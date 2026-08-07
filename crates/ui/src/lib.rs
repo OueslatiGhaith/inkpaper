@@ -1,5 +1,6 @@
 #![no_std]
 
+mod arena;
 mod context;
 mod div;
 mod element;
@@ -10,6 +11,7 @@ mod stateful;
 mod style;
 mod units;
 
+pub use arena::*;
 pub use context::*;
 pub use div::*;
 pub use element::*;
