@@ -1,4 +1,6 @@
-use crate::{Children, Element, NoChildren, ParentElement, Push, Style, Styled};
+use crate::{
+    Children, Element, InteractiveElement, NoChildren, ParentElement, Push, Style, Styled,
+};
 
 pub struct Div<C = NoChildren> {
     pub(crate) style: Style,
@@ -39,3 +41,5 @@ impl<C> ParentElement for Div<C> {
         }
     }
 }
+
+impl<C> InteractiveElement for Div<C> where C: Children {}
