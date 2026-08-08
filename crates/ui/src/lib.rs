@@ -5,6 +5,7 @@ mod context;
 mod div;
 mod element;
 mod entity;
+mod entity_store;
 mod identity;
 mod render;
 mod stateful;

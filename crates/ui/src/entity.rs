@@ -1,6 +1,8 @@
-use core::marker::PhantomData;
+use core::{any::TypeId, marker::PhantomData};
 
-use crate::{Element, Render};
+use crate::{
+    Context, Element, EntityAccessError, EntityBorrowKind, Render, entity_store::RawEntityBorrow,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EntityId {
@@ -37,6 +39,49 @@ impl<T> Entity<T> {
 
     pub const fn entity_id(self) -> EntityId {
         self.id
+    }
+}
+
+impl<T: 'static> Entity<T> {
+    pub fn read<C, R>(
+        self,
+        cx: &Context<'_, C>,
+        f: impl FnOnce(&T) -> R,
+    ) -> Result<R, EntityAccessError>
+    where
+        C: 'static,
+    {
+        let borrow = RawEntityBorrow::acquire(
+            cx.store,
+            self.id,
+            TypeId::of::<T>(),
+            EntityBorrowKind::Shared,
+        )?;
+
+        let value = unsafe { &*borrow.ptr().cast::<T>().as_ptr() };
+
+        Ok(f(value))
+    }
+
+    pub fn update<C, R>(
+        self,
+        cx: &Context<'_, C>,
+        f: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+    ) -> Result<R, EntityAccessError>
+    where
+        C: 'static,
+    {
+        let borrow = RawEntityBorrow::acquire(
+            cx.store,
+            self.id,
+            TypeId::of::<T>(),
+            EntityBorrowKind::Exclusive,
+        )?;
+
+        let value = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
+        let mut entity_cx = Context::from_parts(self, cx.store, cx.notified);
+
+        Ok(f(value, &mut entity_cx))
     }
 }
 

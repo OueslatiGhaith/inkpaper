@@ -1,13 +1,27 @@
-use crate::{Entity, EntityId};
+use core::cell::Cell;
+
+use crate::{
+    Entity, EntityAllocError, EntityId,
+    entity_store::{EntityStore, create_entity},
+};
 
 pub struct Context<'a, T> {
-    entity: Entity<T>,
-    notified: &'a mut bool,
+    pub(crate) entity: Entity<T>,
+    pub(crate) store: &'a dyn EntityStore,
+    pub(crate) notified: &'a Cell<bool>,
 }
 
 impl<'a, T> Context<'a, T> {
-    pub(crate) fn new(entity: Entity<T>, notified: &'a mut bool) -> Self {
-        Self { entity, notified }
+    pub(crate) fn from_parts(
+        entity: Entity<T>,
+        store: &'a dyn EntityStore,
+        notified: &'a Cell<bool>,
+    ) -> Self {
+        Self {
+            entity,
+            store,
+            notified,
+        }
     }
 }
 
@@ -21,6 +35,146 @@ impl<T> Context<'_, T> {
     }
 
     pub fn notify(&mut self) {
-        *self.notified = true;
+        self.notified.set(true);
+    }
+
+    pub fn new<U>(
+        &mut self,
+        build: impl FnOnce(&mut Context<'_, U>) -> U,
+    ) -> Result<Entity<U>, EntityAllocError>
+    where
+        U: 'static,
+    {
+        create_entity(self.store, self.notified, build)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{EntityAccessError, EntityArena};
+
+    use super::*;
+
+    struct Root;
+
+    struct Counter {
+        value: i32,
+    }
+
+    #[test]
+    fn context_can_create_entities() {
+        let arena = EntityArena::<1024, 16>::default();
+        let root = arena.insert(Root).unwrap();
+        let notified = Cell::new(false);
+
+        let mut cx = Context::from_parts(root, &arena, &notified);
+
+        let counter = cx.new(|_| Counter { value: 42 }).unwrap();
+
+        assert_eq!(counter.read(&cx, |counter| counter.value,), Ok(42));
+    }
+
+    #[test]
+    fn entity_can_update_through_context() {
+        let arena = EntityArena::<1024, 16>::default();
+        let root = arena.insert(Root).unwrap();
+        let notified = Cell::new(false);
+
+        let mut cx = Context::from_parts(root, &arena, &notified);
+
+        let counter = cx.new(|_| Counter { value: 1 }).unwrap();
+
+        counter
+            .update(&mut cx, |counter, cx| {
+                counter.value += 1;
+                cx.notify();
+            })
+            .unwrap();
+
+        assert_eq!(counter.read(&cx, |counter| counter.value,), Ok(2));
+        assert!(notified.get());
+    }
+
+    #[test]
+    fn entity_constructors_can_create_entities() {
+        struct Child {
+            value: u32,
+        }
+
+        struct Parent {
+            child: Entity<Child>,
+        }
+
+        let arena = EntityArena::<1024, 16>::default();
+        let root = arena.insert(Root).unwrap();
+        let notified = Cell::new(false);
+
+        let mut cx = Context::from_parts(root, &arena, &notified);
+
+        let parent = cx
+            .new(|cx| {
+                let child = cx.new(|_| Child { value: 123 }).unwrap();
+                Parent { child }
+            })
+            .unwrap();
+
+        let child = parent.read(&cx, |parent| parent.child).unwrap();
+
+        assert_eq!(child.read(&cx, |child| child.value,), Ok(123));
+    }
+
+    #[test]
+    fn self_identity_during_construction() {
+        struct Parent {
+            child: Entity<Child>,
+        }
+
+        struct Child {
+            parent: Entity<Parent>,
+        }
+
+        let arena = EntityArena::<1024, 16>::default();
+        let root = arena.insert(Root).unwrap();
+        let notified = Cell::new(false);
+
+        let mut cx = Context::from_parts(root, &arena, &notified);
+
+        let parent = cx
+            .new(|cx| {
+                let me = cx.entity();
+
+                let child = cx.new(|_| Child { parent: me }).unwrap();
+
+                Parent { child }
+            })
+            .unwrap();
+
+        let child = parent.read(&cx, |p| p.child).unwrap();
+
+        let referenced_parent = child.read(&cx, |c| c.parent).unwrap();
+
+        assert_eq!(referenced_parent, parent);
+    }
+
+    #[test]
+    fn initializing_entity_cannot_be_read() {
+        let arena = EntityArena::<1024, 16>::default();
+        let root = arena.insert(Root).unwrap();
+        let notified = Cell::new(false);
+
+        let mut cx = Context::from_parts(root, &arena, &notified);
+
+        let _ = cx
+            .new(|cx| {
+                let me = cx.entity();
+
+                assert!(matches!(
+                    me.read(cx, |_| ()),
+                    Err(EntityAccessError::NotReady),
+                ));
+
+                Counter { value: 0 }
+            })
+            .unwrap();
     }
 }
