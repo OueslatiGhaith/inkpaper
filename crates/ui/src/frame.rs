@@ -272,8 +272,6 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             self.nodes[index].element_state_id = Some(state_id);
         }
 
-        states.sweep(frame_generation);
-
         Ok(())
     }
 }
@@ -479,6 +477,7 @@ mod tests {
             .expect("entity expansion should succeed");
 
         frame.resolve_identities(states, generation)?;
+        states.sweep(generation);
 
         Ok(root)
     }
@@ -1494,6 +1493,7 @@ mod tests {
             2,
         )
         .unwrap();
+        states.sweep(2);
 
         assert!(!states.contains(old));
     }
@@ -1589,5 +1589,24 @@ mod tests {
             frame.resolve_identities(&mut states, 1,),
             Err(IdentityError::StatesFull)
         );
+    }
+
+    #[test]
+    fn failed_identity_resolution_can_be_aborted() {
+        let mut states = ElementStateTable::<8>::default();
+
+        let parent = IdentityParent::Entity(EntityId::new(0, 0));
+        let old = states.resolve(parent, ElementId::Name("old"), 1).unwrap();
+
+        states.sweep(1);
+
+        assert!(states.contains(old));
+
+        states.resolve(parent, ElementId::Name("new"), 2).unwrap();
+        states.resolve(parent, ElementId::Name("old"), 2).unwrap();
+        states.abort_frame(2);
+
+        assert!(states.contains(old));
+        assert_eq!(states.len(), 1);
     }
 }
