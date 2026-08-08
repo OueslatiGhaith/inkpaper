@@ -4,7 +4,10 @@ use heapless::Vec;
 
 use crate::{
     Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId,
-    StatefulInteractivity, Style, entity_store::EntityStore, listener_store::ListenerStore,
+    StatefulInteractivity, Style,
+    element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
+    entity_store::EntityStore,
+    listener_store::ListenerStore,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,6 +52,7 @@ pub(crate) struct Node {
     pub(crate) last_child: Option<NodeId>,
     pub(crate) next_sibling: Option<NodeId>,
     pub(crate) element_id: Option<ElementId>,
+    pub(crate) element_state_id: Option<ElementStateId>,
     pub(crate) interaction: NodeInteraction,
 }
 
@@ -61,6 +65,7 @@ impl Node {
             last_child: None,
             next_sibling: None,
             element_id: None,
+            element_state_id: None,
             interaction: NodeInteraction::default(),
         }
     }
@@ -223,6 +228,54 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         Ok(root)
     }
+
+    fn identity_parent(&self, node: NodeId) -> Option<IdentityParent> {
+        let mut current = self.nodes[node.index()].parent;
+
+        while let Some(parent_id) = current {
+            let parent = &self.nodes[parent_id.index()];
+
+            // entity in an identity boundary
+            if let NodeKind::Entity { entity, .. } = parent.kind {
+                return Some(IdentityParent::Entity(entity));
+            }
+            // otherwise the nearest identified ancestor establishes the scope
+            if let Some(state_id) = parent.element_state_id {
+                return Some(IdentityParent::Element(state_id));
+            }
+            // unnamed elements do not contribute
+            current = parent.parent;
+        }
+
+        None
+    }
+
+    pub(crate) fn resolve_identities<const STATES: usize>(
+        &mut self,
+        states: &mut ElementStateTable<STATES>,
+        frame_generation: u32,
+    ) -> Result<(), IdentityError> {
+        let len = self.nodes.len();
+
+        for index in 0..len {
+            let node_id = NodeId::new(index as u16);
+            let Some(local_id) = self.nodes[index].element_id else {
+                continue;
+            };
+
+            let parent = self
+                .identity_parent(node_id)
+                .ok_or(IdentityError::MissingEntityScope { node: node_id })?;
+
+            let state_id = states.resolve(parent, local_id, frame_generation)?;
+
+            self.nodes[index].element_state_id = Some(state_id);
+        }
+
+        states.sweep(frame_generation);
+
+        Ok(())
+    }
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODES, TEXT_BYTES> {
@@ -348,10 +401,13 @@ impl MountCx<'_> {
 #[cfg(test)]
 mod tests {
     use core::cell::Cell;
+    use std::string::String;
 
-    use heapless::String;
-
-    use crate::{listener_store::ListenerArena, *};
+    use crate::{
+        element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
+        listener_store::ListenerArena,
+        *,
+    };
 
     fn node_text<const N: usize, const T: usize>(frame: &FrameArena<N, T>, id: NodeId) -> &str {
         match frame.node(id).kind {
@@ -367,6 +423,64 @@ mod tests {
         frame.nodes.iter().enumerate().find_map(|(index, node)| {
             (node.element_id == Some(id)).then(|| NodeId::new(index as u16))
         })
+    }
+
+    fn find_all_elements<const NODES: usize, const TEXT_BYTES: usize>(
+        frame: &FrameArena<NODES, TEXT_BYTES>,
+        id: ElementId,
+    ) -> std::vec::Vec<NodeId> {
+        frame
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, node)| {
+                (node.element_id == Some(id)).then(|| NodeId::new(index as u16))
+            })
+            .collect()
+    }
+
+    fn state_id<const NODES: usize, const TEXT_BYTES: usize>(
+        frame: &FrameArena<NODES, TEXT_BYTES>,
+        node: NodeId,
+    ) -> ElementStateId {
+        frame
+            .node(node)
+            .element_state_id
+            .expect("element should have resolved state identity")
+    }
+
+    fn build_frame<
+        Root,
+        const NODES: usize,
+        const TEXT_BYTES: usize,
+        const STATES: usize,
+        const ENTITY_BYTES: usize,
+        const ENTITY_SLOTS: usize,
+        const LISTENER_BYTES: usize,
+        const LISTENER_SLOTS: usize,
+    >(
+        frame: &mut FrameArena<NODES, TEXT_BYTES>,
+        states: &mut ElementStateTable<STATES>,
+        root: Entity<Root>,
+        entities: &EntityArena<ENTITY_BYTES, ENTITY_SLOTS>,
+        listeners: &ListenerArena<LISTENER_BYTES, LISTENER_SLOTS>,
+        notified: &Cell<bool>,
+        generation: u32,
+    ) -> Result<NodeId, IdentityError>
+    where
+        Root: Render,
+    {
+        frame.clear();
+
+        let root = frame.mount(root).expect("mount should succeed");
+
+        frame
+            .expand_entities(entities, listeners, notified)
+            .expect("entity expansion should succeed");
+
+        frame.resolve_identities(states, generation)?;
+
+        Ok(root)
     }
 
     #[test]
@@ -459,7 +573,7 @@ mod tests {
         let root;
 
         {
-            let text = String::<5>::try_from("Hello").unwrap();
+            let text = String::from("Hello");
             root = frame.mount(div().child(text.as_str())).unwrap();
             // `text` is dropped at the end of this block.
         }
@@ -647,7 +761,7 @@ mod tests {
     }
 
     struct Label {
-        text: String<256>,
+        text: String,
     }
 
     impl Render for Label {
@@ -678,7 +792,7 @@ mod tests {
         entities
             .update(label, |label| {
                 label.text.clear();
-                label.text.push_str("Changed").unwrap();
+                label.text.push_str("Changed");
             })
             .unwrap();
 
@@ -914,5 +1028,566 @@ mod tests {
 
         assert_eq!(frame.node(rendered_root).parent, Some(entity_node));
         assert_eq!(frame.node(rendered_root).next_sibling, None);
+    }
+
+    struct StableApp;
+
+    impl Render for StableApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child(div().id("button").child("Press"))
+        }
+    }
+
+    #[test]
+    fn element_identity_is_stable_across_frames() {
+        let entities = EntityArena::<2048, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<32>::default();
+        let mut frame = FrameArena::<32, 256>::default();
+        let notified = Cell::new(false);
+
+        let app = entities.insert(StableApp).unwrap();
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            app,
+            &entities,
+            &listeners,
+            &notified,
+            1,
+        )
+        .unwrap();
+
+        let button = find_element(&frame, ElementId::Name("button")).unwrap();
+        let first = state_id(&frame, button);
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            app,
+            &entities,
+            &listeners,
+            &notified,
+            2,
+        )
+        .unwrap();
+
+        let button = find_element(&frame, ElementId::Name("button")).unwrap();
+        let second = state_id(&frame, button);
+
+        assert_eq!(first, second);
+        assert!(states.contains(first));
+        assert_eq!(states.len(), 1);
+    }
+
+    struct WrapperApp {
+        wrapped: bool,
+    }
+
+    impl Render for WrapperApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            // we can't return two unrelated concrete types from a normal if,
+            // so keep the same outer type and conditionally insert unnamed
+            // wrappers in separate test component types below.
+            div().id("panel").child(div().id("button"))
+        }
+    }
+
+    struct WrappedApp;
+
+    impl Render for WrappedApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .id("panel")
+                .child(div().child(div().child(div().id("button"))))
+        }
+    }
+
+    #[test]
+    fn unnamed_wrappers_do_not_affect_identity_path() {
+        let entities = EntityArena::<4096, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<32>::default();
+        let mut frame = FrameArena::<64, 256>::default();
+        let notified = Cell::new(false);
+
+        let plain = entities.insert(WrapperApp { wrapped: false }).unwrap();
+        let wrapped = entities.insert(WrappedApp).unwrap();
+
+        // these are different entities, so their Ids should NOT be equal.
+        // what we're validating here is the parent relationship inside each
+        // tree: unnamed wrappers do not become identity parents.
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            plain,
+            &entities,
+            &listeners,
+            &notified,
+            1,
+        )
+        .unwrap();
+
+        let panel = find_element(&frame, ElementId::Name("panel")).unwrap();
+        let button = find_element(&frame, ElementId::Name("button")).unwrap();
+        let panel_state = state_id(&frame, panel);
+        let button_state = state_id(&frame, button);
+        let button_entry = states.entry(button_state).unwrap();
+
+        assert_eq!(
+            button_entry.key.parent,
+            IdentityParent::Element(panel_state),
+        );
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            wrapped,
+            &entities,
+            &listeners,
+            &notified,
+            2,
+        )
+        .unwrap();
+
+        let panel = find_element(&frame, ElementId::Name("panel")).unwrap();
+        let button = find_element(&frame, ElementId::Name("button")).unwrap();
+        let panel_state = state_id(&frame, panel);
+        let button_state = state_id(&frame, button);
+        let button_entry = states.entry(button_state).unwrap();
+
+        assert_eq!(
+            button_entry.key.parent,
+            IdentityParent::Element(panel_state),
+        );
+    }
+
+    struct NestedApp;
+
+    impl Render for NestedApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().id("panel").child(div().id("button"))
+        }
+    }
+
+    #[test]
+    fn nested_element_uses_nearest_identified_parent() {
+        let entities = EntityArena::<2048, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<32>::default();
+        let mut frame = FrameArena::<32, 256>::default();
+        let notified = Cell::new(false);
+
+        let app = entities.insert(NestedApp).unwrap();
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            app,
+            &entities,
+            &listeners,
+            &notified,
+            1,
+        )
+        .unwrap();
+
+        let panel = find_element(&frame, ElementId::Name("panel")).unwrap();
+        let button = find_element(&frame, ElementId::Name("button")).unwrap();
+        let panel_state = state_id(&frame, panel);
+        let button_state = state_id(&frame, button);
+
+        assert_ne!(panel_state, button_state);
+
+        let panel_entry = states.entry(panel_state).unwrap();
+
+        assert_eq!(
+            panel_entry.key.parent,
+            IdentityParent::Entity(app.entity_id()),
+        );
+
+        let button_entry = states.entry(button_state).unwrap();
+
+        assert_eq!(
+            button_entry.key.parent,
+            IdentityParent::Element(panel_state),
+        );
+    }
+
+    struct DuplicateApp;
+
+    impl Render for DuplicateApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child(div().id("button")).child(div().id("button"))
+        }
+    }
+
+    #[test]
+    fn duplicate_ids_in_same_scope_are_rejected() {
+        let entities = EntityArena::<2048, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<32>::default();
+        let mut frame = FrameArena::<32, 256>::default();
+        let notified = Cell::new(false);
+
+        let app = entities.insert(DuplicateApp).unwrap();
+
+        frame.mount(app).unwrap();
+        frame
+            .expand_entities(&entities, &listeners, &notified)
+            .unwrap();
+
+        let result = frame.resolve_identities(&mut states, 1);
+
+        assert_eq!(
+            result,
+            Err(IdentityError::DuplicateElementId {
+                id: ElementId::Name("button"),
+            })
+        );
+    }
+
+    struct SeparateScopesApp;
+
+    impl Render for SeparateScopesApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .child(div().id("left").child(div().id("button")))
+                .child(div().id("right").child(div().id("button")))
+        }
+    }
+
+    #[test]
+    fn same_local_id_is_allowed_under_different_identified_parents() {
+        let entities = EntityArena::<2048, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<32>::default();
+        let mut frame = FrameArena::<32, 256>::default();
+        let notified = Cell::new(false);
+
+        let app = entities.insert(SeparateScopesApp).unwrap();
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            app,
+            &entities,
+            &listeners,
+            &notified,
+            1,
+        )
+        .unwrap();
+
+        let buttons = find_all_elements(&frame, ElementId::Name("button"));
+
+        assert_eq!(buttons.len(), 2);
+
+        let first = state_id(&frame, buttons[0]);
+        let second = state_id(&frame, buttons[1]);
+
+        assert_ne!(first, second);
+
+        let first_parent = states.entry(first).unwrap().key.parent;
+        let second_parent = states.entry(second).unwrap().key.parent;
+
+        assert_ne!(first_parent, second_parent);
+    }
+
+    struct Widget;
+
+    impl Render for Widget {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().id("button").child("Button")
+        }
+    }
+
+    struct WidgetsApp {
+        left: Entity<Widget>,
+        right: Entity<Widget>,
+    }
+
+    impl Render for WidgetsApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child(self.left).child(self.right)
+        }
+    }
+
+    #[test]
+    fn separate_entities_have_separate_identity_namespaces() {
+        let entities = EntityArena::<4096, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<32>::default();
+        let mut frame = FrameArena::<64, 256>::default();
+        let notified = Cell::new(false);
+
+        let left = entities.insert(Widget).unwrap();
+        let right = entities.insert(Widget).unwrap();
+        let app = entities.insert(WidgetsApp { left, right }).unwrap();
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            app,
+            &entities,
+            &listeners,
+            &notified,
+            1,
+        )
+        .unwrap();
+
+        let buttons = find_all_elements(&frame, ElementId::Name("button"));
+
+        assert_eq!(buttons.len(), 2);
+
+        let a = state_id(&frame, buttons[0]);
+        let b = state_id(&frame, buttons[1]);
+
+        assert_ne!(a, b);
+
+        let a_parent = states.entry(a).unwrap().key.parent;
+        let b_parent = states.entry(b).unwrap().key.parent;
+
+        assert!(matches!(a_parent, IdentityParent::Entity(_)));
+        assert!(matches!(b_parent, IdentityParent::Entity(_)));
+        assert_ne!(a_parent, b_parent);
+
+        let expected = [
+            IdentityParent::Entity(left.entity_id()),
+            IdentityParent::Entity(right.entity_id()),
+        ];
+
+        assert!(expected.contains(&a_parent));
+        assert!(expected.contains(&b_parent));
+    }
+
+    struct MovableChild;
+
+    impl Render for MovableChild {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().id("internal-button").child("Internal")
+        }
+    }
+
+    struct ParentA {
+        child: Entity<MovableChild>,
+    }
+
+    impl Render for ParentA {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().id("left").child(self.child)
+        }
+    }
+
+    struct ParentB {
+        child: Entity<MovableChild>,
+    }
+
+    impl Render for ParentB {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .id("right")
+                .child(div().child(div().child(self.child)))
+        }
+    }
+
+    #[test]
+    fn moving_entity_does_not_change_internal_element_identity() {
+        let entities = EntityArena::<4096, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<32>::default();
+        let mut frame = FrameArena::<64, 256>::default();
+        let notified = Cell::new(false);
+
+        let child = entities.insert(MovableChild).unwrap();
+        let parent_a = entities.insert(ParentA { child }).unwrap();
+        let parent_b = entities.insert(ParentB { child }).unwrap();
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            parent_a,
+            &entities,
+            &listeners,
+            &notified,
+            1,
+        )
+        .unwrap();
+
+        let internal = find_element(&frame, ElementId::Name("internal-button")).unwrap();
+        let first = state_id(&frame, internal);
+        let first_parent = states.entry(first).unwrap().key.parent;
+
+        assert_eq!(first_parent, IdentityParent::Entity(child.entity_id()));
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            parent_b,
+            &entities,
+            &listeners,
+            &notified,
+            2,
+        )
+        .unwrap();
+
+        let internal = find_element(&frame, ElementId::Name("internal-button")).unwrap();
+        let second = state_id(&frame, internal);
+
+        assert_eq!(first, second);
+
+        let second_parent = states.entry(second).unwrap().key.parent;
+
+        assert_eq!(second_parent, IdentityParent::Entity(child.entity_id()));
+    }
+
+    struct WithButton;
+
+    impl Render for WithButton {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child(div().id("button"))
+        }
+    }
+
+    struct WithoutButton;
+
+    impl Render for WithoutButton {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child("Nothing")
+        }
+    }
+
+    #[test]
+    fn element_state_is_removed_when_element_disappears() {
+        let entities = EntityArena::<4096, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<32>::default();
+        let mut frame = FrameArena::<32, 256>::default();
+        let notified = Cell::new(false);
+
+        let with_button = entities.insert(WithButton).unwrap();
+        let without_button = entities.insert(WithoutButton).unwrap();
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            with_button,
+            &entities,
+            &listeners,
+            &notified,
+            1,
+        )
+        .unwrap();
+
+        let button = find_element(&frame, ElementId::Name("button")).unwrap();
+        let old = state_id(&frame, button);
+
+        assert!(states.contains(old));
+
+        build_frame(
+            &mut frame,
+            &mut states,
+            without_button,
+            &entities,
+            &listeners,
+            &notified,
+            2,
+        )
+        .unwrap();
+
+        assert!(!states.contains(old));
+    }
+
+    #[test]
+    fn reappearing_element_gets_new_generation() {
+        let entities = EntityArena::<4096, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<32>::default();
+        let mut frame = FrameArena::<32, 256>::default();
+        let notified = Cell::new(false);
+
+        let with_button = entities.insert(WithButton).unwrap();
+        let without_button = entities.insert(WithoutButton).unwrap();
+
+        // frame 1: button exists.
+        build_frame(
+            &mut frame,
+            &mut states,
+            with_button,
+            &entities,
+            &listeners,
+            &notified,
+            1,
+        )
+        .unwrap();
+
+        let button = find_element(&frame, ElementId::Name("button")).unwrap();
+        let old = state_id(&frame, button);
+
+        // frame 2: button disappears and is swept.
+        build_frame(
+            &mut frame,
+            &mut states,
+            without_button,
+            &entities,
+            &listeners,
+            &notified,
+            2,
+        )
+        .unwrap();
+
+        assert!(!states.contains(old));
+
+        // frame 3: button comes back.
+        build_frame(
+            &mut frame,
+            &mut states,
+            with_button,
+            &entities,
+            &listeners,
+            &notified,
+            3,
+        )
+        .unwrap();
+
+        let button = find_element(&frame, ElementId::Name("button")).unwrap();
+        let new = state_id(&frame, button);
+
+        assert_ne!(old, new);
+
+        // with a first-free-slot allocator this will normally be the same slot with
+        // a newer generation.
+        assert_eq!(old.slot(), new.slot());
+
+        assert_ne!(old.generation(), new.generation());
+    }
+
+    struct TooManyStatesApp;
+
+    impl Render for TooManyStatesApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child(div().id("a")).child(div().id("b"))
+        }
+    }
+
+    #[test]
+    fn identity_resolution_reports_state_capacity_exhaustion() {
+        let entities = EntityArena::<2048, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let mut states = ElementStateTable::<1>::default();
+        let mut frame = FrameArena::<16, 128>::default();
+        let notified = Cell::new(false);
+
+        let app = entities.insert(TooManyStatesApp).unwrap();
+
+        frame.mount(app).unwrap();
+        frame
+            .expand_entities(&entities, &listeners, &notified)
+            .unwrap();
+
+        assert_eq!(
+            frame.resolve_identities(&mut states, 1,),
+            Err(IdentityError::StatesFull)
+        );
     }
 }

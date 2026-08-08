@@ -1,9 +1,13 @@
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 mod arena;
 mod context;
 mod div;
 mod element;
+mod element_state;
 mod entity;
 mod entity_store;
 mod event;
