@@ -1,13 +1,15 @@
 use core::cell::Cell;
 
 use crate::{
-    Entity, EntityAllocError, EntityId,
+    Entity, EntityAllocError, EntityId, Listener,
     entity_store::{EntityStore, create_entity},
+    listener_store::{ListenerAllocError, ListenerStore, register_listener},
 };
 
 pub struct Context<'a, T> {
     pub(crate) entity: Entity<T>,
     pub(crate) store: &'a dyn EntityStore,
+    pub(crate) listeners: &'a dyn ListenerStore,
     pub(crate) notified: &'a Cell<bool>,
 }
 
@@ -15,11 +17,13 @@ impl<'a, T> Context<'a, T> {
     pub(crate) fn from_parts(
         entity: Entity<T>,
         store: &'a dyn EntityStore,
+        listeners: &'a dyn ListenerStore,
         notified: &'a Cell<bool>,
     ) -> Self {
         Self {
             entity,
             store,
+            listeners,
             notified,
         }
     }
@@ -45,13 +49,34 @@ impl<T> Context<'_, T> {
     where
         U: 'static,
     {
-        create_entity(self.store, self.notified, build)
+        create_entity(self.store, self.listeners, self.notified, build)
+    }
+}
+
+impl<T: 'static> Context<'_, T> {
+    pub fn try_listener<E, F>(&mut self, callback: F) -> Result<Listener<E>, ListenerAllocError>
+    where
+        E: 'static,
+        F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
+    {
+        register_listener(self.listeners, self.entity, callback)
+    }
+
+    pub fn listener<E, F>(&mut self, callback: F) -> Listener<E>
+    where
+        E: 'static,
+        F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
+    {
+        match self.try_listener(callback) {
+            Ok(listener) => listener,
+            Err(_) => panic!("listener arena capacity exceeded"),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{EntityAccessError, EntityArena};
+    use crate::{EntityAccessError, EntityArena, listener_store::ListenerArena};
 
     use super::*;
 
@@ -64,10 +89,11 @@ mod tests {
     #[test]
     fn context_can_create_entities() {
         let arena = EntityArena::<1024, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &notified);
+        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
 
         let counter = cx.new(|_| Counter { value: 42 }).unwrap();
 
@@ -77,10 +103,11 @@ mod tests {
     #[test]
     fn entity_can_update_through_context() {
         let arena = EntityArena::<1024, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &notified);
+        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
 
         let counter = cx.new(|_| Counter { value: 1 }).unwrap();
 
@@ -106,10 +133,11 @@ mod tests {
         }
 
         let arena = EntityArena::<1024, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &notified);
+        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
 
         let parent = cx
             .new(|cx| {
@@ -134,10 +162,11 @@ mod tests {
         }
 
         let arena = EntityArena::<1024, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &notified);
+        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
 
         let parent = cx
             .new(|cx| {
@@ -159,10 +188,11 @@ mod tests {
     #[test]
     fn initializing_entity_cannot_be_read() {
         let arena = EntityArena::<1024, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &notified);
+        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
 
         let _ = cx
             .new(|cx| {

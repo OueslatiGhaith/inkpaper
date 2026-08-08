@@ -65,7 +65,7 @@ pub(crate) enum EntityBorrowKind {
     Exclusive,
 }
 
-fn align_up(value: usize, alignment: usize) -> Option<usize> {
+pub(crate) fn align_up(value: usize, alignment: usize) -> Option<usize> {
     debug_assert!(alignment.is_power_of_two());
 
     let mask = alignment - 1;

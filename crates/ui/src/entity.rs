@@ -79,7 +79,7 @@ impl<T: 'static> Entity<T> {
         )?;
 
         let value = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
-        let mut entity_cx = Context::from_parts(self, cx.store, cx.notified);
+        let mut entity_cx = Context::from_parts(self, cx.store, cx.listeners, cx.notified);
 
         Ok(f(value, &mut entity_cx))
     }
