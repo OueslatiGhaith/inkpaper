@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 embedded-graphics = "0.8.2"
 heapless = "0.9.3"
+
+[dev-dependencies]
+embedded-graphics-simulator = "0.8.0"

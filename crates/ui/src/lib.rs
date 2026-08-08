@@ -46,5 +46,7 @@ pub use units::*;
 
 pub mod prelude {
     // TODO: fill predlude
-    pub use crate::{Context, Entity, IntoElement, ParentElement, Render, Styled, div, px};
+    pub use crate::{
+        Color, Context, Entity, IntoElement, ParentElement, Render, Runtime, Size, Styled, div, px,
+    };
 }

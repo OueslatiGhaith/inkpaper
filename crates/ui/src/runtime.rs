@@ -199,7 +199,7 @@ impl<
         Some(self.frame.layout(root, viewport, text_measurer))
     }
 
-    fn paint<D, P>(&self, target: &mut D, text_painter: &P) -> Result<Option<()>, D::Error>
+    pub fn paint<D, P>(&self, target: &mut D, text_painter: &P) -> Result<Option<()>, D::Error>
     where
         D: DrawTarget<Color = Rgb888>,
         D::Color: From<Rgb888>,
