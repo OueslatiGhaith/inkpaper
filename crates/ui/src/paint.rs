@@ -113,10 +113,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 return Some(sibling);
             }
 
-            match self.node(node).parent {
-                Some(parent) => node = parent,
-                None => return None,
-            }
+            let parent = self.node(node).parent?;
+            node = parent
         }
     }
 

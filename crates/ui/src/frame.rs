@@ -446,9 +446,8 @@ mod tests {
             .nodes
             .iter()
             .enumerate()
-            .filter_map(|(index, node)| {
-                (node.element_id == Some(id)).then(|| NodeId::new(index as u16))
-            })
+            .filter(|&(_, node)| node.element_id == Some(id))
+            .map(|(index, _)| NodeId::new(index as u16))
             .collect()
     }
 
@@ -793,7 +792,7 @@ mod tests {
 
         let label = entities
             .insert(Label {
-                text: String::try_from("Persistent state text").unwrap(),
+                text: String::from("Persistent state text"),
             })
             .unwrap();
 
@@ -1096,7 +1095,7 @@ mod tests {
     }
 
     struct WrapperApp {
-        wrapped: bool,
+        _wrapped: bool,
     }
 
     impl Render for WrapperApp {
@@ -1126,7 +1125,7 @@ mod tests {
         let mut frame = FrameArena::<64, 256>::default();
         let notified = Cell::new(false);
 
-        let plain = entities.insert(WrapperApp { wrapped: false }).unwrap();
+        let plain = entities.insert(WrapperApp { _wrapped: false }).unwrap();
         let wrapped = entities.insert(WrappedApp).unwrap();
 
         // these are different entities, so their Ids should NOT be equal.

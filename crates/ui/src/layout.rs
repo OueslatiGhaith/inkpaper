@@ -191,12 +191,12 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let base_fill = if fill_count == 0 {
             0
         } else {
-            remaining / fill_count as i32
+            remaining / fill_count
         };
         let fill_remainder = if fill_count == 0 {
             0
         } else {
-            remaining % fill_count as i32
+            remaining % fill_count
         };
 
         let mut natural_main = 0i32;
@@ -333,7 +333,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let base_fill = if fill_count == 0 {
             0
         } else {
-            remaining / fill_count as i32
+            remaining / fill_count
         };
         let fill_remainder = if fill_count == 0 {
             0

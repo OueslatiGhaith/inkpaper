@@ -42,6 +42,7 @@ impl<T> Context<'_, T> {
         self.notified.set(true);
     }
 
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<U>(
         &mut self,
         build: impl FnOnce(&mut Context<'_, U>) -> U,
@@ -112,7 +113,7 @@ mod tests {
         let counter = cx.new(|_| Counter { value: 1 }).unwrap();
 
         counter
-            .update(&mut cx, |counter, cx| {
+            .update(&cx, |counter, cx| {
                 counter.value += 1;
                 cx.notify();
             })

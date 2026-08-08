@@ -1,5 +1,3 @@
-use heapless::index_map::Entry;
-
 use crate::{ElementId, EntityId, NodeId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -58,7 +56,7 @@ impl ElementStateSlot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IdentityError {
+pub enum IdentityError {
     StatesFull,
     DuplicateElementId { id: ElementId },
     MissingEntityScope { node: NodeId },
