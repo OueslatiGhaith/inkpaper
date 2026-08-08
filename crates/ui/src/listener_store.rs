@@ -574,4 +574,69 @@ mod tests {
 
         assert!(matches!(result, Err(ListenerAllocError::StorageFull)));
     }
+
+    #[test]
+    fn click_listener_can_be_attached_to_stateful_div() {
+        let entities = EntityArena::<1024, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let counter = entities.insert(Counter { value: 0 }).unwrap();
+        let notified = Cell::new(false);
+
+        let mut cx = Context::from_parts(counter, &entities, &listeners, &notified);
+
+        let listener = cx.listener(Counter::increment);
+
+        let _element = div().id("increment").on_click(listener).child("+");
+    }
+
+    #[test]
+    fn stateful_element_preserves_click_after_styling() {
+        let entities = EntityArena::<1024, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let counter = entities.insert(Counter { value: 0 }).unwrap();
+        let notified = Cell::new(false);
+
+        let mut cx = Context::from_parts(counter, &entities, &listeners, &notified);
+
+        let listener = cx.listener(Counter::increment);
+
+        let _element = div()
+            .id("increment")
+            .on_click(listener)
+            .flex()
+            .p(px(8))
+            .child("+");
+    }
+
+    #[test]
+    fn stateful_element_preserves_click_after_adding_children() {
+        let entities = EntityArena::<1024, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let counter = entities.insert(Counter { value: 0 }).unwrap();
+        let notified = Cell::new(false);
+
+        let mut cx = Context::from_parts(counter, &entities, &listeners, &notified);
+
+        let listener = cx.listener(Counter::increment);
+
+        let _element = div()
+            .id("increment")
+            .on_click(listener)
+            .child("+")
+            .child("Increment");
+    }
+
+    #[test]
+    fn click_listener_can_be_added_after_children_and_styling() {
+        let entities = EntityArena::<1024, 16>::default();
+        let listeners = ListenerArena::<1024, 16>::default();
+        let counter = entities.insert(Counter { value: 0 }).unwrap();
+        let notified = Cell::new(false);
+
+        let mut cx = Context::from_parts(counter, &entities, &listeners, &notified);
+
+        let listener = cx.listener(Counter::increment);
+
+        let _element = div().child("+").id("increment").p(px(8)).on_click(listener);
+    }
 }

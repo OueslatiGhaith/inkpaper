@@ -1,13 +1,21 @@
-use crate::{Element, ElementId, IntoElementId, ParentElement, Style, Styled};
+use crate::{
+    ClickEvent, Element, ElementId, IntoElementId, Listener, ListenerId, ParentElement, Style,
+    Styled,
+};
 
 pub struct Stateful<E> {
-    pub(crate) element: E,
-    pub(crate) id: ElementId,
+    element: E,
+    id: ElementId,
+    stateful_interactivity: StatefulInteractivity,
 }
 
 impl<E> Stateful<E> {
     pub(crate) fn new(element: E, id: ElementId) -> Self {
-        Self { element, id }
+        Self {
+            element,
+            id,
+            stateful_interactivity: StatefulInteractivity::default(),
+        }
     }
 
     pub fn element_id(&self) -> ElementId {
@@ -45,6 +53,37 @@ where
     where
         C: crate::prelude::IntoElement,
     {
-        Stateful::new(self.element.child(child), self.id)
+        Stateful {
+            id: self.id,
+            element: self.element.child(child),
+            stateful_interactivity: self.stateful_interactivity,
+        }
     }
 }
+
+#[derive(Default)]
+pub struct StatefulInteractivity {
+    click: Option<ListenerId>,
+}
+
+pub trait StatefulInteractiveElement: Element + Sized {
+    fn stateful_interactivity_mut(&mut self) -> &mut StatefulInteractivity;
+}
+
+impl<E> StatefulInteractiveElement for Stateful<E>
+where
+    E: InteractiveElement,
+{
+    fn stateful_interactivity_mut(&mut self) -> &mut StatefulInteractivity {
+        &mut self.stateful_interactivity
+    }
+}
+
+pub trait StatefulInteractiveElementExt: StatefulInteractiveElement {
+    fn on_click(mut self, listener: Listener<ClickEvent>) -> Self {
+        self.stateful_interactivity_mut().click = Some(listener.id);
+        self
+    }
+}
+
+impl<T> StatefulInteractiveElementExt for T where T: StatefulInteractiveElement {}
