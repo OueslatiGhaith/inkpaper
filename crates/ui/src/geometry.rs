@@ -68,4 +68,19 @@ impl Rect {
     pub const fn bottom(self) -> Pixels {
         px(self.origin.y.0 + self.size.height.0)
     }
+
+    pub fn contains(self, point: Point) -> bool {
+        let width = self.size.width.0;
+        let height = self.size.height.0;
+        if width <= 0 || height <= 0 {
+            return false;
+        }
+
+        let left = self.origin.x.0;
+        let top = self.origin.y.0;
+        let right = left.saturating_add(width);
+        let bottom = top.saturating_add(height);
+
+        point.x.0 >= left && point.x.0 < right && point.y.0 >= top && point.y.0 < bottom
+    }
 }

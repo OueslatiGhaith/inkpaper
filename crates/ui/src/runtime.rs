@@ -3,10 +3,11 @@ use core::cell::Cell;
 use embedded_graphics::{draw_target::DrawTarget, pixelcolor::Rgb888};
 
 use crate::{
-    Context, Entity, EntityAllocError, EntityArena, FrameArena, Listener, MountError, NodeId,
-    Render, Size, TextMeasurer,
+    ClickEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Listener, MountError,
+    NodeId, Point, Render, Size, TextMeasurer,
     element_state::{ElementStateTable, IdentityError},
     entity_store::create_entity,
+    input::PointerState,
     listener_store::{ListenerArena, ListenerInvokeError},
     paint::TextPainter,
 };
@@ -45,6 +46,7 @@ pub struct Runtime<
     notified: Cell<bool>,
     frame_generation: u32,
     root: Option<NodeId>,
+    pointer: PointerState,
 }
 
 impl<
@@ -66,6 +68,7 @@ impl<
             notified: Cell::new(false),
             frame_generation: 0,
             root: None,
+            pointer: PointerState::default(),
         }
     }
 }
@@ -135,6 +138,7 @@ impl<
                 self.frame.clear();
                 // never keep listeners registered by a failed render
                 self.listeners.reset();
+                self.pointer.cancel();
                 self.root = None;
 
                 Err(error)
@@ -212,5 +216,42 @@ impl<
         self.frame.paint(root, target, text_painter)?;
 
         Ok(Some(()))
+    }
+
+    pub fn pointer_down(&mut self, position: Point) -> bool {
+        let Some(root) = self.root else {
+            self.pointer.cancel();
+            return false;
+        };
+
+        let target = self.frame.hit_test_click(root, position);
+        self.pointer.press(target.map(|target| target.element));
+
+        target.is_some()
+    }
+
+    pub fn pointer_up(&mut self, position: Point) -> Result<bool, ListenerInvokeError> {
+        let Some(pressed) = self.pointer.take_pressed() else {
+            return Ok(false);
+        };
+        let Some(root) = self.root else {
+            return Ok(false);
+        };
+        let Some(target) = self.frame.hit_test_click(root, position) else {
+            return Ok(false);
+        };
+        if target.element != pressed {
+            return Ok(false);
+        }
+
+        let listener = Listener::from_id(target.listener);
+        self.listeners
+            .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
+
+        Ok(true)
+    }
+
+    pub fn pointer_cancel(&mut self) {
+        self.pointer.cancel();
     }
 }

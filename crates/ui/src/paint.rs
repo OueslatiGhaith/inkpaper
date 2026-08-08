@@ -167,7 +167,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = Some(root);
         while let Some(node) = current {
             self.paint_node(node, target, text_painter)?;
-            current = self.next_paint_node(node);
+            current = self.next_depth_first_node(node);
         }
 
         Ok(())

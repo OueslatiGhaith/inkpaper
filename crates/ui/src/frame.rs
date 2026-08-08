@@ -289,6 +289,22 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     pub fn bounds(&self, id: NodeId) -> Rect {
         self.node(id).layout.bounds
     }
+
+    pub(crate) fn next_depth_first_node(&self, current: NodeId) -> Option<NodeId> {
+        if let Some(child) = self.node(current).first_child {
+            return Some(child);
+        }
+
+        let mut node = current;
+        loop {
+            if let Some(sibling) = self.node(node).next_sibling {
+                return Some(sibling);
+            }
+
+            let parent = self.node(node).parent?;
+            node = parent
+        }
+    }
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODES, TEXT_BYTES> {

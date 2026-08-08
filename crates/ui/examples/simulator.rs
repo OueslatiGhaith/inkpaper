@@ -1,6 +1,19 @@
-use embedded_graphics::{mono_font::ascii::FONT_6X10, pixelcolor::Rgb888, prelude::Size as EgSize};
-use embedded_graphics_simulator::{OutputSettingsBuilder, SimulatorDisplay, Window};
+use std::fmt::Write;
+
+use embedded_graphics::{
+    draw_target::DrawTarget,
+    mono_font::ascii::FONT_6X10,
+    pixelcolor::Rgb888,
+    prelude::{Point as EgPoint, Size as EgSize},
+};
+use embedded_graphics_simulator::{
+    OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window, sdl2::MouseButton,
+};
+use heapless::String;
 use inkpaper_ui::{MonoTextPainter, prelude::*};
+
+const DISPLAY_WIDTH: u32 = 320;
+const DISPLAY_HEIGHT: u32 = 240;
 
 type UiRuntime = Runtime<
     16_384, // entity bytes
@@ -35,67 +48,77 @@ impl Render for Header {
     }
 }
 
-struct StatCard {
-    label: &'static str,
-    value: &'static str,
-    background: Color,
+struct Counter {
+    value: u32,
+    label: String<32>,
 }
 
-impl StatCard {
-    fn new(label: &'static str, value: &'static str, background: Color) -> Self {
-        Self {
-            label,
-            value,
-            background,
-        }
+impl Counter {
+    fn new() -> Self {
+        let mut counter = Self {
+            value: 0,
+            label: String::new(),
+        };
+
+        counter.update_label();
+
+        counter
+    }
+
+    fn update_label(&mut self) {
+        self.label.clear();
+
+        write!(&mut self.label, "Count: {}", self.value,).expect("counter label capacity exceeded");
+    }
+
+    fn increment(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        self.value = self.value.saturating_add(1);
+
+        self.update_label();
+
+        cx.notify();
     }
 }
 
-impl Render for StatCard {
+impl Render for Counter {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         div()
             .w_full()
-            .p(px(8))
-            .gap(px(4))
-            .bg(self.background)
-            .child(self.label)
-            .child(self.value)
+            .p(px(12))
+            .gap(px(10))
+            .bg(Color::rgb(48, 57, 72))
+            .child(self.label.as_str())
+            .child(
+                div()
+                    .id("increment")
+                    .w(px(120))
+                    .h(px(34))
+                    .p(px(8))
+                    .bg(Color::rgb(55, 105, 180))
+                    .on_click(cx.listener(Self::increment))
+                    .child("Increment"),
+            )
     }
 }
 
 struct App {
     header: Entity<Header>,
-    temperature: Entity<StatCard>,
-    humidity: Entity<StatCard>,
-    pressure: Entity<StatCard>,
+    counter: Entity<Counter>,
 }
 
 impl App {
     fn new(cx: &mut Context<Self>) -> Self {
         let header = cx
-            .new(|_| Header::new("InkPaper UI", "embedded-graphics"))
+            .new(|_| Header::new("InkPaper UI", "Click the buttom below"))
             .unwrap();
-        let temperature = cx
-            .new(|_| StatCard::new("Temperature", "23 C", Color::rgb(48, 70, 96)))
-            .unwrap();
-        let humidity = cx
-            .new(|_| StatCard::new("Humidity", "54%", Color::rgb(50, 82, 72)))
-            .unwrap();
-        let pressure = cx
-            .new(|_| StatCard::new("Pressure", "1013 hPa", Color::rgb(76, 65, 89)))
-            .unwrap();
+        let counter = cx.new(|_| Counter::new()).unwrap();
 
-        Self {
-            header,
-            temperature,
-            humidity,
-            pressure,
-        }
+        Self { header, counter }
     }
 }
 
 impl Render for App {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         div()
             .w_full()
             .h_full()
@@ -103,41 +126,69 @@ impl Render for App {
             .gap(px(8))
             .bg(Color::rgb(18, 21, 28))
             .child(self.header)
-            .child(
-                div()
-                    .flex()
-                    .w_full()
-                    .gap(px(8))
-                    .child(self.temperature)
-                    .child(self.humidity),
-            )
-            .child(self.pressure)
+            .child(self.counter)
     }
 }
 
-fn main() {
-    const DISPLAY_WIDTH: u32 = 320;
-    const DISPLAY_HEIGHT: u32 = 240;
-
-    let mut runtime = UiRuntime::default();
-    let text_painter = MonoTextPainter::new(&FONT_6X10, Color::WHITE);
-
-    let app = runtime.create(App::new).unwrap();
+fn render_ui(
+    runtime: &mut UiRuntime,
+    app: Entity<App>,
+    display: &mut SimulatorDisplay<Rgb888>,
+    painter: &MonoTextPainter,
+) {
     runtime.rebuild(app).unwrap();
-
     runtime
         .layout(
             Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32)),
-            &text_painter,
+            painter,
         )
         .unwrap();
 
+    display.clear(Rgb888::new(0, 0, 0)).unwrap();
+
+    runtime.paint(display, painter).unwrap().unwrap();
+}
+
+fn to_ui_point(point: EgPoint) -> Point {
+    Point::new(px(point.x), px(point.y))
+}
+
+fn main() {
+    let mut runtime = UiRuntime::default();
+
+    let app = runtime.create(App::new).unwrap();
+    let painter = MonoTextPainter::new(&FONT_6X10, Color::WHITE);
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 
-    runtime.paint(&mut display, &text_painter).unwrap().unwrap();
+    render_ui(&mut runtime, app, &mut display, &painter);
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
-    let mut widnow = Window::new("InkPaper UI", &output_settings);
+    let mut window = Window::new("InkPaper UI", &output_settings);
 
-    widnow.show_static(&display);
+    'running: loop {
+        window.update(&display);
+
+        for event in window.events() {
+            match event {
+                SimulatorEvent::Quit => break 'running,
+                SimulatorEvent::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    point,
+                } => {
+                    runtime.pointer_down(to_ui_point(point));
+                }
+                SimulatorEvent::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    point,
+                } => {
+                    runtime.pointer_up(to_ui_point(point)).unwrap();
+                }
+                _ => {}
+            }
+        }
+
+        if runtime.take_dirty() {
+            render_ui(&mut runtime, app, &mut display, &painter);
+        }
+    }
 }
