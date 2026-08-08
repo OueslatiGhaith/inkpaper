@@ -3,7 +3,7 @@ use core::cell::Cell;
 use heapless::Vec;
 
 use crate::{
-    Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId,
+    Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId, Rect,
     StatefulInteractivity, Style,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
@@ -44,6 +44,11 @@ pub(crate) enum NodeKind {
     },
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NodeLayout {
+    pub(crate) bounds: Rect,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Node {
     pub(crate) kind: NodeKind,
@@ -54,6 +59,7 @@ pub(crate) struct Node {
     pub(crate) element_id: Option<ElementId>,
     pub(crate) element_state_id: Option<ElementStateId>,
     pub(crate) interaction: NodeInteraction,
+    pub(crate) layout: NodeLayout,
 }
 
 impl Node {
@@ -67,6 +73,7 @@ impl Node {
             element_id: None,
             element_state_id: None,
             interaction: NodeInteraction::default(),
+            layout: NodeLayout::default(),
         }
     }
 }
@@ -157,6 +164,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
     pub(crate) fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.index()]
+    }
+
+    pub(crate) fn node_mut(&mut self, id: NodeId) -> &mut Node {
+        &mut self.nodes[id.index()]
     }
 
     pub(crate) fn text(&self, range: TextRange) -> &str {
@@ -273,6 +284,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         }
 
         Ok(())
+    }
+
+    pub fn bounds(&self, id: NodeId) -> Rect {
+        self.node(id).layout.bounds
     }
 }
 

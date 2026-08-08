@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 use crate::{
     Context, Entity, EntityAllocError, EntityArena, FrameArena, Listener, MountError, NodeId,
-    Render,
+    Render, Size, TextMeasurer,
     element_state::{ElementStateTable, IdentityError},
     entity_store::create_entity,
     listener_store::{ListenerArena, ListenerInvokeError},
@@ -188,5 +188,11 @@ impl<
     {
         self.listeners
             .invoke(listener, event, &self.entities, &self.notified)
+    }
+
+    pub fn layout(&mut self, viewport: Size, text_measurer: &dyn TextMeasurer) -> Option<Size> {
+        let root = self.root?;
+
+        Some(self.frame.layout(root, viewport, text_measurer))
     }
 }
