@@ -1,6 +1,6 @@
 use crate::{
-    ClickEvent, Element, ElementId, IntoElementId, Listener, ListenerId, ParentElement, Style,
-    Styled,
+    ClickEvent, Element, ElementId, IntoElementId, Listener, ListenerId, MountCx, MountError,
+    NodeId, ParentElement, Style, Styled,
 };
 
 pub struct Stateful<E> {
@@ -23,7 +23,17 @@ impl<E> Stateful<E> {
     }
 }
 
-impl<E> Element for Stateful<E> where E: Element {}
+impl<E> Element for Stateful<E>
+where
+    E: Element,
+{
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+        let node = self.element.mount(cx)?;
+        cx.make_stateful(node, self.id, self.stateful_interactivity.into());
+
+        Ok(node)
+    }
+}
 
 pub trait InteractiveElement: Element + Sized {
     fn id(self, id: impl IntoElementId) -> Stateful<Self> {
@@ -61,9 +71,9 @@ where
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct StatefulInteractivity {
-    click: Option<ListenerId>,
+    pub(crate) click: Option<ListenerId>,
 }
 
 pub trait StatefulInteractiveElement: Element + Sized {

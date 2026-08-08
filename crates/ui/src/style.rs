@@ -31,6 +31,7 @@ impl<T: Copy> Edges<T> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Style {
     pub display: Display,
     pub flex_direction: FlexDirection,

@@ -1,4 +1,8 @@
-pub trait Element: Sized {}
+use crate::{MountCx, MountError, NodeId};
+
+pub trait Element: Sized {
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError>;
+}
 
 pub trait IntoElement {
     type Element: Element;
@@ -21,7 +25,11 @@ pub struct Text<'a> {
     pub text: &'a str,
 }
 
-impl Element for Text<'_> {}
+impl Element for Text<'_> {
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+        cx.push_text(self.text)
+    }
+}
 
 impl<'a> IntoElement for &'a str {
     type Element = Text<'a>;
@@ -38,15 +46,31 @@ pub struct Push<C, E> {
     pub element: E,
 }
 
-pub trait Children {}
+pub trait Children {
+    fn mount_children(self, parent: NodeId, cx: &mut MountCx<'_>) -> Result<(), MountError>;
+}
 
-impl Children for NoChildren {}
+impl Children for NoChildren {
+    fn mount_children(self, _: NodeId, _: &mut MountCx<'_>) -> Result<(), MountError> {
+        Ok(())
+    }
+}
 
 impl<C, E> Children for Push<C, E>
 where
     C: Children,
     E: IntoElement,
 {
+    fn mount_children(self, parent: NodeId, cx: &mut MountCx<'_>) -> Result<(), MountError> {
+        self.previous.mount_children(parent, cx)?;
+
+        let child = self.element.into_element();
+        let child = child.mount(cx)?;
+
+        cx.append_child(parent, child);
+
+        Ok(())
+    }
 }
 
 pub trait ParentElement: Sized {

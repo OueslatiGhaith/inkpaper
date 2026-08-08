@@ -1,5 +1,6 @@
 use crate::{
-    Children, Element, InteractiveElement, NoChildren, ParentElement, Push, Style, Styled,
+    Children, Element, InteractiveElement, MountCx, MountError, NoChildren, NodeId, ParentElement,
+    Push, Style, Styled,
 };
 
 pub struct Div<C = NoChildren> {
@@ -14,7 +15,17 @@ pub fn div() -> Div<NoChildren> {
     }
 }
 
-impl<C> Element for Div<C> where C: Children {}
+impl<C> Element for Div<C>
+where
+    C: Children,
+{
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+        let node = cx.push_div(self.style)?;
+        self.children.mount_children(node, cx)?;
+
+        Ok(node)
+    }
+}
 
 impl<C> Styled for Div<C> {
     fn style_mut(&mut self) -> &mut Style {

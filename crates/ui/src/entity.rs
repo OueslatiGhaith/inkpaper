@@ -1,7 +1,8 @@
 use core::{any::TypeId, marker::PhantomData};
 
 use crate::{
-    Context, Element, EntityAccessError, EntityBorrowKind, Render, entity_store::RawEntityBorrow,
+    Context, Element, EntityAccessError, EntityBorrowKind, MountCx, MountError, NodeId, Render,
+    entity_store::RawEntityBorrow,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -107,4 +108,11 @@ impl<T> core::fmt::Debug for Entity<T> {
     }
 }
 
-impl<T> Element for Entity<T> where T: Render {}
+impl<T> Element for Entity<T>
+where
+    T: Render,
+{
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+        cx.push_entity(self.entity_id())
+    }
+}
