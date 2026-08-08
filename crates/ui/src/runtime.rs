@@ -1,11 +1,14 @@
 use core::cell::Cell;
 
+use embedded_graphics::{draw_target::DrawTarget, pixelcolor::Rgb888};
+
 use crate::{
     Context, Entity, EntityAllocError, EntityArena, FrameArena, Listener, MountError, NodeId,
     Render, Size, TextMeasurer,
     element_state::{ElementStateTable, IdentityError},
     entity_store::create_entity,
     listener_store::{ListenerArena, ListenerInvokeError},
+    paint::TextPainter,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,5 +197,20 @@ impl<
         let root = self.root?;
 
         Some(self.frame.layout(root, viewport, text_measurer))
+    }
+
+    fn paint<D, P>(&self, target: &mut D, text_painter: &P) -> Result<Option<()>, D::Error>
+    where
+        D: DrawTarget<Color = Rgb888>,
+        D::Color: From<Rgb888>,
+        P: TextPainter,
+    {
+        let Some(root) = self.root else {
+            return Ok(None);
+        };
+
+        self.frame.paint(root, target, text_painter)?;
+
+        Ok(Some(()))
     }
 }

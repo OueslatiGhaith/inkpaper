@@ -1,4 +1,4 @@
-use crate::{Length, Pixels, px};
+use crate::{Color, Length, Pixels, px};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Display {
@@ -41,6 +41,8 @@ pub struct Style {
 
     pub padding: Edges<Pixels>,
     pub gap: Pixels,
+
+    pub background: Option<Color>,
 }
 
 impl Default for Style {
@@ -52,6 +54,7 @@ impl Default for Style {
             height: Length::Auto,
             padding: Edges::all(px(0)),
             gap: px(0),
+            background: None,
         }
     }
 }
@@ -121,6 +124,11 @@ pub trait Styled: Sized {
 
     fn gap(mut self, gap: impl Into<Pixels>) -> Self {
         self.style_mut().gap = gap.into();
+        self
+    }
+
+    fn bg(mut self, color: Color) -> Self {
+        self.style_mut().background = Some(color);
         self
     }
 }

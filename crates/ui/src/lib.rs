@@ -4,6 +4,7 @@
 extern crate std;
 
 mod arena;
+mod color;
 mod context;
 mod div;
 mod element;
@@ -17,6 +18,7 @@ mod identity;
 mod layout;
 mod listener;
 mod listener_store;
+mod paint;
 mod render;
 mod runtime;
 mod stateful;
@@ -24,6 +26,7 @@ mod style;
 mod units;
 
 pub use arena::*;
+pub use color::*;
 pub use context::*;
 pub use div::*;
 pub use element::*;
@@ -34,6 +37,7 @@ pub use geometry::*;
 pub use identity::*;
 pub use layout::*;
 pub use listener::*;
+pub use paint::*;
 pub use render::*;
 pub use runtime::*;
 pub use stateful::*;
