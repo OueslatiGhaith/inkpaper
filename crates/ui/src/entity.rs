@@ -2,7 +2,7 @@ use core::{any::TypeId, marker::PhantomData};
 
 use crate::{
     Context, Element, EntityAccessError, EntityBorrowKind, MountCx, MountError, NodeId, Render,
-    entity_store::RawEntityBorrow,
+    entity_store::RawEntityBorrow, render_entity,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -113,6 +113,6 @@ where
     T: Render,
 {
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
-        cx.push_entity(self.entity_id())
+        cx.push_entity(self.entity_id(), render_entity::<T>)
     }
 }
