@@ -262,8 +262,10 @@ mod tests {
             .unwrap();
 
         assert!(runtime.pointer_down(Point::new(px(20), px(20),)));
+        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
         assert!(!runtime.pointer_up(Point::new(px(150), px(80),)).unwrap());
         assert_eq!(clicks.get(), 0);
+        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
         assert!(!runtime.is_dirty());
     }
 

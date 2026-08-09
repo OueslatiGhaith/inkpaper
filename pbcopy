@@ -1,0 +1,844 @@
+diff --git a/crates/ui/src/frame.rs b/crates/ui/src/frame.rs
+index 3f62d66..7480d6e 100644
+--- a/crates/ui/src/frame.rs
++++ b/crates/ui/src/frame.rs
+@@ -4,7 +4,7 @@ use heapless::Vec;
+ 
+ use crate::{
+     Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId, Rect,
+-    StatefulInteractivity, Style,
++    StatefulInteractivity, Style, StylePatch,
+     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
+     entity_store::EntityStore,
+     listener_store::ListenerStore,
+@@ -60,6 +60,7 @@ pub(crate) struct Node {
+     pub(crate) element_state_id: Option<ElementStateId>,
+     pub(crate) interaction: NodeInteraction,
+     pub(crate) layout: NodeLayout,
++    pub(crate) effective_style: Option<Style>,
+ }
+ 
+ impl Node {
+@@ -74,6 +75,17 @@ impl Node {
+             element_state_id: None,
+             interaction: NodeInteraction::default(),
+             layout: NodeLayout::default(),
++            effective_style: match kind {
++                NodeKind::Div { style } => Some(style),
++                _ => None,
++            },
++        }
++    }
++
++    pub(crate) fn style(&self) -> Option<Style> {
++        match self.kind {
++            NodeKind::Div { style } => Some(self.effective_style.unwrap_or(style)),
++            _ => None,
+         }
+     }
+ }
+@@ -81,11 +93,17 @@ impl Node {
+ #[derive(Debug, Clone, Copy, Default)]
+ pub(crate) struct NodeInteraction {
+     pub(crate) click: Option<ListenerId>,
++    pub(crate) focused_style: StylePatch,
++    pub(crate) pressed_style: StylePatch,
+ }
+ 
+ impl From<StatefulInteractivity> for NodeInteraction {
+     fn from(value: StatefulInteractivity) -> Self {
+-        Self { click: value.click }
++        Self {
++            click: value.click,
++            focused_style: value.focused_style,
++            pressed_style: value.pressed_style,
++        }
+     }
+ }
+ 
+@@ -305,6 +323,29 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES>
+             node = parent
+         }
+     }
++
++    pub(crate) fn resolve_interaction_styles(
++        &mut self,
++        focused: Option<ElementStateId>,
++        pressed: Option<ElementStateId>,
++    ) {
++        for node in self.nodes.iter_mut() {
++            let NodeKind::Div { style: base } = node.kind else {
++                node.effective_style = None;
++                continue;
++            };
++
++            let mut effective = base;
++            if node.element_state_id == focused {
++                effective = node.interaction.focused_style.apply(effective);
++            }
++            if node.element_state_id == pressed {
++                effective = node.interaction.pressed_style.apply(effective);
++            }
++
++            node.effective_style = Some(effective);
++        }
++    }
+ }
+ 
+ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODES, TEXT_BYTES> {
+diff --git a/crates/ui/src/layout.rs b/crates/ui/src/layout.rs
+index 2f0ce01..7eb6952 100644
+--- a/crates/ui/src/layout.rs
++++ b/crates/ui/src/layout.rs
+@@ -92,7 +92,10 @@ fn content_available(style: Style, outer_available: Size) -> Size {
+ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
+     fn node_requested_length(&self, node: NodeId, axis: Axis) -> Length {
+         match self.node(node).kind {
+-            crate::NodeKind::Div { style } => requested_length(style, axis),
++            crate::NodeKind::Div { .. } => {
++                let style = self.node(node).style().expect("div node must have style");
++                requested_length(style, axis)
++            }
+             crate::NodeKind::Text { .. } => Length::Auto,
+             crate::NodeKind::Entity { .. } => match self.node(node).first_child {
+                 Some(child) => self.node_requested_length(child, axis),
+@@ -132,7 +135,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES>
+                 Some(child) => self.measure_node(child, available, text_measurer),
+                 None => Size::ZERO,
+             },
+-            crate::NodeKind::Div { style } => {
++            crate::NodeKind::Div { .. } => {
++                let style = self.node(node).style().expect("div node must have style");
+                 self.measure_div(node, style, available, text_measurer)
+             }
+         }
+@@ -271,7 +275,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES>
+                     self.layout_node(child, origin, measured, text_measurer);
+                 }
+             }
+-            NodeKind::Div { style } => {
++            NodeKind::Div { .. } => {
++                let style = self.node(node).style().expect("div node must have style");
+                 self.layout_div_children(node, style, origin, measured, text_measurer);
+             }
+         }
+diff --git a/crates/ui/src/paint.rs b/crates/ui/src/paint.rs
+index 0facc7b..8b83491 100644
+--- a/crates/ui/src/paint.rs
++++ b/crates/ui/src/paint.rs
+@@ -130,7 +130,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES>
+     {
+         let node = self.node(node);
+         match node.kind {
+-            crate::NodeKind::Div { style } => {
++            crate::NodeKind::Div { .. } => {
++                let style = node.style().expect("div node must have style");
+                 let Some(background) = style.background else {
+                     return Ok(());
+                 };
+@@ -191,6 +192,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES>
+ 
+ #[cfg(test)]
+ mod tests {
++    use core::cell::Cell;
++    use std::rc::Rc;
++
+     use embedded_graphics::{
+         geometry::Point as EgPoint,
+         mock_display::MockDisplay,
+@@ -337,4 +341,270 @@ mod tests {
+ 
+         assert_eq!(measured, Size::new(px(12), px(7),));
+     }
++
++    type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
++
++    struct TestTextMeasurer;
++    impl TextMeasurer for TestTextMeasurer {
++        fn measure(&self, text: &str, max_size: Size) -> Size {
++            let width = (text.chars().count() as i32)
++                .saturating_mul(6)
++                .min(max_size.width.0.max(0));
++
++            let height = if text.is_empty() {
++                0
++            } else {
++                10.min(max_size.height.0.max(0))
++            };
++
++            Size::new(px(width), px(height))
++        }
++    }
++
++    struct FocusSizeApp {
++        clicks: Rc<Cell<u32>>,
++    }
++
++    impl FocusSizeApp {
++        fn clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
++            self.clicks.set(self.clicks.get().saturating_add(1));
++            cx.notify();
++        }
++    }
++
++    impl Render for FocusSizeApp {
++        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
++            div()
++                .flex()
++                .w(px(200))
++                .h(px(50))
++                .gap(px(5))
++                .child(
++                    div()
++                        .id("first")
++                        .w(px(60))
++                        .h(px(30))
++                        .bg(Color::BLUE)
++                        .when_focused(|style| style.w(px(100)).bg(Color::GREEN))
++                        .on_click(cx.listener(Self::clicked))
++                        .child("First"),
++                )
++                .child(
++                    div()
++                        .id("second")
++                        .w(px(60))
++                        .h(px(30))
++                        .on_click(cx.listener(Self::clicked))
++                        .child("Second"),
++                )
++        }
++    }
++
++    #[test]
++    fn focused_style_can_change_layout_size() {
++        let clicks = Rc::new(Cell::new(0));
++        let mut runtime = TestRuntime::default();
++
++        let app = runtime
++            .create({
++                let clicks = clicks.clone();
++
++                move |_| FocusSizeApp { clicks }
++            })
++            .unwrap();
++
++        let root = runtime.rebuild(app).unwrap();
++        runtime
++            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
++            .unwrap();
++
++        let app_div = runtime.frame().node(root).first_child.unwrap();
++        let first = runtime.frame().node(app_div).first_child.unwrap();
++        let second = runtime.frame().node(first).next_sibling.unwrap();
++
++        assert_eq!(runtime.frame().bounds(first).width(), px(60));
++        assert_eq!(runtime.frame().bounds(second).x(), px(65));
++        assert!(runtime.focus_next());
++        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
++
++        runtime
++            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
++            .unwrap();
++
++        assert_eq!(runtime.frame().bounds(first).width(), px(100));
++        assert_eq!(runtime.frame().bounds(second).x(), px(105));
++    }
++
++    #[test]
++    fn moving_focus_restores_previous_element_base_style() {
++        let clicks = Rc::new(Cell::new(0));
++        let mut runtime = TestRuntime::default();
++
++        let app = runtime
++            .create({
++                let clicks = clicks.clone();
++
++                move |_| FocusSizeApp { clicks }
++            })
++            .unwrap();
++
++        let root = runtime.rebuild(app).unwrap();
++        runtime
++            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
++            .unwrap();
++
++        let app_div = runtime.frame().node(root).first_child.unwrap();
++        let first = runtime.frame().node(app_div).first_child.unwrap();
++
++        assert!(runtime.focus_next());
++
++        runtime.take_invalidation();
++        runtime
++            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
++            .unwrap();
++
++        assert_eq!(runtime.frame().bounds(first).width(), px(100));
++        assert!(runtime.focus_next());
++        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
++
++        runtime
++            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
++            .unwrap();
++
++        assert_eq!(runtime.frame().bounds(first).width(), px(60));
++    }
++
++    struct PressSizeApp {
++        clicks: Rc<Cell<u32>>,
++    }
++
++    impl PressSizeApp {
++        fn clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
++            self.clicks.set(self.clicks.get().saturating_add(1));
++            cx.notify();
++        }
++    }
++
++    impl Render for PressSizeApp {
++        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
++            div().w_full().h_full().child(
++                div()
++                    .id("button")
++                    .w(px(80))
++                    .h(px(30))
++                    .when_pressed(|style| style.w(px(110)).h(px(40)))
++                    .on_click(cx.listener(Self::clicked))
++                    .child("Press"),
++            )
++        }
++    }
++
++    #[test]
++    fn pressed_style_can_change_layout_size() {
++        let clicks = Rc::new(Cell::new(0));
++        let mut runtime = TestRuntime::default();
++
++        let app = runtime
++            .create({
++                let clicks = clicks.clone();
++
++                move |_| PressSizeApp { clicks }
++            })
++            .unwrap();
++
++        let root = runtime.rebuild(app).unwrap();
++        runtime
++            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
++            .unwrap();
++
++        let app_div = runtime.frame().node(root).first_child.unwrap();
++        let button = runtime.frame().node(app_div).first_child.unwrap();
++
++        assert_eq!(runtime.frame().bounds(button).width(), px(80));
++        assert_eq!(runtime.frame().bounds(button).height(), px(30));
++        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
++        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
++
++        runtime
++            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
++            .unwrap();
++
++        assert_eq!(runtime.frame().bounds(button).width(), px(110));
++        assert_eq!(runtime.frame().bounds(button).height(), px(40));
++    }
++
++    #[test]
++    fn releasing_pointer_restores_base_size_and_requests_rebuild_after_click() {
++        let clicks = Rc::new(Cell::new(0));
++        let mut runtime = TestRuntime::default();
++
++        let app = runtime
++            .create({
++                let clicks = clicks.clone();
++
++                move |_| PressSizeApp { clicks }
++            })
++            .unwrap();
++
++        let root = runtime.rebuild(app).unwrap();
++        runtime
++            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
++            .unwrap();
++
++        let app_div = runtime.frame().node(root).first_child.unwrap();
++        let button = runtime.frame().node(app_div).first_child.unwrap();
++
++        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
++
++        runtime.take_invalidation();
++        runtime
++            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
++            .unwrap();
++
++        assert_eq!(runtime.frame().bounds(button).width(), px(110));
++        assert!(runtime.pointer_up(Point::new(px(10), px(10),)).unwrap());
++        assert_eq!(clicks.get(), 1);
++        assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
++    }
++
++    #[test]
++    fn pointer_cancel_removes_pressed_style() {
++        let clicks = Rc::new(Cell::new(0));
++        let mut runtime = TestRuntime::default();
++
++        let app = runtime
++            .create({
++                let clicks = clicks.clone();
++
++                move |_| PressSizeApp { clicks }
++            })
++            .unwrap();
++
++        let root = runtime.rebuild(app).unwrap();
++        runtime
++            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
++            .unwrap();
++
++        let app_div = runtime.frame().node(root).first_child.unwrap();
++        let button = runtime.frame().node(app_div).first_child.unwrap();
++
++        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
++
++        runtime.take_invalidation();
++        runtime
++            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
++            .unwrap();
++
++        assert_eq!(runtime.frame().bounds(button).width(), px(110));
++
++        runtime.pointer_cancel();
++
++        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
++
++        runtime
++            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
++            .unwrap();
++
++        assert_eq!(runtime.frame().bounds(button).width(), px(80));
++    }
+ }
+diff --git a/crates/ui/src/runtime.rs b/crates/ui/src/runtime.rs
+index 3cf5034..c9f4392 100644
+--- a/crates/ui/src/runtime.rs
++++ b/crates/ui/src/runtime.rs
+@@ -30,6 +30,28 @@ impl From<IdentityError> for FrameBuildError {
+     }
+ }
+ 
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub enum Invalidation {
++    #[default]
++    None,
++    Paint,
++    Layout,
++    Rebuild,
++}
++
++impl Invalidation {
++    pub const fn merge(self, other: Self) -> Self {
++        use Invalidation::*;
++
++        match (self, other) {
++            (Rebuild, _) | (_, Rebuild) => Rebuild,
++            (Layout, _) | (_, Layout) => Layout,
++            (Paint, _) | (_, Paint) => Paint,
++            _ => None,
++        }
++    }
++}
++
+ pub struct Runtime<
+     const ENTITY_BYTES: usize,
+     const ENTITY_SLOTS: usize,
+@@ -44,6 +66,7 @@ pub struct Runtime<
+     frame: FrameArena<FRAME_NODES, FRAME_TEXT_BYTES>,
+     element_states: ElementStateTable<ELEMENT_STATES>,
+     notified: Cell<bool>,
++    visual_invalidation: Cell<Invalidation>,
+     frame_generation: u32,
+     root: Option<NodeId>,
+     pointer: PointerState,
+@@ -67,6 +90,7 @@ impl<
+             frame: FrameArena::default(),
+             element_states: ElementStateTable::default(),
+             notified: Cell::new(false),
++            visual_invalidation: Cell::new(Invalidation::None),
+             frame_generation: 0,
+             root: None,
+             pointer: PointerState::default(),
+@@ -122,6 +146,7 @@ impl<
+         // consume the previous dirty request.
+         // if render/event logic calls notify during this build, it becomes dirty again
+         self.notified.set(false);
++        self.visual_invalidation.set(Invalidation::None);
+         let generation = self.next_frame_generation();
+ 
+         let result = self.build_frame(root, generation);
+@@ -131,6 +156,7 @@ impl<
+                 self.element_states.sweep(generation);
+                 self.root = Some(root_node);
+                 self.reconcile_interaction_state();
++                self.refresh_interaction_styles();
+ 
+                 Ok(root_node)
+             }
+@@ -142,6 +168,7 @@ impl<
+                 // never keep listeners registered by a failed render
+                 self.listeners.reset();
+                 self.pointer.cancel();
++                self.visual_invalidation.set(Invalidation::None);
+                 self.root = None;
+                 self.focused = None;
+ 
+@@ -186,11 +213,11 @@ impl<
+     }
+ 
+     pub fn is_dirty(&self) -> bool {
+-        self.notified.get()
++        self.invalidation() != Invalidation::None
+     }
+ 
+     pub fn take_dirty(&self) -> bool {
+-        self.notified.replace(false)
++        self.take_invalidation() != Invalidation::None
+     }
+ 
+     pub fn invoke<E>(&self, listener: Listener<E>, event: &E) -> Result<(), ListenerInvokeError>
+@@ -224,12 +251,22 @@ impl<
+ 
+     pub fn pointer_down(&mut self, position: Point) -> bool {
+         let Some(root) = self.root else {
+-            self.pointer.cancel();
++            if self.pointer.pressed().is_some() {
++                self.pointer.cancel();
++                self.invalidate(Invalidation::Layout);
++            }
++
+             return false;
+         };
+ 
+         let target = self.frame.hit_test_click(root, position);
+-        self.pointer.press(target.map(|target| target.element));
++        let pressed = target.map(|target| target.element);
++        let changed = self.pointer.pressed() != pressed;
++        self.pointer.press(pressed);
++        if changed {
++            self.refresh_interaction_styles();
++            self.invalidate(Invalidation::Layout);
++        }
+ 
+         target.is_some()
+     }
+@@ -238,27 +275,39 @@ impl<
+         let Some(pressed) = self.pointer.take_pressed() else {
+             return Ok(false);
+         };
+-        let Some(root) = self.root else {
+-            return Ok(false);
+-        };
+-        let Some(target) = self.frame.hit_test_click(root, position) else {
+-            return Ok(false);
++
++        let mut listener = None;
++        let mut activated = false;
++
++        if let Some(root) = self.root
++            && let Some(target) = self.frame.hit_test_click(root, position)
++            && target.element == pressed
++        {
++            self.focused = Some(target.element);
++            listener = Some(target.listener);
++            activated = true;
+         };
+-        if target.element != pressed {
+-            return Ok(false);
+-        }
+ 
+-        self.focused = Some(target.element);
++        self.refresh_interaction_styles();
++        self.invalidate(Invalidation::Layout);
+ 
+-        let listener = Listener::from_id(target.listener);
+-        self.listeners
+-            .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
++        if let Some(listener) = listener {
++            let listener = Listener::from_id(listener);
++            self.listeners
++                .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
++        }
+ 
+-        Ok(true)
++        Ok(activated)
+     }
+ 
+     pub fn pointer_cancel(&mut self) {
++        if self.pointer.pressed().is_none() {
++            return;
++        }
++
+         self.pointer.cancel();
++        self.refresh_interaction_styles();
++        self.invalidate(Invalidation::Layout);
+     }
+ 
+     fn reconcile_interaction_state(&mut self) {
+@@ -285,7 +334,12 @@ impl<
+             return false;
+         };
+ 
+-        self.focused = Some(target.element);
++        let next = Some(target.element);
++        if self.focused != next {
++            self.focused = next;
++            self.refresh_interaction_styles();
++            self.invalidate(Invalidation::Layout);
++        }
+ 
+         true
+     }
+@@ -300,13 +354,24 @@ impl<
+             return false;
+         };
+ 
+-        self.focused = Some(target.element);
++        let previous = Some(target.element);
++        if self.focused != previous {
++            self.focused = previous;
++            self.refresh_interaction_styles();
++            self.invalidate(Invalidation::Layout);
++        }
+ 
+         true
+     }
+ 
+     pub fn clear_focus(&mut self) {
++        if self.focused.is_none() {
++            return;
++        }
++
+         self.focused = None;
++        self.refresh_interaction_styles();
++        self.invalidate(Invalidation::Layout);
+     }
+ 
+     pub fn activate_focused(&mut self) -> Result<bool, ListenerInvokeError> {
+@@ -328,4 +393,34 @@ impl<
+ 
+         Ok(true)
+     }
++
++    fn invalidate(&self, invalidation: Invalidation) {
++        let current = self.visual_invalidation.get();
++        self.visual_invalidation.set(current.merge(invalidation));
++    }
++
++    pub fn invalidation(&self) -> Invalidation {
++        let visual = self.visual_invalidation.get();
++        if self.notified.get() {
++            visual.merge(Invalidation::Rebuild)
++        } else {
++            visual
++        }
++    }
++
++    pub fn take_invalidation(&self) -> Invalidation {
++        let visual = self.visual_invalidation.replace(Invalidation::None);
++        let application = if self.notified.replace(false) {
++            Invalidation::Rebuild
++        } else {
++            Invalidation::None
++        };
++
++        visual.merge(application)
++    }
++
++    fn refresh_interaction_styles(&mut self) {
++        self.frame
++            .resolve_interaction_styles(self.focused, self.pointer.pressed());
++    }
+ }
+diff --git a/crates/ui/src/stateful.rs b/crates/ui/src/stateful.rs
+index 5ec4f33..4e6ef7b 100644
+--- a/crates/ui/src/stateful.rs
++++ b/crates/ui/src/stateful.rs
+@@ -1,6 +1,6 @@
+ use crate::{
+-    ClickEvent, Element, ElementId, IntoElementId, Listener, ListenerId, MountCx, MountError,
+-    NodeId, ParentElement, Style, Styled,
++    ClickEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
++    ListenerId, MountCx, MountError, NodeId, ParentElement, Style, StylePatch, Styled,
+ };
+ 
+ pub struct Stateful<E> {
+@@ -57,11 +57,11 @@ where
+     type WithChild<C>
+         = Stateful<E::WithChild<C>>
+     where
+-        C: crate::prelude::IntoElement;
++        C: IntoElement;
+ 
+     fn child<C>(self, child: C) -> Self::WithChild<C>
+     where
+-        C: crate::prelude::IntoElement,
++        C: IntoElement,
+     {
+         Stateful {
+             id: self.id,
+@@ -74,6 +74,8 @@ where
+ #[derive(Debug, Default, Clone, Copy)]
+ pub struct StatefulInteractivity {
+     pub(crate) click: Option<ListenerId>,
++    pub(crate) focused_style: StylePatch,
++    pub(crate) pressed_style: StylePatch,
+ }
+ 
+ pub trait StatefulInteractiveElement: Element + Sized {
+@@ -94,6 +96,34 @@ pub trait StatefulInteractiveElementExt: StatefulInteractiveElement {
+         self.stateful_interactivity_mut().click = Some(listener.id);
+         self
+     }
++
++    fn when_focused<F>(mut self, transform: F) -> Self
++    where
++        Self: Styled,
++        F: FnOnce(InteractionStyle) -> InteractionStyle,
++    {
++        let base = *self.style_mut();
++        let variant = transform(InteractionStyle::new(base)).into_style();
++        let patch = StylePatch::between(base, variant);
++        let interaction = self.stateful_interactivity_mut();
++        interaction.focused_style = interaction.focused_style.merge(patch);
++
++        self
++    }
++
++    fn when_pressed<F>(mut self, transform: F) -> Self
++    where
++        Self: Styled,
++        F: FnOnce(InteractionStyle) -> InteractionStyle,
++    {
++        let base = *self.style_mut();
++        let variant = transform(InteractionStyle::new(base)).into_style();
++        let patch = StylePatch::between(base, variant);
++        let interaction = self.stateful_interactivity_mut();
++        interaction.pressed_style = interaction.pressed_style.merge(patch);
++
++        self
++    }
+ }
+ 
+ impl<T> StatefulInteractiveElementExt for T where T: StatefulInteractiveElement {}
+diff --git a/crates/ui/src/style.rs b/crates/ui/src/style.rs
+index 6655575..ce13611 100644
+--- a/crates/ui/src/style.rs
++++ b/crates/ui/src/style.rs
+@@ -12,7 +12,7 @@ pub enum FlexDirection {
+     Column,
+ }
+ 
+-#[derive(Debug, Clone, Copy)]
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub struct Edges<T> {
+     pub top: T,
+     pub right: T,
+@@ -31,18 +31,66 @@ impl<T: Copy> Edges<T> {
+     }
+ }
+ 
+-#[derive(Debug, Clone, Copy)]
+-pub struct Style {
+-    pub display: Display,
+-    pub flex_direction: FlexDirection,
++macro_rules! declare_style {
++    (
++        $(#[$attr:meta])*
++        pub struct Style {
++            $( $field_vis:vis $field_name:ident: $field_ty:ty ),* $(,)?
++        }
++    ) => {
++        $(#[$attr])*
++        pub struct Style {
++            $( $field_vis $field_name: $field_ty ),*
++        }
++
++        #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++        pub(crate) struct StylePatch {
++            $( $field_vis $field_name: Option< $field_ty > ),*
++        }
++
++        impl StylePatch {
++            pub(crate) fn between(base: Style, variant: Style) -> Self {
++                Self {
++                    $(
++                        $field_name: (base.$field_name != variant.$field_name)
++                            .then_some(variant.$field_name)
++                    ),*
++                }
++            }
++
++            pub(crate) fn apply(self, mut style: Style) -> Style {
++                $(
++                    if let Some(value) = self.$field_name {
++                        style.$field_name = value;
++                    }
++                )*
++
++                style
++            }
++
++            pub(crate) fn merge(self, later: Self) -> Self {
++                Self {
++                    $($field_name: later.$field_name.or(self.$field_name)),*
++                }
++            }
++        }
++    };
++}
++
++declare_style! {
++    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
++    pub struct Style {
++        pub display: Display,
++        pub flex_direction: FlexDirection,
+ 
+-    pub width: Length,
+-    pub height: Length,
++        pub width: Length,
++        pub height: Length,
+ 
+-    pub padding: Edges<Pixels>,
+-    pub gap: Pixels,
++        pub padding: Edges<Pixels>,
++        pub gap: Pixels,
+ 
+-    pub background: Option<Color>,
++        pub background: Option<Color>,
++    }
+ }
+ 
+ impl Default for Style {
+@@ -132,3 +180,24 @@ pub trait Styled: Sized {
+         self
+     }
+ }
++
++#[derive(Debug, Clone, Copy)]
++pub struct InteractionStyle {
++    style: Style,
++}
++
++impl InteractionStyle {
++    pub(crate) const fn new(style: Style) -> Self {
++        Self { style }
++    }
++
++    pub(crate) const fn into_style(self) -> Style {
++        self.style
++    }
++}
++
++impl Styled for InteractionStyle {
++    fn style_mut(&mut self) -> &mut Style {
++        &mut self.style
++    }
++}

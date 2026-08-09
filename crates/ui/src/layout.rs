@@ -92,7 +92,10 @@ fn content_available(style: Style, outer_available: Size) -> Size {
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
     fn node_requested_length(&self, node: NodeId, axis: Axis) -> Length {
         match self.node(node).kind {
-            crate::NodeKind::Div { style } => requested_length(style, axis),
+            crate::NodeKind::Div { .. } => {
+                let style = self.node(node).style().expect("div node must have style");
+                requested_length(style, axis)
+            }
             crate::NodeKind::Text { .. } => Length::Auto,
             crate::NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.node_requested_length(child, axis),
@@ -132,7 +135,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 Some(child) => self.measure_node(child, available, text_measurer),
                 None => Size::ZERO,
             },
-            crate::NodeKind::Div { style } => {
+            crate::NodeKind::Div { .. } => {
+                let style = self.node(node).style().expect("div node must have style");
                 self.measure_div(node, style, available, text_measurer)
             }
         }
@@ -271,7 +275,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     self.layout_node(child, origin, measured, text_measurer);
                 }
             }
-            NodeKind::Div { style } => {
+            NodeKind::Div { .. } => {
+                let style = self.node(node).style().expect("div node must have style");
                 self.layout_div_children(node, style, origin, measured, text_measurer);
             }
         }

@@ -12,7 +12,7 @@ pub enum FlexDirection {
     Column,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Edges<T> {
     pub top: T,
     pub right: T,
@@ -31,18 +31,66 @@ impl<T: Copy> Edges<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Style {
-    pub display: Display,
-    pub flex_direction: FlexDirection,
+macro_rules! declare_style {
+    (
+        $(#[$attr:meta])*
+        pub struct Style {
+            $( $field_vis:vis $field_name:ident: $field_ty:ty ),* $(,)?
+        }
+    ) => {
+        $(#[$attr])*
+        pub struct Style {
+            $( $field_vis $field_name: $field_ty ),*
+        }
 
-    pub width: Length,
-    pub height: Length,
+        #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+        pub(crate) struct StylePatch {
+            $( $field_vis $field_name: Option< $field_ty > ),*
+        }
 
-    pub padding: Edges<Pixels>,
-    pub gap: Pixels,
+        impl StylePatch {
+            pub(crate) fn between(base: Style, variant: Style) -> Self {
+                Self {
+                    $(
+                        $field_name: (base.$field_name != variant.$field_name)
+                            .then_some(variant.$field_name)
+                    ),*
+                }
+            }
 
-    pub background: Option<Color>,
+            pub(crate) fn apply(self, mut style: Style) -> Style {
+                $(
+                    if let Some(value) = self.$field_name {
+                        style.$field_name = value;
+                    }
+                )*
+
+                style
+            }
+
+            pub(crate) fn merge(self, later: Self) -> Self {
+                Self {
+                    $($field_name: later.$field_name.or(self.$field_name)),*
+                }
+            }
+        }
+    };
+}
+
+declare_style! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Style {
+        pub display: Display,
+        pub flex_direction: FlexDirection,
+
+        pub width: Length,
+        pub height: Length,
+
+        pub padding: Edges<Pixels>,
+        pub gap: Pixels,
+
+        pub background: Option<Color>,
+    }
 }
 
 impl Default for Style {
@@ -130,5 +178,26 @@ pub trait Styled: Sized {
     fn bg(mut self, color: Color) -> Self {
         self.style_mut().background = Some(color);
         self
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct InteractionStyle {
+    style: Style,
+}
+
+impl InteractionStyle {
+    pub(crate) const fn new(style: Style) -> Self {
+        Self { style }
+    }
+
+    pub(crate) const fn into_style(self) -> Style {
+        self.style
+    }
+}
+
+impl Styled for InteractionStyle {
+    fn style_mut(&mut self) -> &mut Style {
+        &mut self.style
     }
 }

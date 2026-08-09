@@ -3,7 +3,7 @@ use std::fmt::Write;
 use embedded_graphics::{
     draw_target::DrawTarget,
     mono_font::ascii::FONT_6X10,
-    pixelcolor::Rgb888,
+    pixelcolor::{Rgb888, RgbColor},
     prelude::{Point as EgPoint, Size as EgSize},
 };
 use embedded_graphics_simulator::{
@@ -14,6 +14,8 @@ use inkpaper_ui::{MonoTextPainter, prelude::*};
 
 const DISPLAY_WIDTH: u32 = 320;
 const DISPLAY_HEIGHT: u32 = 240;
+const DISPLAY_SIZE_EG: EgSize = EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+const DISPLAY_SIZE: Size = Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32));
 
 type UiRuntime = Runtime<
     16_384, // entity bytes
@@ -37,7 +39,7 @@ impl Header {
 }
 
 impl Render for Header {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         div()
             .w_full()
             .p(px(10))
@@ -95,6 +97,7 @@ impl Render for Counter {
                     .h(px(34))
                     .p(px(8))
                     .bg(Color::rgb(55, 105, 180))
+                    .when_pressed(|style| style.bg(Color::rgb(105, 180, 55)))
                     .on_click(cx.listener(Self::increment))
                     .child("Increment"),
             )
@@ -137,12 +140,7 @@ fn render_ui(
     painter: &MonoTextPainter,
 ) {
     runtime.rebuild(app).unwrap();
-    runtime
-        .layout(
-            Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32)),
-            painter,
-        )
-        .unwrap();
+    runtime.layout(DISPLAY_SIZE, painter).unwrap();
 
     display.clear(Rgb888::new(0, 0, 0)).unwrap();
 
@@ -153,12 +151,38 @@ fn to_ui_point(point: EgPoint) -> Point {
     Point::new(px(point.x), px(point.y))
 }
 
+fn update_ui(
+    runtime: &mut UiRuntime,
+    app: Entity<App>,
+    display: &mut SimulatorDisplay<Rgb888>,
+    painter: &MonoTextPainter,
+) {
+    match runtime.take_invalidation() {
+        inkpaper_ui::Invalidation::None => {}
+        inkpaper_ui::Invalidation::Paint => {
+            display.clear(Rgb888::BLACK).unwrap();
+            runtime.paint(display, painter).unwrap();
+        }
+        inkpaper_ui::Invalidation::Layout => {
+            runtime.layout(DISPLAY_SIZE, painter).unwrap();
+            display.clear(Rgb888::BLACK).unwrap();
+            runtime.paint(display, painter).unwrap();
+        }
+        inkpaper_ui::Invalidation::Rebuild => {
+            runtime.rebuild(app).unwrap();
+            runtime.layout(DISPLAY_SIZE, painter).unwrap();
+            display.clear(Rgb888::BLACK).unwrap();
+            runtime.paint(display, painter).unwrap();
+        }
+    }
+}
+
 fn main() {
     let mut runtime = UiRuntime::default();
 
     let app = runtime.create(App::new).unwrap();
     let painter = MonoTextPainter::new(&FONT_6X10, Color::WHITE);
-    let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
+    let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
     render_ui(&mut runtime, app, &mut display, &painter);
 
@@ -187,8 +211,6 @@ fn main() {
             }
         }
 
-        if runtime.take_dirty() {
-            render_ui(&mut runtime, app, &mut display, &painter);
-        }
+        update_ui(&mut runtime, app, &mut display, &painter);
     }
 }

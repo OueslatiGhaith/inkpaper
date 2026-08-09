@@ -4,7 +4,7 @@ use heapless::Vec;
 
 use crate::{
     Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId, Rect,
-    StatefulInteractivity, Style,
+    StatefulInteractivity, Style, StylePatch,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     listener_store::ListenerStore,
@@ -60,6 +60,7 @@ pub(crate) struct Node {
     pub(crate) element_state_id: Option<ElementStateId>,
     pub(crate) interaction: NodeInteraction,
     pub(crate) layout: NodeLayout,
+    pub(crate) effective_style: Option<Style>,
 }
 
 impl Node {
@@ -74,6 +75,17 @@ impl Node {
             element_state_id: None,
             interaction: NodeInteraction::default(),
             layout: NodeLayout::default(),
+            effective_style: match kind {
+                NodeKind::Div { style } => Some(style),
+                _ => None,
+            },
+        }
+    }
+
+    pub(crate) fn style(&self) -> Option<Style> {
+        match self.kind {
+            NodeKind::Div { style } => Some(self.effective_style.unwrap_or(style)),
+            _ => None,
         }
     }
 }
@@ -81,11 +93,17 @@ impl Node {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NodeInteraction {
     pub(crate) click: Option<ListenerId>,
+    pub(crate) focused_style: StylePatch,
+    pub(crate) pressed_style: StylePatch,
 }
 
 impl From<StatefulInteractivity> for NodeInteraction {
     fn from(value: StatefulInteractivity) -> Self {
-        Self { click: value.click }
+        Self {
+            click: value.click,
+            focused_style: value.focused_style,
+            pressed_style: value.pressed_style,
+        }
     }
 }
 
@@ -303,6 +321,29 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
             let parent = self.node(node).parent?;
             node = parent
+        }
+    }
+
+    pub(crate) fn resolve_interaction_styles(
+        &mut self,
+        focused: Option<ElementStateId>,
+        pressed: Option<ElementStateId>,
+    ) {
+        for node in self.nodes.iter_mut() {
+            let NodeKind::Div { style: base } = node.kind else {
+                node.effective_style = None;
+                continue;
+            };
+
+            let mut effective = base;
+            if node.element_state_id == focused {
+                effective = node.interaction.focused_style.apply(effective);
+            }
+            if node.element_state_id == pressed {
+                effective = node.interaction.pressed_style.apply(effective);
+            }
+
+            node.effective_style = Some(effective);
         }
     }
 }

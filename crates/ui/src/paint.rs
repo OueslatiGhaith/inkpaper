@@ -130,7 +130,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     {
         let node = self.node(node);
         match node.kind {
-            crate::NodeKind::Div { style } => {
+            crate::NodeKind::Div { .. } => {
+                let style = node.style().expect("div node must have style");
                 let Some(background) = style.background else {
                     return Ok(());
                 };
@@ -191,6 +192,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
 #[cfg(test)]
 mod tests {
+    use core::cell::Cell;
+    use std::rc::Rc;
+
     use embedded_graphics::{
         geometry::Point as EgPoint,
         mock_display::MockDisplay,
@@ -336,5 +340,271 @@ mod tests {
         let measured = crate::TextMeasurer::measure(&painter, "Hello", Size::new(px(12), px(7)));
 
         assert_eq!(measured, Size::new(px(12), px(7),));
+    }
+
+    type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
+
+    struct TestTextMeasurer;
+    impl TextMeasurer for TestTextMeasurer {
+        fn measure(&self, text: &str, max_size: Size) -> Size {
+            let width = (text.chars().count() as i32)
+                .saturating_mul(6)
+                .min(max_size.width.0.max(0));
+
+            let height = if text.is_empty() {
+                0
+            } else {
+                10.min(max_size.height.0.max(0))
+            };
+
+            Size::new(px(width), px(height))
+        }
+    }
+
+    struct FocusSizeApp {
+        clicks: Rc<Cell<u32>>,
+    }
+
+    impl FocusSizeApp {
+        fn clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+            self.clicks.set(self.clicks.get().saturating_add(1));
+            cx.notify();
+        }
+    }
+
+    impl Render for FocusSizeApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .flex()
+                .w(px(200))
+                .h(px(50))
+                .gap(px(5))
+                .child(
+                    div()
+                        .id("first")
+                        .w(px(60))
+                        .h(px(30))
+                        .bg(Color::BLUE)
+                        .when_focused(|style| style.w(px(100)).bg(Color::GREEN))
+                        .on_click(cx.listener(Self::clicked))
+                        .child("First"),
+                )
+                .child(
+                    div()
+                        .id("second")
+                        .w(px(60))
+                        .h(px(30))
+                        .on_click(cx.listener(Self::clicked))
+                        .child("Second"),
+                )
+        }
+    }
+
+    #[test]
+    fn focused_style_can_change_layout_size() {
+        let clicks = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let clicks = clicks.clone();
+
+                move |_| FocusSizeApp { clicks }
+            })
+            .unwrap();
+
+        let root = runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
+            .unwrap();
+
+        let app_div = runtime.frame().node(root).first_child.unwrap();
+        let first = runtime.frame().node(app_div).first_child.unwrap();
+        let second = runtime.frame().node(first).next_sibling.unwrap();
+
+        assert_eq!(runtime.frame().bounds(first).width(), px(60));
+        assert_eq!(runtime.frame().bounds(second).x(), px(65));
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
+
+        runtime
+            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
+            .unwrap();
+
+        assert_eq!(runtime.frame().bounds(first).width(), px(100));
+        assert_eq!(runtime.frame().bounds(second).x(), px(105));
+    }
+
+    #[test]
+    fn moving_focus_restores_previous_element_base_style() {
+        let clicks = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let clicks = clicks.clone();
+
+                move |_| FocusSizeApp { clicks }
+            })
+            .unwrap();
+
+        let root = runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
+            .unwrap();
+
+        let app_div = runtime.frame().node(root).first_child.unwrap();
+        let first = runtime.frame().node(app_div).first_child.unwrap();
+
+        assert!(runtime.focus_next());
+
+        runtime.take_invalidation();
+        runtime
+            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
+            .unwrap();
+
+        assert_eq!(runtime.frame().bounds(first).width(), px(100));
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
+
+        runtime
+            .layout(Size::new(px(200), px(50)), &TestTextMeasurer)
+            .unwrap();
+
+        assert_eq!(runtime.frame().bounds(first).width(), px(60));
+    }
+
+    struct PressSizeApp {
+        clicks: Rc<Cell<u32>>,
+    }
+
+    impl PressSizeApp {
+        fn clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+            self.clicks.set(self.clicks.get().saturating_add(1));
+            cx.notify();
+        }
+    }
+
+    impl Render for PressSizeApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().w_full().h_full().child(
+                div()
+                    .id("button")
+                    .w(px(80))
+                    .h(px(30))
+                    .when_pressed(|style| style.w(px(110)).h(px(40)))
+                    .on_click(cx.listener(Self::clicked))
+                    .child("Press"),
+            )
+        }
+    }
+
+    #[test]
+    fn pressed_style_can_change_layout_size() {
+        let clicks = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let clicks = clicks.clone();
+
+                move |_| PressSizeApp { clicks }
+            })
+            .unwrap();
+
+        let root = runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        let app_div = runtime.frame().node(root).first_child.unwrap();
+        let button = runtime.frame().node(app_div).first_child.unwrap();
+
+        assert_eq!(runtime.frame().bounds(button).width(), px(80));
+        assert_eq!(runtime.frame().bounds(button).height(), px(30));
+        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
+        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
+
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert_eq!(runtime.frame().bounds(button).width(), px(110));
+        assert_eq!(runtime.frame().bounds(button).height(), px(40));
+    }
+
+    #[test]
+    fn releasing_pointer_restores_base_size_and_requests_rebuild_after_click() {
+        let clicks = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let clicks = clicks.clone();
+
+                move |_| PressSizeApp { clicks }
+            })
+            .unwrap();
+
+        let root = runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        let app_div = runtime.frame().node(root).first_child.unwrap();
+        let button = runtime.frame().node(app_div).first_child.unwrap();
+
+        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
+
+        runtime.take_invalidation();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert_eq!(runtime.frame().bounds(button).width(), px(110));
+        assert!(runtime.pointer_up(Point::new(px(10), px(10),)).unwrap());
+        assert_eq!(clicks.get(), 1);
+        assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
+    }
+
+    #[test]
+    fn pointer_cancel_removes_pressed_style() {
+        let clicks = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let clicks = clicks.clone();
+
+                move |_| PressSizeApp { clicks }
+            })
+            .unwrap();
+
+        let root = runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        let app_div = runtime.frame().node(root).first_child.unwrap();
+        let button = runtime.frame().node(app_div).first_child.unwrap();
+
+        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
+
+        runtime.take_invalidation();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert_eq!(runtime.frame().bounds(button).width(), px(110));
+
+        runtime.pointer_cancel();
+
+        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
+
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert_eq!(runtime.frame().bounds(button).width(), px(80));
     }
 }

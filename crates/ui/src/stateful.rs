@@ -1,6 +1,6 @@
 use crate::{
-    ClickEvent, Element, ElementId, IntoElementId, Listener, ListenerId, MountCx, MountError,
-    NodeId, ParentElement, Style, Styled,
+    ClickEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
+    ListenerId, MountCx, MountError, NodeId, ParentElement, Style, StylePatch, Styled,
 };
 
 pub struct Stateful<E> {
@@ -57,11 +57,11 @@ where
     type WithChild<C>
         = Stateful<E::WithChild<C>>
     where
-        C: crate::prelude::IntoElement;
+        C: IntoElement;
 
     fn child<C>(self, child: C) -> Self::WithChild<C>
     where
-        C: crate::prelude::IntoElement,
+        C: IntoElement,
     {
         Stateful {
             id: self.id,
@@ -74,6 +74,8 @@ where
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StatefulInteractivity {
     pub(crate) click: Option<ListenerId>,
+    pub(crate) focused_style: StylePatch,
+    pub(crate) pressed_style: StylePatch,
 }
 
 pub trait StatefulInteractiveElement: Element + Sized {
@@ -92,6 +94,34 @@ where
 pub trait StatefulInteractiveElementExt: StatefulInteractiveElement {
     fn on_click(mut self, listener: Listener<ClickEvent>) -> Self {
         self.stateful_interactivity_mut().click = Some(listener.id);
+        self
+    }
+
+    fn when_focused<F>(mut self, transform: F) -> Self
+    where
+        Self: Styled,
+        F: FnOnce(InteractionStyle) -> InteractionStyle,
+    {
+        let base = *self.style_mut();
+        let variant = transform(InteractionStyle::new(base)).into_style();
+        let patch = StylePatch::between(base, variant);
+        let interaction = self.stateful_interactivity_mut();
+        interaction.focused_style = interaction.focused_style.merge(patch);
+
+        self
+    }
+
+    fn when_pressed<F>(mut self, transform: F) -> Self
+    where
+        Self: Styled,
+        F: FnOnce(InteractionStyle) -> InteractionStyle,
+    {
+        let base = *self.style_mut();
+        let variant = transform(InteractionStyle::new(base)).into_style();
+        let patch = StylePatch::between(base, variant);
+        let interaction = self.stateful_interactivity_mut();
+        interaction.pressed_style = interaction.pressed_style.merge(patch);
+
         self
     }
 }

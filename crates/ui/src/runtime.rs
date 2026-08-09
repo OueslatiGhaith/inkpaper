@@ -30,6 +30,28 @@ impl From<IdentityError> for FrameBuildError {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Invalidation {
+    #[default]
+    None,
+    Paint,
+    Layout,
+    Rebuild,
+}
+
+impl Invalidation {
+    pub const fn merge(self, other: Self) -> Self {
+        use Invalidation::*;
+
+        match (self, other) {
+            (Rebuild, _) | (_, Rebuild) => Rebuild,
+            (Layout, _) | (_, Layout) => Layout,
+            (Paint, _) | (_, Paint) => Paint,
+            _ => None,
+        }
+    }
+}
+
 pub struct Runtime<
     const ENTITY_BYTES: usize,
     const ENTITY_SLOTS: usize,
@@ -44,6 +66,7 @@ pub struct Runtime<
     frame: FrameArena<FRAME_NODES, FRAME_TEXT_BYTES>,
     element_states: ElementStateTable<ELEMENT_STATES>,
     notified: Cell<bool>,
+    visual_invalidation: Cell<Invalidation>,
     frame_generation: u32,
     root: Option<NodeId>,
     pointer: PointerState,
@@ -67,6 +90,7 @@ impl<
             frame: FrameArena::default(),
             element_states: ElementStateTable::default(),
             notified: Cell::new(false),
+            visual_invalidation: Cell::new(Invalidation::None),
             frame_generation: 0,
             root: None,
             pointer: PointerState::default(),
@@ -122,6 +146,7 @@ impl<
         // consume the previous dirty request.
         // if render/event logic calls notify during this build, it becomes dirty again
         self.notified.set(false);
+        self.visual_invalidation.set(Invalidation::None);
         let generation = self.next_frame_generation();
 
         let result = self.build_frame(root, generation);
@@ -131,6 +156,7 @@ impl<
                 self.element_states.sweep(generation);
                 self.root = Some(root_node);
                 self.reconcile_interaction_state();
+                self.refresh_interaction_styles();
 
                 Ok(root_node)
             }
@@ -142,6 +168,7 @@ impl<
                 // never keep listeners registered by a failed render
                 self.listeners.reset();
                 self.pointer.cancel();
+                self.visual_invalidation.set(Invalidation::None);
                 self.root = None;
                 self.focused = None;
 
@@ -186,11 +213,11 @@ impl<
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.notified.get()
+        self.invalidation() != Invalidation::None
     }
 
     pub fn take_dirty(&self) -> bool {
-        self.notified.replace(false)
+        self.take_invalidation() != Invalidation::None
     }
 
     pub fn invoke<E>(&self, listener: Listener<E>, event: &E) -> Result<(), ListenerInvokeError>
@@ -224,12 +251,22 @@ impl<
 
     pub fn pointer_down(&mut self, position: Point) -> bool {
         let Some(root) = self.root else {
-            self.pointer.cancel();
+            if self.pointer.pressed().is_some() {
+                self.pointer.cancel();
+                self.invalidate(Invalidation::Layout);
+            }
+
             return false;
         };
 
         let target = self.frame.hit_test_click(root, position);
-        self.pointer.press(target.map(|target| target.element));
+        let pressed = target.map(|target| target.element);
+        let changed = self.pointer.pressed() != pressed;
+        self.pointer.press(pressed);
+        if changed {
+            self.refresh_interaction_styles();
+            self.invalidate(Invalidation::Layout);
+        }
 
         target.is_some()
     }
@@ -238,27 +275,39 @@ impl<
         let Some(pressed) = self.pointer.take_pressed() else {
             return Ok(false);
         };
-        let Some(root) = self.root else {
-            return Ok(false);
+
+        let mut listener = None;
+        let mut activated = false;
+
+        if let Some(root) = self.root
+            && let Some(target) = self.frame.hit_test_click(root, position)
+            && target.element == pressed
+        {
+            self.focused = Some(target.element);
+            listener = Some(target.listener);
+            activated = true;
         };
-        let Some(target) = self.frame.hit_test_click(root, position) else {
-            return Ok(false);
-        };
-        if target.element != pressed {
-            return Ok(false);
+
+        self.refresh_interaction_styles();
+        self.invalidate(Invalidation::Layout);
+
+        if let Some(listener) = listener {
+            let listener = Listener::from_id(listener);
+            self.listeners
+                .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
         }
 
-        self.focused = Some(target.element);
-
-        let listener = Listener::from_id(target.listener);
-        self.listeners
-            .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
-
-        Ok(true)
+        Ok(activated)
     }
 
     pub fn pointer_cancel(&mut self) {
+        if self.pointer.pressed().is_none() {
+            return;
+        }
+
         self.pointer.cancel();
+        self.refresh_interaction_styles();
+        self.invalidate(Invalidation::Layout);
     }
 
     fn reconcile_interaction_state(&mut self) {
@@ -285,7 +334,12 @@ impl<
             return false;
         };
 
-        self.focused = Some(target.element);
+        let next = Some(target.element);
+        if self.focused != next {
+            self.focused = next;
+            self.refresh_interaction_styles();
+            self.invalidate(Invalidation::Layout);
+        }
 
         true
     }
@@ -300,13 +354,24 @@ impl<
             return false;
         };
 
-        self.focused = Some(target.element);
+        let previous = Some(target.element);
+        if self.focused != previous {
+            self.focused = previous;
+            self.refresh_interaction_styles();
+            self.invalidate(Invalidation::Layout);
+        }
 
         true
     }
 
     pub fn clear_focus(&mut self) {
+        if self.focused.is_none() {
+            return;
+        }
+
         self.focused = None;
+        self.refresh_interaction_styles();
+        self.invalidate(Invalidation::Layout);
     }
 
     pub fn activate_focused(&mut self) -> Result<bool, ListenerInvokeError> {
@@ -327,5 +392,35 @@ impl<
             .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
 
         Ok(true)
+    }
+
+    fn invalidate(&self, invalidation: Invalidation) {
+        let current = self.visual_invalidation.get();
+        self.visual_invalidation.set(current.merge(invalidation));
+    }
+
+    pub fn invalidation(&self) -> Invalidation {
+        let visual = self.visual_invalidation.get();
+        if self.notified.get() {
+            visual.merge(Invalidation::Rebuild)
+        } else {
+            visual
+        }
+    }
+
+    pub fn take_invalidation(&self) -> Invalidation {
+        let visual = self.visual_invalidation.replace(Invalidation::None);
+        let application = if self.notified.replace(false) {
+            Invalidation::Rebuild
+        } else {
+            Invalidation::None
+        };
+
+        visual.merge(application)
+    }
+
+    fn refresh_interaction_styles(&mut self) {
+        self.frame
+            .resolve_interaction_styles(self.focused, self.pointer.pressed());
     }
 }
