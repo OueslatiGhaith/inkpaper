@@ -1,15 +1,12 @@
 use core::cell::Cell;
 
-use embedded_graphics::{draw_target::DrawTarget, pixelcolor::Rgb888};
-
 use crate::{
     ClickEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Invalidation, Listener,
-    MountError, NodeId, Point, Render, Size, TextMeasurer,
+    MountError, NodeId, Painter, Point, Render, Size, TextMeasurer,
     element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
     input::PointerState,
     listener_store::{ListenerArena, ListenerInvokeError},
-    paint::TextPainter,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +98,7 @@ impl<
         let next = self.frame_generation.wrapping_add(1);
 
         if next == 0 {
-            // `last_seen_frame` is i32, so don't allow old frame numbers to alias
+            // `last_seen_frame` is u32, so don't allow old frame numbers to alias
             // after wrap around
             self.element_states.clear();
             self.frame_generation = 1;
@@ -139,7 +136,7 @@ impl<
                 Ok(root_node)
             }
             Err(error) => {
-                // identity resolition may have partially touched persistent state
+                // identity resolution may have partially touched persistent state
                 self.element_states.abort_frame(generation);
                 // never expose a partial frame
                 self.frame.clear();
@@ -163,10 +160,9 @@ impl<
     where
         T: Render,
     {
-        let root_node = self.frame.mount(root)?;
-
-        self.frame
-            .expand_entities(&self.entities, &self.listeners, &self.notified)?;
+        let root_node =
+            self.frame
+                .mount_and_expand(root, &self.entities, &self.listeners, &self.notified)?;
 
         self.frame
             .resolve_identities(&mut self.element_states, generation)?;
@@ -212,17 +208,15 @@ impl<
         Some(self.frame.layout(root, viewport, text_measurer))
     }
 
-    pub fn paint<D, P>(&self, target: &mut D, text_painter: &P) -> Result<Option<()>, D::Error>
+    pub fn paint<P>(&self, painter: &mut P) -> Result<Option<()>, P::Error>
     where
-        D: DrawTarget<Color = Rgb888>,
-        D::Color: From<Rgb888>,
-        P: TextPainter,
+        P: Painter,
     {
         let Some(root) = self.root else {
             return Ok(None);
         };
 
-        self.frame.paint(root, target, text_painter)?;
+        self.frame.paint(root, painter)?;
 
         Ok(Some(()))
     }
@@ -275,7 +269,6 @@ impl<
         let focus_invalidation = self.focus_transition_invalidation(previous_focus, next_focus);
         let invalidation = pressed_invalidation.merge(focus_invalidation);
 
-        self.pointer.cancel();
         self.focused = next_focus;
         self.refresh_interaction_styles();
         self.invalidate(invalidation);
@@ -319,7 +312,7 @@ impl<
             self.focused = None;
             return false;
         };
-        let Some(target) = self.frame.next_click_traget(root, self.focused) else {
+        let Some(target) = self.frame.next_click_target(root, self.focused) else {
             self.focused = None;
             return false;
         };
@@ -434,10 +427,10 @@ impl<
 
         let mut invalidation = Invalidation::None;
         if let Some(previous) = previous {
-            invalidation = invalidation.merge(self.frame.focused_complete_invalidation(previous));
+            invalidation = invalidation.merge(self.frame.focused_style_invalidation(previous));
         }
         if let Some(next) = next {
-            invalidation = invalidation.merge(self.frame.focused_complete_invalidation(next));
+            invalidation = invalidation.merge(self.frame.focused_style_invalidation(next));
         }
 
         invalidation

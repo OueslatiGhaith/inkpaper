@@ -3,6 +3,9 @@
 #[cfg(test)]
 extern crate std;
 
+#[cfg(feature = "embedded-graphics")]
+pub mod backend;
+
 mod arena;
 mod color;
 mod context;

@@ -62,23 +62,6 @@ fn flow_axis(style: Style) -> Axis {
     }
 }
 
-fn resolve_length(length: Length, available: i32, auto_size: i32) -> i32 {
-    let available = non_negative(available);
-    match length {
-        Length::Auto => non_negative(auto_size).min(available),
-        Length::Pixels(value) => non_negative(value.0).min(available),
-        Length::Fill => available,
-    }
-}
-
-fn horizontal_padding(style: Style) -> i32 {
-    non_negative(style.padding.left.0) + non_negative(style.padding.right.0)
-}
-
-fn vertical_padding(style: Style) -> i32 {
-    non_negative(style.padding.top.0) + non_negative(style.padding.bottom.0)
-}
-
 fn content_available(style: Style, outer_available: Size) -> Size {
     Size::new(
         Pixels(non_negative(
@@ -316,9 +299,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         let fill_space = non_negative(
             available_main
-                .saturating_add(fixed_main)
-                .saturating_add(fill_margins)
-                .saturating_add(total_gap),
+                .saturating_sub(fixed_main)
+                .saturating_sub(fill_margins)
+                .saturating_sub(total_gap),
         );
         let fill_base = if fill_count == 0 {
             0
@@ -498,12 +481,12 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let fill_base = if fill_count == 0 {
             0
         } else {
-            fill_space / fill_count as i32
+            fill_space / fill_count
         };
         let fill_remainder = if fill_count == 0 {
             0
         } else {
-            fill_space % fill_count as i32
+            fill_space % fill_count
         };
 
         let mut occupied_main = total_gap;
@@ -645,24 +628,6 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 None => Edges::all(px(0)),
             },
         }
-    }
-
-    fn child_constraint(
-        content_size: Size,
-        margin: Edges<Pixels>,
-        axis: Axis,
-        allocated_main: Option<i32>,
-    ) -> Size {
-        let main = allocated_main.unwrap_or_else(|| {
-            non_negative(
-                main_size(content_size, axis).saturating_sub(main_margin_total(margin, axis)),
-            )
-        });
-        let cross = non_negative(
-            cross_size(content_size, axis).saturating_sub(cross_margin_total(margin, axis)),
-        );
-
-        size_from_axes(main, cross, axis)
     }
 }
 

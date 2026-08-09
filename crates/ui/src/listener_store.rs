@@ -34,7 +34,7 @@ impl From<EntityAccessError> for ListenerInvokeError {
 }
 
 type ListenerInvokeFn = unsafe fn(
-    closuer: *const u8,
+    closure: *const u8,
     target: EntityId,
     event: *const u8,
     entities: &dyn EntityStore,
@@ -65,6 +65,10 @@ pub(crate) struct RawListenerReservation {
     pub(crate) ptr: NonNull<u8>,
 }
 
+/// # Safety
+///
+/// the reserved storage for `listener` must contain a valid initialized
+/// callback of the type registered during `reserve`.
 pub(crate) unsafe trait ListenerStore {
     fn reserve(
         &self,
@@ -76,7 +80,6 @@ pub(crate) unsafe trait ListenerStore {
     ) -> Result<RawListenerReservation, ListenerAllocError>;
 
     unsafe fn commit(&self, listener: ListenerId);
-    fn abandon(&self, listener: ListenerId);
 }
 
 const LISTENER_ARENA_ALIGNMENT: usize = 16;
@@ -286,14 +289,6 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> ListenerStore for ListenerAr
     unsafe fn commit(&self, listener: ListenerId) {
         let slot = listener.slot() as usize;
         self.states[slot].set(ListenerSlotState::Live);
-    }
-
-    fn abandon(&self, listener: ListenerId) {
-        let slot = listener.slot() as usize;
-
-        if self.states[slot].get() == ListenerSlotState::Initializing {
-            self.states[slot].set(ListenerSlotState::Abandonned);
-        }
     }
 }
 

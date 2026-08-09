@@ -1,6 +1,6 @@
 use embedded_graphics::{mono_font::ascii::FONT_6X10, pixelcolor::Rgb888, prelude::Size as EgSize};
 use embedded_graphics_simulator::SimulatorDisplay;
-use inkpaper_ui::{MonoTextPainter, prelude::*};
+use inkpaper_ui::{backend::EmbeddedGraphicsPainter, prelude::*};
 
 const DISPLAY_WIDTH: u32 = 128;
 const DISPLAY_HEIGHT: u32 = 64;
@@ -28,10 +28,12 @@ impl Render for App {
 #[test]
 fn full_runtime_can_render_to_simulator_display() {
     let mut runtime = TestRuntime::default();
-    let painter = MonoTextPainter::new(&FONT_6X10, Color::WHITE);
 
     let app = runtime.create(|_| App).unwrap();
     runtime.rebuild(app).unwrap();
+
+    let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
+    let mut painter = EmbeddedGraphicsPainter::new(&mut display, &FONT_6X10, Color::WHITE);
 
     let laid_out = runtime.layout(
         Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32)),
@@ -46,9 +48,7 @@ fn full_runtime_can_render_to_simulator_display() {
         ))
     );
 
-    let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
-
-    let painted = runtime.paint(&mut display, &painter).unwrap();
+    let painted = runtime.paint(&mut painter).unwrap();
 
     assert_eq!(painted, Some(()));
     assert!(runtime.frame_node_count() > 0);

@@ -3,8 +3,12 @@ name = "inkpaper-ui"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["embedded-graphics"]
+embedded-graphics = ["dep:embedded-graphics"]
+
 [dependencies]
-embedded-graphics = "0.8.2"
+embedded-graphics = { version = "0.8.2", optional = true }
 heapless = "0.9.3"
 
 [dev-dependencies]

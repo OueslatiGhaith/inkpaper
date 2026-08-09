@@ -10,7 +10,7 @@ use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window, sdl2::MouseButton,
 };
 use heapless::String;
-use inkpaper_ui::{MonoTextPainter, prelude::*};
+use inkpaper_ui::{backend::EmbeddedGraphicsPainter, prelude::*};
 
 const DISPLAY_WIDTH: u32 = 320;
 const DISPLAY_HEIGHT: u32 = 240;
@@ -112,7 +112,7 @@ struct App {
 impl App {
     fn new(cx: &mut Context<Self>) -> Self {
         let header = cx
-            .new(|_| Header::new("InkPaper UI", "Click the buttom below"))
+            .new(|_| Header::new("InkPaper UI", "Click the button below"))
             .unwrap();
         let counter = cx.new(|_| Counter::new()).unwrap();
 
@@ -133,58 +133,47 @@ impl Render for App {
     }
 }
 
-fn render_ui(
-    runtime: &mut UiRuntime,
-    app: Entity<App>,
-    display: &mut SimulatorDisplay<Rgb888>,
-    painter: &MonoTextPainter,
-) {
-    runtime.rebuild(app).unwrap();
-    runtime.layout(DISPLAY_SIZE, painter).unwrap();
-
-    display.clear(Rgb888::new(0, 0, 0)).unwrap();
-
-    runtime.paint(display, painter).unwrap().unwrap();
-}
-
 fn to_ui_point(point: EgPoint) -> Point {
     Point::new(px(point.x), px(point.y))
 }
 
-fn update_ui(
-    runtime: &mut UiRuntime,
-    app: Entity<App>,
-    display: &mut SimulatorDisplay<Rgb888>,
-    painter: &MonoTextPainter,
-) {
+fn update_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorDisplay<Rgb888>) {
     match runtime.take_invalidation() {
         Invalidation::None => {}
-        Invalidation::Paint => {
-            display.clear(Rgb888::BLACK).unwrap();
-            runtime.paint(display, painter).unwrap();
-        }
+        Invalidation::Paint => paint_ui(runtime, display),
         Invalidation::Layout => {
-            runtime.layout(DISPLAY_SIZE, painter).unwrap();
-            display.clear(Rgb888::BLACK).unwrap();
-            runtime.paint(display, painter).unwrap();
+            layout_ui(runtime, display);
+            paint_ui(runtime, display);
         }
         Invalidation::Rebuild => {
             runtime.rebuild(app).unwrap();
-            runtime.layout(DISPLAY_SIZE, painter).unwrap();
-            display.clear(Rgb888::BLACK).unwrap();
-            runtime.paint(display, painter).unwrap();
+            layout_ui(runtime, display);
+            paint_ui(runtime, display);
         }
     }
+}
+
+fn layout_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
+    let painter = EmbeddedGraphicsPainter::new(display, &FONT_6X10, Color::WHITE);
+    runtime.layout(DISPLAY_SIZE, &painter).unwrap();
+}
+
+fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
+    display.clear(Rgb888::BLACK).unwrap();
+
+    let mut painter = EmbeddedGraphicsPainter::new(display, &FONT_6X10, Color::WHITE);
+    runtime.paint(&mut painter).unwrap().unwrap();
 }
 
 fn main() {
     let mut runtime = UiRuntime::default();
 
     let app = runtime.create(App::new).unwrap();
-    let painter = MonoTextPainter::new(&FONT_6X10, Color::WHITE);
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    render_ui(&mut runtime, app, &mut display, &painter);
+    runtime.rebuild(app).unwrap();
+    layout_ui(&mut runtime, &mut display);
+    paint_ui(&mut runtime, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
     let mut window = Window::new("InkPaper UI", &output_settings);
@@ -211,6 +200,6 @@ fn main() {
             }
         }
 
-        update_ui(&mut runtime, app, &mut display, &painter);
+        update_ui(&mut runtime, app, &mut display);
     }
 }

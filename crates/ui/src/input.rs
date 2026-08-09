@@ -2,7 +2,6 @@ use crate::{FrameArena, Invalidation, ListenerId, NodeId, Point, element_state::
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ClickTarget {
-    pub(crate) node: NodeId,
     pub(crate) element: ElementStateId,
     pub(crate) listener: ListenerId,
 }
@@ -54,11 +53,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let element = node.element_state_id?;
         let listener = node.interaction.click?;
 
-        Some(ClickTarget {
-            node: node_id,
-            element,
-            listener,
-        })
+        Some(ClickTarget { element, listener })
     }
 
     pub(crate) fn click_target_for_element(
@@ -80,7 +75,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         None
     }
 
-    pub(crate) fn next_click_traget(
+    pub(crate) fn next_click_target(
         &self,
         root: NodeId,
         current_element: Option<ElementStateId>,
@@ -166,7 +161,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         Some(last)
     }
 
-    pub(crate) fn focused_complete_invalidation(&self, element: ElementStateId) -> Invalidation {
+    pub(crate) fn focused_style_invalidation(&self, element: ElementStateId) -> Invalidation {
         for node in self.nodes.iter() {
             if node.element_state_id == Some(element) {
                 return node.interaction.focused_style.invalidation();

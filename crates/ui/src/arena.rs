@@ -33,7 +33,7 @@ enum EntitySlotState {
     Vacant,
     Initializing,
     Live,
-    Abandonned,
+    Abandoned,
 }
 
 const ENTITY_ARENA_ALIGNMENT: usize = 16;
@@ -78,9 +78,9 @@ pub(crate) fn align_up(value: usize, alignment: usize) -> Option<usize> {
 /// 2. the value at [`EntityMeta::offset`] has exactly the [`TypeId`] in that metadata
 /// 3. allocated object ranges never overlap
 /// 4. values never move after insertion
-/// 5. an `&mut T` exists only white that entity's [`BorrowState`] is `Exclusive`
+/// 5. an `&mut T` exists only while that entity's [`BorrowState`] is `Exclusive`
 /// 6. an `&T` never exists while that entity's [`BorrowState`] is `Exclusive`
-/// 7. the runtime validates [`TypeId`] before converting raw storage into `&T`or `&mut T`
+/// 7. the runtime validates [`TypeId`] before converting raw storage into `&T` or `&mut T`
 /// 8. no reference to the whole storage buffer is created while references to stored objects
 ///    may exist
 /// 9. each inserted value is dropped once when the arena is dropped
@@ -169,7 +169,7 @@ impl<const BYTES: usize, const SLOTS: usize> EntityArena<BYTES, SLOTS> {
         match self.states[slot].get() {
             EntitySlotState::Live => {}
             EntitySlotState::Initializing => return Err(EntityAccessError::NotReady),
-            EntitySlotState::Vacant | EntitySlotState::Abandonned => {
+            EntitySlotState::Vacant | EntitySlotState::Abandoned => {
                 return Err(EntityAccessError::InvalidEntity);
             }
         }
@@ -328,7 +328,7 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> EntityStore for EntityArena<
         let slot = entity.slot() as usize;
 
         if matches!(self.states[slot].get(), EntitySlotState::Initializing) {
-            self.states[slot].set(EntitySlotState::Abandonned);
+            self.states[slot].set(EntitySlotState::Abandoned);
         }
     }
 
@@ -413,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn stores_hetergenous_entities() {
+    fn stores_heterogeneous_entities() {
         let arena = EntityArena::<1024, 16>::default();
 
         let counter = arena.insert(Counter { value: 42 }).unwrap();
