@@ -1051,4 +1051,28 @@ mod tests {
 
         assert_eq!(frame.bounds(root).width(), px(40));
     }
+
+    #[test]
+    fn border_width_reduces_content_area() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(60))
+                    .border(px(2))
+                    .p(px(4))
+                    .child(div().w(px(20)).h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(60)), &measurer);
+
+        let child = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(root), 0, 0, 100, 60);
+        assert_bounds(frame.bounds(child), 6, 6, 20, 10);
+    }
 }

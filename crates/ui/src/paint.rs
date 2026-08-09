@@ -4,7 +4,10 @@ use embedded_graphics::{
     geometry::{Point as EgPoint, Size as EgSize},
     mono_font::{MonoFont, MonoTextStyle},
     pixelcolor::Rgb888,
-    primitives::{Primitive, PrimitiveStyle, Rectangle},
+    primitives::{
+        Primitive, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, RoundedRectangle,
+        StrokeAlignment,
+    },
     text::{Baseline, Text},
 };
 
@@ -132,19 +135,38 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         match node.kind {
             crate::NodeKind::Div { .. } => {
                 let style = node.style().expect("div node must have style");
-                let Some(background) = style.background else {
-                    return Ok(());
-                };
-
                 let bounds = node.layout.bounds;
                 if bounds.width().0 <= 0 || bounds.height().0 <= 0 {
                     return Ok(());
                 }
 
+                let border_width = u32::try_from(style.border_width.0.max(0)).unwrap_or(u32::MAX);
+
+                let mut primitive_style =
+                    PrimitiveStyleBuilder::new().stroke_alignment(StrokeAlignment::Inside);
+
+                if let Some(background) = style.background {
+                    primitive_style = primitive_style.fill_color(to_rgb888(background));
+                }
+                if border_width > 0
+                    && let Some(border_color) = style.border_color
+                {
+                    primitive_style = primitive_style
+                        .stroke_color(to_rgb888(border_color))
+                        .stroke_width(border_width);
+                }
+
+                let primitive_style = primitive_style.build();
                 let rectangle = to_embedded_rect(bounds);
-                rectangle
-                    .into_styled(PrimitiveStyle::with_fill(to_rgb888(background)))
-                    .draw(target)?;
+
+                let radius = u32::try_from(style.border_radius.0.max(0)).unwrap_or(u32::MAX);
+                if radius == 0 {
+                    rectangle.into_styled(primitive_style).draw(target)?;
+                } else {
+                    RoundedRectangle::with_equal_corners(rectangle, EgSize::new_equal(radius))
+                        .into_styled(primitive_style)
+                        .draw(target)?;
+                }
 
                 Ok(())
             }
@@ -606,5 +628,105 @@ mod tests {
             .unwrap();
 
         assert_eq!(runtime.frame().bounds(button).width(), px(80));
+    }
+
+    #[test]
+    fn border_is_painted_inside_element_bounds() {
+        let painter = MonoTextPainter::new(&FONT_6X10, Color::WHITE);
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(10))
+                    .h(px(10))
+                    .bg(Color::BLUE)
+                    .border(px(2))
+                    .border_color(Color::RED),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(20), px(20)), &painter);
+
+        let mut display = MockDisplay::<Rgb888>::new();
+        display.set_allow_overdraw(true);
+        frame.paint(root, &mut display, &painter).unwrap();
+
+        assert_eq!(
+            display.get_pixel(EgPoint::new(0, 0)),
+            Some(Rgb888::new(255, 0, 0,))
+        );
+        assert_eq!(
+            display.get_pixel(EgPoint::new(5, 5)),
+            Some(Rgb888::new(0, 0, 255,))
+        );
+    }
+
+    #[test]
+    fn rounded_background_does_not_fill_square_corner_pixel() {
+        let painter = MonoTextPainter::new(&FONT_6X10, Color::WHITE);
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let root = frame
+            .mount(div().w(px(20)).h(px(20)).bg(Color::RED).rounded(px(6)))
+            .unwrap();
+        frame.layout(root, Size::new(px(20), px(20)), &painter);
+
+        let mut display = MockDisplay::<Rgb888>::new();
+        frame.paint(root, &mut display, &painter).unwrap();
+
+        assert_eq!(display.get_pixel(EgPoint::new(0, 0)), None);
+        assert_eq!(
+            display.get_pixel(EgPoint::new(10, 10)),
+            Some(Rgb888::new(255, 0, 0,))
+        );
+    }
+
+    #[test]
+    fn focused_border_color_is_paint_only_but_border_width_requires_layout() {
+        struct App;
+
+        impl App {
+            fn clicked(&mut self, _: &ClickEvent, _cx: &mut Context<Self>) {}
+        }
+
+        impl Render for App {
+            fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div()
+                    .child(
+                        div()
+                            .id("paint")
+                            .w(px(50))
+                            .h(px(20))
+                            .border(px(1))
+                            .border_color(Color::BLUE)
+                            .when_focused(|style| style.border_color(Color::RED))
+                            .on_click(cx.listener(Self::clicked)),
+                    )
+                    .child(
+                        div()
+                            .id("layout")
+                            .w(px(50))
+                            .h(px(20))
+                            .border(px(1))
+                            .when_focused(|style| style.border(px(3)))
+                            .on_click(cx.listener(Self::clicked)),
+                    )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
     }
 }

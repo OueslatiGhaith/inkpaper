@@ -320,6 +320,21 @@ pub trait Styled: Sized {
         self.style_mut().background = Some(color);
         self
     }
+
+    fn border(mut self, width: Pixels) -> Self {
+        self.style_mut().border_width = width;
+        self
+    }
+
+    fn border_color(mut self, color: Color) -> Self {
+        self.style_mut().border_color = Some(color);
+        self
+    }
+
+    fn rounded(mut self, radius: Pixels) -> Self {
+        self.style_mut().border_radius = radius;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
