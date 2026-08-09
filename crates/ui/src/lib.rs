@@ -16,6 +16,7 @@ mod frame;
 mod geometry;
 mod identity;
 mod input;
+mod invalidation;
 mod layout;
 mod listener;
 mod listener_store;
@@ -36,6 +37,7 @@ pub use event::*;
 pub use frame::*;
 pub use geometry::*;
 pub use identity::*;
+pub use invalidation::*;
 pub use layout::*;
 pub use listener::*;
 pub use paint::*;
@@ -48,7 +50,8 @@ pub use units::*;
 pub mod prelude {
     // TODO: fill predlude
     pub use crate::{
-        ClickEvent, Color, Context, Entity, InteractiveElement, IntoElement, ParentElement, Point,
-        Render, Runtime, Size, StatefulInteractiveElementExt, Styled, div, px,
+        ClickEvent, Color, Context, Entity, InteractiveElement, IntoElement, Invalidation,
+        ParentElement, Point, Render, Runtime, Size, StatefulInteractiveElementExt, Styled, div,
+        px,
     };
 }

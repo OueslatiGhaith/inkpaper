@@ -1,4 +1,4 @@
-use crate::{Color, Length, Pixels, px};
+use crate::{Color, Invalidation, Length, Pixels, px};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Display {
@@ -35,7 +35,10 @@ macro_rules! declare_style {
     (
         $(#[$attr:meta])*
         pub struct Style {
-            $( $field_vis:vis $field_name:ident: $field_ty:ty ),* $(,)?
+            $(
+                #[$invalidation:ident]
+                $field_vis:vis $field_name:ident: $field_ty:ty
+            ),* $(,)?
         }
     ) => {
         $(#[$attr])*
@@ -73,22 +76,51 @@ macro_rules! declare_style {
                     $($field_name: later.$field_name.or(self.$field_name)),*
                 }
             }
+
+            pub(crate) const fn invalidation(self) -> Invalidation {
+                $(
+                    declare_style!(@check_layout, $invalidation, self.$field_name);
+                )*
+                $(
+                    declare_style!(@check_paint, $invalidation, self.$field_name);
+                )*
+
+                Invalidation::None
+            }
         }
     };
+
+    (@check_layout, layout, $field:expr) => {
+        if $field.is_some() {
+            return Invalidation::Layout;
+        }
+    };
+    (@check_layout, paint, $field:expr) => {};
+    (@check_paint, paint, $field:expr) => {
+        if $field.is_some() {
+            return Invalidation::Paint;
+        }
+    };
+    (@check_paint, layout, $field:expr) => {};
 }
 
 declare_style! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Style {
+        #[layout]
         pub display: Display,
+        #[layout]
         pub flex_direction: FlexDirection,
-
+        #[layout]
         pub width: Length,
+        #[layout]
         pub height: Length,
-
+        #[layout]
         pub padding: Edges<Pixels>,
+        #[layout]
         pub gap: Pixels,
 
+        #[paint]
         pub background: Option<Color>,
     }
 }

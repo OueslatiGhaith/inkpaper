@@ -158,17 +158,17 @@ fn update_ui(
     painter: &MonoTextPainter,
 ) {
     match runtime.take_invalidation() {
-        inkpaper_ui::Invalidation::None => {}
-        inkpaper_ui::Invalidation::Paint => {
+        Invalidation::None => {}
+        Invalidation::Paint => {
             display.clear(Rgb888::BLACK).unwrap();
             runtime.paint(display, painter).unwrap();
         }
-        inkpaper_ui::Invalidation::Layout => {
+        Invalidation::Layout => {
             runtime.layout(DISPLAY_SIZE, painter).unwrap();
             display.clear(Rgb888::BLACK).unwrap();
             runtime.paint(display, painter).unwrap();
         }
-        inkpaper_ui::Invalidation::Rebuild => {
+        Invalidation::Rebuild => {
             runtime.rebuild(app).unwrap();
             runtime.layout(DISPLAY_SIZE, painter).unwrap();
             display.clear(Rgb888::BLACK).unwrap();

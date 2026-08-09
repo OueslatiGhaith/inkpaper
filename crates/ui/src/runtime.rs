@@ -3,8 +3,8 @@ use core::cell::Cell;
 use embedded_graphics::{draw_target::DrawTarget, pixelcolor::Rgb888};
 
 use crate::{
-    ClickEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Listener, MountError,
-    NodeId, Point, Render, Size, TextMeasurer,
+    ClickEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Invalidation, Listener,
+    MountError, NodeId, Point, Render, Size, TextMeasurer,
     element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
     input::PointerState,
@@ -27,28 +27,6 @@ impl From<MountError> for FrameBuildError {
 impl From<IdentityError> for FrameBuildError {
     fn from(value: IdentityError) -> Self {
         Self::Identity(value)
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum Invalidation {
-    #[default]
-    None,
-    Paint,
-    Layout,
-    Rebuild,
-}
-
-impl Invalidation {
-    pub const fn merge(self, other: Self) -> Self {
-        use Invalidation::*;
-
-        match (self, other) {
-            (Rebuild, _) | (_, Rebuild) => Rebuild,
-            (Layout, _) | (_, Layout) => Layout,
-            (Paint, _) | (_, Paint) => Paint,
-            _ => None,
-        }
     }
 }
 
@@ -250,22 +228,25 @@ impl<
     }
 
     pub fn pointer_down(&mut self, position: Point) -> bool {
+        let previous = self.pointer.pressed();
         let Some(root) = self.root else {
-            if self.pointer.pressed().is_some() {
+            if previous.is_some() {
+                let invalidation = self.pressed_transition_invalidation(previous, None);
                 self.pointer.cancel();
-                self.invalidate(Invalidation::Layout);
+                self.refresh_interaction_styles();
+                self.invalidate(invalidation);
             }
 
             return false;
         };
 
         let target = self.frame.hit_test_click(root, position);
-        let pressed = target.map(|target| target.element);
-        let changed = self.pointer.pressed() != pressed;
-        self.pointer.press(pressed);
-        if changed {
+        let next = target.map(|target| target.element);
+        if previous != next {
+            let invalidation = self.pressed_transition_invalidation(previous, next);
+            self.pointer.press(next);
             self.refresh_interaction_styles();
-            self.invalidate(Invalidation::Layout);
+            self.invalidate(invalidation);
         }
 
         target.is_some()
@@ -276,6 +257,8 @@ impl<
             return Ok(false);
         };
 
+        let previous_focus = self.focused;
+        let mut next_focus = previous_focus;
         let mut listener = None;
         let mut activated = false;
 
@@ -283,13 +266,19 @@ impl<
             && let Some(target) = self.frame.hit_test_click(root, position)
             && target.element == pressed
         {
-            self.focused = Some(target.element);
+            next_focus = Some(target.element);
             listener = Some(target.listener);
             activated = true;
         };
 
+        let pressed_invalidation = self.pressed_transition_invalidation(Some(pressed), None);
+        let focus_invalidation = self.focus_transition_invalidation(previous_focus, next_focus);
+        let invalidation = pressed_invalidation.merge(focus_invalidation);
+
+        self.pointer.cancel();
+        self.focused = next_focus;
         self.refresh_interaction_styles();
-        self.invalidate(Invalidation::Layout);
+        self.invalidate(invalidation);
 
         if let Some(listener) = listener {
             let listener = Listener::from_id(listener);
@@ -301,13 +290,14 @@ impl<
     }
 
     pub fn pointer_cancel(&mut self) {
-        if self.pointer.pressed().is_none() {
+        let Some(previous) = self.pointer.pressed() else {
             return;
-        }
+        };
 
+        let invalidation = self.pressed_transition_invalidation(Some(previous), None);
         self.pointer.cancel();
         self.refresh_interaction_styles();
-        self.invalidate(Invalidation::Layout);
+        self.invalidate(invalidation);
     }
 
     fn reconcile_interaction_state(&mut self) {
@@ -334,12 +324,16 @@ impl<
             return false;
         };
 
+        let previous = self.focused;
         let next = Some(target.element);
-        if self.focused != next {
-            self.focused = next;
-            self.refresh_interaction_styles();
-            self.invalidate(Invalidation::Layout);
+        if previous == next {
+            return true;
         }
+
+        let invalidation = self.focus_transition_invalidation(previous, next);
+        self.focused = next;
+        self.refresh_interaction_styles();
+        self.invalidate(invalidation);
 
         true
     }
@@ -354,24 +348,29 @@ impl<
             return false;
         };
 
-        let previous = Some(target.element);
-        if self.focused != previous {
-            self.focused = previous;
-            self.refresh_interaction_styles();
-            self.invalidate(Invalidation::Layout);
+        let previous = self.focused;
+        let next = Some(target.element);
+        if previous == next {
+            return true;
         }
+
+        let invalidation = self.focus_transition_invalidation(previous, next);
+        self.focused = next;
+        self.refresh_interaction_styles();
+        self.invalidate(invalidation);
 
         true
     }
 
     pub fn clear_focus(&mut self) {
-        if self.focused.is_none() {
+        let Some(previous) = self.focused else {
             return;
-        }
+        };
 
+        let invalidation = self.focus_transition_invalidation(Some(previous), None);
         self.focused = None;
         self.refresh_interaction_styles();
-        self.invalidate(Invalidation::Layout);
+        self.invalidate(invalidation);
     }
 
     pub fn activate_focused(&mut self) -> Result<bool, ListenerInvokeError> {
@@ -422,5 +421,45 @@ impl<
     fn refresh_interaction_styles(&mut self) {
         self.frame
             .resolve_interaction_styles(self.focused, self.pointer.pressed());
+    }
+
+    fn focus_transition_invalidation(
+        &self,
+        previous: Option<ElementStateId>,
+        next: Option<ElementStateId>,
+    ) -> Invalidation {
+        if previous == next {
+            return Invalidation::None;
+        }
+
+        let mut invalidation = Invalidation::None;
+        if let Some(previous) = previous {
+            invalidation = invalidation.merge(self.frame.focused_complete_invalidation(previous));
+        }
+        if let Some(next) = next {
+            invalidation = invalidation.merge(self.frame.focused_complete_invalidation(next));
+        }
+
+        invalidation
+    }
+
+    fn pressed_transition_invalidation(
+        &self,
+        previous: Option<ElementStateId>,
+        next: Option<ElementStateId>,
+    ) -> Invalidation {
+        if previous == next {
+            return Invalidation::None;
+        }
+
+        let mut invalidation = Invalidation::None;
+        if let Some(previous) = previous {
+            invalidation = invalidation.merge(self.frame.pressed_style_invalidation(previous));
+        }
+        if let Some(next) = next {
+            invalidation = invalidation.merge(self.frame.pressed_style_invalidation(next));
+        }
+
+        invalidation
     }
 }

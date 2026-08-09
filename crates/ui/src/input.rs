@@ -1,4 +1,4 @@
-use crate::{FrameArena, ListenerId, NodeId, Point, element_state::ElementStateId};
+use crate::{FrameArena, Invalidation, ListenerId, NodeId, Point, element_state::ElementStateId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ClickTarget {
@@ -165,12 +165,32 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         Some(last)
     }
+
+    pub(crate) fn focused_complete_invalidation(&self, element: ElementStateId) -> Invalidation {
+        for node in self.nodes.iter() {
+            if node.element_state_id == Some(element) {
+                return node.interaction.focused_style.invalidation();
+            }
+        }
+
+        Invalidation::None
+    }
+
+    pub(crate) fn pressed_style_invalidation(&self, element: ElementStateId) -> Invalidation {
+        for node in self.nodes.iter() {
+            if node.element_state_id == Some(element) {
+                return node.interaction.pressed_style.invalidation();
+            }
+        }
+
+        Invalidation::None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use core::cell::Cell;
-    use std::{eprintln, rc::Rc};
+    use std::rc::Rc;
 
     use crate::*;
 
@@ -262,10 +282,10 @@ mod tests {
             .unwrap();
 
         assert!(runtime.pointer_down(Point::new(px(20), px(20),)));
-        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
+        assert_eq!(runtime.take_invalidation(), Invalidation::None);
         assert!(!runtime.pointer_up(Point::new(px(150), px(80),)).unwrap());
         assert_eq!(clicks.get(), 0);
-        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
+        assert_eq!(runtime.take_invalidation(), Invalidation::None);
         assert!(!runtime.is_dirty());
     }
 
