@@ -109,7 +109,7 @@ impl<
         self.frame_generation
     }
 
-    pub fn rebuild<T>(&mut self, root: Entity<T>) -> Result<NodeId, FrameBuildError>
+    pub fn rebuild<T>(&mut self, root: Entity<T>) -> Result<(), FrameBuildError>
     where
         T: Render,
     {
@@ -133,7 +133,7 @@ impl<
                 self.reconcile_interaction_state();
                 self.refresh_interaction_styles();
 
-                Ok(root_node)
+                Ok(())
             }
             Err(error) => {
                 // identity resolution may have partially touched persistent state
@@ -170,11 +170,11 @@ impl<
         Ok(root_node)
     }
 
-    pub fn root_node(&self) -> Option<NodeId> {
+    pub(crate) fn root_node(&self) -> Option<NodeId> {
         self.root
     }
 
-    pub fn frame(&self) -> &FrameArena<FN, FT> {
+    pub(crate) fn frame(&self) -> &FrameArena<FN, FT> {
         &self.frame
     }
 
@@ -186,15 +186,19 @@ impl<
         self.frame.text_bytes_used()
     }
 
-    pub fn is_dirty(&self) -> bool {
+    pub(crate) fn is_dirty(&self) -> bool {
         self.invalidation() != Invalidation::None
     }
 
-    pub fn take_dirty(&self) -> bool {
+    pub(crate) fn take_dirty(&self) -> bool {
         self.take_invalidation() != Invalidation::None
     }
 
-    pub fn invoke<E>(&self, listener: Listener<E>, event: &E) -> Result<(), ListenerInvokeError>
+    pub(crate) fn invoke<E>(
+        &self,
+        listener: Listener<E>,
+        event: &E,
+    ) -> Result<(), ListenerInvokeError>
     where
         E: 'static,
     {

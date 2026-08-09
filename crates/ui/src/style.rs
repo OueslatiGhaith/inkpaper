@@ -28,6 +28,12 @@ pub enum JustifyContent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlexBasis {
+    Auto,
+    Pixels(Pixels),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Edges<T> {
     pub top: T,
     pub right: T,
@@ -145,6 +151,10 @@ declare_style! {
             align_items: AlignItems = AlignItems::Start,
             justify_content: JustifyContent = JustifyContent::Start,
 
+            flex_grow: u16 = 0,
+            flex_shrink: u16 = 0,
+            flex_basis: FlexBasis = FlexBasis::Auto,
+
             width: Length = Length::Auto,
             height: Length = Length::Auto,
 
@@ -221,6 +231,33 @@ pub trait Styled: Sized {
         self
     }
 
+    fn flex_grow(mut self, weight: u16) -> Self {
+        self.style_mut().flex_grow = weight;
+        self
+    }
+
+    fn flex_shrink(mut self, weight: u16) -> Self {
+        self.style_mut().flex_shrink = weight;
+        self
+    }
+
+    fn flex_basis(mut self, basis: Pixels) -> Self {
+        self.style_mut().flex_basis = FlexBasis::Pixels(basis);
+        self
+    }
+
+    fn flex_basis_auto(mut self) -> Self {
+        self.style_mut().flex_basis = FlexBasis::Auto;
+        self
+    }
+
+    fn flex_1(mut self) -> Self {
+        self.style_mut().flex_grow = 1;
+        self.style_mut().flex_shrink = 1;
+        self.style_mut().flex_basis = FlexBasis::Pixels(px(0));
+        self
+    }
+
     fn w(mut self, width: impl Into<Length>) -> Self {
         self.style_mut().width = width.into();
         self
@@ -286,6 +323,20 @@ pub trait Styled: Sized {
         self
     }
 
+    fn px(mut self, padding: impl Into<Pixels>) -> Self {
+        let padding = padding.into();
+        self.style_mut().padding.right = padding;
+        self.style_mut().padding.left = padding;
+        self
+    }
+
+    fn py(mut self, padding: impl Into<Pixels>) -> Self {
+        let padding = padding.into();
+        self.style_mut().padding.top = padding;
+        self.style_mut().padding.bottom = padding;
+        self
+    }
+
     fn m(mut self, margin: impl Into<Pixels>) -> Self {
         self.style_mut().margin = Edges::all(margin.into());
         self
@@ -308,6 +359,20 @@ pub trait Styled: Sized {
 
     fn ml(mut self, margin: impl Into<Pixels>) -> Self {
         self.style_mut().margin.left = margin.into();
+        self
+    }
+
+    fn mx(mut self, margin: impl Into<Pixels>) -> Self {
+        let margin = margin.into();
+        self.style_mut().margin.right = margin;
+        self.style_mut().margin.left = margin;
+        self
+    }
+
+    fn my(mut self, margin: impl Into<Pixels>) -> Self {
+        let margin = margin.into();
+        self.style_mut().margin.top = margin;
+        self.style_mut().margin.bottom = margin;
         self
     }
 

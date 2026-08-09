@@ -84,7 +84,7 @@ pub(crate) fn align_up(value: usize, alignment: usize) -> Option<usize> {
 /// 8. no reference to the whole storage buffer is created while references to stored objects
 ///    may exist
 /// 9. each inserted value is dropped once when the arena is dropped
-pub struct EntityArena<const BYTES: usize, const SLOTS: usize> {
+pub(crate) struct EntityArena<const BYTES: usize, const SLOTS: usize> {
     storage: UnsafeCell<EntityStorage<BYTES>>,
     entries: RefCell<Vec<EntityMeta, SLOTS>>,
     borrows: [Cell<BorrowState>; SLOTS],

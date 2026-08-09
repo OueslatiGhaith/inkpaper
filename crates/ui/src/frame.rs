@@ -121,7 +121,7 @@ impl From<EntityAccessError> for MountError {
     }
 }
 
-pub struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
+pub(crate) struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
     pub(crate) nodes: Vec<Node, NODES>,
     text: Vec<u8, TEXT_BYTES>,
 }

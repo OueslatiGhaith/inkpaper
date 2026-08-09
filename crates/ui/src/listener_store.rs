@@ -109,7 +109,7 @@ impl<const N: usize> ListenerStorage<N> {
 ///    the complete callback.
 /// 7. only Live listeners are dropped.
 /// 8. each live callback is dropped exactly once.
-pub struct ListenerArena<const BYTES: usize, const SLOTS: usize> {
+pub(crate) struct ListenerArena<const BYTES: usize, const SLOTS: usize> {
     storage: UnsafeCell<ListenerStorage<BYTES>>,
     entries: RefCell<Vec<ListenerMeta, SLOTS>>,
     states: [Cell<ListenerSlotState>; SLOTS],

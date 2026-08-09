@@ -54,7 +54,7 @@ pub mod prelude {
     // TODO: fill predlude
     pub use crate::{
         ClickEvent, Color, Context, Entity, InteractiveElement, IntoElement, Invalidation,
-        ParentElement, Point, Render, Runtime, Size, StatefulInteractiveElementExt, Styled, div,
-        px,
+        ParentElement, Pixels, Point, Rect, Render, Runtime, Size, StatefulInteractiveElementExt,
+        Styled, div, px,
     };
 }
