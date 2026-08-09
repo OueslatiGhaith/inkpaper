@@ -13,6 +13,21 @@ pub enum FlexDirection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlignItems {
+    Start,
+    Center,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JustifyContent {
+    Start,
+    Center,
+    End,
+    Between,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Edges<T> {
     pub top: T,
     pub right: T,
@@ -36,36 +51,53 @@ macro_rules! declare_style {
         $(#[$attr:meta])*
         pub struct Style {
             $(
-                #[$invalidation:ident]
-                $field_vis:vis $field_name:ident: $field_ty:ty
-            ),* $(,)?
+                $invalidation:ident {
+                    $( $field_name:ident: $field_ty:ty = $field_default:expr ),* $(,)?
+                }
+            )*
         }
     ) => {
         $(#[$attr])*
         pub struct Style {
-            $( $field_vis $field_name: $field_ty ),*
+            $( $( pub $field_name: $field_ty,)* )*
+        }
+
+        impl Default for Style {
+            fn default() -> Self {
+                Self {
+                    $(
+                        $(
+                            $field_name: $field_default,
+                        )*
+                    )*
+                }
+            }
         }
 
         #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
         pub(crate) struct StylePatch {
-            $( $field_vis $field_name: Option< $field_ty > ),*
+            $( $( $field_name: Option< $field_ty >, )* )*
         }
 
         impl StylePatch {
             pub(crate) fn between(base: Style, variant: Style) -> Self {
                 Self {
                     $(
-                        $field_name: (base.$field_name != variant.$field_name)
-                            .then_some(variant.$field_name)
-                    ),*
+                        $(
+                            $field_name: (base.$field_name != variant.$field_name)
+                                .then_some(variant.$field_name),
+                        )*
+                    )*
                 }
             }
 
             pub(crate) fn apply(self, mut style: Style) -> Style {
                 $(
-                    if let Some(value) = self.$field_name {
-                        style.$field_name = value;
-                    }
+                    $(
+                        if let Some(value) = self.$field_name {
+                            style.$field_name = value;
+                        }
+                    )*
                 )*
 
                 style
@@ -73,68 +105,64 @@ macro_rules! declare_style {
 
             pub(crate) fn merge(self, later: Self) -> Self {
                 Self {
-                    $($field_name: later.$field_name.or(self.$field_name)),*
+                    $(
+                        $(
+                            $field_name: later.$field_name.or(self.$field_name),
+                        )*
+                    )*
                 }
             }
 
             pub(crate) const fn invalidation(self) -> Invalidation {
+                let mut invalidation = Invalidation::None;
+
                 $(
-                    declare_style!(@check_layout, $invalidation, self.$field_name);
-                )*
-                $(
-                    declare_style!(@check_paint, $invalidation, self.$field_name);
+                    $(
+                        if self.$field_name.is_some() {
+                            invalidation = invalidation.merge(
+                                declare_style!(@invalidation, $invalidation)
+                            );
+                        }
+                    )*
                 )*
 
-                Invalidation::None
+                invalidation
             }
         }
     };
 
-    (@check_layout, layout, $field:expr) => {
-        if $field.is_some() {
-            return Invalidation::Layout;
-        }
-    };
-    (@check_layout, paint, $field:expr) => {};
-    (@check_paint, paint, $field:expr) => {
-        if $field.is_some() {
-            return Invalidation::Paint;
-        }
-    };
-    (@check_paint, layout, $field:expr) => {};
+    (@invalidation, layout) => { Invalidation::Layout };
+    (@invalidation, paint) => { Invalidation::Paint };
+    (@invalidation, rebuild) => { Invalidation::Rebuild };
 }
 
 declare_style! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Style {
-        #[layout]
-        pub display: Display,
-        #[layout]
-        pub flex_direction: FlexDirection,
-        #[layout]
-        pub width: Length,
-        #[layout]
-        pub height: Length,
-        #[layout]
-        pub padding: Edges<Pixels>,
-        #[layout]
-        pub gap: Pixels,
+        layout {
+            display: Display = Display::Block,
+            flex_direction: FlexDirection = FlexDirection::Row,
+            align_items: AlignItems = AlignItems::Start,
+            justify_content: JustifyContent = JustifyContent::Start,
 
-        #[paint]
-        pub background: Option<Color>,
-    }
-}
+            width: Length = Length::Auto,
+            height: Length = Length::Auto,
 
-impl Default for Style {
-    fn default() -> Self {
-        Self {
-            display: Display::Block,
-            flex_direction: FlexDirection::Row,
-            width: Length::Auto,
-            height: Length::Auto,
-            padding: Edges::all(px(0)),
-            gap: px(0),
-            background: None,
+            min_width: Option<Pixels> = None,
+            max_width: Option<Pixels> = None,
+            min_height: Option<Pixels> = None,
+            max_height: Option<Pixels> = None,
+
+            padding: Edges<Pixels> = Edges::all(px(0)),
+            margin: Edges<Pixels> = Edges::all(px(0)),
+            gap: Pixels = px(0),
+
+            border_width: Pixels = px(0),
+        }
+        paint {
+            background: Option<Color> = None,
+            border_color: Option<Color> = None,
+            border_radius: Pixels = px(0),
         }
     }
 }
@@ -157,6 +185,42 @@ pub trait Styled: Sized {
         self
     }
 
+    fn items_start(mut self) -> Self {
+        self.style_mut().align_items = AlignItems::Start;
+        self
+    }
+
+    fn items_center(mut self) -> Self {
+        self.style_mut().align_items = AlignItems::Center;
+        self
+    }
+
+    fn items_end(mut self) -> Self {
+        self.style_mut().align_items = AlignItems::End;
+        self
+    }
+
+    fn justify_start(mut self) -> Self {
+        self.style_mut().justify_content = JustifyContent::Start;
+
+        self
+    }
+
+    fn justify_center(mut self) -> Self {
+        self.style_mut().justify_content = JustifyContent::Center;
+        self
+    }
+
+    fn justify_end(mut self) -> Self {
+        self.style_mut().justify_content = JustifyContent::End;
+        self
+    }
+
+    fn justify_between(mut self) -> Self {
+        self.style_mut().justify_content = JustifyContent::Between;
+        self
+    }
+
     fn w(mut self, width: impl Into<Length>) -> Self {
         self.style_mut().width = width.into();
         self
@@ -174,6 +238,26 @@ pub trait Styled: Sized {
 
     fn h_full(mut self) -> Self {
         self.style_mut().height = Length::Fill;
+        self
+    }
+
+    fn min_w(mut self, value: Pixels) -> Self {
+        self.style_mut().min_width = Some(value);
+        self
+    }
+
+    fn max_w(mut self, value: Pixels) -> Self {
+        self.style_mut().max_width = Some(value);
+        self
+    }
+
+    fn min_h(mut self, value: Pixels) -> Self {
+        self.style_mut().min_height = Some(value);
+        self
+    }
+
+    fn max_h(mut self, value: Pixels) -> Self {
+        self.style_mut().max_height = Some(value);
         self
     }
 
@@ -199,6 +283,31 @@ pub trait Styled: Sized {
 
     fn pl(mut self, padding: impl Into<Pixels>) -> Self {
         self.style_mut().padding.left = padding.into();
+        self
+    }
+
+    fn m(mut self, margin: impl Into<Pixels>) -> Self {
+        self.style_mut().margin = Edges::all(margin.into());
+        self
+    }
+
+    fn mt(mut self, margin: impl Into<Pixels>) -> Self {
+        self.style_mut().margin.top = margin.into();
+        self
+    }
+
+    fn mr(mut self, margin: impl Into<Pixels>) -> Self {
+        self.style_mut().margin.right = margin.into();
+        self
+    }
+
+    fn mb(mut self, margin: impl Into<Pixels>) -> Self {
+        self.style_mut().margin.bottom = margin.into();
+        self
+    }
+
+    fn ml(mut self, margin: impl Into<Pixels>) -> Self {
+        self.style_mut().margin.left = margin.into();
         self
     }
 

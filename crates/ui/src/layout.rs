@@ -1,5 +1,6 @@
 use crate::{
-    Display, FlexDirection, FrameArena, Length, NodeId, NodeKind, Point, Rect, Size, Style, px,
+    AlignItems, Display, Edges, FlexDirection, FrameArena, JustifyContent, Length, NodeId,
+    NodeKind, Pixels, Point, Rect, Size, Style, px,
 };
 
 pub trait TextMeasurer {
@@ -80,13 +81,130 @@ fn vertical_padding(style: Style) -> i32 {
 
 fn content_available(style: Style, outer_available: Size) -> Size {
     Size::new(
-        px(non_negative(
-            outer_available.width.0 - horizontal_padding(style),
+        Pixels(non_negative(
+            outer_available
+                .width
+                .0
+                .saturating_sub(horizontal_chrome(style)),
         )),
-        px(non_negative(
-            outer_available.height.0 - vertical_padding(style),
+        Pixels(non_negative(
+            outer_available
+                .height
+                .0
+                .saturating_sub(vertical_chrome(style)),
         )),
     )
+}
+
+fn border_width(style: Style) -> i32 {
+    non_negative(style.border_width.0)
+}
+
+fn horizontal_chrome(style: Style) -> i32 {
+    non_negative(style.padding.left.0)
+        .saturating_add(non_negative(style.padding.right.0))
+        .saturating_add(border_width(style).saturating_mul(2))
+}
+
+fn vertical_chrome(style: Style) -> i32 {
+    non_negative(style.padding.top.0)
+        .saturating_add(non_negative(style.padding.bottom.0))
+        .saturating_add(border_width(style).saturating_mul(2))
+}
+
+fn resolve_dimension(
+    length: Length,
+    minimum: Option<Pixels>,
+    maximum: Option<Pixels>,
+    available: i32,
+    natural: i32,
+) -> i32 {
+    let available = non_negative(available);
+    let base = match length {
+        Length::Auto => non_negative(natural),
+        Length::Pixels(value) => non_negative(value.0),
+        Length::Fill => available,
+    }
+    .min(available);
+
+    let minimum = minimum
+        .map(|value| non_negative(value.0))
+        .unwrap_or(0)
+        .min(available);
+    let maximum = maximum
+        .map(|value| non_negative(value.0))
+        .unwrap_or(available)
+        .min(available)
+        .max(minimum);
+
+    base.clamp(minimum, maximum)
+}
+
+fn measurement_limit(length: Length, maximum: Option<Pixels>, available: i32) -> i32 {
+    let available = non_negative(available);
+    let requested = match length {
+        Length::Auto => available,
+        Length::Pixels(value) => non_negative(value.0),
+        Length::Fill => available,
+    };
+
+    let maximum = maximum
+        .map(|value| non_negative(value.0))
+        .unwrap_or(available);
+
+    requested.min(maximum).min(available)
+}
+
+fn main_margin_start(margin: Edges<Pixels>, axis: Axis) -> i32 {
+    match axis {
+        Axis::Horizontal => non_negative(margin.left.0),
+        Axis::Vertical => non_negative(margin.top.0),
+    }
+}
+
+fn main_margin_end(margin: Edges<Pixels>, axis: Axis) -> i32 {
+    match axis {
+        Axis::Horizontal => non_negative(margin.right.0),
+        Axis::Vertical => non_negative(margin.bottom.0),
+    }
+}
+
+fn cross_margin_start(margin: Edges<Pixels>, axis: Axis) -> i32 {
+    match axis {
+        Axis::Horizontal => non_negative(margin.top.0),
+        Axis::Vertical => non_negative(margin.left.0),
+    }
+}
+
+fn cross_margin_end(margin: Edges<Pixels>, axis: Axis) -> i32 {
+    match axis {
+        Axis::Horizontal => non_negative(margin.bottom.0),
+        Axis::Vertical => non_negative(margin.right.0),
+    }
+}
+
+fn main_margin_total(margin: Edges<Pixels>, axis: Axis) -> i32 {
+    main_margin_start(margin, axis).saturating_add(main_margin_end(margin, axis))
+}
+
+fn cross_margin_total(margin: Edges<Pixels>, axis: Axis) -> i32 {
+    cross_margin_start(margin, axis).saturating_add(cross_margin_end(margin, axis))
+}
+
+fn child_constraint(
+    content_size: Size,
+    margin: Edges<Pixels>,
+    axis: Axis,
+    allocated_main: Option<i32>,
+) -> Size {
+    let main = allocated_main.unwrap_or_else(|| {
+        non_negative(main_size(content_size, axis).saturating_sub(main_margin_total(margin, axis)))
+    });
+    let cross = non_negative(
+        cross_size(content_size, axis).saturating_sub(cross_margin_total(margin, axis)),
+    );
+
+    size_from_axes(main, cross, axis)
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
@@ -151,23 +269,22 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     ) -> Size {
         let axis = flow_axis(style);
 
-        let width_limit = match style.width {
-            Length::Pixels(value) => non_negative(value.0).min(non_negative(available.width.0)),
-            Length::Fill => non_negative(available.width.0),
-            Length::Auto => non_negative(available.width.0),
-        };
+        let outer_limit = Size::new(
+            px(measurement_limit(
+                style.width,
+                style.max_width,
+                available.width.0,
+            )),
+            px(measurement_limit(
+                style.height,
+                style.max_height,
+                available.height.0,
+            )),
+        );
 
-        let height_limit = match style.height {
-            Length::Pixels(value) => non_negative(value.0).min(non_negative(available.height.0)),
-            Length::Fill => non_negative(available.height.0),
-            Length::Auto => non_negative(available.height.0),
-        };
-
-        let outer_limit = Size::new(px(width_limit), px(height_limit));
         let child_available = content_available(style, outer_limit);
         let child_count = self.child_count(node);
         let gap = non_negative(style.gap.0);
-        let available_main = main_size(child_available, axis);
 
         let total_gap = if child_count > 1 {
             gap.saturating_mul((child_count - 1) as i32)
@@ -175,32 +292,43 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             0
         };
 
+        let available_main = main_size(child_available, axis);
         let mut fixed_main = 0i32;
         let mut fill_count = 0;
+        let mut fill_margins = 0i32;
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
+            let margin = self.node_margin(child);
             if self.node_requested_length(child, axis) == Length::Fill {
                 fill_count += 1;
+                fill_margins = fill_margins.saturating_add(main_margin_total(margin, axis));
             } else {
-                let measured = self.measure_node(child, child_available, text_measurer);
-                fixed_main = fixed_main.saturating_add(main_size(measured, axis));
+                let constraint = child_constraint(child_available, margin, axis, None);
+                let measured = self.measure_node(child, constraint, text_measurer);
+                fixed_main = fixed_main
+                    .saturating_add(main_size(measured, axis))
+                    .saturating_add(main_margin_total(margin, axis));
             }
 
             current = self.node(child).next_sibling;
         }
 
-        let remaining = non_negative(available_main - fixed_main - total_gap);
-
-        let base_fill = if fill_count == 0 {
+        let fill_space = non_negative(
+            available_main
+                .saturating_add(fixed_main)
+                .saturating_add(fill_margins)
+                .saturating_add(total_gap),
+        );
+        let fill_base = if fill_count == 0 {
             0
         } else {
-            remaining / fill_count
+            fill_space / fill_count
         };
         let fill_remainder = if fill_count == 0 {
             0
         } else {
-            remaining % fill_count
+            fill_space % fill_count
         };
 
         let mut natural_main = 0i32;
@@ -209,8 +337,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
+            let margin = self.node_margin(child);
             let is_fill = self.node_requested_length(child, axis) == Length::Fill;
-            let child_constraint = if is_fill {
+
+            let allocated_main = if is_fill {
                 let extra = if fill_index < fill_remainder as usize {
                     1
                 } else {
@@ -219,38 +349,47 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
                 fill_index += 1;
 
-                size_from_axes(base_fill + extra, cross_size(child_available, axis), axis)
+                Some(fill_base.saturating_add(extra))
             } else {
-                child_available
+                None
             };
-            let measured = self.measure_node(child, child_constraint, text_measurer);
-            natural_main = natural_main.saturating_add(main_size(measured, axis));
-            natural_cross = natural_cross.max(cross_size(measured, axis));
+
+            let constraint = child_constraint(child_available, margin, axis, allocated_main);
+            let measured = self.measure_node(child, constraint, text_measurer);
+
+            natural_main = natural_main
+                .saturating_add(main_size(measured, axis))
+                .saturating_add(main_margin_total(margin, axis));
+            natural_cross = natural_cross
+                .max(cross_size(measured, axis).saturating_add(cross_margin_total(margin, axis)));
+
             current = self.node(child).next_sibling;
         }
 
-        if child_count > 1 {
-            natural_main = natural_main.saturating_add(total_gap);
-        }
+        natural_main = natural_main.saturating_add(total_gap);
 
         let natural_content = size_from_axes(natural_main, natural_cross, axis);
         let natural_width = natural_content
             .width
             .0
-            .saturating_add(horizontal_padding(style));
+            .saturating_add(horizontal_chrome(style));
         let natural_height = natural_content
             .height
             .0
-            .saturating_add(vertical_padding(style));
+            .saturating_add(vertical_chrome(style));
 
         Size::new(
-            px(resolve_length(
+            Pixels(resolve_dimension(
                 style.width,
+                style.min_width,
+                style.max_width,
                 available.width.0,
                 natural_width,
             )),
-            px(resolve_length(
+            Pixels(resolve_dimension(
                 style.height,
+                style.min_height,
+                style.max_height,
                 available.height.0,
                 natural_height,
             )),
@@ -292,23 +431,31 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         outer_size: Size,
         text_measurer: &dyn TextMeasurer,
     ) {
-        let axis = flow_axis(style);
-        let left = non_negative(style.padding.left.0);
-        let top = non_negative(style.padding.top.0);
-        let right = non_negative(style.padding.right.0);
-        let bottom = non_negative(style.padding.bottom.0);
-
-        let content_size = Size::new(
-            px(non_negative(outer_size.width.0 - left - right)),
-            px(non_negative(outer_size.height.0 - top - bottom)),
-        );
-        let content_origin = Point::new(px(origin.x.0 + left), px(origin.y.0 + top));
-
         let child_count = self.child_count(node);
         if child_count == 0 {
             return;
         }
 
+        let axis = flow_axis(style);
+        let border = border_width(style);
+        let content_origin = Point::new(
+            Pixels(
+                origin
+                    .x
+                    .0
+                    .saturating_add(border)
+                    .saturating_add(non_negative(style.padding.left.0)),
+            ),
+            Pixels(
+                origin
+                    .y
+                    .0
+                    .saturating_add(border)
+                    .saturating_add(non_negative(style.padding.top.0)),
+            ),
+        );
+
+        let content_size = content_available(style, outer_size);
         let gap = non_negative(style.gap.0);
         let total_gap = if child_count > 1 {
             gap.saturating_mul((child_count - 1) as i32)
@@ -317,34 +464,95 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         };
 
         let available_main = main_size(content_size, axis);
+        let available_cross = cross_size(content_size, axis);
 
-        let mut fixed_main: i32 = 0;
+        let mut fixed_main = 0i32;
         let mut fill_count = 0;
+        let mut fill_margins = 0i32;
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
+            let margin = self.node_margin(child);
             if self.node_requested_length(child, axis) == Length::Fill {
                 fill_count += 1;
+                fill_margins = fill_margins.saturating_add(main_margin_total(margin, axis));
             } else {
-                let measured = self.measure_node(child, content_size, text_measurer);
-                fixed_main = fixed_main.saturating_add(main_size(measured, axis));
+                let constraint = child_constraint(content_size, margin, axis, None);
+                let measured = self.measure_node(child, constraint, text_measurer);
+
+                fixed_main = fixed_main
+                    .saturating_add(main_size(measured, axis))
+                    .saturating_add(main_margin_total(margin, axis));
             }
 
             current = self.node(child).next_sibling;
         }
 
-        let remaining = non_negative(available_main - fixed_main - total_gap);
+        let fill_space = non_negative(
+            available_main
+                .saturating_sub(fixed_main)
+                .saturating_sub(fill_margins)
+                .saturating_sub(total_gap),
+        );
 
-        let base_fill = if fill_count == 0 {
+        let fill_base = if fill_count == 0 {
             0
         } else {
-            remaining / fill_count
+            fill_space / fill_count as i32
         };
         let fill_remainder = if fill_count == 0 {
             0
         } else {
-            remaining % fill_count
+            fill_space % fill_count as i32
         };
+
+        let mut occupied_main = total_gap;
+        let mut fill_index = 0;
+        let mut current = self.node(node).first_child;
+
+        while let Some(child) = current {
+            let margin = self.node_margin(child);
+            let is_fill = self.node_requested_length(child, axis) == Length::Fill;
+
+            let allocated_main = if is_fill {
+                let extra = if fill_index < fill_remainder as usize {
+                    1
+                } else {
+                    0
+                };
+
+                fill_index += 1;
+
+                Some(fill_base.saturating_add(extra))
+            } else {
+                None
+            };
+
+            let constraint = child_constraint(content_size, margin, axis, allocated_main);
+            let measured = self.measure_node(child, constraint, text_measurer);
+
+            occupied_main = occupied_main
+                .saturating_add(main_size(measured, axis))
+                .saturating_add(main_margin_total(margin, axis));
+            current = self.node(child).next_sibling;
+        }
+
+        let free_main = non_negative(available_main.saturating_sub(occupied_main));
+
+        let (leading_main, between_extra, between_remainder) = match style.justify_content {
+            JustifyContent::Start => (0, 0, 0),
+            JustifyContent::Center => (free_main / 2, 0, 0),
+            JustifyContent::End => (free_main, 0, 0),
+            JustifyContent::Between => {
+                if child_count > 1 {
+                    let spaces = (child_count - 1) as i32;
+                    (0, free_main / spaces, free_main % spaces)
+                } else {
+                    (0, 0, 0)
+                }
+            }
+        };
+
         let content_main_origin = match axis {
             Axis::Horizontal => content_origin.x.0,
             Axis::Vertical => content_origin.y.0,
@@ -354,15 +562,17 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             Axis::Vertical => content_origin.x.0,
         };
 
-        let mut cursor = content_main_origin;
+        let mut cursor = content_main_origin.saturating_add(leading_main);
         let mut fill_index = 0;
+        let mut child_index = 0;
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
             let next = self.node(child).next_sibling;
+            let margin = self.node_margin(child);
             let is_fill = self.node_requested_length(child, axis) == Length::Fill;
 
-            let child_available = if is_fill {
+            let allocated_main = if is_fill {
                 let extra = if fill_index < fill_remainder as usize {
                     1
                 } else {
@@ -371,19 +581,43 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
                 fill_index += 1;
 
-                size_from_axes(base_fill + extra, cross_size(content_size, axis), axis)
+                Some(fill_base.saturating_add(extra))
             } else {
-                content_size
+                None
             };
 
-            let child_origin = point_from_axes(cursor, content_cross_origin, axis);
-            let child_size = self.layout_node(child, child_origin, child_available, text_measurer);
+            let constraint = child_constraint(content_size, margin, axis, allocated_main);
+            let measured = self.measure_node(child, constraint, text_measurer);
+            let child_outer_cross =
+                cross_size(measured, axis).saturating_add(cross_margin_total(margin, axis));
 
-            cursor = cursor.saturating_add(main_size(child_size, axis));
+            let cross_free = non_negative(available_cross.saturating_sub(child_outer_cross));
+            let cross_offset = match style.align_items {
+                AlignItems::Start => 0,
+                AlignItems::Center => cross_free / 2,
+                AlignItems::End => cross_free,
+            };
+
+            let child_main = cursor.saturating_add(main_margin_start(margin, axis));
+            let child_cross = content_cross_origin
+                .saturating_add(cross_offset)
+                .saturating_add(cross_margin_start(margin, axis));
+            let child_origin = point_from_axes(child_main, child_cross, axis);
+            let child_size = self.layout_node(child, child_origin, constraint, text_measurer);
+
+            cursor = cursor
+                .saturating_add(main_margin_start(margin, axis))
+                .saturating_add(main_size(child_size, axis))
+                .saturating_add(main_margin_end(margin, axis));
+
             if next.is_some() {
-                cursor = cursor.saturating_add(gap);
+                cursor = cursor.saturating_add(gap).saturating_add(between_extra);
+                if child_index < between_remainder as usize {
+                    cursor = cursor.saturating_add(1);
+                }
             }
 
+            child_index += 1;
             current = next;
         }
     }
@@ -395,6 +629,40 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         self.layout_node(root, Point::ZERO, viewport, text_measurer)
+    }
+
+    fn node_margin(&self, node: NodeId) -> Edges<Pixels> {
+        match self.node(node).kind {
+            NodeKind::Div { .. } => {
+                self.node(node)
+                    .style()
+                    .expect("div node must have style")
+                    .margin
+            }
+            NodeKind::Text { .. } => Edges::all(px(0)),
+            NodeKind::Entity { .. } => match self.node(node).first_child {
+                Some(child) => self.node_margin(child),
+                None => Edges::all(px(0)),
+            },
+        }
+    }
+
+    fn child_constraint(
+        content_size: Size,
+        margin: Edges<Pixels>,
+        axis: Axis,
+        allocated_main: Option<i32>,
+    ) -> Size {
+        let main = allocated_main.unwrap_or_else(|| {
+            non_negative(
+                main_size(content_size, axis).saturating_sub(main_margin_total(margin, axis)),
+            )
+        });
+        let cross = non_negative(
+            cross_size(content_size, axis).saturating_sub(cross_margin_total(margin, axis)),
+        );
+
+        size_from_axes(main, cross, axis)
     }
 }
 
@@ -648,5 +916,139 @@ mod tests {
 
         assert_eq!(size, Size::new(px(320), px(240),));
         assert_bounds(frame.bounds(root), 0, 0, 320, 240);
+    }
+
+    #[test]
+    fn items_center_centers_children_on_cross_axis() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .flex()
+                    .items_center()
+                    .w(px(100))
+                    .h(px(60))
+                    .child(div().w(px(20)).h(px(20))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(60)), &measurer);
+
+        let child = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(child), 0, 20, 20, 20);
+    }
+
+    #[test]
+    fn justify_center_centers_children_on_main_axis() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .flex()
+                    .justify_center()
+                    .w(px(100))
+                    .h(px(30))
+                    .gap(px(10))
+                    .child(div().w(px(20)).h(px(10)))
+                    .child(div().w(px(20)).h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(30)), &measurer);
+
+        let first = frame.node(root).first_child.unwrap();
+        let second = frame.node(first).next_sibling.unwrap();
+
+        assert_bounds(frame.bounds(first), 25, 0, 20, 10);
+        assert_bounds(frame.bounds(second), 55, 0, 20, 10);
+    }
+
+    #[test]
+    fn justify_between_distributes_remaining_space() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .flex()
+                    .justify_between()
+                    .w(px(100))
+                    .h(px(30))
+                    .child(div().w(px(20)).h(px(10)))
+                    .child(div().w(px(20)).h(px(10)))
+                    .child(div().w(px(20)).h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(30)), &measurer);
+
+        let first = frame.node(root).first_child.unwrap();
+        let second = frame.node(first).next_sibling.unwrap();
+        let third = frame.node(second).next_sibling.unwrap();
+
+        assert_bounds(frame.bounds(first), 0, 0, 20, 10);
+        assert_bounds(frame.bounds(second), 40, 0, 20, 10);
+        assert_bounds(frame.bounds(third), 80, 0, 20, 10);
+    }
+
+    #[test]
+    fn margins_participate_in_flex_flow() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .flex()
+                    .w(px(100))
+                    .h(px(40))
+                    .child(div().w(px(20)).h(px(10)).ml(px(5)).mr(px(7)))
+                    .child(div().w(px(20)).h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(40)), &measurer);
+
+        let first = frame.node(root).first_child.unwrap();
+        let second = frame.node(first).next_sibling.unwrap();
+
+        assert_bounds(frame.bounds(first), 5, 0, 20, 10);
+        assert_bounds(frame.bounds(second), 32, 0, 20, 10);
+    }
+
+    #[test]
+    fn min_width_expands_auto_element() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame.mount(div().min_w(px(80)).child("Hi")).unwrap();
+
+        frame.layout(root, Size::new(px(200), px(100)), &measurer);
+
+        assert_eq!(frame.bounds(root).width(), px(80));
+    }
+
+    #[test]
+    fn max_width_limits_auto_element() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .max_w(px(40))
+                    .child("This is much wider than forty pixels"),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(200), px(100)), &measurer);
+
+        assert_eq!(frame.bounds(root).width(), px(40));
     }
 }
