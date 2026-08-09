@@ -17,6 +17,10 @@ impl PointerState {
         self.pressed = element;
     }
 
+    pub(crate) fn pressed(&self) -> Option<ElementStateId> {
+        self.pressed
+    }
+
     pub(crate) fn take_pressed(&mut self) -> Option<ElementStateId> {
         self.pressed.take()
     }
@@ -34,14 +38,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         while let Some(node_id) = current {
             let node = self.node(node_id);
             if node.layout.bounds.contains(position)
-                && let (Some(element), Some(listener)) =
-                    (node.element_state_id, node.interaction.click)
+                && let Some(target) = self.click_target_from_node(node_id)
             {
-                hit = Some(ClickTarget {
-                    node: node_id,
-                    element,
-                    listener,
-                })
+                hit = Some(target)
             }
 
             current = self.next_depth_first_node(node_id);
@@ -49,12 +48,129 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         hit
     }
+
+    fn click_target_from_node(&self, node_id: NodeId) -> Option<ClickTarget> {
+        let node = self.node(node_id);
+        let element = node.element_state_id?;
+        let listener = node.interaction.click?;
+
+        Some(ClickTarget {
+            node: node_id,
+            element,
+            listener,
+        })
+    }
+
+    pub(crate) fn click_target_for_element(
+        &self,
+        root: NodeId,
+        element: ElementStateId,
+    ) -> Option<ClickTarget> {
+        let mut current = Some(root);
+        while let Some(node_id) = current {
+            if let Some(target) = self.click_target_from_node(node_id)
+                && target.element == element
+            {
+                return Some(target);
+            }
+
+            current = self.next_depth_first_node(node_id);
+        }
+
+        None
+    }
+
+    pub(crate) fn next_click_traget(
+        &self,
+        root: NodeId,
+        current_element: Option<ElementStateId>,
+    ) -> Option<ClickTarget> {
+        let first = self.first_click_target(root)?;
+        let Some(current_element) = current_element else {
+            return Some(first);
+        };
+
+        let mut found_current = false;
+        let mut current = Some(root);
+
+        while let Some(node_id) = current {
+            if let Some(target) = self.click_target_from_node(node_id) {
+                if found_current {
+                    return Some(target);
+                }
+                if target.element == current_element {
+                    found_current = true
+                }
+            }
+
+            current = self.next_depth_first_node(node_id);
+        }
+
+        Some(first)
+    }
+
+    fn first_click_target(&self, root: NodeId) -> Option<ClickTarget> {
+        let mut current = Some(root);
+
+        while let Some(node_id) = current {
+            if let Some(target) = self.click_target_from_node(node_id) {
+                return Some(target);
+            }
+
+            current = self.next_depth_first_node(node_id);
+        }
+
+        None
+    }
+
+    fn last_click_target(&self, root: NodeId) -> Option<ClickTarget> {
+        let mut current = Some(root);
+        let mut last = None;
+
+        while let Some(node_id) = current {
+            if let Some(target) = self.click_target_from_node(node_id) {
+                last = Some(target);
+            }
+
+            current = self.next_depth_first_node(node_id);
+        }
+
+        last
+    }
+
+    pub(crate) fn previous_click_target(
+        &self,
+        root: NodeId,
+        current_element: Option<ElementStateId>,
+    ) -> Option<ClickTarget> {
+        let last = self.last_click_target(root)?;
+        let Some(current_element) = current_element else {
+            return Some(last);
+        };
+
+        let mut previous = None;
+        let mut current = Some(root);
+
+        while let Some(node_id) = current {
+            if let Some(target) = self.click_target_from_node(node_id) {
+                if target.element == current_element {
+                    return previous.or(Some(last));
+                }
+
+                previous = Some(target);
+            }
+
+            current = self.next_depth_first_node(node_id);
+        }
+
+        Some(last)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use core::cell::Cell;
-    use std::rc::Rc;
+    use std::{eprintln, rc::Rc};
 
     use crate::*;
 
@@ -272,5 +388,341 @@ mod tests {
 
         assert!(runtime.pointer_up(Point::new(px(20), px(20),)).unwrap());
         assert_eq!(clicks.get(), 1);
+    }
+
+    struct FocusApp {
+        first: Rc<Cell<u32>>,
+        second: Rc<Cell<u32>>,
+        third: Rc<Cell<u32>>,
+    }
+
+    impl FocusApp {
+        fn first_clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+            self.first.set(self.first.get().saturating_add(1));
+            cx.notify();
+        }
+
+        fn second_clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+            self.second.set(self.second.get().saturating_add(1));
+            cx.notify();
+        }
+
+        fn third_clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+            self.third.set(self.third.get().saturating_add(1));
+            cx.notify();
+        }
+    }
+
+    impl Render for FocusApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            let first = cx.listener(Self::first_clicked);
+            let second = cx.listener(Self::second_clicked);
+            let third = cx.listener(Self::third_clicked);
+
+            div()
+                .w_full()
+                .h_full()
+                .gap(px(5))
+                .child(
+                    div()
+                        .id("first")
+                        .w(px(80))
+                        .h(px(20))
+                        .on_click(first)
+                        .child("First"),
+                )
+                .child(
+                    div()
+                        .id("not-focusable")
+                        .w(px(80))
+                        .h(px(20))
+                        .child("Not interactive"),
+                )
+                .child(
+                    div()
+                        .id("second")
+                        .w(px(80))
+                        .h(px(20))
+                        .on_click(second)
+                        .child("Second"),
+                )
+                .child(
+                    div()
+                        .id("third")
+                        .w(px(80))
+                        .h(px(20))
+                        .on_click(third)
+                        .child("Third"),
+                )
+        }
+    }
+
+    #[test]
+    fn focus_next_moves_through_clickable_elements() {
+        let first = Rc::new(Cell::new(0));
+        let second = Rc::new(Cell::new(0));
+        let third = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let first = first.clone();
+                let second = second.clone();
+                let third = third.clone();
+
+                move |_| FocusApp {
+                    first,
+                    second,
+                    third,
+                }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert!(runtime.activate_focused().unwrap());
+        assert_eq!(first.get(), 1);
+        assert_eq!(second.get(), 0);
+        assert_eq!(third.get(), 0);
+
+        runtime.take_dirty();
+
+        assert!(runtime.focus_next());
+        assert!(runtime.activate_focused().unwrap());
+        assert_eq!(first.get(), 1);
+        assert_eq!(second.get(), 1);
+        assert_eq!(third.get(), 0);
+    }
+
+    #[test]
+    fn focus_next_wraps_to_first_element() {
+        let first = Rc::new(Cell::new(0));
+        let second = Rc::new(Cell::new(0));
+        let third = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let first = first.clone();
+                let second = second.clone();
+                let third = third.clone();
+
+                move |_| FocusApp {
+                    first,
+                    second,
+                    third,
+                }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert!(runtime.focus_next());
+        assert!(runtime.focus_next());
+        assert!(runtime.focus_next());
+        assert!(runtime.activate_focused().unwrap());
+        assert_eq!(first.get(), 1);
+        assert_eq!(second.get(), 0);
+        assert_eq!(third.get(), 0);
+    }
+
+    #[test]
+    fn focus_previous_wraps_to_last_element() {
+        let first = Rc::new(Cell::new(0));
+        let second = Rc::new(Cell::new(0));
+        let third = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let first = first.clone();
+                let second = second.clone();
+                let third = third.clone();
+
+                move |_| FocusApp {
+                    first,
+                    second,
+                    third,
+                }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_previous());
+        assert!(runtime.activate_focused().unwrap());
+        assert_eq!(first.get(), 0);
+        assert_eq!(second.get(), 0);
+        assert_eq!(third.get(), 1);
+    }
+
+    #[test]
+    fn focus_survives_rebuild_when_element_still_exists() {
+        let first = Rc::new(Cell::new(0));
+        let second = Rc::new(Cell::new(0));
+        let third = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let first = first.clone();
+                let second = second.clone();
+                let third = third.clone();
+
+                move |_| FocusApp {
+                    first,
+                    second,
+                    third,
+                }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert!(runtime.focus_next());
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.activate_focused().unwrap());
+        assert_eq!(first.get(), 0);
+        assert_eq!(second.get(), 1);
+        assert_eq!(third.get(), 0);
+    }
+
+    #[test]
+    fn focused_activation_uses_current_frame_listener() {
+        let first = Rc::new(Cell::new(0));
+        let second = Rc::new(Cell::new(0));
+        let third = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let first = first.clone();
+                let second = second.clone();
+                let third = third.clone();
+
+                move |_| FocusApp {
+                    first,
+                    second,
+                    third,
+                }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.activate_focused().unwrap());
+        assert_eq!(first.get(), 1);
+    }
+
+    #[test]
+    fn successful_pointer_click_establishes_focus() {
+        let first = Rc::new(Cell::new(0));
+        let second = Rc::new(Cell::new(0));
+        let third = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let first = first.clone();
+                let second = second.clone();
+                let third = third.clone();
+
+                move |_| FocusApp {
+                    first,
+                    second,
+                    third,
+                }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.pointer_down(Point::new(px(10), px(55),)));
+        assert!(runtime.pointer_up(Point::new(px(10), px(55),)).unwrap());
+        assert_eq!(second.get(), 1);
+
+        runtime.take_dirty();
+
+        assert!(runtime.focus_next());
+        assert!(runtime.activate_focused().unwrap());
+        assert_eq!(third.get(), 1);
+    }
+
+    struct EmptyApp;
+    impl Render for EmptyApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().w_full().h_full().child("Nothing interactive")
+        }
+    }
+
+    #[test]
+    fn focus_is_cleared_when_element_disappears() {
+        let first = Rc::new(Cell::new(0));
+        let second = Rc::new(Cell::new(0));
+        let third = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let first = first.clone();
+                let second = second.clone();
+                let third = third.clone();
+
+                move |_| FocusApp {
+                    first,
+                    second,
+                    third,
+                }
+            })
+            .unwrap();
+
+        let empty = runtime.create(|_| EmptyApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+
+        runtime.rebuild(empty).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(!runtime.activate_focused().unwrap());
     }
 }

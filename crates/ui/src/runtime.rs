@@ -5,7 +5,7 @@ use embedded_graphics::{draw_target::DrawTarget, pixelcolor::Rgb888};
 use crate::{
     ClickEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Listener, MountError,
     NodeId, Point, Render, Size, TextMeasurer,
-    element_state::{ElementStateTable, IdentityError},
+    element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
     input::PointerState,
     listener_store::{ListenerArena, ListenerInvokeError},
@@ -47,6 +47,7 @@ pub struct Runtime<
     frame_generation: u32,
     root: Option<NodeId>,
     pointer: PointerState,
+    focused: Option<ElementStateId>,
 }
 
 impl<
@@ -69,6 +70,7 @@ impl<
             frame_generation: 0,
             root: None,
             pointer: PointerState::default(),
+            focused: None,
         }
     }
 }
@@ -128,6 +130,7 @@ impl<
             Ok(root_node) => {
                 self.element_states.sweep(generation);
                 self.root = Some(root_node);
+                self.reconcile_interaction_state();
 
                 Ok(root_node)
             }
@@ -140,6 +143,7 @@ impl<
                 self.listeners.reset();
                 self.pointer.cancel();
                 self.root = None;
+                self.focused = None;
 
                 Err(error)
             }
@@ -244,6 +248,8 @@ impl<
             return Ok(false);
         }
 
+        self.focused = Some(target.element);
+
         let listener = Listener::from_id(target.listener);
         self.listeners
             .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
@@ -253,5 +259,73 @@ impl<
 
     pub fn pointer_cancel(&mut self) {
         self.pointer.cancel();
+    }
+
+    fn reconcile_interaction_state(&mut self) {
+        if let Some(focused) = self.focused
+            && !self.element_states.contains(focused)
+        {
+            self.focused = None;
+        }
+
+        if let Some(pressed) = self.pointer.pressed()
+            && !self.element_states.contains(pressed)
+        {
+            self.pointer.cancel();
+        }
+    }
+
+    pub fn focus_next(&mut self) -> bool {
+        let Some(root) = self.root else {
+            self.focused = None;
+            return false;
+        };
+        let Some(target) = self.frame.next_click_traget(root, self.focused) else {
+            self.focused = None;
+            return false;
+        };
+
+        self.focused = Some(target.element);
+
+        true
+    }
+
+    pub fn focus_previous(&mut self) -> bool {
+        let Some(root) = self.root else {
+            self.focused = None;
+            return false;
+        };
+        let Some(target) = self.frame.previous_click_target(root, self.focused) else {
+            self.focused = None;
+            return false;
+        };
+
+        self.focused = Some(target.element);
+
+        true
+    }
+
+    pub fn clear_focus(&mut self) {
+        self.focused = None;
+    }
+
+    pub fn activate_focused(&mut self) -> Result<bool, ListenerInvokeError> {
+        let Some(root) = self.root else {
+            self.focused = None;
+            return Ok(false);
+        };
+        let Some(focused) = self.focused else {
+            return Ok(false);
+        };
+        let Some(target) = self.frame.click_target_for_element(root, focused) else {
+            self.focused = None;
+            return Ok(false);
+        };
+
+        let listener = Listener::from_id(target.listener);
+        self.listeners
+            .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
+
+        Ok(true)
     }
 }
