@@ -1,5 +1,5 @@
 use crate::{
-    FrameArena, Invalidation, ListenerId, NodeId, Point,
+    FrameArena, Invalidation, ListenerId, NodeId, Offset, Point,
     element_state::ElementStateId,
     px,
     scroll::{ScrollAxes, ScrollStateTable},
@@ -16,7 +16,7 @@ pub(crate) struct ScrollTarget {
     pub(crate) node: NodeId,
     pub(crate) element: ElementStateId,
     pub(crate) axes: ScrollAxes,
-    pub(crate) max_offset: Point,
+    pub(crate) max_offset: Offset,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -220,7 +220,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         hit
     }
 
-    pub(crate) fn set_scroll_offset(&mut self, node: NodeId, offset: Point) {
+    pub(crate) fn set_scroll_offset(&mut self, node: NodeId, offset: Offset) {
         self.node_mut(node).interaction.scroll_offset = offset;
     }
 
@@ -241,17 +241,17 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
             let maximum = self.max_scroll_offset(node_id);
             let current = states.offset(element);
-            let next = Point::new(
-                px(if axes.horizontal() {
-                    current.x.0.clamp(0, maximum.x.0)
+            let next = Offset::new(
+                if axes.horizontal() {
+                    current.x.clamp(px(0), maximum.x)
                 } else {
-                    0
-                }),
-                px(if axes.vertical() {
-                    current.y.0.clamp(0, maximum.y.0)
+                    px(0)
+                },
+                if axes.vertical() {
+                    current.y.clamp(px(0), maximum.y)
                 } else {
-                    0
-                }),
+                    px(0)
+                },
             );
 
             states.set_offset(element, next);
@@ -276,12 +276,12 @@ mod tests {
         fn measure(&self, text: &str, max_size: Size) -> Size {
             let width = (text.chars().count() as i32)
                 .saturating_mul(6)
-                .min(max_size.width.0.max(0));
+                .min(max_size.width.non_negative().get());
 
             let height = if text.is_empty() {
                 0
             } else {
-                10.min(max_size.height.0.max(0))
+                10.min(max_size.height.non_negative().get())
             };
 
             Size::new(px(width), px(height))

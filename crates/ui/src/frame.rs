@@ -4,7 +4,7 @@ use heapless::Vec;
 
 use crate::{
     Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId,
-    Point, Rect, StatefulInteractivity, Style, StylePatch,
+    Offset, Rect, StatefulInteractivity, Style, StylePatch,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     listener_store::ListenerStore,
@@ -97,7 +97,7 @@ pub(crate) struct NodeInteraction {
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
     pub(crate) scroll_axes: ScrollAxes,
-    pub(crate) scroll_offset: Point,
+    pub(crate) scroll_offset: Offset,
 }
 
 impl From<StatefulInteractivity> for NodeInteraction {
@@ -107,7 +107,7 @@ impl From<StatefulInteractivity> for NodeInteraction {
             focused_style: value.focused_style,
             pressed_style: value.pressed_style,
             scroll_axes: value.scroll_axes,
-            scroll_offset: Point::ZERO,
+            scroll_offset: Offset::ZERO,
         }
     }
 }
@@ -360,7 +360,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             node.interaction.scroll_offset = node
                 .element_state_id
                 .map(|id| states.offset(id))
-                .unwrap_or(Point::ZERO);
+                .unwrap_or(Offset::ZERO);
         }
     }
 }

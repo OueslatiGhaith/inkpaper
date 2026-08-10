@@ -1,6 +1,5 @@
 use crate::{
-    Color, FrameArena, NodeId, NodeKind, Pixels, Point, Rect, TextMeasurer, px,
-    visual::{ClipRegion, VisualNode},
+    Color, FrameArena, NodeId, NodeKind, Pixels, Point, Rect, TextMeasurer, visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +50,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         match node.kind {
             NodeKind::Div { .. } => {
                 let style = node.style().expect("div node must have style");
-                let border = match (style.border_width.0 > 0, style.border_color) {
+                let border = match (style.border_width.is_positive(), style.border_color) {
                     (true, Some(color)) => Some(BorderPaint {
                         width: style.border_width,
                         color,
@@ -116,11 +115,11 @@ mod tests {
         fn measure(&self, text: &str, max_size: Size) -> Size {
             let width = (text.chars().count() as i32)
                 .saturating_mul(6)
-                .min(max_size.width.0.max(0));
+                .min(max_size.width.non_negative().get());
             let height = if text.is_empty() {
                 0
             } else {
-                10.min(max_size.height.0.max(0))
+                10.min(max_size.height.non_negative().get())
             };
 
             Size::new(px(width), px(height))

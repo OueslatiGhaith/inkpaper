@@ -34,12 +34,12 @@ mod tests {
         fn measure(&self, text: &str, max_size: Size) -> Size {
             let width = (text.chars().count() as i32)
                 .saturating_mul(6)
-                .min(max_size.width.0.max(0));
+                .min(max_size.width.non_negative().get());
 
             let height = if text.is_empty() {
                 0
             } else {
-                10.min(max_size.height.0.max(0))
+                10.min(max_size.height.non_negative().get())
             };
 
             Size::new(px(width), px(height))

@@ -55,7 +55,7 @@ pub use units::*;
 pub mod prelude {
     // TODO: fill predlude
     pub use crate::{
-        ClickEvent, Color, Context, Entity, InteractiveElement, IntoElement, Invalidation,
+        ClickEvent, Color, Context, Entity, InteractiveElement, IntoElement, Invalidation, Offset,
         ParentElement, Pixels, Point, Rect, Render, Runtime, Size, StatefulInteractiveElementExt,
         Styled, div, px,
     };

@@ -1,6 +1,6 @@
 use crate::{
     AlignItems, Display, Edges, FlexBasis, FlexDirection, FrameArena, JustifyContent, Length,
-    NodeId, NodeKind, Pixels, Point, Rect, Size, Style, px,
+    NodeId, NodeKind, Offset, Pixels, Point, Rect, Size, Style, px,
 };
 
 pub trait TextMeasurer {
@@ -13,35 +13,31 @@ enum Axis {
     Vertical,
 }
 
-fn non_negative(value: i32) -> i32 {
-    value.max(0)
-}
-
-fn main_size(size: Size, axis: Axis) -> i32 {
+fn main_size(size: Size, axis: Axis) -> Pixels {
     match axis {
-        Axis::Horizontal => size.width.0,
-        Axis::Vertical => size.height.0,
+        Axis::Horizontal => size.width,
+        Axis::Vertical => size.height,
     }
 }
 
-fn cross_size(size: Size, axis: Axis) -> i32 {
+fn cross_size(size: Size, axis: Axis) -> Pixels {
     match axis {
-        Axis::Horizontal => size.height.0,
-        Axis::Vertical => size.width.0,
+        Axis::Horizontal => size.height,
+        Axis::Vertical => size.width,
     }
 }
 
-fn size_from_axes(main: i32, cross: i32, axis: Axis) -> Size {
+fn size_from_axes(main: Pixels, cross: Pixels, axis: Axis) -> Size {
     match axis {
-        Axis::Horizontal => Size::new(px(main), px(cross)),
-        Axis::Vertical => Size::new(px(cross), px(main)),
+        Axis::Horizontal => Size::new(main, cross),
+        Axis::Vertical => Size::new(cross, main),
     }
 }
 
-fn point_from_axes(main: i32, cross: i32, axis: Axis) -> Point {
+fn point_from_axes(main: Pixels, cross: Pixels, axis: Axis) -> Point {
     match axis {
-        Axis::Horizontal => Point::new(px(main), px(cross)),
-        Axis::Vertical => Point::new(px(cross), px(main)),
+        Axis::Horizontal => Point::new(main, cross),
+        Axis::Vertical => Point::new(cross, main),
     }
 }
 
@@ -64,108 +60,92 @@ fn flow_axis(style: Style) -> Axis {
 
 fn content_available(style: Style, outer_available: Size) -> Size {
     Size::new(
-        Pixels(non_negative(
-            outer_available
-                .width
-                .0
-                .saturating_sub(horizontal_chrome(style)),
-        )),
-        Pixels(non_negative(
-            outer_available
-                .height
-                .0
-                .saturating_sub(vertical_chrome(style)),
-        )),
+        (outer_available.width - horizontal_chrome(style)).non_negative(),
+        (outer_available.height - vertical_chrome(style)).non_negative(),
     )
 }
 
-fn border_width(style: Style) -> i32 {
-    non_negative(style.border_width.0)
+fn border_width(style: Style) -> Pixels {
+    style.border_width.non_negative()
 }
 
-fn horizontal_chrome(style: Style) -> i32 {
-    non_negative(style.padding.left.0)
-        .saturating_add(non_negative(style.padding.right.0))
-        .saturating_add(border_width(style).saturating_mul(2))
+fn horizontal_chrome(style: Style) -> Pixels {
+    style.padding.left.non_negative() + style.padding.right.non_negative() + border_width(style) * 2
 }
 
-fn vertical_chrome(style: Style) -> i32 {
-    non_negative(style.padding.top.0)
-        .saturating_add(non_negative(style.padding.bottom.0))
-        .saturating_add(border_width(style).saturating_mul(2))
+fn vertical_chrome(style: Style) -> Pixels {
+    style.padding.top.non_negative() + style.padding.bottom.non_negative() + border_width(style) * 2
 }
 
 fn resolve_dimension(
     length: Length,
     minimum: Option<Pixels>,
     maximum: Option<Pixels>,
-    available: i32,
-    natural: i32,
-) -> i32 {
-    let available = non_negative(available);
+    available: Pixels,
+    natural: Pixels,
+) -> Pixels {
+    let available = available.non_negative();
     let base = match length {
-        Length::Auto => non_negative(natural).min(available),
-        Length::Pixels(value) => non_negative(value.0),
+        Length::Auto => natural.non_negative().min(available),
+        Length::Pixels(value) => value.non_negative(),
         Length::Fill => available,
     };
 
-    let minimum = minimum.map(|value| non_negative(value.0)).unwrap_or(0);
+    let minimum = minimum.map(Pixels::non_negative).unwrap_or(px(0));
     let maximum = maximum
-        .map(|value| non_negative(value.0))
-        .unwrap_or(i32::MAX)
+        .map(Pixels::non_negative)
+        .unwrap_or(Pixels::MAX)
         .max(minimum);
 
     base.clamp(minimum, maximum)
 }
 
-fn measurement_limit(length: Length, maximum: Option<Pixels>, available: i32) -> i32 {
-    let available = non_negative(available);
+fn measurement_limit(length: Length, maximum: Option<Pixels>, available: Pixels) -> Pixels {
+    let available = available.non_negative();
     let requested = match length {
         Length::Auto => available,
-        Length::Pixels(value) => non_negative(value.0),
+        Length::Pixels(value) => value.non_negative(),
         Length::Fill => available,
     };
 
-    let maximum = maximum
-        .map(|value| non_negative(value.0))
-        .unwrap_or(i32::MAX);
+    let maximum = maximum.map(Pixels::non_negative).unwrap_or(Pixels::MAX);
 
     requested.min(maximum)
 }
 
-fn main_margin_start(margin: Edges<Pixels>, axis: Axis) -> i32 {
+fn main_margin_start(margin: Edges<Pixels>, axis: Axis) -> Pixels {
     match axis {
-        Axis::Horizontal => non_negative(margin.left.0),
-        Axis::Vertical => non_negative(margin.top.0),
+        Axis::Horizontal => margin.left.non_negative(),
+        Axis::Vertical => margin.top.non_negative(),
     }
 }
 
-fn main_margin_end(margin: Edges<Pixels>, axis: Axis) -> i32 {
+fn main_margin_end(margin: Edges<Pixels>, axis: Axis) -> Pixels {
     match axis {
-        Axis::Horizontal => non_negative(margin.right.0),
-        Axis::Vertical => non_negative(margin.bottom.0),
+        Axis::Horizontal => margin.right.non_negative(),
+        Axis::Vertical => margin.bottom.non_negative(),
     }
 }
 
-fn cross_margin_start(margin: Edges<Pixels>, axis: Axis) -> i32 {
+fn cross_margin_start(margin: Edges<Pixels>, axis: Axis) -> Pixels {
     match axis {
-        Axis::Horizontal => non_negative(margin.top.0),
-        Axis::Vertical => non_negative(margin.left.0),
+        Axis::Horizontal => margin.top.non_negative(),
+        Axis::Vertical => margin.left.non_negative(),
     }
 }
 
-fn cross_margin_end(margin: Edges<Pixels>, axis: Axis) -> i32 {
+fn cross_margin_end(margin: Edges<Pixels>, axis: Axis) -> Pixels {
     match axis {
-        Axis::Horizontal => non_negative(margin.bottom.0),
-        Axis::Vertical => non_negative(margin.right.0),
+        Axis::Horizontal => margin.bottom.non_negative(),
+        Axis::Vertical => margin.right.non_negative(),
     }
 }
 
-fn main_margin_total(margin: Edges<Pixels>, axis: Axis) -> i32 {
+fn main_margin_total(margin: Edges<Pixels>, axis: Axis) -> Pixels {
     main_margin_start(margin, axis).saturating_add(main_margin_end(margin, axis))
 }
 
-fn cross_margin_total(margin: Edges<Pixels>, axis: Axis) -> i32 {
+fn cross_margin_total(margin: Edges<Pixels>, axis: Axis) -> Pixels {
     cross_margin_start(margin, axis).saturating_add(cross_margin_end(margin, axis))
 }
 
@@ -173,52 +153,42 @@ fn child_constraint(
     content_size: Size,
     margin: Edges<Pixels>,
     axis: Axis,
-    allocated_main: Option<i32>,
+    allocated_main: Option<Pixels>,
 ) -> Size {
     let main = allocated_main.unwrap_or_else(|| {
-        non_negative(main_size(content_size, axis).saturating_sub(main_margin_total(margin, axis)))
+        (main_size(content_size, axis) - main_margin_total(margin, axis)).non_negative()
     });
-    let cross = non_negative(
-        cross_size(content_size, axis).saturating_sub(cross_margin_total(margin, axis)),
-    );
+    let cross = (cross_size(content_size, axis) - cross_margin_total(margin, axis)).non_negative();
 
     size_from_axes(main, cross, axis)
 }
 
-fn weighted_share(amount: i32, previous_weight: u64, next_weight: u64, total_weight: u64) -> i32 {
-    if amount <= 0 || total_weight <= previous_weight {
-        return 0;
+fn weighted_share(
+    amount: Pixels,
+    previous_weight: u64,
+    next_weight: u64,
+    total_weight: u64,
+) -> Pixels {
+    if amount.is_non_positive() || total_weight <= previous_weight {
+        return px(0);
     }
 
-    let amount = amount as u64;
+    let amount = amount.get() as u64;
     let previous = amount.saturating_mul(previous_weight) / total_weight;
     let next = amount.saturating_mul(next_weight) / total_weight;
+    let share = next.saturating_sub(previous);
 
-    i32::try_from(next.saturating_sub(previous)).unwrap_or(i32::MAX)
+    px(i32::try_from(share).unwrap_or(i32::MAX))
 }
 
-fn size_with_main(size: Size, main: i32, axis: Axis) -> Size {
+fn size_with_main(size: Size, main: Pixels, axis: Axis) -> Size {
     match axis {
-        Axis::Horizontal => Size::new(px(main), size.height),
-        Axis::Vertical => Size::new(size.width, px(main)),
+        Axis::Horizontal => Size::new(main, size.height),
+        Axis::Vertical => Size::new(size.width, main),
     }
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
-    fn node_requested_length(&self, node: NodeId, axis: Axis) -> Length {
-        match self.node(node).kind {
-            crate::NodeKind::Div { .. } => {
-                let style = self.node(node).style().expect("div node must have style");
-                requested_length(style, axis)
-            }
-            crate::NodeKind::Text { .. } => Length::Auto,
-            crate::NodeKind::Entity { .. } => match self.node(node).first_child {
-                Some(child) => self.node_requested_length(child, axis),
-                None => Length::Auto,
-            },
-        }
-    }
-
     fn child_count(&self, parent: NodeId) -> usize {
         let mut count = 0;
         let mut current = self.node(parent).first_child;
@@ -242,8 +212,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 let measured = text_measurer.measure(self.text(text), available);
 
                 Size::new(
-                    px(non_negative(measured.width.0).min(non_negative(available.width.0))),
-                    px(non_negative(measured.height.0).min(non_negative(available.height.0))),
+                    measured
+                        .width
+                        .non_negative()
+                        .min(available.width.non_negative()),
+                    measured
+                        .height
+                        .non_negative()
+                        .min(available.height.non_negative()),
                 )
             }
             crate::NodeKind::Entity { .. } => match self.node(node).first_child {
@@ -267,31 +243,24 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let axis = flow_axis(style);
 
         let outer_limit = Size::new(
-            px(measurement_limit(
-                style.width,
-                style.max_width,
-                available.width.0,
-            )),
-            px(measurement_limit(
-                style.height,
-                style.max_height,
-                available.height.0,
-            )),
+            measurement_limit(style.width, style.max_width, available.width),
+            measurement_limit(style.height, style.max_height, available.height),
         );
 
         let viewport = content_available(style, outer_limit);
         let child_available = self.child_layout_available(node, viewport);
         let child_count = self.child_count(node);
-        let gap = non_negative(style.gap.0);
+        let gap = style.gap.non_negative();
 
         let total_gap = if child_count > 1 {
-            gap.saturating_mul((child_count - 1) as i32)
+            let gap_count = i32::try_from(child_count - 1).unwrap_or(i32::MAX);
+            gap * gap_count
         } else {
-            0
+            px(0)
         };
 
         let mut natural_main = total_gap;
-        let mut natural_cross = 0;
+        let mut natural_cross = px(0);
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
@@ -303,40 +272,32 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 text_measurer,
             );
 
-            natural_main = natural_main
-                .saturating_add(base)
-                .saturating_add(main_margin_total(margin, axis));
-            natural_cross = natural_cross
-                .max(cross_size(measured, axis).saturating_add(cross_margin_total(margin, axis)));
+            natural_main += base + main_margin_total(margin, axis);
+            natural_cross =
+                natural_cross.max(cross_size(measured, axis) + cross_margin_total(margin, axis));
 
             current = self.node(child).next_sibling;
         }
 
         let natural_content = size_from_axes(natural_main, natural_cross, axis);
-        let natural_width = natural_content
-            .width
-            .0
-            .saturating_add(horizontal_chrome(style));
-        let natural_height = natural_content
-            .height
-            .0
-            .saturating_add(vertical_chrome(style));
+        let natural_width = natural_content.width + horizontal_chrome(style);
+        let natural_height = natural_content.height + vertical_chrome(style);
 
         Size::new(
-            Pixels(resolve_dimension(
+            resolve_dimension(
                 style.width,
                 style.min_width,
                 style.max_width,
-                available.width.0,
+                available.width,
                 natural_width,
-            )),
-            Pixels(resolve_dimension(
+            ),
+            resolve_dimension(
                 style.height,
                 style.min_height,
                 style.max_height,
-                available.height.0,
+                available.height,
                 natural_height,
-            )),
+            ),
         )
     }
 
@@ -369,20 +330,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let axis = flow_axis(style);
         let border = border_width(style);
         let content_origin = Point::new(
-            Pixels(
-                origin
-                    .x
-                    .0
-                    .saturating_add(border)
-                    .saturating_add(non_negative(style.padding.left.0)),
-            ),
-            Pixels(
-                origin
-                    .y
-                    .0
-                    .saturating_add(border)
-                    .saturating_add(non_negative(style.padding.top.0)),
-            ),
+            origin.x + border + style.padding.left.non_negative(),
+            origin.y + border + style.padding.top.non_negative(),
         );
 
         let viewport_content_size = content_available(style, outer_size);
@@ -397,11 +346,12 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             Axis::Vertical => scroll_axes.horizontal(),
         };
 
-        let gap = non_negative(style.gap.0);
+        let gap = style.gap.non_negative();
         let total_gap = if child_count > 1 {
-            gap.saturating_mul((child_count - 1) as i32)
+            let gap_count = i32::try_from(child_count - 1).unwrap_or(i32::MAX);
+            gap * gap_count
         } else {
-            0
+            px(0)
         };
 
         let available_main = main_size(viewport_content_size, axis);
@@ -427,48 +377,48 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 text_measurer,
             );
 
-            occupied_main = occupied_main
-                .saturating_add(target_main)
-                .saturating_add(main_margin_total(margin, axis));
+            occupied_main += target_main + main_margin_total(margin, axis);
             grow_before = grow_before.saturating_add(self.node_flex_grow(child, axis) as u64);
 
             let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
-            let shrink_factor =
-                (self.node_flex_shrink(child, axis) as u64).saturating_mul(base.max(0) as u64);
+            let shrink_factor = (self.node_flex_shrink(child, axis) as u64)
+                .saturating_mul(base.non_negative().get() as u64);
 
             shrink_before = shrink_before.saturating_add(shrink_factor);
             current = self.node(child).next_sibling;
         }
 
-        let free_main = non_negative(available_main.saturating_sub(occupied_main));
+        let free_main = (available_main - occupied_main).non_negative();
 
-        let (leading_main, between_extra, between_remainder) = match style.justify_content {
-            JustifyContent::Start => (0, 0, 0),
-            JustifyContent::Center => (free_main / 2, 0, 0),
-            JustifyContent::End => (free_main, 0, 0),
+        let (leading_main, between_extra, mut between_remainder) = match style.justify_content {
+            JustifyContent::Start => (px(0), px(0), px(0)),
+            JustifyContent::Center => (free_main / 2, px(0), px(0)),
+            JustifyContent::End => (free_main, px(0), px(0)),
             JustifyContent::Between => {
                 if child_count > 1 {
-                    let spaces = (child_count - 1) as i32;
-                    (0, free_main / spaces, free_main % spaces)
+                    let spaces = i32::try_from(child_count - 1).unwrap_or(i32::MAX);
+                    let between_extra = free_main / spaces;
+                    let between_remainder = free_main - between_extra * spaces;
+
+                    (px(0), between_extra, between_remainder)
                 } else {
-                    (0, 0, 0)
+                    (px(0), px(0), px(0))
                 }
             }
         };
 
         let content_main_origin = match axis {
-            Axis::Horizontal => content_origin.x.0,
-            Axis::Vertical => content_origin.y.0,
+            Axis::Horizontal => content_origin.x,
+            Axis::Vertical => content_origin.y,
         };
         let content_cross_origin = match axis {
-            Axis::Horizontal => content_origin.y.0,
-            Axis::Vertical => content_origin.x.0,
+            Axis::Horizontal => content_origin.y,
+            Axis::Vertical => content_origin.x,
         };
 
-        let mut cursor = content_main_origin.saturating_add(leading_main);
+        let mut cursor = content_main_origin + leading_main;
         let mut grow_before = 0;
         let mut shrink_before = 0;
-        let mut child_index = 0;
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
@@ -490,47 +440,43 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             let constraint = child_constraint(child_available, margin, axis, Some(target_main));
             let measured = self.measure_node(child, constraint, text_measurer);
             let child_size = size_with_main(measured, target_main, axis);
-            let child_outer_cross =
-                cross_size(child_size, axis).saturating_add(cross_margin_total(margin, axis));
-            let cross_free = non_negative(available_cross.saturating_sub(child_outer_cross));
+            let child_outer_cross = cross_size(child_size, axis) + cross_margin_total(margin, axis);
+            let cross_free = (available_cross - child_outer_cross).non_negative();
             let cross_offset = if scrolling_cross {
-                0
+                px(0)
             } else {
                 match style.align_items {
-                    AlignItems::Start => 0,
+                    AlignItems::Start => px(0),
                     AlignItems::Center => cross_free / 2,
                     AlignItems::End => cross_free,
                 }
             };
 
-            let child_main_origin = cursor.saturating_add(main_margin_start(margin, axis));
-            let child_cross_origin = content_cross_origin
-                .saturating_add(cross_offset)
-                .saturating_add(cross_margin_start(margin, axis));
+            let child_main_origin = cursor + main_margin_start(margin, axis);
+            let child_cross_origin =
+                content_cross_origin + cross_offset + cross_margin_start(margin, axis);
             let child_origin = point_from_axes(child_main_origin, child_cross_origin, axis);
 
             self.layout_node_with_size(child, child_origin, child_size, text_measurer);
 
-            cursor = cursor
-                .saturating_add(main_margin_start(margin, axis))
-                .saturating_add(target_main)
-                .saturating_add(main_margin_end(margin, axis));
+            cursor += main_margin_start(margin, axis) + target_main + main_margin_end(margin, axis);
 
             if next.is_some() {
-                cursor = cursor.saturating_add(gap).saturating_add(between_extra);
-                if child_index < between_remainder as usize {
-                    cursor = cursor.saturating_add(1);
+                cursor += gap + between_extra;
+                if between_remainder.is_positive() {
+                    cursor += px(1);
+                    between_remainder -= px(1)
                 }
             }
 
             grow_before = grow_before.saturating_add(self.node_flex_grow(child, axis) as u64);
 
             let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
-            let shrink_factor =
-                (self.node_flex_shrink(child, axis) as u64).saturating_mul(base.max(0) as u64);
+            let shrink_factor = (self.node_flex_shrink(child, axis) as u64)
+                .saturating_mul(base.non_negative().get() as u64);
 
             shrink_before = shrink_before.saturating_add(shrink_factor);
-            child_index += 1;
+            // child_index += 1; // TODO: check
             current = next;
         }
     }
@@ -599,8 +545,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         0
     }
 
-    fn clamp_flex_main_size(&self, node: NodeId, axis: Axis, value: i32) -> i32 {
-        let value = non_negative(value);
+    fn clamp_flex_main_size(&self, node: NodeId, axis: Axis, value: Pixels) -> Pixels {
+        let value = value.non_negative();
         let Some(style) = self.node_flex_style(node) else {
             return value;
         };
@@ -610,10 +556,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             Axis::Vertical => (style.min_height, style.max_height),
         };
 
-        let minimum = minimum.map(|value| non_negative(value.0)).unwrap_or(0);
+        let minimum = minimum.map(Pixels::non_negative).unwrap_or(px(0));
         let maximum = maximum
-            .map(|value| non_negative(value.0))
-            .unwrap_or(i32::MAX)
+            .map(Pixels::non_negative)
+            .unwrap_or(Pixels::MAX)
             .max(minimum);
 
         value.clamp(minimum, maximum)
@@ -625,15 +571,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         axis: Axis,
         available: Size,
         text_measurer: &dyn TextMeasurer,
-    ) -> i32 {
+    ) -> Pixels {
         let style = self.node_flex_style(node);
         let requested = style.map(|style| requested_length(style, axis));
         let basis = style.map(|style| style.flex_basis);
         let base = match basis {
-            Some(FlexBasis::Pixels(value)) => non_negative(value.0),
+            Some(FlexBasis::Pixels(value)) => value.non_negative(),
             Some(FlexBasis::Auto) | None => {
                 if requested == Some(Length::Fill) {
-                    0
+                    px(0)
                 } else {
                     let measured = self.measure_node(node, available, text_measurer);
                     main_size(measured, axis)
@@ -668,10 +614,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         while let Some(child) = current {
             let weight = self.node_flex_shrink(child, axis) as u64;
-            let base = self
-                .flex_base_main_size(child, axis, available, text_measurer)
-                .max(0) as u64;
-            total = total.saturating_add(weight.saturating_mul(base));
+            let base = self.flex_base_main_size(child, axis, available, text_measurer);
+            total = total.saturating_add(weight.saturating_mul(base.non_negative().get() as u64));
             current = self.node(child).next_sibling;
         }
 
@@ -684,16 +628,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         axis: Axis,
         available: Size,
         text_measurer: &dyn TextMeasurer,
-    ) -> i32 {
-        let mut total = 0i32;
+    ) -> Pixels {
+        let mut total = px(0);
         let mut current = self.node(parent).first_child;
 
         while let Some(child) = current {
             let margin = self.node_margin(child);
             let base = self.flex_base_main_size(child, axis, available, text_measurer);
-            total = total
-                .saturating_add(base)
-                .saturating_add(main_margin_total(margin, axis));
+            total += base + main_margin_total(margin, axis);
             current = self.node(child).next_sibling;
         }
 
@@ -707,24 +649,23 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         child: NodeId,
         axis: Axis,
         layout_available: Size,
-        viewport_main: i32,
-        total_gap: i32,
+        viewport_main: Pixels,
+        total_gap: Pixels,
         grow_before: u64,
         shrink_before: u64,
         scrolling_main: bool,
         text_measurer: &dyn TextMeasurer,
-    ) -> i32 {
+    ) -> Pixels {
         let base = self.flex_base_main_size(child, axis, layout_available, text_measurer);
         if scrolling_main {
             return base;
         }
 
-        let total_base = self
-            .total_flex_base_size(parent, axis, layout_available, text_measurer)
-            .saturating_add(total_gap);
+        let total_base =
+            total_gap + self.total_flex_base_size(parent, axis, layout_available, text_measurer);
 
         if total_base < viewport_main {
-            let free = viewport_main.saturating_sub(total_base);
+            let free = viewport_main - total_base;
             let weight = self.node_flex_grow(child, axis) as u64;
             let total_weight = self.total_flex_grow_weight(parent, axis);
             let added = weighted_share(
@@ -734,13 +675,13 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 total_weight,
             );
 
-            return self.clamp_flex_main_size(child, axis, base.saturating_add(added));
+            return self.clamp_flex_main_size(child, axis, base + added);
         }
 
         if total_base > viewport_main {
-            let deficit = total_base.saturating_sub(viewport_main);
+            let deficit = total_base - viewport_main;
             let shrink_weight = self.node_flex_shrink(child, axis) as u64;
-            let shrink_factor = shrink_weight.saturating_mul(base.max(0) as u64);
+            let shrink_factor = shrink_weight.saturating_mul(base.non_negative().get() as u64);
             let total_factor =
                 self.total_flex_shrink_factor(parent, axis, layout_available, text_measurer);
             let removed = weighted_share(
@@ -750,7 +691,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 total_factor,
             );
 
-            return self.clamp_flex_main_size(child, axis, base.saturating_sub(removed));
+            return self.clamp_flex_main_size(child, axis, base - removed);
         }
 
         base
@@ -779,57 +720,47 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     fn child_layout_available(&self, node: NodeId, viewport: Size) -> Size {
-        const SCROLL_LAYOUT_LIMIT: i32 = i32::MAX / 4;
+        const SCROLL_LAYOUT_LIMIT: Pixels = px(i32::MAX / 4);
         let axes = self.node(node).interaction.scroll_axes;
 
         Size::new(
             if axes.horizontal() {
-                px(SCROLL_LAYOUT_LIMIT)
+                SCROLL_LAYOUT_LIMIT
             } else {
                 viewport.width
             },
             if axes.vertical() {
-                px(SCROLL_LAYOUT_LIMIT)
+                SCROLL_LAYOUT_LIMIT
             } else {
                 viewport.height
             },
         )
     }
 
-    pub(crate) fn max_scroll_offset(&self, node: NodeId) -> Point {
+    pub(crate) fn max_scroll_offset(&self, node: NodeId) -> Offset {
         let bounds = self.node(node).layout.bounds;
         let style = self.node(node).style();
-        let mut right = bounds.right().0;
-        let mut bottom = bounds.bottom().0;
+        let mut right = bounds.right();
+        let mut bottom = bounds.bottom();
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
             let child_bounds = self.node(child).layout.bounds;
             let margin = self.node_margin(child);
 
-            right = right.max(
-                child_bounds
-                    .right()
-                    .0
-                    .saturating_add(non_negative(margin.right.0)),
-            );
-            bottom = bottom.max(
-                child_bounds
-                    .bottom()
-                    .0
-                    .saturating_add(non_negative(margin.bottom.0)),
-            );
+            right = right.max(child_bounds.right() + margin.right.non_negative());
+            bottom = bottom.max(child_bounds.bottom() + margin.bottom.non_negative());
             current = self.node(child).next_sibling;
         }
 
         if let Some(style) = style {
-            right = right.saturating_add(non_negative(style.padding.right.0));
-            bottom = bottom.saturating_add(non_negative(style.padding.bottom.0));
+            right += style.padding.right.non_negative();
+            bottom += style.padding.bottom.non_negative();
         }
 
-        Point::new(
-            px(right.saturating_sub(bounds.right().0).max(0)),
-            px(bottom.saturating_sub(bounds.bottom().0).max(0)),
+        Offset::new(
+            (right - bounds.right()).non_negative(),
+            (bottom - bounds.bottom()).non_negative(),
         )
     }
 }
@@ -841,28 +772,36 @@ mod tests {
     type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
 
     struct TestTextMeasurer {
-        character_width: i32,
-        line_height: i32,
+        character_width: Pixels,
+        line_height: Pixels,
     }
 
     impl TestTextMeasurer {
         fn new(character_width: i32, line_height: i32) -> Self {
             Self {
-                character_width,
-                line_height,
+                character_width: px(character_width),
+                line_height: px(line_height),
             }
         }
     }
 
     impl TextMeasurer for TestTextMeasurer {
         fn measure(&self, text: &str, max_size: Size) -> Size {
-            let character_count = text.chars().count() as i32;
-            let desired_width = character_count.saturating_mul(self.character_width);
-            let desired_height = if text.is_empty() { 0 } else { self.line_height };
+            let character_count = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
+            let desired_width = self.character_width * character_count;
+            let desired_height = if text.is_empty() {
+                px(0)
+            } else {
+                self.line_height
+            };
 
             Size::new(
-                px(desired_width.max(0).min(max_size.width.0.max(0))),
-                px(desired_height.max(0).min(max_size.height.0.max(0))),
+                desired_width
+                    .non_negative()
+                    .min(max_size.width.non_negative()),
+                desired_height
+                    .non_negative()
+                    .min(max_size.height.non_negative()),
             )
         }
     }
@@ -1482,7 +1421,7 @@ mod tests {
 
         let before = runtime.frame().node_count();
 
-        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(20),),));
+        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(20),),));
 
         assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
 
@@ -1514,11 +1453,11 @@ mod tests {
             .layout(Size::new(px(100), px(40)), &TestTextMeasurer::new(8, 10))
             .unwrap();
 
-        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(1_000),),));
+        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(1_000),),));
 
         runtime.take_invalidation();
 
-        assert!(!runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(1),),));
+        assert!(!runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(1),),));
     }
 
     #[test]
@@ -1548,7 +1487,7 @@ mod tests {
             .layout(Size::new(px(100), px(40)), &measurer)
             .unwrap();
 
-        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(20),),));
+        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(20),),));
 
         runtime.take_invalidation();
         runtime.rebuild(app).unwrap();
@@ -1556,6 +1495,6 @@ mod tests {
             .layout(Size::new(px(100), px(40)), &measurer)
             .unwrap();
 
-        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(-1),),));
+        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(-1),),));
     }
 }

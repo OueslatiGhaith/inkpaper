@@ -1,4 +1,4 @@
-use crate::{NodeId, Point, element_state::ElementStateId};
+use crate::{Offset, element_state::ElementStateId};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScrollAxes {
@@ -27,14 +27,14 @@ impl ScrollAxes {
 struct ScrollSlot {
     initialized: bool,
     generation: u32,
-    offset: Point,
+    offset: Offset,
 }
 
 impl ScrollSlot {
     const EMPTY: Self = Self {
         initialized: false,
         generation: 0,
-        offset: Point::ZERO,
+        offset: Offset::ZERO,
     };
 }
 
@@ -51,16 +51,16 @@ impl<const SLOTS: usize> Default for ScrollStateTable<SLOTS> {
 }
 
 impl<const SLOTS: usize> ScrollStateTable<SLOTS> {
-    pub(crate) fn offset(&self, id: ElementStateId) -> Point {
+    pub(crate) fn offset(&self, id: ElementStateId) -> Offset {
         let slot = &self.slots[id.slot()];
         if slot.initialized && slot.generation == id.generation() {
             slot.offset
         } else {
-            Point::ZERO
+            Offset::ZERO
         }
     }
 
-    pub(crate) fn set_offset(&mut self, id: ElementStateId, offset: Point) {
+    pub(crate) fn set_offset(&mut self, id: ElementStateId, offset: Offset) {
         let slot = &mut self.slots[id.slot()];
         slot.initialized = true;
         slot.generation = id.generation();

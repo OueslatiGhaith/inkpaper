@@ -11,7 +11,7 @@ use embedded_graphics_simulator::{
     sdl2::{Keycode, MouseButton},
 };
 use heapless::String;
-use inkpaper_ui::{backend::EmbeddedGraphicsPainter, prelude::*};
+use inkpaper_ui::{Offset, backend::EmbeddedGraphicsPainter, prelude::*};
 
 const DISPLAY_WIDTH: u32 = 320;
 const DISPLAY_HEIGHT: u32 = 240;
@@ -487,7 +487,7 @@ fn main() {
                     const SCROLL_STEP: i32 = 12;
                     runtime.scroll_at(
                         mouse_position,
-                        Point::new(
+                        Offset::new(
                             px(-scroll_delta.x.saturating_mul(SCROLL_STEP)),
                             px(-scroll_delta.y.saturating_mul(SCROLL_STEP)),
                         ),

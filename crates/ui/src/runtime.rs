@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 use crate::{
     ClickEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Invalidation, Listener,
-    MountError, NodeId, Painter, Point, Render, Size, TextMeasurer,
+    MountError, NodeId, Offset, Painter, Point, Render, Size, TextMeasurer,
     element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
     input::PointerState,
@@ -467,7 +467,7 @@ impl<
         invalidation
     }
 
-    pub fn scroll_at(&mut self, position: Point, delta: Point) -> bool {
+    pub fn scroll_at(&mut self, position: Point, delta: Offset) -> bool {
         let Some(root) = self.root else {
             return false;
         };
@@ -478,25 +478,17 @@ impl<
         let previous = self.scroll_states.offset(target.element);
 
         let next_x = if target.axes.horizontal() {
-            previous
-                .x
-                .0
-                .saturating_add(delta.x.0)
-                .clamp(0, target.max_offset.x.0)
+            (previous.x + delta.x).clamp(px(0), target.max_offset.x)
         } else {
-            previous.x.0
+            previous.x
         };
         let next_y = if target.axes.vertical() {
-            previous
-                .y
-                .0
-                .saturating_add(delta.y.0)
-                .clamp(0, target.max_offset.y.0)
+            (previous.y + delta.y).clamp(px(0), target.max_offset.y)
         } else {
-            previous.y.0
+            previous.y
         };
 
-        let next = Point::new(px(next_x), px(next_y));
+        let next = Offset::new(next_x, next_y);
         if next == previous {
             return false;
         }

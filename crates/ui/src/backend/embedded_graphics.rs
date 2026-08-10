@@ -69,10 +69,10 @@ impl<D> TextMeasurer for EmbeddedGraphicsPainter<'_, '_, D> {
 
         let width = i32::try_from(width)
             .unwrap_or(i32::MAX)
-            .min(max_size.width.0.max(0));
+            .min(max_size.width.non_negative().get());
         let height = i32::try_from(height)
             .unwrap_or(i32::MAX)
-            .min(max_size.height.0.max(0));
+            .min(max_size.height.non_negative().get());
 
         Size::new(px(width), px(height))
     }
@@ -125,11 +125,11 @@ fn to_rgb888(color: Color) -> EgRgb888 {
 }
 
 fn to_embedded_rect(rect: Rect) -> EgRectangle {
-    let width = u32::try_from(rect.width().0.max(0)).unwrap_or(u32::MAX);
-    let height = u32::try_from(rect.height().0.max(0)).unwrap_or(u32::MAX);
+    let width = u32::try_from(rect.width().non_negative().get()).unwrap_or(u32::MAX);
+    let height = u32::try_from(rect.height().non_negative().get()).unwrap_or(u32::MAX);
 
     EgRectangle::new(
-        EgPoint::new(rect.x().0, rect.y().0),
+        EgPoint::new(rect.x().get(), rect.y().get()),
         EgSize::new(width, height),
     )
 }
@@ -138,7 +138,7 @@ fn draw_box_to<D>(target: &mut D, bounds: Rect, paint: BoxPaint) -> Result<(), D
 where
     D: EgDrawTarget<Color = EgRgb888>,
 {
-    if bounds.width().0 <= 0 || bounds.height().0 <= 0 {
+    if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
         return Ok(());
     }
     if paint.background.is_none() && paint.border.is_none() {
@@ -150,7 +150,7 @@ where
         style = style.fill_color(to_rgb888(background));
     }
     if let Some(border) = paint.border {
-        let width = u32::try_from(border.width.0.max(0)).unwrap_or(u32::MAX);
+        let width = u32::try_from(border.width.non_negative().get()).unwrap_or(u32::MAX);
         if width > 0 {
             style = style
                 .stroke_color(to_rgb888(border.color))
@@ -160,7 +160,7 @@ where
 
     let style = style.build();
     let rectangle = to_embedded_rect(bounds);
-    let radius = u32::try_from(paint.radius.0.max(0)).unwrap_or(u32::MAX);
+    let radius = u32::try_from(paint.radius.non_negative().get()).unwrap_or(u32::MAX);
 
     if radius == 0 {
         rectangle.into_styled(style).draw(target)?;
@@ -186,7 +186,7 @@ where
     let style = EgMonoTextStyle::new(font, to_rgb888(color));
     EgText::with_baseline(
         text,
-        EgPoint::new(origin.x.0, origin.y.0),
+        EgPoint::new(origin.x.get(), origin.y.get()),
         style,
         EgBaseline::Top,
     )

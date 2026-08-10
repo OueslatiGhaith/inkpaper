@@ -1,6 +1,6 @@
 use heapless::Vec;
 
-use crate::{FrameArena, NodeId, Point, Rect, px};
+use crate::{FrameArena, NodeId, Offset, Point, Rect, px};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClipRegion {
@@ -11,7 +11,7 @@ pub(crate) enum ClipRegion {
 
 impl ClipRegion {
     pub(crate) fn intersect(self, rect: Rect) -> Self {
-        if rect.width().0 <= 0 || rect.height().0 <= 0 {
+        if rect.width().is_non_positive() || rect.height().is_non_positive() {
             return Self::Empty;
         }
 
@@ -48,13 +48,13 @@ impl ClipRegion {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VisualContext {
-    translation: Point,
+    translation: Offset,
     clip: ClipRegion,
 }
 
 impl VisualContext {
     pub(crate) const ROOT: Self = Self {
-        translation: Point::ZERO,
+        translation: Offset::ZERO,
         clip: ClipRegion::Unbounded,
     };
 
@@ -62,12 +62,9 @@ impl VisualContext {
         rect.translated(self.translation)
     }
 
-    pub(crate) fn translated_by_scroll(self, scroll: Point) -> Self {
+    pub(crate) fn translated_by_scroll(self, scroll: Offset) -> Self {
         Self {
-            translation: Point::new(
-                px(self.translation.x.0.saturating_sub(scroll.x.0)),
-                px(self.translation.y.0.saturating_sub(scroll.y.0)),
-            ),
+            translation: self.translation - scroll,
             clip: self.clip,
         }
     }
@@ -207,23 +204,18 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let border = self
             .node(node)
             .style()
-            .map(|style| px(style.border_width.0.max(0)))
+            .map(|style| style.border_width.non_negative())
             .unwrap_or(px(0));
 
         bounds.inset(border)
     }
 
     pub fn visual_bounds(&self, node: NodeId) -> Rect {
-        let mut translation = Point::ZERO;
+        let mut translation = Offset::ZERO;
         let mut current = self.node(node).parent;
 
         while let Some(parent) = current {
-            let scroll = self.node(parent).interaction.scroll_offset;
-            translation = Point::new(
-                px(translation.x.0.saturating_sub(scroll.x.0)),
-                px(translation.y.0.saturating_sub(scroll.y.0)),
-            );
-
+            translation -= self.node(parent).interaction.scroll_offset;
             current = self.node(parent).parent;
         }
 
@@ -263,8 +255,8 @@ mod tests {
 
         let outer = frame.node(root).first_child.unwrap();
 
-        frame.node_mut(root).interaction.scroll_offset = Point::new(px(0), px(10));
-        frame.node_mut(outer).interaction.scroll_offset = Point::new(px(0), px(7));
+        frame.node_mut(root).interaction.scroll_offset = Offset::new(px(0), px(10));
+        frame.node_mut(outer).interaction.scroll_offset = Offset::new(px(0), px(7));
 
         let mut traversal = frame.visual_nodes(root);
         let root_visual = traversal.next().unwrap();
@@ -338,7 +330,7 @@ mod tests {
             .unwrap();
 
         frame.layout(root, Size::new(px(100), px(40)), &TestTextMeasurer);
-        frame.node_mut(root).interaction.scroll_offset = Point::new(px(0), px(20));
+        frame.node_mut(root).interaction.scroll_offset = Offset::new(px(0), px(20));
 
         let mut traversal = frame.visual_nodes(root);
         let root_visual = traversal.next().unwrap();
@@ -378,11 +370,11 @@ mod tests {
         fn measure(&self, text: &str, max_size: Size) -> Size {
             let width = (text.chars().count() as i32)
                 .saturating_mul(6)
-                .min(max_size.width.0.max(0));
+                .min(max_size.width.non_negative().get());
             let height = if text.is_empty() {
                 0
             } else {
-                10.min(max_size.height.0.max(0))
+                10.min(max_size.height.non_negative().get())
             };
 
             Size::new(px(width), px(height))
@@ -439,7 +431,7 @@ mod tests {
         let mut painter = RecordingPainter::default();
 
         frame.layout(root, Size::new(px(50), px(30)), &painter);
-        frame.node_mut(root).interaction.scroll_offset = Point::new(px(0), px(10));
+        frame.node_mut(root).interaction.scroll_offset = Offset::new(px(0), px(10));
         frame.paint(root, &mut painter).unwrap();
 
         assert_eq!(
