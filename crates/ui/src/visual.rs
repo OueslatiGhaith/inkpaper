@@ -458,4 +458,57 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn explicit_size_can_overflow_parent_constraints() {
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(50))
+                    .h(px(30))
+                    .border(px(1))
+                    .overflow_hidden()
+                    .child(div().w(px(50)).h(px(60))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(50), px(30)), &TestTextMeasurer);
+
+        let child = frame.node(root).first_child.unwrap();
+
+        assert_eq!(
+            frame.bounds(root),
+            Rect::new(Point::new(px(0), px(0),), Size::new(px(50), px(30),),)
+        );
+        assert_eq!(
+            frame.bounds(child),
+            Rect::new(Point::new(px(1), px(1),), Size::new(px(50), px(60),),)
+        );
+    }
+
+    #[test]
+    fn flex_shrink_can_reduce_explicitly_oversized_items() {
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .flex()
+                    .w(px(100))
+                    .h(px(40))
+                    .child(div().w(px(80)).h(px(20)).flex_shrink(1))
+                    .child(div().w(px(80)).h(px(20)).flex_shrink(1)),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(40)), &TestTextMeasurer);
+
+        let first = frame.node(root).first_child.unwrap();
+        let second = frame.node(first).next_sibling.unwrap();
+
+        assert_eq!(frame.bounds(first).width(), px(50));
+        assert_eq!(frame.bounds(second).width(), px(50));
+    }
 }

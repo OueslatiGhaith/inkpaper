@@ -104,20 +104,15 @@ fn resolve_dimension(
 ) -> i32 {
     let available = non_negative(available);
     let base = match length {
-        Length::Auto => non_negative(natural),
+        Length::Auto => non_negative(natural).min(available),
         Length::Pixels(value) => non_negative(value.0),
         Length::Fill => available,
-    }
-    .min(available);
+    };
 
-    let minimum = minimum
-        .map(|value| non_negative(value.0))
-        .unwrap_or(0)
-        .min(available);
+    let minimum = minimum.map(|value| non_negative(value.0)).unwrap_or(0);
     let maximum = maximum
         .map(|value| non_negative(value.0))
-        .unwrap_or(available)
-        .min(available)
+        .unwrap_or(i32::MAX)
         .max(minimum);
 
     base.clamp(minimum, maximum)
@@ -133,9 +128,9 @@ fn measurement_limit(length: Length, maximum: Option<Pixels>, available: i32) ->
 
     let maximum = maximum
         .map(|value| non_negative(value.0))
-        .unwrap_or(available);
+        .unwrap_or(i32::MAX);
 
-    requested.min(maximum).min(available)
+    requested.min(maximum)
 }
 
 fn main_margin_start(margin: Edges<Pixels>, axis: Axis) -> i32 {
@@ -604,12 +599,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         0
     }
 
-    fn clamp_flex_main_size(&self, node: NodeId, axis: Axis, value: i32, available: i32) -> i32 {
+    fn clamp_flex_main_size(&self, node: NodeId, axis: Axis, value: i32) -> i32 {
         let value = non_negative(value);
-        let available = non_negative(available);
-
         let Some(style) = self.node_flex_style(node) else {
-            return value.min(available);
+            return value;
         };
 
         let (minimum, maximum) = match axis {
@@ -617,14 +610,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             Axis::Vertical => (style.min_height, style.max_height),
         };
 
-        let minimum = minimum
-            .map(|v| non_negative(v.0))
-            .unwrap_or(0)
-            .min(available);
+        let minimum = minimum.map(|value| non_negative(value.0)).unwrap_or(0);
         let maximum = maximum
-            .map(|v| non_negative(v.0))
-            .unwrap_or(available)
-            .min(available)
+            .map(|value| non_negative(value.0))
+            .unwrap_or(i32::MAX)
             .max(minimum);
 
         value.clamp(minimum, maximum)
@@ -652,7 +641,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             }
         };
 
-        self.clamp_flex_main_size(node, axis, base, main_size(available, axis))
+        self.clamp_flex_main_size(node, axis, base)
     }
 
     fn total_flex_grow_weight(&self, parent: NodeId, axis: Axis) -> u64 {
@@ -745,12 +734,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 total_weight,
             );
 
-            return self.clamp_flex_main_size(
-                child,
-                axis,
-                base.saturating_add(added),
-                main_size(layout_available, axis),
-            );
+            return self.clamp_flex_main_size(child, axis, base.saturating_add(added));
         }
 
         if total_base > viewport_main {
@@ -766,12 +750,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 total_factor,
             );
 
-            return self.clamp_flex_main_size(
-                child,
-                axis,
-                base.saturating_sub(removed),
-                main_size(layout_available, axis),
-            );
+            return self.clamp_flex_main_size(child, axis, base.saturating_sub(removed));
         }
 
         base
