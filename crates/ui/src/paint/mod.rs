@@ -118,10 +118,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         while let Some(parent) = current {
             if self.node_clips_children(parent) {
-                let parent_bounds = self.visual_bounds(parent);
+                let parent_clip = self.children_clip_bounds(parent);
+                if parent_clip.width().0 <= 0 || parent_clip.height().0 <= 0 {
+                    return ClipRegion::Empty;
+                }
+
                 clip = match clip {
-                    ClipRegion::Unbounded => ClipRegion::Rect(parent_bounds),
-                    ClipRegion::Rect(existing) => match existing.intersection(parent_bounds) {
+                    ClipRegion::Unbounded => ClipRegion::Rect(parent_clip),
+                    ClipRegion::Rect(existing) => match existing.intersection(parent_clip) {
                         Some(rect) => ClipRegion::Rect(rect),
                         None => return ClipRegion::Empty,
                     },
@@ -155,6 +159,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         }
 
         Point::new(px(x), px(y))
+    }
+
+    fn children_clip_bounds(&self, node: NodeId) -> Rect {
+        let bounds = self.visual_bounds(node);
+        let Some(style) = self.node(node).style() else {
+            return bounds;
+        };
+
+        bounds.inset(px(style.border_width.0.max(0)))
     }
 }
 
@@ -356,6 +369,46 @@ mod tests {
                     radius: px(0),
                 },
                 clip: Some(expected_clip),
+            }
+        );
+    }
+
+    #[test]
+    fn overflow_hidden_clips_children_inside_parent_border() {
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(50))
+                    .h(px(30))
+                    .border(px(2))
+                    .border_color(Color::WHITE)
+                    .overflow_hidden()
+                    .child(div().w(px(100)).h(px(100)).bg(Color::RED)),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(100)), &painter);
+        frame.paint(root, &mut painter).unwrap();
+
+        let child = frame.node(root).first_child.unwrap();
+
+        assert_eq!(
+            painter.commands[1],
+            Command::Box {
+                bounds: frame.visual_bounds(child),
+                paint: BoxPaint {
+                    background: Some(Color::RED),
+                    border: None,
+                    radius: px(0),
+                },
+                clip: Some(Rect::new(
+                    Point::new(px(2), px(2),),
+                    Size::new(px(46), px(26),),
+                )),
             }
         );
     }

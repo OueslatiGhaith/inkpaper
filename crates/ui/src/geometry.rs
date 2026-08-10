@@ -109,4 +109,20 @@ impl Rect {
             Size::new(px(right - left), px(bottom - top)),
         ))
     }
+
+    pub fn inset(self, amount: Pixels) -> Self {
+        let amount = amount.0.max(0);
+        let doubled = amount.saturating_mul(2);
+
+        Self::new(
+            Point::new(
+                px(self.origin.x.0.saturating_add(amount)),
+                px(self.origin.y.0.saturating_add(amount)),
+            ),
+            Size::new(
+                px(self.size.width.0.saturating_sub(doubled).max(0)),
+                px(self.size.height.0.saturating_sub(doubled).max(0)),
+            ),
+        )
+    }
 }
