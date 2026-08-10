@@ -149,8 +149,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         while let Some(parent) = current {
             let scroll = self.node(parent).interaction.scroll_offset;
-            x = x.saturating_add(scroll.x.0);
-            y = y.saturating_add(scroll.y.0);
+            x = x.saturating_sub(scroll.x.0);
+            y = y.saturating_sub(scroll.y.0);
             current = self.node(parent).parent;
         }
 
