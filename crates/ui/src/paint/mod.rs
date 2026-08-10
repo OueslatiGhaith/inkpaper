@@ -1,4 +1,7 @@
-use crate::{Color, FrameArena, NodeId, NodeKind, Pixels, Point, Rect, Size, TextMeasurer, px};
+use crate::{
+    Color, FrameArena, NodeId, NodeKind, Pixels, Point, Rect, TextMeasurer, px,
+    visual::{ClipRegion, VisualNode},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BorderPaint {
@@ -11,13 +14,6 @@ pub struct BoxPaint {
     pub background: Option<Color>,
     pub border: Option<BorderPaint>,
     pub radius: Pixels,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ClipRegion {
-    Unbounded,
-    Rect(Rect),
-    Empty,
 }
 
 pub trait Painter: TextMeasurer {
@@ -39,18 +35,18 @@ pub trait Painter: TextMeasurer {
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
-    fn paint_node<P>(&self, node_id: NodeId, painter: &mut P) -> Result<(), P::Error>
+    fn paint_visual_node<P>(&self, visual: VisualNode, painter: &mut P) -> Result<(), P::Error>
     where
         P: Painter,
     {
-        let clip = match self.clip_for_node(node_id) {
-            ClipRegion::Unbounded => None,
-            ClipRegion::Rect(rect) => Some(rect),
-            ClipRegion::Empty => return Ok(()),
-        };
+        if !visual.is_visible() {
+            return Ok(());
+        }
 
+        let node_id = visual.node();
         let node = self.node(node_id);
-        let bounds = self.visual_bounds(node_id);
+        let bounds = visual.bounds();
+        let clip = visual.clip();
 
         match node.kind {
             NodeKind::Div { .. } => {
@@ -82,92 +78,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     where
         P: Painter,
     {
-        let mut current = Some(root);
-        while let Some(node) = current {
-            self.paint_node(node, painter)?;
-            current = self.next_depth_first_node(node);
+        for visual in self.visual_nodes(root) {
+            self.paint_visual_node(visual, painter)?;
         }
 
         Ok(())
-    }
-
-    fn node_clips_children(&self, node: NodeId) -> bool {
-        let node = self.node(node);
-
-        let style_clips = match node.kind {
-            NodeKind::Div { .. } => node
-                .style()
-                .map(|style| style.clip_children)
-                .unwrap_or(false),
-            _ => false,
-        };
-
-        style_clips || node.interaction.scroll_axes.any()
-    }
-
-    pub(crate) fn visual_bounds(&self, node: NodeId) -> Rect {
-        self.node(node)
-            .layout
-            .bounds
-            .translated(self.node_visual_offset(node))
-    }
-
-    fn clip_for_node(&self, node: NodeId) -> ClipRegion {
-        let mut clip = ClipRegion::Unbounded;
-        let mut current = self.node(node).parent;
-
-        while let Some(parent) = current {
-            if self.node_clips_children(parent) {
-                let parent_clip = self.children_clip_bounds(parent);
-                if parent_clip.width().0 <= 0 || parent_clip.height().0 <= 0 {
-                    return ClipRegion::Empty;
-                }
-
-                clip = match clip {
-                    ClipRegion::Unbounded => ClipRegion::Rect(parent_clip),
-                    ClipRegion::Rect(existing) => match existing.intersection(parent_clip) {
-                        Some(rect) => ClipRegion::Rect(rect),
-                        None => return ClipRegion::Empty,
-                    },
-                    ClipRegion::Empty => return ClipRegion::Empty,
-                };
-            }
-            current = self.node(parent).parent;
-        }
-
-        clip
-    }
-
-    pub(crate) fn point_visible_for_node(&self, node: NodeId, position: Point) -> bool {
-        match self.clip_for_node(node) {
-            ClipRegion::Unbounded => true,
-            ClipRegion::Rect(clip) => clip.contains(position),
-            ClipRegion::Empty => false,
-        }
-    }
-
-    fn node_visual_offset(&self, node: NodeId) -> Point {
-        let mut x = 0i32;
-        let mut y = 0i32;
-        let mut current = self.node(node).parent;
-
-        while let Some(parent) = current {
-            let scroll = self.node(parent).interaction.scroll_offset;
-            x = x.saturating_sub(scroll.x.0);
-            y = y.saturating_sub(scroll.y.0);
-            current = self.node(parent).parent;
-        }
-
-        Point::new(px(x), px(y))
-    }
-
-    fn children_clip_bounds(&self, node: NodeId) -> Rect {
-        let bounds = self.visual_bounds(node);
-        let Some(style) = self.node(node).style() else {
-            return bounds;
-        };
-
-        bounds.inset(px(style.border_width.0.max(0)))
     }
 }
 

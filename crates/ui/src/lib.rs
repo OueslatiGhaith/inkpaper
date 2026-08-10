@@ -30,6 +30,7 @@ mod scroll;
 mod stateful;
 mod style;
 mod units;
+mod visual;
 
 pub use arena::*;
 pub use color::*;

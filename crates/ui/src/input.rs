@@ -44,18 +44,15 @@ impl PointerState {
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
     pub(crate) fn hit_test_click(&self, root: NodeId, position: Point) -> Option<ClickTarget> {
-        let mut current = Some(root);
         let mut hit = None;
 
-        while let Some(node_id) = current {
-            if self.visual_bounds(node_id).contains(position)
-                && self.point_visible_for_node(node_id, position)
-                && let Some(target) = self.click_target_from_node(node_id)
-            {
+        for visual in self.visual_nodes(root) {
+            if !visual.contains(position) {
+                continue;
+            }
+            if let Some(target) = self.click_target_from_node(visual.node()) {
                 hit = Some(target)
             }
-
-            current = self.next_depth_first_node(node_id);
         }
 
         hit
@@ -195,25 +192,29 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     pub(crate) fn hit_test_scroll(&self, root: NodeId, position: Point) -> Option<ScrollTarget> {
-        let mut current = Some(root);
         let mut hit = None;
 
-        while let Some(node_id) = current {
-            let node = self.node(node_id);
-            if node.interaction.scroll_axes.any()
-                && self.visual_bounds(node_id).contains(position)
-                && self.point_visible_for_node(node_id, position)
-                && let Some(element) = node.element_state_id
-            {
-                hit = Some(ScrollTarget {
-                    node: node_id,
-                    element,
-                    axes: node.interaction.scroll_axes,
-                    max_offset: self.max_scroll_offset(node_id),
-                })
+        for visual in self.visual_nodes(root) {
+            if !visual.contains(position) {
+                continue;
             }
 
-            current = self.next_depth_first_node(node_id);
+            let node_id = visual.node();
+            let node = self.node(node_id);
+            let axes = node.interaction.scroll_axes;
+            if !axes.any() {
+                continue;
+            }
+            let Some(element) = node.element_state_id else {
+                continue;
+            };
+
+            hit = Some(ScrollTarget {
+                node: node_id,
+                element,
+                axes,
+                max_offset: self.max_scroll_offset(node_id),
+            });
         }
 
         hit
