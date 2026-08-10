@@ -12,7 +12,7 @@ use embedded_graphics::{
     text::{Baseline as EgBaseline, Text as EgText},
 };
 
-use crate::{BorderPaint, Color, Painter, Rect, Size, TextMeasurer, px};
+use crate::{BorderPaint, BoxPaint, Color, Painter, Point, Rect, Size, TextMeasurer, px};
 
 pub struct EmbeddedGraphicsPainter<'target, 'font, D> {
     target: &'target mut D,
@@ -85,54 +85,38 @@ where
 {
     type Error = D::Error;
 
-    fn draw_box(&mut self, bounds: Rect, paint: crate::BoxPaint) -> Result<(), Self::Error> {
-        if bounds.width().0 <= 0 || bounds.height().0 <= 0 {
-            return Ok(());
-        }
-        if paint.background.is_none() && paint.border.is_none() {
-            return Ok(());
-        }
-
-        let mut style = EgPrimitiveStyleBuilder::new().stroke_alignment(EgStrokeAlignment::Inside);
-
-        if let Some(background) = paint.background {
-            style = style.fill_color(to_rgb888(background));
-        }
-        if let Some(BorderPaint { width, color }) = paint.border {
-            let width = u32::try_from(width.0.max(0)).unwrap_or(u32::MAX);
-            if width > 0 {
-                style = style.stroke_color(to_rgb888(color)).stroke_width(width);
-            }
-        }
-
-        let style = style.build();
-        let rectangle = to_embedded_rect(bounds);
-        let radius = u32::try_from(paint.radius.0.max(0)).unwrap_or(u32::MAX);
+    fn draw_box(
+        &mut self,
+        bounds: Rect,
+        paint: BoxPaint,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error> {
         let mut target = self.target.color_converted::<EgRgb888>();
 
-        if radius == 0 {
-            rectangle.into_styled(style).draw(&mut target)?;
+        if let Some(clip) = clip {
+            let clip = to_embedded_rect(clip);
+            let mut clipped = target.clipped(&clip);
+            draw_box_to(&mut clipped, bounds, paint)
         } else {
-            EgRoundedRectangle::with_equal_corners(rectangle, EgSize::new(radius, radius))
-                .into_styled(style)
-                .draw(&mut target)?;
+            draw_box_to(&mut target, bounds, paint)
         }
-
-        Ok(())
     }
 
-    fn draw_text(&mut self, text: &str, origin: crate::prelude::Point) -> Result<(), Self::Error> {
-        let style = EgMonoTextStyle::new(self.font, to_rgb888(self.text_color));
+    fn draw_text(
+        &mut self,
+        text: &str,
+        origin: Point,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error> {
         let mut target = self.target.color_converted::<EgRgb888>();
 
-        EgText::with_baseline(
-            text,
-            EgPoint::new(origin.x.0, origin.y.0),
-            style,
-            EgBaseline::Top,
-        )
-        .draw(&mut target)
-        .map(|_| ())
+        if let Some(clip) = clip {
+            let clip = to_embedded_rect(clip);
+            let mut clipped = target.clipped(&clip);
+            draw_text_to(&mut clipped, text, origin, self.font, self.text_color)
+        } else {
+            draw_text_to(&mut target, text, origin, self.font, self.text_color)
+        }
     }
 }
 
@@ -148,6 +132,66 @@ fn to_embedded_rect(rect: Rect) -> EgRectangle {
         EgPoint::new(rect.x().0, rect.y().0),
         EgSize::new(width, height),
     )
+}
+
+fn draw_box_to<D>(target: &mut D, bounds: Rect, paint: BoxPaint) -> Result<(), D::Error>
+where
+    D: EgDrawTarget<Color = EgRgb888>,
+{
+    if bounds.width().0 <= 0 || bounds.height().0 <= 0 {
+        return Ok(());
+    }
+    if paint.background.is_none() && paint.border.is_none() {
+        return Ok(());
+    }
+
+    let mut style = EgPrimitiveStyleBuilder::new().stroke_alignment(EgStrokeAlignment::Inside);
+    if let Some(background) = paint.background {
+        style = style.fill_color(to_rgb888(background));
+    }
+    if let Some(border) = paint.border {
+        let width = u32::try_from(border.width.0.max(0)).unwrap_or(u32::MAX);
+        if width > 0 {
+            style = style
+                .stroke_color(to_rgb888(border.color))
+                .stroke_width(width);
+        }
+    }
+
+    let style = style.build();
+    let rectangle = to_embedded_rect(bounds);
+    let radius = u32::try_from(paint.radius.0.max(0)).unwrap_or(u32::MAX);
+
+    if radius == 0 {
+        rectangle.into_styled(style).draw(target)?;
+    } else {
+        EgRoundedRectangle::with_equal_corners(rectangle, EgSize::new(radius, radius))
+            .into_styled(style)
+            .draw(target)?;
+    }
+
+    Ok(())
+}
+
+fn draw_text_to<D>(
+    target: &mut D,
+    text: &str,
+    origin: Point,
+    font: &EgMonoFont<'_>,
+    color: Color,
+) -> Result<(), D::Error>
+where
+    D: EgDrawTarget<Color = EgRgb888>,
+{
+    let style = EgMonoTextStyle::new(font, to_rgb888(color));
+    EgText::with_baseline(
+        text,
+        EgPoint::new(origin.x.0, origin.y.0),
+        style,
+        EgBaseline::Top,
+    )
+    .draw(target)
+    .map(|_| ())
 }
 
 #[cfg(test)]
@@ -177,6 +221,7 @@ mod tests {
                         }),
                         radius: px(0),
                     },
+                    None,
                 )
                 .unwrap();
         }

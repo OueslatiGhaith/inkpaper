@@ -13,19 +13,45 @@ pub struct BoxPaint {
     pub radius: Pixels,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ClipRegion {
+    Unbounded,
+    Rect(Rect),
+    Empty,
+}
+
 pub trait Painter: TextMeasurer {
     type Error;
 
-    fn draw_box(&mut self, bounds: Rect, paint: BoxPaint) -> Result<(), Self::Error>;
-    fn draw_text(&mut self, text: &str, origin: Point) -> Result<(), Self::Error>;
+    fn draw_box(
+        &mut self,
+        bounds: Rect,
+        paint: BoxPaint,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error>;
+
+    fn draw_text(
+        &mut self,
+        text: &str,
+        origin: Point,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error>;
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
-    fn paint_node<P>(&self, node: NodeId, painter: &mut P) -> Result<(), P::Error>
+    fn paint_node<P>(&self, node_id: NodeId, painter: &mut P) -> Result<(), P::Error>
     where
         P: Painter,
     {
-        let node = self.node(node);
+        let clip = match self.clip_for_node(node_id) {
+            ClipRegion::Unbounded => None,
+            ClipRegion::Rect(rect) => Some(rect),
+            ClipRegion::Empty => return Ok(()),
+        };
+
+        let node = self.node(node_id);
+        let bounds = self.visual_bounds(node_id);
+
         match node.kind {
             NodeKind::Div { .. } => {
                 let style = node.style().expect("div node must have style");
@@ -38,17 +64,16 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 };
 
                 painter.draw_box(
-                    node.layout.bounds,
+                    bounds,
                     BoxPaint {
                         background: style.background,
                         border,
                         radius: style.border_radius,
                     },
+                    clip,
                 )
             }
-            NodeKind::Text { text } => {
-                painter.draw_text(self.text(text), node.layout.bounds.origin)
-            }
+            NodeKind::Text { text } => painter.draw_text(self.text(text), bounds.origin, clip),
             NodeKind::Entity { .. } => Ok(()),
         }
     }
@@ -65,6 +90,51 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         Ok(())
     }
+
+    fn node_clips_children(&self, node: NodeId) -> bool {
+        match self.node(node).kind {
+            NodeKind::Div { .. } => self
+                .node(node)
+                .style()
+                .map(|style| style.clip_children)
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn visual_bounds(&self, node: NodeId) -> Rect {
+        self.node(node).layout.bounds
+    }
+
+    fn clip_for_node(&self, node: NodeId) -> ClipRegion {
+        let mut clip = ClipRegion::Unbounded;
+        let mut current = self.node(node).parent;
+
+        while let Some(parent) = current {
+            if self.node_clips_children(parent) {
+                let parent_bounds = self.visual_bounds(parent);
+                clip = match clip {
+                    ClipRegion::Unbounded => ClipRegion::Rect(parent_bounds),
+                    ClipRegion::Rect(existing) => match existing.intersection(parent_bounds) {
+                        Some(rect) => ClipRegion::Rect(rect),
+                        None => return ClipRegion::Empty,
+                    },
+                    ClipRegion::Empty => return ClipRegion::Empty,
+                };
+            }
+            current = self.node(parent).parent;
+        }
+
+        clip
+    }
+
+    pub(crate) fn point_visible_for_node(&self, node: NodeId, position: Point) -> bool {
+        match self.clip_for_node(node) {
+            ClipRegion::Unbounded => true,
+            ClipRegion::Rect(clip) => clip.contains(position),
+            ClipRegion::Empty => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -76,8 +146,16 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Command {
-        Box { bounds: Rect, paint: BoxPaint },
-        Text { origin: Point, length: usize },
+        Box {
+            bounds: Rect,
+            paint: BoxPaint,
+            clip: Option<Rect>,
+        },
+        Text {
+            origin: Point,
+            length: usize,
+            clip: Option<Rect>,
+        },
     }
 
     #[derive(Default)]
@@ -103,15 +181,30 @@ mod tests {
     impl Painter for RecordingPainter {
         type Error = Infallible;
 
-        fn draw_box(&mut self, bounds: Rect, paint: BoxPaint) -> Result<(), Self::Error> {
-            self.commands.push(Command::Box { bounds, paint });
+        fn draw_box(
+            &mut self,
+            bounds: Rect,
+            paint: BoxPaint,
+            clip: Option<Rect>,
+        ) -> Result<(), Self::Error> {
+            self.commands.push(Command::Box {
+                bounds,
+                paint,
+                clip,
+            });
             Ok(())
         }
 
-        fn draw_text(&mut self, text: &str, origin: Point) -> Result<(), Self::Error> {
+        fn draw_text(
+            &mut self,
+            text: &str,
+            origin: Point,
+            clip: Option<Rect>,
+        ) -> Result<(), Self::Error> {
             self.commands.push(Command::Text {
                 origin,
                 length: text.len(),
+                clip,
             });
             Ok(())
         }
@@ -146,6 +239,7 @@ mod tests {
                     border: None,
                     radius: px(0),
                 },
+                clip: None
             }
         );
 
@@ -158,6 +252,7 @@ mod tests {
                     border: None,
                     radius: px(0),
                 },
+                clip: None
             }
         );
 
@@ -166,6 +261,7 @@ mod tests {
             Command::Text {
                 origin: Point::new(px(0), px(10),),
                 length: 2,
+                clip: None
             }
         );
     }
@@ -202,7 +298,44 @@ mod tests {
                     }),
                     radius: px(6),
                 },
+                clip: None
             }]
+        );
+    }
+
+    #[test]
+    fn overflow_hidden_clips_descendant_painting() {
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(50))
+                    .h(px(30))
+                    .overflow_hidden()
+                    .child(div().w(px(100)).h(px(20)).bg(Color::RED)),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(100)), &painter);
+        frame.paint(root, &mut painter).unwrap();
+
+        let child = frame.node(root).first_child.unwrap();
+        let expected_clip = frame.bounds(root);
+
+        assert_eq!(
+            painter.commands[1],
+            Command::Box {
+                bounds: frame.bounds(child),
+                paint: BoxPaint {
+                    background: Some(Color::RED),
+                    border: None,
+                    radius: px(0),
+                },
+                clip: Some(expected_clip),
+            }
         );
     }
 }

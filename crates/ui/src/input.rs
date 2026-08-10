@@ -35,8 +35,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut hit = None;
 
         while let Some(node_id) = current {
-            let node = self.node(node_id);
-            if node.layout.bounds.contains(position)
+            if self.visual_bounds(node_id).contains(position)
+                && self.point_visible_for_node(node_id, position)
                 && let Some(target) = self.click_target_from_node(node_id)
             {
                 hit = Some(target)

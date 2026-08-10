@@ -171,8 +171,11 @@ declare_style! {
         }
         paint {
             background: Option<Color> = None,
+
             border_color: Option<Color> = None,
             border_radius: Pixels = px(0),
+
+            clip_children: bool = false,
         }
     }
 }
@@ -398,6 +401,11 @@ pub trait Styled: Sized {
 
     fn rounded(mut self, radius: Pixels) -> Self {
         self.style_mut().border_radius = radius;
+        self
+    }
+
+    fn overflow_hidden(mut self) -> Self {
+        self.style_mut().clip_children = true;
         self
     }
 }

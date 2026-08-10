@@ -61,12 +61,12 @@ impl Rect {
         self.size.height
     }
 
-    pub const fn right(self) -> Pixels {
-        px(self.origin.x.0 + self.size.width.0)
+    pub fn right(self) -> Pixels {
+        px(self.origin.x.0.saturating_add(self.size.width.0))
     }
 
-    pub const fn bottom(self) -> Pixels {
-        px(self.origin.y.0 + self.size.height.0)
+    pub fn bottom(self) -> Pixels {
+        px(self.origin.y.0.saturating_add(self.size.height.0))
     }
 
     pub fn contains(self, point: Point) -> bool {
@@ -82,5 +82,31 @@ impl Rect {
         let bottom = top.saturating_add(height);
 
         point.x.0 >= left && point.x.0 < right && point.y.0 >= top && point.y.0 < bottom
+    }
+
+    pub fn translated(self, delta: Point) -> Self {
+        Self::new(
+            Point::new(
+                px(self.origin.x.0.saturating_add(delta.x.0)),
+                px(self.origin.y.0.saturating_add(delta.y.0)),
+            ),
+            self.size,
+        )
+    }
+
+    pub fn intersection(self, other: Self) -> Option<Self> {
+        let left = self.x().0.max(other.x().0);
+        let top = self.y().0.max(other.y().0);
+        let right = self.right().0.min(other.right().0);
+        let bottom = self.bottom().0.min(other.bottom().0);
+
+        if right <= left || bottom <= top {
+            return None;
+        }
+
+        Some(Self::new(
+            Point::new(px(left), px(top)),
+            Size::new(px(right - left), px(bottom - top)),
+        ))
     }
 }
