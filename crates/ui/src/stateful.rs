@@ -1,6 +1,7 @@
 use crate::{
     ClickEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
     ListenerId, MountCx, MountError, NodeId, ParentElement, Style, StylePatch, Styled,
+    scroll::ScrollAxes,
 };
 
 pub struct Stateful<E> {
@@ -76,6 +77,7 @@ pub struct StatefulInteractivity {
     pub(crate) click: Option<ListenerId>,
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
+    pub(crate) scroll_axes: ScrollAxes,
 }
 
 pub trait StatefulInteractiveElement: Element + Sized {
@@ -122,6 +124,33 @@ pub trait StatefulInteractiveElementExt: StatefulInteractiveElement {
         let interaction = self.stateful_interactivity_mut();
         interaction.pressed_style = interaction.pressed_style.merge(patch);
 
+        self
+    }
+
+    fn overflow_x_scroll(mut self) -> Self
+    where
+        Self: Styled,
+    {
+        self.style_mut().clip_children = true;
+        self.stateful_interactivity_mut().scroll_axes = ScrollAxes::Horizontal;
+        self
+    }
+
+    fn overflow_y_scroll(mut self) -> Self
+    where
+        Self: Styled,
+    {
+        self.style_mut().clip_children = true;
+        self.stateful_interactivity_mut().scroll_axes = ScrollAxes::Vertical;
+        self
+    }
+
+    fn overflow_scroll(mut self) -> Self
+    where
+        Self: Styled,
+    {
+        self.style_mut().clip_children = true;
+        self.stateful_interactivity_mut().scroll_axes = ScrollAxes::Both;
         self
     }
 }

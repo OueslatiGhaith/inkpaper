@@ -266,7 +266,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         &self,
         node: NodeId,
         style: Style,
-        available: crate::Size,
+        available: Size,
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         let axis = flow_axis(style);
@@ -284,7 +284,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             )),
         );
 
-        let child_available = content_available(style, outer_limit);
+        let viewport = content_available(style, outer_limit);
+        let child_available = self.child_layout_available(node, viewport);
         let child_count = self.child_count(node);
         let gap = non_negative(style.gap.0);
 
@@ -389,7 +390,18 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             ),
         );
 
-        let content_size = content_available(style, outer_size);
+        let viewport_content_size = content_available(style, outer_size);
+        let child_available = self.child_layout_available(node, viewport_content_size);
+        let scroll_axes = self.node(node).interaction.scroll_axes;
+        let scrolling_main = match axis {
+            Axis::Horizontal => scroll_axes.horizontal(),
+            Axis::Vertical => scroll_axes.vertical(),
+        };
+        let scrolling_cross = match axis {
+            Axis::Horizontal => scroll_axes.vertical(),
+            Axis::Vertical => scroll_axes.horizontal(),
+        };
+
         let gap = non_negative(style.gap.0);
         let total_gap = if child_count > 1 {
             gap.saturating_mul((child_count - 1) as i32)
@@ -397,38 +409,39 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             0
         };
 
-        let available_main = main_size(content_size, axis);
-        let available_cross = cross_size(content_size, axis);
+        let available_main = main_size(viewport_content_size, axis);
+        let available_cross = cross_size(viewport_content_size, axis);
 
         let mut occupied_main = total_gap;
-        let mut grow_before = 0;
-        let mut shrink_before = 0;
+        let mut grow_before = 0u64;
+        let mut shrink_before = 0u64;
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
             let margin = self.node_margin(child);
-            let child_main = self.flex_item_main_size(
+            let target_main = self.flex_item_main_size(
                 node,
                 child,
                 axis,
-                content_size,
+                child_available,
+                available_main,
                 total_gap,
                 grow_before,
                 shrink_before,
+                scrolling_main,
                 text_measurer,
             );
 
             occupied_main = occupied_main
-                .saturating_add(child_main)
+                .saturating_add(target_main)
                 .saturating_add(main_margin_total(margin, axis));
             grow_before = grow_before.saturating_add(self.node_flex_grow(child, axis) as u64);
 
-            let base = self.flex_base_main_size(child, axis, content_size, text_measurer);
+            let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
+            let shrink_factor =
+                (self.node_flex_shrink(child, axis) as u64).saturating_mul(base.max(0) as u64);
 
-            shrink_before = shrink_before.saturating_add(
-                (self.node_flex_shrink(child, axis) as u64).saturating_mul(base.max(0) as u64),
-            );
-
+            shrink_before = shrink_before.saturating_add(shrink_factor);
             current = self.node(child).next_sibling;
         }
 
@@ -470,23 +483,29 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 node,
                 child,
                 axis,
-                content_size,
+                child_available,
+                available_main,
                 total_gap,
                 grow_before,
                 shrink_before,
+                scrolling_main,
                 text_measurer,
             );
 
-            let constraint = child_constraint(content_size, margin, axis, Some(target_main));
+            let constraint = child_constraint(child_available, margin, axis, Some(target_main));
             let measured = self.measure_node(child, constraint, text_measurer);
             let child_size = size_with_main(measured, target_main, axis);
             let child_outer_cross =
                 cross_size(child_size, axis).saturating_add(cross_margin_total(margin, axis));
             let cross_free = non_negative(available_cross.saturating_sub(child_outer_cross));
-            let cross_offset = match style.align_items {
-                AlignItems::Start => 0,
-                AlignItems::Center => cross_free / 2,
-                AlignItems::End => cross_free,
+            let cross_offset = if scrolling_cross {
+                0
+            } else {
+                match style.align_items {
+                    AlignItems::Start => 0,
+                    AlignItems::Center => cross_free / 2,
+                    AlignItems::End => cross_free,
+                }
             };
 
             let child_main_origin = cursor.saturating_add(main_margin_start(margin, axis));
@@ -511,12 +530,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
             grow_before = grow_before.saturating_add(self.node_flex_grow(child, axis) as u64);
 
-            let base = self.flex_base_main_size(child, axis, content_size, text_measurer);
+            let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
+            let shrink_factor =
+                (self.node_flex_shrink(child, axis) as u64).saturating_mul(base.max(0) as u64);
 
-            shrink_before = shrink_before.saturating_add(
-                (self.node_flex_shrink(child, axis) as u64).saturating_mul(base.max(0) as u64),
-            );
-
+            shrink_before = shrink_before.saturating_add(shrink_factor);
             child_index += 1;
             current = next;
         }
@@ -699,20 +717,25 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         parent: NodeId,
         child: NodeId,
         axis: Axis,
-        content_size: Size,
+        layout_available: Size,
+        viewport_main: i32,
         total_gap: i32,
         grow_before: u64,
         shrink_before: u64,
+        scrolling_main: bool,
         text_measurer: &dyn TextMeasurer,
     ) -> i32 {
-        let available_main = main_size(content_size, axis);
-        let total_base = self
-            .total_flex_base_size(parent, axis, content_size, text_measurer)
-            .saturating_add(total_gap);
-        let base = self.flex_base_main_size(child, axis, content_size, text_measurer);
+        let base = self.flex_base_main_size(child, axis, layout_available, text_measurer);
+        if scrolling_main {
+            return base;
+        }
 
-        if total_base < available_main {
-            let free = available_main.saturating_sub(total_base);
+        let total_base = self
+            .total_flex_base_size(parent, axis, layout_available, text_measurer)
+            .saturating_add(total_gap);
+
+        if total_base < viewport_main {
+            let free = viewport_main.saturating_sub(total_base);
             let weight = self.node_flex_grow(child, axis) as u64;
             let total_weight = self.total_flex_grow_weight(parent, axis);
             let added = weighted_share(
@@ -726,16 +749,16 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 child,
                 axis,
                 base.saturating_add(added),
-                available_main,
+                main_size(layout_available, axis),
             );
         }
 
-        if total_base > available_main {
-            let deficit = total_base.saturating_sub(available_main);
+        if total_base > viewport_main {
+            let deficit = total_base.saturating_sub(viewport_main);
             let shrink_weight = self.node_flex_shrink(child, axis) as u64;
             let shrink_factor = shrink_weight.saturating_mul(base.max(0) as u64);
             let total_factor =
-                self.total_flex_shrink_factor(parent, axis, content_size, text_measurer);
+                self.total_flex_shrink_factor(parent, axis, layout_available, text_measurer);
             let removed = weighted_share(
                 deficit,
                 shrink_before,
@@ -747,7 +770,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 child,
                 axis,
                 base.saturating_sub(removed),
-                available_main,
+                main_size(layout_available, axis),
             );
         }
 
@@ -775,11 +798,68 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             }
         }
     }
+
+    fn child_layout_available(&self, node: NodeId, viewport: Size) -> Size {
+        const SCROLL_LAYOUT_LIMIT: i32 = i32::MAX / 4;
+        let axes = self.node(node).interaction.scroll_axes;
+
+        Size::new(
+            if axes.horizontal() {
+                px(SCROLL_LAYOUT_LIMIT)
+            } else {
+                viewport.width
+            },
+            if axes.vertical() {
+                px(SCROLL_LAYOUT_LIMIT)
+            } else {
+                viewport.height
+            },
+        )
+    }
+
+    pub(crate) fn max_scroll_offset(&self, node: NodeId) -> Point {
+        let bounds = self.node(node).layout.bounds;
+        let style = self.node(node).style();
+        let mut right = bounds.right().0;
+        let mut bottom = bounds.bottom().0;
+        let mut current = self.node(node).first_child;
+
+        while let Some(child) = current {
+            let child_bounds = self.node(child).layout.bounds;
+            let margin = self.node_margin(child);
+
+            right = right.max(
+                child_bounds
+                    .right()
+                    .0
+                    .saturating_add(non_negative(margin.right.0)),
+            );
+            bottom = bottom.max(
+                child_bounds
+                    .bottom()
+                    .0
+                    .saturating_add(non_negative(margin.bottom.0)),
+            );
+            current = self.node(child).next_sibling;
+        }
+
+        if let Some(style) = style {
+            right = right.saturating_add(non_negative(style.padding.right.0));
+            bottom = bottom.saturating_add(non_negative(style.padding.bottom.0));
+        }
+
+        Point::new(
+            px(right.saturating_sub(bounds.right().0).max(0)),
+            px(bottom.saturating_sub(bounds.bottom().0).max(0)),
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::*;
+
+    type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
 
     struct TestTextMeasurer {
         character_width: i32,
@@ -1390,5 +1470,113 @@ mod tests {
 
         assert_bounds(frame.bounds(first), 0, 0, 50, 20);
         assert_bounds(frame.bounds(second), 50, 0, 50, 20);
+    }
+
+    #[test]
+    fn vertical_scroll_moves_content_without_relayout() {
+        struct App;
+        impl Render for App {
+            fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div().w(px(100)).h(px(60)).child(
+                    div()
+                        .id("scroll")
+                        .w(px(100))
+                        .h(px(40))
+                        .overflow_y_scroll()
+                        .child(div().w(px(100)).h(px(30)).bg(Color::RED))
+                        .child(div().w(px(100)).h(px(30)).bg(Color::BLUE)),
+                )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        let measurer = TestTextMeasurer::new(8, 10);
+
+        runtime
+            .layout(Size::new(px(100), px(60)), &measurer)
+            .unwrap();
+
+        let before = runtime.frame().node_count();
+
+        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(20),),));
+
+        assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
+
+        assert_eq!(runtime.frame().node_count(), before);
+    }
+
+    #[test]
+    fn scroll_offset_is_clamped_to_content_extent() {
+        struct App;
+
+        impl Render for App {
+            fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div()
+                    .id("scroll")
+                    .w(px(100))
+                    .h(px(40))
+                    .overflow_y_scroll()
+                    .child(div().w(px(100)).h(px(30)))
+                    .child(div().w(px(100)).h(px(30)))
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(40)), &TestTextMeasurer::new(8, 10))
+            .unwrap();
+
+        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(1_000),),));
+
+        runtime.take_invalidation();
+
+        assert!(!runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(1),),));
+    }
+
+    #[test]
+    fn scroll_offset_survives_rebuild() {
+        struct App;
+
+        impl Render for App {
+            fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div()
+                    .id("scroll")
+                    .w(px(100))
+                    .h(px(40))
+                    .overflow_y_scroll()
+                    .child(div().h(px(80)).w(px(100)).bg(Color::RED))
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        let measurer = TestTextMeasurer::new(8, 10);
+
+        runtime
+            .layout(Size::new(px(100), px(40)), &measurer)
+            .unwrap();
+
+        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(20),),));
+
+        runtime.take_invalidation();
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(40)), &measurer)
+            .unwrap();
+
+        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Point::new(px(0), px(-1),),));
     }
 }

@@ -178,23 +178,38 @@ fn main() {
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
     let mut window = Window::new("InkPaper UI", &output_settings);
 
+    let mut mouse_position = Point::ZERO;
+
     'running: loop {
         window.update(&display);
 
         for event in window.events() {
             match event {
                 SimulatorEvent::Quit => break 'running,
+                SimulatorEvent::MouseMove { point } => mouse_position = to_ui_point(point),
                 SimulatorEvent::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     point,
                 } => {
-                    runtime.pointer_down(to_ui_point(point));
+                    mouse_position = to_ui_point(point);
+                    runtime.pointer_down(mouse_position);
                 }
                 SimulatorEvent::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     point,
                 } => {
-                    runtime.pointer_up(to_ui_point(point)).unwrap();
+                    mouse_position = to_ui_point(point);
+                    runtime.pointer_up(mouse_position).unwrap();
+                }
+                SimulatorEvent::MouseWheel { scroll_delta, .. } => {
+                    const SCROLL_STEP: i32 = 12;
+                    runtime.scroll_at(
+                        mouse_position,
+                        Point::new(
+                            px(-scroll_delta.x.saturating_mul(SCROLL_STEP)),
+                            px(-scroll_delta.y.saturating_mul(SCROLL_STEP)),
+                        ),
+                    );
                 }
                 _ => {}
             }

@@ -26,6 +26,7 @@ mod listener_store;
 mod paint;
 mod render;
 mod runtime;
+mod scroll;
 mod stateful;
 mod style;
 mod units;

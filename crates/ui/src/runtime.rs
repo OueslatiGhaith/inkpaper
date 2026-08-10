@@ -7,6 +7,8 @@ use crate::{
     entity_store::create_entity,
     input::PointerState,
     listener_store::{ListenerArena, ListenerInvokeError},
+    px,
+    scroll::ScrollStateTable,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +42,7 @@ pub struct Runtime<
     listeners: ListenerArena<LISTENER_BYTES, LISTENER_SLOTS>,
     frame: FrameArena<FRAME_NODES, FRAME_TEXT_BYTES>,
     element_states: ElementStateTable<ELEMENT_STATES>,
+    scroll_states: ScrollStateTable<ELEMENT_STATES>,
     notified: Cell<bool>,
     visual_invalidation: Cell<Invalidation>,
     frame_generation: u32,
@@ -64,6 +67,7 @@ impl<
             listeners: ListenerArena::default(),
             frame: FrameArena::default(),
             element_states: ElementStateTable::default(),
+            scroll_states: ScrollStateTable::default(),
             notified: Cell::new(false),
             visual_invalidation: Cell::new(Invalidation::None),
             frame_generation: 0,
@@ -132,6 +136,7 @@ impl<
                 self.root = Some(root_node);
                 self.reconcile_interaction_state();
                 self.refresh_interaction_styles();
+                self.frame.resolve_scroll_offsets(&self.scroll_states);
 
                 Ok(())
             }
@@ -208,8 +213,10 @@ impl<
 
     pub fn layout(&mut self, viewport: Size, text_measurer: &dyn TextMeasurer) -> Option<Size> {
         let root = self.root?;
+        let size = self.frame.layout(root, viewport, text_measurer);
+        self.frame.clamp_scroll_offset(&mut self.scroll_states);
 
-        Some(self.frame.layout(root, viewport, text_measurer))
+        Some(size)
     }
 
     pub fn paint<P>(&self, painter: &mut P) -> Result<Option<()>, P::Error>
@@ -458,5 +465,46 @@ impl<
         }
 
         invalidation
+    }
+
+    pub fn scroll_at(&mut self, position: Point, delta: Point) -> bool {
+        let Some(root) = self.root else {
+            return false;
+        };
+        let Some(target) = self.frame.hit_test_scroll(root, position) else {
+            return false;
+        };
+
+        let previous = self.scroll_states.offset(target.element);
+
+        let next_x = if target.axes.horizontal() {
+            previous
+                .x
+                .0
+                .saturating_add(delta.x.0)
+                .clamp(0, target.max_offset.x.0)
+        } else {
+            previous.x.0
+        };
+        let next_y = if target.axes.vertical() {
+            previous
+                .y
+                .0
+                .saturating_add(delta.y.0)
+                .clamp(0, target.max_offset.y.0)
+        } else {
+            previous.y.0
+        };
+
+        let next = Point::new(px(next_x), px(next_y));
+        if next == previous {
+            return false;
+        }
+
+        self.scroll_states.set_offset(target.element, next);
+        self.frame.set_scroll_offset(target.node, next);
+        self.invalidate(Invalidation::Paint);
+
+        true
     }
 }

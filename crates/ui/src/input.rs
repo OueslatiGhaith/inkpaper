@@ -1,9 +1,22 @@
-use crate::{FrameArena, Invalidation, ListenerId, NodeId, Point, element_state::ElementStateId};
+use crate::{
+    FrameArena, Invalidation, ListenerId, NodeId, Point,
+    element_state::ElementStateId,
+    px,
+    scroll::{ScrollAxes, ScrollStateTable},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ClickTarget {
     pub(crate) element: ElementStateId,
     pub(crate) listener: ListenerId,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ScrollTarget {
+    pub(crate) node: NodeId,
+    pub(crate) element: ElementStateId,
+    pub(crate) axes: ScrollAxes,
+    pub(crate) max_offset: Point,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -179,6 +192,71 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         }
 
         Invalidation::None
+    }
+
+    pub(crate) fn hit_test_scroll(&self, root: NodeId, position: Point) -> Option<ScrollTarget> {
+        let mut current = Some(root);
+        let mut hit = None;
+
+        while let Some(node_id) = current {
+            let node = self.node(node_id);
+            if node.interaction.scroll_axes.any()
+                && self.visual_bounds(node_id).contains(position)
+                && self.point_visible_for_node(node_id, position)
+                && let Some(element) = node.element_state_id
+            {
+                hit = Some(ScrollTarget {
+                    node: node_id,
+                    element,
+                    axes: node.interaction.scroll_axes,
+                    max_offset: self.max_scroll_offset(node_id),
+                })
+            }
+
+            current = self.next_depth_first_node(node_id);
+        }
+
+        hit
+    }
+
+    pub(crate) fn set_scroll_offset(&mut self, node: NodeId, offset: Point) {
+        self.node_mut(node).interaction.scroll_offset = offset;
+    }
+
+    pub(crate) fn clamp_scroll_offset<const SLOTS: usize>(
+        &mut self,
+        states: &mut ScrollStateTable<SLOTS>,
+    ) {
+        for index in 0..self.nodes.len() {
+            let node_id = NodeId::new(index as u16);
+            let node = self.node(node_id);
+            let axes = node.interaction.scroll_axes;
+            if !axes.any() {
+                continue;
+            }
+            let Some(element) = node.element_state_id else {
+                continue;
+            };
+
+            let maximum = self.max_scroll_offset(node_id);
+            let current = states.offset(element);
+            let next = Point::new(
+                px(if axes.horizontal() {
+                    current.x.0.clamp(0, maximum.x.0)
+                } else {
+                    0
+                }),
+                px(if axes.vertical() {
+                    current.y.0.clamp(0, maximum.y.0)
+                } else {
+                    0
+                }),
+            );
+
+            states.set_offset(element, next);
+
+            self.node_mut(node_id).interaction.scroll_offset = next;
+        }
     }
 }
 

@@ -3,11 +3,12 @@ use core::cell::Cell;
 use heapless::Vec;
 
 use crate::{
-    Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId, Rect,
-    StatefulInteractivity, Style, StylePatch,
+    Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId,
+    Point, Rect, StatefulInteractivity, Style, StylePatch,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     listener_store::ListenerStore,
+    scroll::{ScrollAxes, ScrollStateTable},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,6 +96,8 @@ pub(crate) struct NodeInteraction {
     pub(crate) click: Option<ListenerId>,
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
+    pub(crate) scroll_axes: ScrollAxes,
+    pub(crate) scroll_offset: Point,
 }
 
 impl From<StatefulInteractivity> for NodeInteraction {
@@ -103,6 +106,8 @@ impl From<StatefulInteractivity> for NodeInteraction {
             click: value.click,
             focused_style: value.focused_style,
             pressed_style: value.pressed_style,
+            scroll_axes: value.scroll_axes,
+            scroll_offset: Point::ZERO,
         }
     }
 }
@@ -344,6 +349,18 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             }
 
             node.effective_style = Some(effective);
+        }
+    }
+
+    pub(crate) fn resolve_scroll_offsets<const SLOTS: usize>(
+        &mut self,
+        states: &ScrollStateTable<SLOTS>,
+    ) {
+        for node in self.nodes.iter_mut() {
+            node.interaction.scroll_offset = node
+                .element_state_id
+                .map(|id| states.offset(id))
+                .unwrap_or(Point::ZERO);
         }
     }
 }

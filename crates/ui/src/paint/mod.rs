@@ -1,4 +1,4 @@
-use crate::{Color, FrameArena, NodeId, NodeKind, Pixels, Point, Rect, TextMeasurer};
+use crate::{Color, FrameArena, NodeId, NodeKind, Pixels, Point, Rect, Size, TextMeasurer, px};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BorderPaint {
@@ -92,18 +92,24 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     fn node_clips_children(&self, node: NodeId) -> bool {
-        match self.node(node).kind {
-            NodeKind::Div { .. } => self
-                .node(node)
+        let node = self.node(node);
+
+        let style_clips = match node.kind {
+            NodeKind::Div { .. } => node
                 .style()
                 .map(|style| style.clip_children)
                 .unwrap_or(false),
             _ => false,
-        }
+        };
+
+        style_clips || node.interaction.scroll_axes.any()
     }
 
     pub(crate) fn visual_bounds(&self, node: NodeId) -> Rect {
-        self.node(node).layout.bounds
+        self.node(node)
+            .layout
+            .bounds
+            .translated(self.node_visual_offset(node))
     }
 
     fn clip_for_node(&self, node: NodeId) -> ClipRegion {
@@ -134,6 +140,21 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             ClipRegion::Rect(clip) => clip.contains(position),
             ClipRegion::Empty => false,
         }
+    }
+
+    fn node_visual_offset(&self, node: NodeId) -> Point {
+        let mut x = 0i32;
+        let mut y = 0i32;
+        let mut current = self.node(node).parent;
+
+        while let Some(parent) = current {
+            let scroll = self.node(parent).interaction.scroll_offset;
+            x = x.saturating_add(scroll.x.0);
+            y = y.saturating_add(scroll.y.0);
+            current = self.node(parent).parent;
+        }
+
+        Point::new(px(x), px(y))
     }
 }
 

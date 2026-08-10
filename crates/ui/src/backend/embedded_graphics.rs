@@ -12,7 +12,7 @@ use embedded_graphics::{
     text::{Baseline as EgBaseline, Text as EgText},
 };
 
-use crate::{BorderPaint, BoxPaint, Color, Painter, Point, Rect, Size, TextMeasurer, px};
+use crate::{BoxPaint, Color, Painter, Point, Rect, Size, TextMeasurer, px};
 
 pub struct EmbeddedGraphicsPainter<'target, 'font, D> {
     target: &'target mut D,
