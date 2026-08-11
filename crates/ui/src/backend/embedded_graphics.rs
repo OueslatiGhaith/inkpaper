@@ -12,7 +12,10 @@ use embedded_graphics::{
     text::{Baseline as EgBaseline, Text as EgText},
 };
 
-use crate::{BoxPaint, Color, FontId, Painter, Pixels, Rect, Size, TextMeasurer, TextStyle, px};
+use crate::{
+    BoxPaint, Color, FontId, Painter, Pixels, Rect, Size, TextAlign, TextMeasurer, TextStyle, px,
+    text_layout::for_each_text_line,
+};
 
 pub struct EmbeddedGraphicsPainter<'target, 'font, D, const FONTS: usize> {
     target: &'target mut D,
@@ -45,36 +48,29 @@ impl<D, const FONTS: usize> TextMeasurer for EmbeddedGraphicsPainter<'_, '_, D, 
         }
 
         let font = self.resolve_font(style.font);
-        let character_width = font_character_width(font);
-        let character_spacing = font_character_spacing(font);
         let glyph_height = font_character_height(font);
         let line_advance = text_line_advance(font, style);
 
-        let mut longest_line = px(0);
-        let mut line_count = 0i32;
+        let mut longest_line = Pixels::ZERO;
+        let mut line_count: i32 = 0;
 
-        for line in text.split('\n') {
-            let characters = i32::try_from(line.chars().count()).unwrap_or(i32::MAX);
-            let width = if characters == 0 {
-                px(0)
-            } else {
-                character_width
-                    .saturating_add(character_spacing)
-                    .saturating_mul(characters)
-                    .saturating_sub(character_spacing)
-            };
+        for_each_text_line(
+            text,
+            style.wrap,
+            max_size.width,
+            |line| measure_mono_line(font, line),
+            |_, width| {
+                longest_line = longest_line.max(width);
 
-            longest_line = longest_line.max(width);
-            line_count = line_count.saturating_add(1);
+                line_count = line_count.saturating_add(1);
+            },
+        );
+
+        if line_count == 0 {
+            return Size::ZERO;
         }
 
-        let height = if line_count <= 0 {
-            px(0)
-        } else {
-            glyph_height
-                .saturating_add(line_advance)
-                .saturating_mul(line_count - 1)
-        };
+        let height = glyph_height.saturating_add(line_advance.saturating_mul(line_count - 1));
 
         Size::new(
             longest_line
@@ -197,25 +193,47 @@ where
         return Ok(());
     }
 
-    let text_style = EgMonoTextStyle::new(font, to_rgb888(style.color));
     let line_advance = text_line_advance(font, style);
 
-    let mut origin = bounds.origin;
-    for line in text.split('\n') {
-        if !line.is_empty() {
-            EgText::with_baseline(
-                line,
-                EgPoint::new(origin.x.get(), origin.y.get()),
-                text_style,
-                EgBaseline::Top,
-            )
-            .draw(target)?;
-        }
+    let mut y = bounds.origin.y;
+    let mut error = None;
 
-        origin.y += line_advance;
+    for_each_text_line(
+        text,
+        style.wrap,
+        bounds.width(),
+        |line| measure_mono_line(font, line),
+        |line, width| {
+            if error.is_some() {
+                return;
+            }
+
+            if !line.is_empty() {
+                let x = aligned_line_x(bounds, width, style.align);
+                let text_style = EgMonoTextStyle::new(font, to_rgb888(style.color));
+
+                let result = EgText::with_baseline(
+                    line,
+                    EgPoint::new(x.get(), y.get()),
+                    text_style,
+                    EgBaseline::Top,
+                )
+                .draw(target)
+                .map(|_| ());
+
+                if let Err(draw_error) = result {
+                    error = Some(draw_error);
+                }
+            }
+
+            y += line_advance;
+        },
+    );
+
+    match error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
-
-    Ok(())
 }
 
 fn font_character_width(font: &EgMonoFont<'_>) -> Pixels {
@@ -237,6 +255,30 @@ fn text_line_advance(font: &EgMonoFont<'_>, style: TextStyle) -> Pixels {
         .non_negative()
 }
 
+fn measure_mono_line(font: &EgMonoFont<'_>, text: &str) -> Pixels {
+    let characters = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
+    if characters == 0 {
+        return Pixels::ZERO;
+    }
+
+    let character_width = font_character_width(font);
+    let spacing = font_character_spacing(font);
+
+    character_width
+        .saturating_add(spacing)
+        .saturating_mul(characters)
+        .saturating_sub(spacing)
+}
+
+fn aligned_line_x(bounds: Rect, line_width: Pixels, align: TextAlign) -> Pixels {
+    let remaining = (bounds.width() - line_width).non_negative();
+    match align {
+        TextAlign::Start => bounds.origin.x,
+        TextAlign::Center => bounds.origin.x + remaining / 2,
+        TextAlign::End => bounds.origin.x + remaining,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use embedded_graphics::{
@@ -244,7 +286,10 @@ mod tests {
         pixelcolor::Rgb888,
     };
 
-    use crate::{backend::EmbeddedGraphicsPainter, *};
+    use crate::{
+        backend::{EmbeddedGraphicsPainter, embedded_graphics::aligned_line_x},
+        *,
+    };
 
     #[test]
     fn embedded_graphics_backend_rasterizes_box() {
@@ -277,5 +322,50 @@ mod tests {
             display.get_pixel(EgPoint::new(5, 5,)),
             Some(Rgb888::new(0, 0, 255,))
         );
+    }
+
+    #[test]
+    fn text_measurement_wraps_at_word_boundaries() {
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+
+        let size = painter.measure(
+            "hello world",
+            TextStyle {
+                wrap: TextWrap::Word,
+                ..TextStyle::default()
+            },
+            Size::new(px(30), px(100)),
+        );
+
+        assert_eq!(size, Size::new(px(30), px(20),));
+    }
+
+    #[test]
+    fn custom_line_height_affects_multiline_measurement() {
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+
+        let size = painter.measure(
+            "first\nsecond",
+            TextStyle {
+                line_height: Some(px(15)),
+                ..TextStyle::default()
+            },
+            Size::new(px(100), px(100)),
+        );
+
+        assert_eq!(size.height, px(25));
+    }
+
+    #[test]
+    fn centered_text_line_is_offset_inside_bounds() {
+        let bounds = Rect::new(Point::new(px(10), px(5)), Size::new(px(100), px(20)));
+
+        assert_eq!(aligned_line_x(bounds, px(40), TextAlign::Center,), px(40));
+        assert_eq!(aligned_line_x(bounds, px(40), TextAlign::End,), px(70));
+        assert_eq!(aligned_line_x(bounds, px(40), TextAlign::Start,), px(10));
     }
 }

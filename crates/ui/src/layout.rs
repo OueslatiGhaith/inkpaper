@@ -1550,6 +1550,7 @@ mod tests {
                 font: FontId::new(3),
                 color: Color::GREEN,
                 line_height: Some(px(18)),
+                ..Default::default()
             })
         );
     }

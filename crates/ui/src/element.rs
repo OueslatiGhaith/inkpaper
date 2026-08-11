@@ -1,5 +1,5 @@
 use crate::{
-    Color, MountCx, MountError, NodeId, Pixels,
+    Color, MountCx, MountError, NodeId, Pixels, TextAlign, TextWrap,
     text_style::{FontId, TextStylePatch, TextStyled},
 };
 
@@ -55,6 +55,16 @@ impl TextStyled for Text<'_> {
 
     fn line_height(mut self, line_height: Pixels) -> Self {
         self.style.line_height = Some(line_height.non_negative());
+        self
+    }
+
+    fn text_align(mut self, align: TextAlign) -> Self {
+        self.style.align = Some(align);
+        self
+    }
+
+    fn text_wrap(mut self, wrap: TextWrap) -> Self {
+        self.style.wrap = Some(wrap);
         self
     }
 }

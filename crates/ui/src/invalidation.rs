@@ -410,4 +410,70 @@ mod tests {
         assert!(runtime.focus_next());
         assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
     }
+
+    #[test]
+    fn focused_text_alignment_change_requires_paint_only() {
+        struct App;
+        impl App {
+            fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+        }
+
+        impl Render for App {
+            fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div().child(
+                    div()
+                        .id("button")
+                        .text_start()
+                        .when_focused(|style| style.text_center())
+                        .on_click(cx.listener(Self::clicked))
+                        .child("Button"),
+                )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
+    }
+
+    #[test]
+    fn focused_text_wrap_change_requires_layout() {
+        struct App;
+        impl App {
+            fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+        }
+
+        impl Render for App {
+            fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div().child(
+                    div()
+                        .id("button")
+                        .no_wrap()
+                        .when_focused(|style| style.wrap())
+                        .on_click(cx.listener(Self::clicked))
+                        .child("A long button label"),
+                )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
+    }
 }

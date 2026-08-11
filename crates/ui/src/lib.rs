@@ -29,6 +29,7 @@ mod runtime;
 mod scroll;
 mod stateful;
 mod style;
+mod text_layout;
 mod text_style;
 mod units;
 mod visual;
@@ -59,6 +60,6 @@ pub mod prelude {
     pub use crate::{
         ClickEvent, Color, Context, Entity, FontId, InteractiveElement, IntoElement, Invalidation,
         Offset, ParentElement, Pixels, Point, Rect, Render, Runtime, Size,
-        StatefulInteractiveElementExt, Styled, TextStyled, div, px, text,
+        StatefulInteractiveElementExt, Styled, TextAlign, TextStyled, TextWrap, div, px, text,
     };
 }

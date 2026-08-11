@@ -1,4 +1,4 @@
-use crate::{Color, Invalidation, Length, Pixels, px, text_style::FontId};
+use crate::{Color, Invalidation, Length, Pixels, TextAlign, TextWrap, px, text_style::FontId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Display {
@@ -171,6 +171,7 @@ declare_style! {
 
             font: Option<FontId> = None,
             line_height: Option<Pixels> = None,
+            text_wrap: Option<TextWrap> = None,
         }
         paint {
             background: Option<Color> = None,
@@ -181,6 +182,7 @@ declare_style! {
             clip_children: bool = false,
 
             text_color: Option<Color> = None,
+            text_align: Option<TextAlign> = None,
         }
     }
 }

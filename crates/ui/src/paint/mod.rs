@@ -1,6 +1,5 @@
 use crate::{
-    Color, FrameArena, NodeId, NodeKind, Pixels, Point, Rect, TextMeasurer, TextStyle,
-    visual::VisualNode,
+    Color, FrameArena, NodeId, NodeKind, Pixels, Rect, TextMeasurer, TextStyle, visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,6 +365,7 @@ mod tests {
                     font: FontId::new(1),
                     color: Color::RED,
                     line_height: Some(px(16)),
+                    ..Default::default()
                 },
                 clip: None,
             }

@@ -385,7 +385,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                         .style()
                         .expect("div node must have style");
 
-                    TextStylePatch::fron_style(style).resolve(inherited)
+                    TextStylePatch::from_style(style).resolve(inherited)
                 }
                 NodeKind::Text { .. } => self.node(node_id).text_style.resolve(inherited),
                 NodeKind::Entity { .. } => inherited,
@@ -1794,6 +1794,7 @@ mod tests {
                 font: FontId::new(2),
                 color: Color::RED,
                 line_height: Some(px(14)),
+                ..Default::default()
             }
         );
     }
