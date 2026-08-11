@@ -4,7 +4,7 @@ use heapless::Vec;
 
 use crate::{
     Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId,
-    Offset, Rect, StatefulInteractivity, Style, StylePatch,
+    Offset, Rect, StatefulInteractivity, Style, StylePatch, TextStyle,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     listener_store::ListenerStore,
@@ -64,6 +64,7 @@ pub(crate) struct Node {
     pub(crate) layout: NodeLayout,
     pub(crate) effective_style: Option<Style>,
     pub(crate) text_style: TextStylePatch,
+    pub(crate) effective_text_style: TextStyle,
 }
 
 impl Node {
@@ -83,6 +84,7 @@ impl Node {
                 _ => None,
             },
             text_style: TextStylePatch::default(),
+            effective_text_style: TextStyle::default(),
         }
     }
 
@@ -364,6 +366,33 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 .element_state_id
                 .map(|id| states.offset(id))
                 .unwrap_or(Offset::ZERO);
+        }
+    }
+
+    pub(crate) fn resolve_text_styles(&mut self, root: NodeId) {
+        let mut current = Some(root);
+        while let Some(node_id) = current {
+            let inherited = self
+                .node(node_id)
+                .parent
+                .map(|parent| self.node(parent).effective_text_style)
+                .unwrap_or_default();
+
+            let resolved = match self.node(node_id).kind {
+                NodeKind::Div { .. } => {
+                    let style = self
+                        .node(node_id)
+                        .style()
+                        .expect("div node must have style");
+
+                    TextStylePatch::fron_style(style).resolve(inherited)
+                }
+                NodeKind::Text { .. } => self.node(node_id).text_style.resolve(inherited),
+                NodeKind::Entity { .. } => inherited,
+            };
+
+            self.node_mut(node_id).effective_text_style = resolved;
+            current = self.next_depth_first_node(node_id);
         }
     }
 }
@@ -1734,5 +1763,38 @@ mod tests {
         assert_eq!(frame.node(node).text_style.font(), Some(FontId::new(2)));
         assert_eq!(frame.node(node).text_style.color(), Some(Color::RED));
         assert_eq!(frame.node(node).text_style.line_height(), Some(px(18)));
+    }
+
+    #[test]
+    fn text_style_resolves_through_nested_elements() {
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .font(FontId::new(1))
+                    .text_color(Color::WHITE)
+                    .line_height(px(14))
+                    .child(
+                        div()
+                            .text_color(Color::RED)
+                            .child(text("Hello").font(FontId::new(2))),
+                    ),
+            )
+            .unwrap();
+
+        frame.resolve_text_styles(root);
+
+        let inner = frame.node(root).first_child.unwrap();
+        let text_node = frame.node(inner).first_child.unwrap();
+
+        assert_eq!(
+            frame.node(text_node).effective_text_style,
+            TextStyle {
+                font: FontId::new(2),
+                color: Color::RED,
+                line_height: Some(px(14)),
+            }
+        );
     }
 }

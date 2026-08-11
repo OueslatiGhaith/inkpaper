@@ -12,73 +12,80 @@ use embedded_graphics::{
     text::{Baseline as EgBaseline, Text as EgText},
 };
 
-use crate::{BoxPaint, Color, Painter, Point, Rect, Size, TextMeasurer, px};
+use crate::{BoxPaint, Color, FontId, Painter, Pixels, Rect, Size, TextMeasurer, TextStyle, px};
 
-pub struct EmbeddedGraphicsPainter<'target, 'font, D> {
+pub struct EmbeddedGraphicsPainter<'target, 'font, D, const FONTS: usize> {
     target: &'target mut D,
-    font: &'font EgMonoFont<'font>,
-    // TODO: temporary until we implement text styles
-    text_color: Color,
+    fonts: [&'font EgMonoFont<'font>; FONTS],
 }
 
-impl<'target, 'font, D> EmbeddedGraphicsPainter<'target, 'font, D> {
-    pub fn new(target: &'target mut D, font: &'font EgMonoFont<'font>, text_color: Color) -> Self {
-        Self {
-            target,
-            font,
-            text_color,
-        }
+impl<'target, 'font, D, const FONTS: usize> EmbeddedGraphicsPainter<'target, 'font, D, FONTS> {
+    pub fn new(target: &'target mut D, fonts: [&'font EgMonoFont<'font>; FONTS]) -> Self {
+        assert!(FONTS > 0, "at least one font must be registered");
+
+        Self { target, fonts }
     }
 
     pub fn target_mut(&mut self) -> &mut D {
         self.target
     }
 
-    pub fn set_text_color(&mut self, color: Color) {
-        self.text_color = color;
+    fn resolve_font(&self, font: FontId) -> &'font EgMonoFont<'font> {
+        self.fonts
+            .get(font.index())
+            .copied()
+            .unwrap_or(self.fonts[0])
     }
 }
 
-impl<D> TextMeasurer for EmbeddedGraphicsPainter<'_, '_, D> {
-    fn measure(&self, text: &str, max_size: Size) -> Size {
+impl<D, const FONTS: usize> TextMeasurer for EmbeddedGraphicsPainter<'_, '_, D, FONTS> {
+    fn measure(&self, text: &str, style: TextStyle, max_size: Size) -> Size {
         if text.is_empty() {
             return Size::ZERO;
         }
 
-        let mut longest_line = 0;
-        let mut lines = 0;
+        let font = self.resolve_font(style.font);
+        let character_width = font_character_width(font);
+        let character_spacing = font_character_spacing(font);
+        let glyph_height = font_character_height(font);
+        let line_advance = text_line_advance(font, style);
+
+        let mut longest_line = px(0);
+        let mut line_count = 0i32;
 
         for line in text.split('\n') {
-            longest_line = longest_line.max(line.chars().count());
-            lines += 1;
+            let characters = i32::try_from(line.chars().count()).unwrap_or(i32::MAX);
+            let width = if characters == 0 {
+                px(0)
+            } else {
+                character_width
+                    .saturating_add(character_spacing)
+                    .saturating_mul(characters)
+                    .saturating_sub(character_spacing)
+            };
+
+            longest_line = longest_line.max(width);
+            line_count = line_count.saturating_add(1);
         }
 
-        let character_width = self.font.character_size.width;
-        let character_height = self.font.character_size.height;
-        let spacing = self.font.character_spacing;
-        let characters = u32::try_from(longest_line).unwrap_or(u32::MAX);
-        let lines = u32::try_from(lines).unwrap_or(u32::MAX);
-        let height = lines.saturating_mul(character_height);
-        let width = if characters == 0 {
-            0
+        let height = if line_count <= 0 {
+            px(0)
         } else {
-            characters
-                .saturating_mul(character_width.saturating_add(spacing))
-                .saturating_sub(spacing)
+            glyph_height
+                .saturating_add(line_advance)
+                .saturating_mul(line_count - 1)
         };
 
-        let width = i32::try_from(width)
-            .unwrap_or(i32::MAX)
-            .min(max_size.width.non_negative().get());
-        let height = i32::try_from(height)
-            .unwrap_or(i32::MAX)
-            .min(max_size.height.non_negative().get());
-
-        Size::new(px(width), px(height))
+        Size::new(
+            longest_line
+                .non_negative()
+                .min(max_size.width.non_negative()),
+            height.non_negative().min(max_size.height.non_negative()),
+        )
     }
 }
 
-impl<D> Painter for EmbeddedGraphicsPainter<'_, '_, D>
+impl<D, const FONTS: usize> Painter for EmbeddedGraphicsPainter<'_, '_, D, FONTS>
 where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,
@@ -105,17 +112,20 @@ where
     fn draw_text(
         &mut self,
         text: &str,
-        origin: Point,
+        bounds: Rect,
+        style: TextStyle,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
-        let mut target = self.target.color_converted::<EgRgb888>();
+        let font = self.resolve_font(style.font);
+        let mut target = self.target.color_converted();
 
         if let Some(clip) = clip {
             let clip = to_embedded_rect(clip);
             let mut clipped = target.clipped(&clip);
-            draw_text_to(&mut clipped, text, origin, self.font, self.text_color)
+
+            draw_text_to(&mut clipped, text, bounds, font, style)
         } else {
-            draw_text_to(&mut target, text, origin, self.font, self.text_color)
+            draw_text_to(&mut target, text, bounds, font, style)
         }
     }
 }
@@ -176,22 +186,55 @@ where
 fn draw_text_to<D>(
     target: &mut D,
     text: &str,
-    origin: Point,
+    bounds: Rect,
     font: &EgMonoFont<'_>,
-    color: Color,
+    style: TextStyle,
 ) -> Result<(), D::Error>
 where
     D: EgDrawTarget<Color = EgRgb888>,
 {
-    let style = EgMonoTextStyle::new(font, to_rgb888(color));
-    EgText::with_baseline(
-        text,
-        EgPoint::new(origin.x.get(), origin.y.get()),
-        style,
-        EgBaseline::Top,
-    )
-    .draw(target)
-    .map(|_| ())
+    if text.is_empty() {
+        return Ok(());
+    }
+
+    let text_style = EgMonoTextStyle::new(font, to_rgb888(style.color));
+    let line_advance = text_line_advance(font, style);
+
+    let mut origin = bounds.origin;
+    for line in text.split('\n') {
+        if !line.is_empty() {
+            EgText::with_baseline(
+                line,
+                EgPoint::new(origin.x.get(), origin.y.get()),
+                text_style,
+                EgBaseline::Top,
+            )
+            .draw(target)?;
+        }
+
+        origin.y += line_advance;
+    }
+
+    Ok(())
+}
+
+fn font_character_width(font: &EgMonoFont<'_>) -> Pixels {
+    px(i32::try_from(font.character_size.width).unwrap_or(i32::MAX))
+}
+
+fn font_character_height(font: &EgMonoFont<'_>) -> Pixels {
+    px(i32::try_from(font.character_size.height).unwrap_or(i32::MAX))
+}
+
+fn font_character_spacing(font: &EgMonoFont<'_>) -> Pixels {
+    px(i32::try_from(font.character_spacing).unwrap_or(i32::MAX))
+}
+
+fn text_line_advance(font: &EgMonoFont<'_>, style: TextStyle) -> Pixels {
+    style
+        .line_height
+        .unwrap_or_else(|| font_character_height(font))
+        .non_negative()
 }
 
 #[cfg(test)]
@@ -208,7 +251,7 @@ mod tests {
         let mut display = MockDisplay::<Rgb888>::new();
 
         {
-            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &FONT_6X10, Color::WHITE);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
 
             painter
                 .draw_box(

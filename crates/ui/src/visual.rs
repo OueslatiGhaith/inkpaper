@@ -233,8 +233,18 @@ mod tests {
     struct TestTextMeasurer;
 
     impl TextMeasurer for TestTextMeasurer {
-        fn measure(&self, _text: &str, _max_size: Size) -> Size {
-            Size::ZERO
+        fn measure(&self, text: &str, _style: TextStyle, max_size: Size) -> Size {
+            let width = px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
+                .saturating_mul(6)
+                .min(max_size.width.non_negative());
+
+            let height = if text.is_empty() {
+                px(0)
+            } else {
+                px(0).min(max_size.height.non_negative())
+            };
+
+            Size::new(width, height)
         }
     }
 
@@ -355,8 +365,9 @@ mod tests {
             clip: Option<Rect>,
         },
         Text {
-            origin: Point,
+            bounds: Rect,
             length: usize,
+            style: TextStyle,
             clip: Option<Rect>,
         },
     }
@@ -367,17 +378,18 @@ mod tests {
     }
 
     impl TextMeasurer for RecordingPainter {
-        fn measure(&self, text: &str, max_size: Size) -> Size {
-            let width = (text.chars().count() as i32)
+        fn measure(&self, text: &str, _style: TextStyle, max_size: Size) -> Size {
+            let width = px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
                 .saturating_mul(6)
-                .min(max_size.width.non_negative().get());
+                .min(max_size.width.non_negative());
+
             let height = if text.is_empty() {
-                0
+                Pixels::ZERO
             } else {
-                10.min(max_size.height.non_negative().get())
+                px(10).min(max_size.height.non_negative())
             };
 
-            Size::new(px(width), px(height))
+            Size::new(width, height)
         }
     }
 
@@ -401,14 +413,17 @@ mod tests {
         fn draw_text(
             &mut self,
             text: &str,
-            origin: Point,
+            bounds: Rect,
+            style: TextStyle,
             clip: Option<Rect>,
         ) -> Result<(), Self::Error> {
             self.commands.push(Command::Text {
-                origin,
+                bounds,
                 length: text.len(),
+                style,
                 clip,
             });
+
             Ok(())
         }
     }

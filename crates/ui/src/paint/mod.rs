@@ -1,5 +1,6 @@
 use crate::{
-    Color, FrameArena, NodeId, NodeKind, Pixels, Point, Rect, TextMeasurer, visual::VisualNode,
+    Color, FrameArena, NodeId, NodeKind, Pixels, Point, Rect, TextMeasurer, TextStyle,
+    visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,7 +29,8 @@ pub trait Painter: TextMeasurer {
     fn draw_text(
         &mut self,
         text: &str,
-        origin: Point,
+        bounds: Rect,
+        style: TextStyle,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error>;
 }
@@ -68,7 +70,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     clip,
                 )
             }
-            NodeKind::Text { text } => painter.draw_text(self.text(text), bounds.origin, clip),
+            NodeKind::Text { text } => {
+                painter.draw_text(self.text(text), bounds, node.effective_text_style, clip)
+            }
             NodeKind::Entity { .. } => Ok(()),
         }
     }
@@ -99,9 +103,11 @@ mod tests {
             paint: BoxPaint,
             clip: Option<Rect>,
         },
+
         Text {
-            origin: Point,
+            bounds: Rect,
             length: usize,
+            style: TextStyle,
             clip: Option<Rect>,
         },
     }
@@ -112,17 +118,18 @@ mod tests {
     }
 
     impl TextMeasurer for RecordingPainter {
-        fn measure(&self, text: &str, max_size: Size) -> Size {
-            let width = (text.chars().count() as i32)
+        fn measure(&self, text: &str, _style: TextStyle, max_size: Size) -> Size {
+            let width = px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
                 .saturating_mul(6)
-                .min(max_size.width.non_negative().get());
+                .min(max_size.width.non_negative());
+
             let height = if text.is_empty() {
-                0
+                Pixels::ZERO
             } else {
-                10.min(max_size.height.non_negative().get())
+                px(10).min(max_size.height.non_negative())
             };
 
-            Size::new(px(width), px(height))
+            Size::new(width, height)
         }
     }
 
@@ -146,14 +153,17 @@ mod tests {
         fn draw_text(
             &mut self,
             text: &str,
-            origin: Point,
+            bounds: Rect,
+            style: TextStyle,
             clip: Option<Rect>,
         ) -> Result<(), Self::Error> {
             self.commands.push(Command::Text {
-                origin,
+                bounds,
                 length: text.len(),
+                style,
                 clip,
             });
+
             Ok(())
         }
     }
@@ -207,8 +217,9 @@ mod tests {
         assert_eq!(
             painter.commands[2],
             Command::Text {
-                origin: Point::new(px(0), px(10),),
+                bounds: Rect::new(Point::new(px(0), px(10)), Size::new(px(12), px(10))),
                 length: 2,
+                style: TextStyle::default(),
                 clip: None
             }
         );
@@ -323,6 +334,40 @@ mod tests {
                     Point::new(px(2), px(2),),
                     Size::new(px(46), px(26),),
                 )),
+            }
+        );
+    }
+
+    #[test]
+    fn painting_receives_resolved_text_style() {
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .font(FontId::new(1))
+                    .text_color(Color::WHITE)
+                    .line_height(px(16))
+                    .child(text("Hello").text_color(Color::RED)),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(100)), &painter);
+        frame.paint(root, &mut painter).unwrap();
+
+        assert_eq!(
+            painter.commands[1],
+            Command::Text {
+                bounds: Rect::new(Point::ZERO, Size::new(px(30), px(10),),),
+                length: "Hello".len(),
+                style: TextStyle {
+                    font: FontId::new(1),
+                    color: Color::RED,
+                    line_height: Some(px(16)),
+                },
+                clip: None,
             }
         );
     }

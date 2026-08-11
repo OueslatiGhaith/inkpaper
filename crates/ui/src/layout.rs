@@ -1,10 +1,10 @@
 use crate::{
     AlignItems, Display, Edges, FlexBasis, FlexDirection, FrameArena, JustifyContent, Length,
-    NodeId, NodeKind, Offset, Pixels, Point, Rect, Size, Style, px,
+    NodeId, NodeKind, Offset, Pixels, Point, Rect, Size, Style, TextStyle, px,
 };
 
 pub trait TextMeasurer {
-    fn measure(&self, text: &str, max_size: Size) -> Size;
+    fn measure(&self, text: &str, style: TextStyle, max_size: Size) -> Size;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,7 +209,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     ) -> Size {
         match self.node(node).kind {
             crate::NodeKind::Text { text } => {
-                let measured = text_measurer.measure(self.text(text), available);
+                let measured = text_measurer.measure(
+                    self.text(text),
+                    self.node(node).effective_text_style,
+                    available,
+                );
 
                 Size::new(
                     measured
@@ -487,6 +491,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         viewport: Size,
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
+        self.resolve_text_styles(root);
         self.layout_node(root, Point::ZERO, viewport, text_measurer)
     }
 
@@ -767,6 +772,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
 #[cfg(test)]
 mod tests {
+    use core::cell::Cell;
+
     use crate::*;
 
     type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
@@ -786,11 +793,11 @@ mod tests {
     }
 
     impl TextMeasurer for TestTextMeasurer {
-        fn measure(&self, text: &str, max_size: Size) -> Size {
+        fn measure(&self, text: &str, _style: TextStyle, max_size: Size) -> Size {
             let character_count = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
-            let desired_width = self.character_width * character_count;
+            let desired_width = self.character_width.saturating_mul(character_count);
             let desired_height = if text.is_empty() {
-                px(0)
+                Pixels::ZERO
             } else {
                 self.line_height
             };
@@ -1496,5 +1503,54 @@ mod tests {
             .unwrap();
 
         assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(-1),),));
+    }
+
+    #[test]
+    fn text_measurement_receives_resolved_text_style() {
+        struct RecordingMeasurer {
+            style: Cell<Option<TextStyle>>,
+        }
+
+        impl TextMeasurer for RecordingMeasurer {
+            fn measure(&self, text: &str, style: TextStyle, max_size: Size) -> Size {
+                self.style.set(Some(style));
+
+                if text.is_empty() {
+                    return Size::ZERO;
+                }
+
+                Size::new(
+                    px(20).min(max_size.width.non_negative()),
+                    px(10).min(max_size.height.non_negative()),
+                )
+            }
+        }
+
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .font(FontId::new(3))
+                    .text_color(Color::GREEN)
+                    .line_height(px(18))
+                    .child("Hello"),
+            )
+            .unwrap();
+
+        let measurer = RecordingMeasurer {
+            style: Cell::new(None),
+        };
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        assert_eq!(
+            measurer.style.get(),
+            Some(TextStyle {
+                font: FontId::new(3),
+                color: Color::GREEN,
+                line_height: Some(px(18)),
+            })
+        );
     }
 }

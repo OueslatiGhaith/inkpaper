@@ -1,4 +1,4 @@
-use crate::{Color, Pixels, Styled};
+use crate::{Color, Pixels, Style, Styled};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FontId(u16);
@@ -8,6 +8,10 @@ impl FontId {
 
     pub const fn new(value: u16) -> Self {
         Self(value)
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
     }
 }
 
@@ -36,6 +40,14 @@ pub struct TextStylePatch {
 }
 
 impl TextStylePatch {
+    pub const fn fron_style(style: Style) -> Self {
+        Self {
+            font: style.font,
+            color: style.text_color,
+            line_height: style.line_height,
+        }
+    }
+
     pub const fn font(self) -> Option<FontId> {
         self.font
     }
@@ -50,18 +62,9 @@ impl TextStylePatch {
 
     pub fn resolve(self, inherited: TextStyle) -> TextStyle {
         TextStyle {
-            font: match self.font {
-                Some(font) => font,
-                None => inherited.font,
-            },
-            color: match self.color {
-                Some(color) => color,
-                None => inherited.color,
-            },
-            line_height: match self.line_height {
-                Some(line_height) => Some(line_height),
-                None => inherited.line_height,
-            },
+            font: self.font.unwrap_or(inherited.font),
+            color: self.color.unwrap_or(inherited.color),
+            line_height: self.line_height.or(inherited.line_height),
         }
     }
 

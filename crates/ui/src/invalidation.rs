@@ -31,18 +31,18 @@ mod tests {
 
     struct TestTextMeasurer;
     impl TextMeasurer for TestTextMeasurer {
-        fn measure(&self, text: &str, max_size: Size) -> Size {
-            let width = (text.chars().count() as i32)
+        fn measure(&self, text: &str, _style: TextStyle, max_size: Size) -> Size {
+            let width = px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
                 .saturating_mul(6)
-                .min(max_size.width.non_negative().get());
+                .min(max_size.width.non_negative());
 
             let height = if text.is_empty() {
-                0
+                px(0)
             } else {
-                10.min(max_size.height.non_negative().get())
+                px(0).min(max_size.height.non_negative())
             };
 
-            Size::new(px(width), px(height))
+            Size::new(width, height)
         }
     }
 
