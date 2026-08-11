@@ -9,6 +9,7 @@ use crate::{
     entity_store::EntityStore,
     listener_store::ListenerStore,
     scroll::{ScrollAxes, ScrollStateTable},
+    text_style::TextStylePatch,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,6 +63,7 @@ pub(crate) struct Node {
     pub(crate) interaction: NodeInteraction,
     pub(crate) layout: NodeLayout,
     pub(crate) effective_style: Option<Style>,
+    pub(crate) text_style: TextStylePatch,
 }
 
 impl Node {
@@ -80,6 +82,7 @@ impl Node {
                 NodeKind::Div { style } => Some(style),
                 _ => None,
             },
+            text_style: TextStylePatch::default(),
         }
     }
 
@@ -370,7 +373,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
         self.push_node(NodeKind::Div { style })
     }
 
-    fn push_text(&mut self, text: &str) -> Result<NodeId, MountError> {
+    fn push_text(&mut self, text: &str, style: TextStylePatch) -> Result<NodeId, MountError> {
         let bytes = text.as_bytes();
         let start = self.text.len();
         let end = start
@@ -391,8 +394,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
             start,
             len: bytes.len(),
         };
+        let node = self.push_node(NodeKind::Text { text: range })?;
+        self.node_mut(node).text_style = style;
 
-        self.push_node(NodeKind::Text { text: range })
+        Ok(node)
     }
 
     fn push_entity(
@@ -434,7 +439,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
 
 pub(crate) trait FrameStore {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError>;
-    fn push_text(&mut self, text: &str) -> Result<NodeId, MountError>;
+    fn push_text(&mut self, text: &str, style: TextStylePatch) -> Result<NodeId, MountError>;
     fn push_entity(
         &mut self,
         entity: EntityId,
@@ -459,8 +464,12 @@ impl MountCx<'_> {
         self.frame.push_div(style)
     }
 
-    pub(crate) fn push_text(&mut self, text: &str) -> Result<NodeId, MountError> {
-        self.frame.push_text(text)
+    pub(crate) fn push_text(
+        &mut self,
+        text: &str,
+        style: TextStylePatch,
+    ) -> Result<NodeId, MountError> {
+        self.frame.push_text(text, style)
     }
 
     pub(crate) fn push_entity(
@@ -1696,5 +1705,34 @@ mod tests {
 
         assert!(states.contains(old));
         assert_eq!(states.len(), 1);
+    }
+
+    #[test]
+    fn plain_string_mounts_without_text_style_overrides() {
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let node = frame.mount("Hello").unwrap();
+
+        assert_eq!(frame.node(node).text_style, TextStylePatch::default());
+        assert_eq!(node_text(&frame, node), "Hello");
+    }
+
+    #[test]
+    fn explicit_text_element_preserves_text_style_overrides() {
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let node = frame
+            .mount(
+                text("Hello")
+                    .font(FontId::new(2))
+                    .text_color(Color::RED)
+                    .line_height(px(18)),
+            )
+            .unwrap();
+
+        assert_eq!(node_text(&frame, node), "Hello");
+        assert_eq!(frame.node(node).text_style.font(), Some(FontId::new(2)));
+        assert_eq!(frame.node(node).text_style.color(), Some(Color::RED));
+        assert_eq!(frame.node(node).text_style.line_height(), Some(px(18)));
     }
 }

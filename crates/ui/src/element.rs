@@ -1,4 +1,7 @@
-use crate::{MountCx, MountError, NodeId};
+use crate::{
+    Color, MountCx, MountError, NodeId, Pixels,
+    text_style::{FontId, TextStylePatch, TextStyled},
+};
 
 pub trait Element: Sized {
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError>;
@@ -23,11 +26,42 @@ where
 
 pub struct Text<'a> {
     pub text: &'a str,
+    pub(crate) style: TextStylePatch,
+}
+
+impl<'a> Text<'a> {
+    pub fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            style: TextStylePatch::default(),
+        }
+    }
+}
+
+pub fn text(value: &str) -> Text<'_> {
+    Text::new(value)
+}
+
+impl TextStyled for Text<'_> {
+    fn font(mut self, font: FontId) -> Self {
+        self.style.font = Some(font);
+        self
+    }
+
+    fn text_color(mut self, color: Color) -> Self {
+        self.style.color = Some(color);
+        self
+    }
+
+    fn line_height(mut self, line_height: Pixels) -> Self {
+        self.style.line_height = Some(line_height.non_negative());
+        self
+    }
 }
 
 impl Element for Text<'_> {
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
-        cx.push_text(self.text)
+        cx.push_text(self.text, self.style)
     }
 }
 
@@ -35,7 +69,7 @@ impl<'a> IntoElement for &'a str {
     type Element = Text<'a>;
 
     fn into_element(self) -> Self::Element {
-        Text { text: self }
+        Text::new(self)
     }
 }
 

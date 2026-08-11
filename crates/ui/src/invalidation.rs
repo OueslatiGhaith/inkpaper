@@ -344,4 +344,70 @@ mod tests {
         assert_eq!(clicks.get(), 1);
         assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
     }
+
+    #[test]
+    fn focused_text_color_change_requires_paint_only() {
+        struct App;
+        impl App {
+            fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+        }
+
+        impl Render for App {
+            fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div().child(
+                    div()
+                        .id("button")
+                        .text_color(Color::WHITE)
+                        .when_focused(|style| style.text_color(Color::RED))
+                        .on_click(cx.listener(Self::clicked))
+                        .child("Button"),
+                )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
+    }
+
+    #[test]
+    fn focused_font_change_requires_layout() {
+        struct App;
+        impl App {
+            fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+        }
+
+        impl Render for App {
+            fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div().child(
+                    div()
+                        .id("button")
+                        .font(FontId::new(0))
+                        .when_focused(|style| style.font(FontId::new(1)))
+                        .on_click(cx.listener(Self::clicked))
+                        .child("Button"),
+                )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
+    }
 }
