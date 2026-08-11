@@ -49,6 +49,7 @@ pub struct Runtime<
     root: Option<NodeId>,
     pointer: PointerState,
     focused: Option<ElementStateId>,
+    pending_scroll_into_view: Option<ElementStateId>,
 }
 
 impl<
@@ -74,6 +75,7 @@ impl<
             root: None,
             pointer: PointerState::default(),
             focused: None,
+            pending_scroll_into_view: None,
         }
     }
 }
@@ -151,6 +153,7 @@ impl<
                 self.visual_invalidation.set(Invalidation::None);
                 self.root = None;
                 self.focused = None;
+                self.pending_scroll_into_view = None;
 
                 Err(error)
             }
@@ -216,6 +219,11 @@ impl<
         let size = self.frame.layout(root, viewport, text_measurer);
         self.frame.clamp_scroll_offset(&mut self.scroll_states);
 
+        if let Some(element) = self.pending_scroll_into_view.take() {
+            self.frame
+                .scroll_element_into_view(root, element, &mut self.scroll_states);
+        }
+
         Some(size)
     }
 
@@ -262,8 +270,7 @@ impl<
             return Ok(false);
         };
 
-        let previous_focus = self.focused;
-        let mut next_focus = previous_focus;
+        let mut next_focus = self.focused;
         let mut listener = None;
         let mut activated = false;
 
@@ -274,15 +281,12 @@ impl<
             next_focus = Some(target.element);
             listener = Some(target.listener);
             activated = true;
-        };
+        }
 
         let pressed_invalidation = self.pressed_transition_invalidation(Some(pressed), None);
-        let focus_invalidation = self.focus_transition_invalidation(previous_focus, next_focus);
-        let invalidation = pressed_invalidation.merge(focus_invalidation);
+        let focus_invalidation = self.set_focus(next_focus);
 
-        self.focused = next_focus;
-        self.refresh_interaction_styles();
-        self.invalidate(invalidation);
+        self.invalidate(pressed_invalidation.merge(focus_invalidation));
 
         if let Some(listener) = listener {
             let listener = Listener::from_id(listener);
@@ -309,6 +313,13 @@ impl<
             && !self.element_states.contains(focused)
         {
             self.focused = None;
+            self.pending_scroll_into_view = None;
+        }
+
+        if let Some(pending) = self.pending_scroll_into_view
+            && !self.element_states.contains(pending)
+        {
+            self.pending_scroll_into_view = None;
         }
 
         if let Some(pressed) = self.pointer.pressed()
@@ -320,23 +331,17 @@ impl<
 
     pub fn focus_next(&mut self) -> bool {
         let Some(root) = self.root else {
-            self.focused = None;
+            let invalidation = self.set_focus(None);
+            self.invalidate(invalidation);
             return false;
         };
         let Some(target) = self.frame.next_click_target(root, self.focused) else {
-            self.focused = None;
+            let invalidation = self.set_focus(None);
+            self.invalidate(invalidation);
             return false;
         };
 
-        let previous = self.focused;
-        let next = Some(target.element);
-        if previous == next {
-            return true;
-        }
-
-        let invalidation = self.focus_transition_invalidation(previous, next);
-        self.focused = next;
-        self.refresh_interaction_styles();
+        let invalidation = self.set_focus(Some(target.element));
         self.invalidate(invalidation);
 
         true
@@ -344,36 +349,24 @@ impl<
 
     pub fn focus_previous(&mut self) -> bool {
         let Some(root) = self.root else {
-            self.focused = None;
+            let invalidation = self.set_focus(None);
+            self.invalidate(invalidation);
             return false;
         };
         let Some(target) = self.frame.previous_click_target(root, self.focused) else {
-            self.focused = None;
+            let invalidation = self.set_focus(None);
+            self.invalidate(invalidation);
             return false;
         };
 
-        let previous = self.focused;
-        let next = Some(target.element);
-        if previous == next {
-            return true;
-        }
-
-        let invalidation = self.focus_transition_invalidation(previous, next);
-        self.focused = next;
-        self.refresh_interaction_styles();
+        let invalidation = self.set_focus(Some(target.element));
         self.invalidate(invalidation);
 
         true
     }
 
     pub fn clear_focus(&mut self) {
-        let Some(previous) = self.focused else {
-            return;
-        };
-
-        let invalidation = self.focus_transition_invalidation(Some(previous), None);
-        self.focused = None;
-        self.refresh_interaction_styles();
+        let invalidation = self.set_focus(None);
         self.invalidate(invalidation);
     }
 
@@ -498,5 +491,43 @@ impl<
         self.invalidate(Invalidation::Paint);
 
         true
+    }
+
+    fn scroll_element_into_view_now(&mut self, element: ElementStateId) -> bool {
+        let Some(root) = self.root else { return false };
+        self.frame
+            .scroll_element_into_view(root, element, &mut self.scroll_states)
+    }
+
+    fn set_focus(&mut self, next: Option<ElementStateId>) -> Invalidation {
+        let previous = self.focused;
+        if previous == next {
+            if let Some(element) = next
+                && self.scroll_element_into_view_now(element)
+            {
+                return Invalidation::Paint;
+            }
+
+            return Invalidation::None;
+        }
+
+        let mut invalidation = self.focus_transition_invalidation(previous, next);
+
+        self.focused = next;
+        self.refresh_interaction_styles();
+        self.pending_scroll_into_view = None;
+
+        let Some(element) = next else {
+            return invalidation;
+        };
+        if matches!(invalidation, Invalidation::Layout | Invalidation::Rebuild) {
+            // focus styling changed geometry. Current frame bounds are stale, so wait
+            // until layout has recomputed them
+            self.pending_scroll_into_view = Some(element);
+        } else if self.scroll_element_into_view_now(element) {
+            invalidation = invalidation.merge(Invalidation::Paint);
+        }
+
+        invalidation
     }
 }

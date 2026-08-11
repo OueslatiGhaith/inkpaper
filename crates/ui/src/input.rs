@@ -1,5 +1,5 @@
 use crate::{
-    FrameArena, Invalidation, ListenerId, NodeId, Offset, Point,
+    FrameArena, Invalidation, ListenerId, NodeId, Offset, Pixels, Point, Rect,
     element_state::ElementStateId,
     px,
     scroll::{ScrollAxes, ScrollStateTable},
@@ -40,6 +40,34 @@ impl PointerState {
     pub(crate) fn cancel(&mut self) {
         self.pressed = None;
     }
+}
+
+fn scroll_axis_into_view(
+    current: Pixels,
+    maximum: Pixels,
+    target_start: Pixels,
+    target_end: Pixels,
+    viewport_start: Pixels,
+    viewport_end: Pixels,
+) -> Pixels {
+    let maximum = maximum.non_negative();
+    if viewport_end <= viewport_start {
+        return current.clamp(px(0), maximum);
+    }
+
+    let delta = if target_start < viewport_start && target_end > viewport_end {
+        // the target is larger than the viewport and already spans both edges
+        // there is no position that can make it fully visible, so don't jump
+        px(0)
+    } else if target_start < viewport_start {
+        target_start - viewport_start
+    } else if target_end > viewport_end {
+        target_end - viewport_end
+    } else {
+        px(0)
+    };
+
+    (current + delta).clamp(px(0), maximum)
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
@@ -258,6 +286,121 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
             self.node_mut(node_id).interaction.scroll_offset = next;
         }
+    }
+
+    pub(crate) fn node_for_element(&self, root: NodeId, element: ElementStateId) -> Option<NodeId> {
+        let mut current = Some(root);
+
+        while let Some(node_id) = current {
+            if self.node(node_id).element_state_id == Some(element) {
+                return Some(node_id);
+            }
+
+            current = self.next_depth_first_node(node_id);
+        }
+
+        None
+    }
+
+    fn visual_bounds_for_pair(
+        &self,
+        root: NodeId,
+        first: NodeId,
+        second: NodeId,
+    ) -> Option<(Rect, Rect)> {
+        let mut first_bounds = None;
+        let mut second_bounds = None;
+
+        for visual in self.visual_nodes(root) {
+            let node = visual.node();
+            if node == first {
+                first_bounds = Some(visual.bounds());
+            }
+            if node == second {
+                second_bounds = Some(visual.bounds());
+            }
+
+            if let (Some(first), Some(second)) = (first_bounds, second_bounds) {
+                return Some((first, second));
+            }
+        }
+
+        None
+    }
+
+    fn scroll_viewport_bounds(&self, node: NodeId, visual_bounds: Rect) -> Rect {
+        let border = self
+            .node(node)
+            .style()
+            .map(|s| s.border_width.non_negative())
+            .unwrap_or_default();
+
+        visual_bounds.inset(border)
+    }
+
+    pub(crate) fn scroll_element_into_view<const SLOTS: usize>(
+        &mut self,
+        root: NodeId,
+        element: ElementStateId,
+        states: &mut ScrollStateTable<SLOTS>,
+    ) -> bool {
+        let Some(target_node) = self.node_for_element(root, element) else {
+            return false;
+        };
+
+        // start with the nearest parent so nested scroll areas are adjusted
+        // from inside out
+        let mut changed = false;
+        let mut current = self.node(target_node).parent;
+
+        while let Some(scroll_node) = current {
+            let next_parent = self.node(scroll_node).parent;
+            let (axes, scroll_element) = {
+                let node = self.node(scroll_node);
+                (node.interaction.scroll_axes, node.element_state_id)
+            };
+
+            if axes.any()
+                && let Some(scroll_element) = scroll_element
+                && let Some((target_bounds, scroll_bounds)) =
+                    self.visual_bounds_for_pair(root, target_node, scroll_node)
+            {
+                let viewport = self.scroll_viewport_bounds(scroll_node, scroll_bounds);
+                let previous = states.offset(scroll_element);
+                let maximum = self.max_scroll_offset(scroll_node);
+                let mut next = previous;
+
+                if axes.horizontal() {
+                    next.x = scroll_axis_into_view(
+                        previous.x,
+                        maximum.x,
+                        target_bounds.x(),
+                        target_bounds.right(),
+                        viewport.x(),
+                        viewport.right(),
+                    );
+                }
+                if axes.vertical() {
+                    next.y = scroll_axis_into_view(
+                        previous.y,
+                        maximum.y,
+                        target_bounds.y(),
+                        target_bounds.bottom(),
+                        viewport.y(),
+                        viewport.bottom(),
+                    );
+                }
+                if next != previous {
+                    states.set_offset(scroll_element, next);
+                    self.set_scroll_offset(scroll_node, next);
+                    changed = true;
+                }
+            }
+
+            current = next_parent;
+        }
+
+        changed
     }
 }
 
@@ -820,5 +963,233 @@ mod tests {
             .unwrap();
 
         assert!(!runtime.activate_focused().unwrap());
+    }
+
+    struct FocusScrollApp;
+    impl FocusScrollApp {
+        fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+    }
+
+    impl Render for FocusScrollApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .id("scroll")
+                .w(px(100))
+                .h(px(40))
+                .overflow_y_scroll()
+                .child(
+                    div()
+                        .id("first")
+                        .w(px(100))
+                        .h(px(30))
+                        .on_click(cx.listener(Self::clicked))
+                        .child("First"),
+                )
+                .child(
+                    div()
+                        .id("second")
+                        .w(px(100))
+                        .h(px(30))
+                        .on_click(cx.listener(Self::clicked))
+                        .child("Second"),
+                )
+                .child(
+                    div()
+                        .id("third")
+                        .w(px(100))
+                        .h(px(30))
+                        .on_click(cx.listener(Self::clicked))
+                        .child("Third"),
+                )
+        }
+    }
+
+    #[test]
+    fn focus_navigation_scrolls_target_into_view() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| FocusScrollApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(40)), &TestTextMeasurer)
+            .unwrap();
+
+        let root = runtime.root_node().unwrap();
+        let scroll = runtime.frame().node(root).first_child.unwrap();
+
+        assert!(runtime.focus_next());
+        assert_eq!(
+            runtime.frame().node(scroll).interaction.scroll_offset,
+            Offset::ZERO
+        );
+
+        runtime.take_invalidation();
+
+        assert!(runtime.focus_next());
+        assert_eq!(
+            runtime.frame().node(scroll).interaction.scroll_offset,
+            Offset::new(px(0), px(20),)
+        );
+        assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
+        assert!(runtime.focus_next());
+        assert_eq!(
+            runtime.frame().node(scroll).interaction.scroll_offset,
+            Offset::new(px(0), px(50),)
+        );
+
+        runtime.take_invalidation();
+
+        assert!(runtime.focus_previous());
+        assert_eq!(
+            runtime.frame().node(scroll).interaction.scroll_offset,
+            Offset::new(px(0), px(30),)
+        );
+    }
+
+    struct NestedFocusScrollApp;
+    impl NestedFocusScrollApp {
+        fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+    }
+
+    impl Render for NestedFocusScrollApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .id("outer")
+                .w(px(100))
+                .h(px(60))
+                .overflow_y_scroll()
+                .child(div().w(px(100)).h(px(30)))
+                .child(
+                    div()
+                        .id("inner")
+                        .w(px(100))
+                        .h(px(40))
+                        .overflow_y_scroll()
+                        .child(
+                            div()
+                                .id("first")
+                                .w(px(100))
+                                .h(px(30))
+                                .on_click(cx.listener(Self::clicked))
+                                .child("First"),
+                        )
+                        .child(
+                            div()
+                                .id("second")
+                                .w(px(100))
+                                .h(px(30))
+                                .on_click(cx.listener(Self::clicked))
+                                .child("Second"),
+                        ),
+                )
+        }
+    }
+
+    #[test]
+    fn focus_scrolls_nested_containers_inside_out() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| NestedFocusScrollApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(60)), &TestTextMeasurer)
+            .unwrap();
+
+        let root = runtime.root_node().unwrap();
+        let outer = runtime.frame().node(root).first_child.unwrap();
+        let spacer = runtime.frame().node(outer).first_child.unwrap();
+        let inner = runtime.frame().node(spacer).next_sibling.unwrap();
+
+        assert!(runtime.focus_next());
+
+        runtime.take_invalidation();
+
+        assert!(runtime.focus_next());
+        assert_eq!(
+            runtime.frame().node(inner).interaction.scroll_offset,
+            Offset::new(px(0), px(20),)
+        );
+        assert_eq!(
+            runtime.frame().node(outer).interaction.scroll_offset,
+            Offset::new(px(0), px(10),)
+        );
+    }
+
+    struct LayoutFocusScrollApp;
+    impl LayoutFocusScrollApp {
+        fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+    }
+
+    impl Render for LayoutFocusScrollApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .id("scroll")
+                .w(px(100))
+                .h(px(40))
+                .overflow_y_scroll()
+                .child(
+                    div()
+                        .id("first")
+                        .w(px(100))
+                        .h(px(30))
+                        .on_click(cx.listener(Self::clicked))
+                        .child("First"),
+                )
+                .child(
+                    div()
+                        .id("second")
+                        .w(px(100))
+                        .h(px(10))
+                        .when_focused(|style| style.h(px(30)))
+                        .on_click(cx.listener(Self::clicked))
+                        .child("Second"),
+                )
+        }
+    }
+
+    #[test]
+    fn focus_scroll_waits_for_layout_when_focus_changes_size() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| LayoutFocusScrollApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        let measurer = TestTextMeasurer;
+
+        runtime
+            .layout(Size::new(px(100), px(40)), &measurer)
+            .unwrap();
+
+        let root = runtime.root_node().unwrap();
+        let scroll = runtime.frame().node(root).first_child.unwrap();
+
+        assert!(runtime.focus_next());
+
+        runtime.take_invalidation();
+
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.invalidation(), Invalidation::Layout);
+
+        // bounds have not been recalculated yet, therefore scrolling must
+        // still be unchanged.
+        assert_eq!(
+            runtime.frame().node(scroll).interaction.scroll_offset,
+            Offset::ZERO
+        );
+
+        runtime.take_invalidation();
+        runtime
+            .layout(Size::new(px(100), px(40)), &measurer)
+            .unwrap();
+
+        // second item was 10px tall, but focus changed it to 30px. After layout
+        // it occupies y=30..60, so the viewport must scroll by 20px.
+        assert_eq!(
+            runtime.frame().node(scroll).interaction.scroll_offset,
+            Offset::new(px(0), px(20),)
+        );
     }
 }
