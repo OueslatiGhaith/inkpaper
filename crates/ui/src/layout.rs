@@ -208,7 +208,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         match self.node(node).kind {
-            crate::NodeKind::Text { text } => {
+            NodeKind::Text { text } => {
                 let measured = text_measurer.measure_text(
                     self.text(text),
                     self.node(node).effective_text_style,
@@ -226,11 +226,25 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                         .min(available.height.non_negative()),
                 )
             }
-            crate::NodeKind::Entity { .. } => match self.node(node).first_child {
+            NodeKind::Image { source } => {
+                let intrinsic = source.size();
+
+                Size::new(
+                    intrinsic
+                        .width
+                        .non_negative()
+                        .min(available.width.non_negative()),
+                    intrinsic
+                        .height
+                        .non_negative()
+                        .min(available.height.non_negative()),
+                )
+            }
+            NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.measure_node(child, available, text_measurer),
                 None => Size::ZERO,
             },
-            crate::NodeKind::Div { .. } => {
+            NodeKind::Div { .. } => {
                 let style = self.node(node).style().expect("div node must have style");
                 self.measure_div(node, style, available, text_measurer)
             }
@@ -503,7 +517,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     .expect("div node must have style")
                     .margin
             }
-            NodeKind::Text { .. } => Edges::all(px(0)),
+            NodeKind::Text { .. } | NodeKind::Image { .. } => Edges::all(px(0)),
             NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.node_margin(child),
                 None => Edges::all(px(0)),
@@ -514,7 +528,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     fn node_flex_style(&self, node: NodeId) -> Option<Style> {
         match self.node(node).kind {
             NodeKind::Div { .. } => self.node(node).style(),
-            NodeKind::Text { .. } => None,
+            NodeKind::Text { .. } | NodeKind::Image { .. } => None,
             NodeKind::Entity { .. } => self
                 .node(node)
                 .first_child
@@ -711,7 +725,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     ) {
         self.node_mut(node).layout.bounds = Rect::new(origin, size);
         match self.node(node).kind {
-            NodeKind::Text { .. } => {}
+            NodeKind::Text { .. } | NodeKind::Image { .. } => {}
             NodeKind::Entity { .. } => {
                 if let Some(child) = self.node(node).first_child {
                     self.layout_node_with_size(child, origin, size, text_measurer);
@@ -1553,5 +1567,91 @@ mod tests {
                 ..Default::default()
             })
         );
+    }
+
+    #[test]
+    fn image_uses_intrinsic_size() {
+        let measurer = TestTextMeasurer::new(8, 10);
+
+        let source = ImageSource::new(ImageId::new(0), Size::new(px(32), px(18)));
+
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame.mount(div().child(image(source))).unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let image_node = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(image_node), 0, 0, 32, 18);
+    }
+
+    #[test]
+    fn image_intrinsic_size_is_clamped_to_available_space() {
+        let measurer = TestTextMeasurer::new(8, 10);
+
+        let source = ImageSource::new(ImageId::new(0), Size::new(px(80), px(40)));
+
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame
+            .mount(div().w(px(30)).h(px(20)).child(image(source)))
+            .unwrap();
+
+        frame.layout(root, Size::new(px(30), px(20)), &measurer);
+
+        let image_node = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(image_node), 0, 0, 30, 20);
+    }
+
+    #[test]
+    fn images_participate_in_block_flow() {
+        let measurer = TestTextMeasurer::new(8, 10);
+
+        let first = ImageSource::new(ImageId::new(0), Size::new(px(20), px(10)));
+        let second = ImageSource::new(ImageId::new(1), Size::new(px(30), px(15)));
+
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame
+            .mount(div().gap(px(4)).child(image(first)).child(image(second)))
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let first_node = frame.node(root).first_child.unwrap();
+        let second_node = frame.node(first_node).next_sibling.unwrap();
+
+        assert_bounds(frame.bounds(first_node), 0, 0, 20, 10);
+        assert_bounds(frame.bounds(second_node), 0, 14, 30, 15);
+    }
+
+    #[test]
+    fn images_participate_in_flex_row_layout() {
+        let measurer = TestTextMeasurer::new(8, 10);
+
+        let first = ImageSource::new(ImageId::new(0), Size::new(px(20), px(10)));
+        let second = ImageSource::new(ImageId::new(1), Size::new(px(30), px(15)));
+
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .flex()
+                    .gap(px(5))
+                    .child(image(first))
+                    .child(image(second)),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(40)), &measurer);
+
+        let first_node = frame.node(root).first_child.unwrap();
+        let second_node = frame.node(first_node).next_sibling.unwrap();
+
+        assert_bounds(frame.bounds(first_node), 0, 0, 20, 10);
+        assert_bounds(frame.bounds(second_node), 25, 0, 30, 15);
     }
 }

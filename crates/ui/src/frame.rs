@@ -3,8 +3,9 @@ use core::cell::Cell;
 use heapless::Vec;
 
 use crate::{
-    Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId,
-    Offset, Rect, ResolvedTextStyle, StatefulInteractivity, Style, StylePatch, TextStyle,
+    Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, ImageSource, IntoElement,
+    ListenerId, Offset, Rect, ResolvedTextStyle, StatefulInteractivity, Style, StylePatch,
+    TextStyle,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     listener_store::ListenerStore,
@@ -37,6 +38,9 @@ pub(crate) enum NodeKind {
     },
     Text {
         text: TextRange,
+    },
+    Image {
+        source: ImageSource,
     },
     Entity {
         entity: EntityId,
@@ -385,7 +389,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     .text
                     .resolve(inherited),
                 NodeKind::Text { .. } => self.node(node_id).text_style.resolve(inherited),
-                NodeKind::Entity { .. } => inherited,
+                NodeKind::Image { .. } | NodeKind::Entity { .. } => inherited,
             };
 
             self.node_mut(node_id).effective_text_style = resolved;
@@ -424,6 +428,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
         self.node_mut(node).text_style = style;
 
         Ok(node)
+    }
+
+    fn push_image(&mut self, source: ImageSource) -> Result<NodeId, MountError> {
+        self.push_node(NodeKind::Image { source })
     }
 
     fn push_entity(
@@ -466,6 +474,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
 pub(crate) trait FrameStore {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError>;
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError>;
+    fn push_image(&mut self, source: ImageSource) -> Result<NodeId, MountError>;
     fn push_entity(
         &mut self,
         entity: EntityId,
@@ -492,6 +501,10 @@ impl MountCx<'_> {
 
     pub(crate) fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
         self.frame.push_text(text, style)
+    }
+
+    pub(crate) fn push_image(&mut self, source: ImageSource) -> Result<NodeId, MountError> {
+        self.frame.push_image(source)
     }
 
     pub(crate) fn push_entity(
@@ -1793,5 +1806,32 @@ mod tests {
                 ..Default::default()
             }
         );
+    }
+
+    fn node_image_source<const NODES: usize, const TEXT_BYTES: usize>(
+        frame: &FrameArena<NODES, TEXT_BYTES>,
+        node: NodeId,
+    ) -> ImageSource {
+        match frame.node(node).kind {
+            NodeKind::Image { source } => source,
+            _ => panic!("expected image node"),
+        }
+    }
+
+    #[test]
+    fn mounts_image_leaf() {
+        let source = ImageSource::new(ImageId::new(1), Size::new(px(16), px(12)));
+
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame.mount(div().child(image(source))).unwrap();
+
+        assert_eq!(frame.node_count(), 2);
+
+        let image_node = frame.node(root).first_child.unwrap();
+
+        assert_eq!(node_image_source(&frame, image_node,), source);
+        assert_eq!(frame.node(image_node).parent, Some(root));
+        assert_eq!(frame.node(image_node).first_child, None);
     }
 }

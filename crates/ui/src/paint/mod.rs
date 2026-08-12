@@ -73,7 +73,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             NodeKind::Text { text } => {
                 painter.draw_text(self.text(text), bounds, node.effective_text_style, clip)
             }
-            NodeKind::Entity { .. } => Ok(()),
+            NodeKind::Image { .. } | NodeKind::Entity { .. } => Ok(()),
         }
     }
 
