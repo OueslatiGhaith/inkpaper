@@ -370,6 +370,11 @@ mod tests {
             style: ResolvedTextStyle,
             clip: Option<Rect>,
         },
+        Image {
+            source: ImageSource,
+            bounds: Rect,
+            clip: Option<Rect>,
+        },
     }
 
     #[derive(Default)]
@@ -421,6 +426,21 @@ mod tests {
                 bounds,
                 length: text.len(),
                 style,
+                clip,
+            });
+
+            Ok(())
+        }
+
+        fn draw_image(
+            &mut self,
+            source: ImageSource,
+            bounds: Rect,
+            clip: Option<Rect>,
+        ) -> Result<(), Self::Error> {
+            self.commands.push(Command::Image {
+                source,
+                bounds,
                 clip,
             });
 

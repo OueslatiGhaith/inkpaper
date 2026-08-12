@@ -1,7 +1,10 @@
+use core::marker::PhantomData;
+
 use embedded_graphics::{
     Drawable,
     draw_target::DrawTargetExt,
     geometry::{Point as EgPoint, Size as EgSize},
+    image::{Image as EgImage, ImageDrawable as EgImageDrawable},
     mono_font::{MonoFont as EgMonoFont, MonoTextStyle as EgMonoTextStyle},
     pixelcolor::Rgb888 as EgRgb888,
     prelude::DrawTarget as EgDrawTarget,
@@ -13,21 +16,98 @@ use embedded_graphics::{
 };
 
 use crate::{
-    BoxPaint, Color, FontId, LineHeight, Painter, Pixels, Rect, ResolvedTextStyle, Size, TextAlign,
-    TextMeasurer, px,
-    text_layout::{ELLIPSIS, for_each_text_line, for_each_visible_text_line},
+    BoxPaint, Color, FontId, ImageId, ImageSource, LineHeight, Painter, Pixels, Point, Rect,
+    ResolvedTextStyle, Size, TextAlign, TextMeasurer, px,
+    text_layout::{ELLIPSIS, for_each_visible_text_line},
 };
 
-pub struct EmbeddedGraphicsPainter<'target, 'font, D, const FONTS: usize> {
-    target: &'target mut D,
-    fonts: [&'font EgMonoFont<'font>; FONTS],
+pub struct EmbeddedGraphicsImage<'image, D>
+where
+    D: EgDrawTarget,
+{
+    image: *const (),
+    size: Size,
+    draw_fn: unsafe fn(
+        image: *const (),
+        target: &mut D,
+        origin: Point,
+        clip: Option<Rect>,
+    ) -> Result<(), D::Error>,
+    _lifetime: PhantomData<&'image ()>,
 }
 
-impl<'target, 'font, D, const FONTS: usize> EmbeddedGraphicsPainter<'target, 'font, D, FONTS> {
-    pub fn new(target: &'target mut D, fonts: [&'font EgMonoFont<'font>; FONTS]) -> Self {
+impl<'image, D> Copy for EmbeddedGraphicsImage<'image, D> where D: EgDrawTarget {}
+impl<'image, D> Clone for EmbeddedGraphicsImage<'image, D>
+where
+    D: EgDrawTarget,
+{
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'image, D> EmbeddedGraphicsImage<'image, D>
+where
+    D: EgDrawTarget,
+{
+    pub fn new<T>(image: &'image T) -> Self
+    where
+        T: EgImageDrawable,
+        T::Color: Into<D::Color>,
+    {
+        Self {
+            image: core::ptr::from_ref(image).cast(),
+            size: from_embedded_size(image.size()),
+            draw_fn: draw_erased_image::<T, D>,
+            _lifetime: PhantomData,
+        }
+    }
+
+    pub const fn size(self) -> Size {
+        self.size
+    }
+
+    pub const fn source(self, id: ImageId) -> ImageSource {
+        ImageSource::new(id, self.size)
+    }
+
+    fn draw(self, target: &mut D, origin: Point, clip: Option<Rect>) -> Result<(), D::Error> {
+        unsafe { (self.draw_fn)(self.image, target, origin, clip) }
+    }
+}
+
+pub struct EmbeddedGraphicsPainter<
+    'target,
+    'font,
+    'image,
+    D,
+    const FONTS: usize,
+    const IMAGES: usize,
+> where
+    D: EgDrawTarget,
+{
+    target: &'target mut D,
+    fonts: [&'font EgMonoFont<'font>; FONTS],
+    images: [EmbeddedGraphicsImage<'image, D>; IMAGES],
+}
+
+impl<'target, 'font, 'image, D, const FONTS: usize, const IMAGES: usize>
+    EmbeddedGraphicsPainter<'target, 'font, 'image, D, FONTS, IMAGES>
+where
+    D: EgDrawTarget,
+{
+    pub fn new(
+        target: &'target mut D,
+        fonts: [&'font EgMonoFont<'font>; FONTS],
+        images: [EmbeddedGraphicsImage<'image, D>; IMAGES],
+    ) -> Self {
         assert!(FONTS > 0, "at least one font must be registered");
 
-        Self { target, fonts }
+        Self {
+            target,
+            fonts,
+            images,
+        }
     }
 
     pub fn target_mut(&mut self) -> &mut D {
@@ -40,9 +120,17 @@ impl<'target, 'font, D, const FONTS: usize> EmbeddedGraphicsPainter<'target, 'fo
             .copied()
             .unwrap_or(self.fonts[0])
     }
+
+    fn resolve_image(&self, id: ImageId) -> Option<EmbeddedGraphicsImage<'image, D>> {
+        self.images.get(id.index()).copied()
+    }
 }
 
-impl<D, const FONTS: usize> TextMeasurer for EmbeddedGraphicsPainter<'_, '_, D, FONTS> {
+impl<D, const FONTS: usize, const IMAGES: usize> TextMeasurer
+    for EmbeddedGraphicsPainter<'_, '_, '_, D, FONTS, IMAGES>
+where
+    D: EgDrawTarget,
+{
     fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size {
         if text.is_empty() {
             return Size::ZERO;
@@ -84,7 +172,8 @@ impl<D, const FONTS: usize> TextMeasurer for EmbeddedGraphicsPainter<'_, '_, D, 
     }
 }
 
-impl<D, const FONTS: usize> Painter for EmbeddedGraphicsPainter<'_, '_, D, FONTS>
+impl<D, const FONTS: usize, const IMAGES: usize> Painter
+    for EmbeddedGraphicsPainter<'_, '_, '_, D, FONTS, IMAGES>
 where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,
@@ -134,6 +223,38 @@ where
 
         draw_text_to(&mut clipped, text, bounds, font, style)
     }
+
+    fn draw_image(
+        &mut self,
+        source: ImageSource,
+        bounds: Rect,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
+            return Ok(());
+        }
+
+        let Some(image) = self.resolve_image(source.id()) else {
+            debug_assert!(false, "image {:?} is not registered", source.id());
+            return Ok(());
+        };
+
+        debug_assert_eq!(
+            image.size(),
+            source.size(),
+            "registered image size differs from ImageSource size for {:?}",
+            source.id()
+        );
+
+        let Some(image_clip) = (match clip {
+            Some(clip) => clip.intersection(bounds),
+            None => Some(bounds),
+        }) else {
+            return Ok(());
+        };
+
+        image.draw(self.target, bounds.origin, Some(image_clip))
+    }
 }
 
 fn to_rgb888(color: Color) -> EgRgb888 {
@@ -147,6 +268,17 @@ fn to_embedded_rect(rect: Rect) -> EgRectangle {
     EgRectangle::new(
         EgPoint::new(rect.x().get(), rect.y().get()),
         EgSize::new(width, height),
+    )
+}
+
+fn to_embedded_point(point: Point) -> EgPoint {
+    EgPoint::new(point.x.get(), point.y.get())
+}
+
+fn from_embedded_size(size: EgSize) -> Size {
+    Size::new(
+        px(i32::try_from(size.width).unwrap_or(i32::MAX)),
+        px(i32::try_from(size.height).unwrap_or(i32::MAX)),
     )
 }
 
@@ -336,15 +468,49 @@ fn aligned_line_x(bounds: Rect, line_width: Pixels, align: TextAlign) -> Pixels 
     }
 }
 
+unsafe fn draw_erased_image<T, D>(
+    image: *const (),
+    target: &mut D,
+    origin: Point,
+    clip: Option<Rect>,
+) -> Result<(), D::Error>
+where
+    D: EgDrawTarget,
+    T: EgImageDrawable,
+    T::Color: Into<D::Color>,
+{
+    let image = unsafe { &*image.cast::<T>() };
+    let position = to_embedded_point(origin);
+    let drawable = EgImage::new(image, position);
+    let mut target = target.color_converted::<T::Color>();
+
+    match clip {
+        Some(clip) => {
+            let clip = to_embedded_rect(clip);
+            let mut clipped = target.clipped(&clip);
+            drawable.draw(&mut clipped).map(|_| ())
+        }
+        None => drawable.draw(&mut target).map(|_| ()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use embedded_graphics::{
-        geometry::Point as EgPoint, mock_display::MockDisplay, mono_font::ascii::FONT_6X10,
+        draw_target::DrawTarget as EgDrawTarget,
+        geometry::{OriginDimensions, Point as EgPoint, Size as EgSize},
+        image::ImageDrawable as EgImageDrawable,
+        mock_display::MockDisplay,
+        mono_font::ascii::FONT_6X10,
         pixelcolor::Rgb888,
+        primitives::Rectangle as EgRectangle,
     };
 
     use crate::{
-        backend::{EmbeddedGraphicsPainter, embedded_graphics::aligned_line_x},
+        backend::{
+            EmbeddedGraphicsPainter,
+            embedded_graphics::{EmbeddedGraphicsImage, aligned_line_x},
+        },
         *,
     };
 
@@ -353,7 +519,7 @@ mod tests {
         let mut display = MockDisplay::<Rgb888>::new();
 
         {
-            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
 
             painter
                 .draw_box(
@@ -385,7 +551,7 @@ mod tests {
     fn text_measurement_wraps_at_word_boundaries() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
 
         let size = painter.measure_text(
             "hello world",
@@ -403,7 +569,7 @@ mod tests {
     fn custom_line_height_affects_multiline_measurement() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
 
         let size = painter.measure_text(
             "first\nsecond",
@@ -430,7 +596,7 @@ mod tests {
     fn max_lines_limits_measured_height() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
 
         let size = painter.measure_text(
             "hello world again",
@@ -449,7 +615,7 @@ mod tests {
     fn ellipsis_respects_available_width() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
 
         let size = painter.measure_text(
             "abcdefghij",
@@ -467,7 +633,7 @@ mod tests {
     fn wrapped_text_can_be_clamped_with_ellipsis() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
 
         let size = painter.measure_text(
             "hello world again",
@@ -481,5 +647,142 @@ mod tests {
         );
 
         assert_eq!(size, Size::new(px(30), px(10),));
+    }
+
+    struct SolidTestImage {
+        size: EgSize,
+        color: Rgb888,
+    }
+
+    impl OriginDimensions for SolidTestImage {
+        fn size(&self) -> EgSize {
+            self.size
+        }
+    }
+
+    impl EgImageDrawable for SolidTestImage {
+        type Color = Rgb888;
+
+        fn draw<D>(&self, target: &mut D) -> Result<(), D::Error>
+        where
+            D: EgDrawTarget<Color = Self::Color>,
+        {
+            target.fill_solid(&EgRectangle::new(EgPoint::zero(), self.size), self.color)
+        }
+
+        fn draw_sub_image<D>(&self, target: &mut D, area: &EgRectangle) -> Result<(), D::Error>
+        where
+            D: EgDrawTarget<Color = Self::Color>,
+        {
+            target.fill_solid(area, self.color)
+        }
+    }
+
+    #[test]
+    fn embedded_graphics_backend_draws_registered_image() {
+        let bitmap = SolidTestImage {
+            size: EgSize::new(4, 3),
+            color: Rgb888::new(255, 0, 0),
+        };
+        let registered = EmbeddedGraphicsImage::new(&bitmap);
+        let source = registered.source(ImageId::new(0));
+
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        {
+            let mut painter =
+                EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], [registered]);
+
+            painter
+                .draw_image(
+                    source,
+                    Rect::new(Point::new(px(2), px(3)), source.size()),
+                    None,
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            display.get_pixel(EgPoint::new(2, 3,)),
+            Some(Rgb888::new(255, 0, 0,))
+        );
+        assert_eq!(
+            display.get_pixel(EgPoint::new(5, 5,)),
+            Some(Rgb888::new(255, 0, 0,))
+        );
+        assert_eq!(display.get_pixel(EgPoint::new(1, 3,)), None);
+    }
+
+    #[test]
+    fn embedded_graphics_backend_clips_image_to_layout_bounds() {
+        let bitmap = SolidTestImage {
+            size: EgSize::new(4, 4),
+            color: Rgb888::new(0, 255, 0),
+        };
+        let registered = EmbeddedGraphicsImage::new(&bitmap);
+        let source = registered.source(ImageId::new(0));
+
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        {
+            let mut painter =
+                EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], [registered]);
+
+            painter
+                .draw_image(
+                    source,
+                    Rect::new(Point::new(px(10), px(10)), Size::new(px(2), px(2))),
+                    None,
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            display.get_pixel(EgPoint::new(10, 10,)),
+            Some(Rgb888::new(0, 255, 0,))
+        );
+        assert_eq!(
+            display.get_pixel(EgPoint::new(11, 11,)),
+            Some(Rgb888::new(0, 255, 0,))
+        );
+        assert_eq!(display.get_pixel(EgPoint::new(12, 10,)), None);
+        assert_eq!(display.get_pixel(EgPoint::new(10, 12,)), None);
+    }
+
+    #[test]
+    fn embedded_graphics_backend_combines_image_bounds_with_ancestor_clip() {
+        let bitmap = SolidTestImage {
+            size: EgSize::new(6, 4),
+
+            color: Rgb888::new(0, 0, 255),
+        };
+        let registered = EmbeddedGraphicsImage::new(&bitmap);
+        let source = registered.source(ImageId::new(0));
+
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        {
+            let mut painter =
+                EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], [registered]);
+
+            painter
+                .draw_image(
+                    source,
+                    Rect::new(Point::new(px(4), px(4)), source.size()),
+                    Some(Rect::new(Point::new(px(5), px(5)), Size::new(px(2), px(2)))),
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            display.get_pixel(EgPoint::new(5, 5,)),
+            Some(Rgb888::new(0, 0, 255,))
+        );
+        assert_eq!(
+            display.get_pixel(EgPoint::new(6, 6,)),
+            Some(Rgb888::new(0, 0, 255,))
+        );
+        assert_eq!(display.get_pixel(EgPoint::new(4, 4,)), None);
+        assert_eq!(display.get_pixel(EgPoint::new(7, 5,)), None);
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
-    Color, FrameArena, NodeId, NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer,
-    visual::VisualNode,
+    Color, FrameArena, ImageSource, NodeId, NodeKind, Pixels, Rect, ResolvedTextStyle,
+    TextMeasurer, visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +31,13 @@ pub trait Painter: TextMeasurer {
         text: &str,
         bounds: Rect,
         style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error>;
+
+    fn draw_image(
+        &mut self,
+        source: ImageSource,
+        bounds: Rect,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error>;
 }
@@ -73,7 +80,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             NodeKind::Text { text } => {
                 painter.draw_text(self.text(text), bounds, node.effective_text_style, clip)
             }
-            NodeKind::Image { .. } | NodeKind::Entity { .. } => Ok(()),
+            NodeKind::Image { source } => painter.draw_image(source, bounds, clip),
+            NodeKind::Entity { .. } => Ok(()),
         }
     }
 
@@ -103,11 +111,15 @@ mod tests {
             paint: BoxPaint,
             clip: Option<Rect>,
         },
-
         Text {
             bounds: Rect,
             length: usize,
             style: ResolvedTextStyle,
+            clip: Option<Rect>,
+        },
+        Image {
+            source: ImageSource,
+            bounds: Rect,
             clip: Option<Rect>,
         },
     }
@@ -161,6 +173,21 @@ mod tests {
                 bounds,
                 length: text.len(),
                 style,
+                clip,
+            });
+
+            Ok(())
+        }
+
+        fn draw_image(
+            &mut self,
+            source: ImageSource,
+            bounds: Rect,
+            clip: Option<Rect>,
+        ) -> Result<(), Self::Error> {
+            self.commands.push(Command::Image {
+                source,
+                bounds,
                 clip,
             });
 
@@ -368,6 +395,32 @@ mod tests {
                     line_height: LineHeight::Pixels(px(16)),
                     ..Default::default()
                 },
+                clip: None,
+            }
+        );
+    }
+
+    #[test]
+    fn frame_emits_image_paint_command() {
+        let source = ImageSource::new(ImageId::new(0), Size::new(px(20), px(12)));
+
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame
+            .mount(div().w(px(80)).h(px(40)).child(image(source)))
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(80), px(40)), &painter);
+        frame.paint(root, &mut painter).unwrap();
+
+        assert_eq!(painter.commands.len(), 2);
+        assert_eq!(
+            painter.commands[1],
+            Command::Image {
+                source,
+                bounds: Rect::new(Point::new(px(0), px(0),), Size::new(px(20), px(12),),),
                 clip: None,
             }
         );

@@ -34,7 +34,7 @@ fn full_runtime_can_render_to_simulator_display() {
     runtime.rebuild(app).unwrap();
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
-    let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+    let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
 
     let laid_out = runtime.layout(
         Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32)),

@@ -414,14 +414,14 @@ fn update_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorD
 }
 
 fn layout_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
-    let painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10]);
+    let painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10], []);
     runtime.layout(DISPLAY_SIZE, &painter).unwrap();
 }
 
 fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
     display.clear(Rgb888::BLACK).unwrap();
 
-    let mut painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10]);
+    let mut painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10], []);
     runtime.paint(&mut painter).unwrap().unwrap();
 }
 
