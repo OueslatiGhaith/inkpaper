@@ -1,4 +1,4 @@
-use crate::{Color, Pixels, Style, Styled};
+use crate::{Color, Pixels, Styled, TextStyle};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FontId(u16);
@@ -30,94 +30,51 @@ pub enum TextWrap {
     Word,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TextStyle {
-    pub font: FontId,
-    pub color: Color,
-    pub line_height: Option<Pixels>,
-    pub align: TextAlign,
-    pub wrap: TextWrap,
-}
-
-impl Default for TextStyle {
-    fn default() -> Self {
-        Self {
-            font: FontId::DEFAULT,
-            color: Color::BLACK,
-            line_height: None,
-            align: TextAlign::Start,
-            wrap: TextWrap::NoWrap,
-        }
-    }
-}
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct TextStylePatch {
-    pub(crate) font: Option<FontId>,
-    pub(crate) color: Option<Color>,
-    pub(crate) line_height: Option<Pixels>,
-    pub(crate) align: Option<TextAlign>,
-    pub(crate) wrap: Option<TextWrap>,
+pub enum LineHeight {
+    #[default]
+    Normal,
+    Pixels(Pixels),
 }
 
-impl TextStylePatch {
-    pub(crate) const fn from_style(style: Style) -> Self {
-        Self {
-            font: style.font,
-            color: style.text_color,
-            line_height: style.line_height,
-            align: style.text_align,
-            wrap: style.text_wrap,
-        }
-    }
-
-    pub const fn font(self) -> Option<FontId> {
-        self.font
-    }
-
-    pub const fn color(self) -> Option<Color> {
-        self.color
-    }
-
-    pub const fn line_height(self) -> Option<Pixels> {
-        self.line_height
-    }
-
-    pub const fn align(self) -> Option<TextAlign> {
-        self.align
-    }
-
-    pub const fn wrap(self) -> Option<TextWrap> {
-        self.wrap
-    }
-
-    pub fn resolve(self, inherited: TextStyle) -> TextStyle {
-        TextStyle {
-            font: self.font.unwrap_or(inherited.font),
-            color: self.color.unwrap_or(inherited.color),
-            line_height: self.line_height.or(inherited.line_height),
-            align: self.align.unwrap_or(inherited.align),
-            wrap: self.wrap.unwrap_or(inherited.wrap),
-        }
-    }
-
-    pub fn merge(self, later: Self) -> Self {
-        Self {
-            font: later.font.or(self.font),
-            color: later.color.or(self.color),
-            line_height: later.line_height.or(self.line_height),
-            align: later.align.or(self.align),
-            wrap: later.wrap.or(self.wrap),
-        }
+impl From<Pixels> for LineHeight {
+    fn from(value: Pixels) -> Self {
+        Self::Pixels(value.non_negative())
     }
 }
 
 pub trait TextStyled: Sized {
-    fn font(self, font: FontId) -> Self;
-    fn text_color(self, color: Color) -> Self;
-    fn line_height(self, line_height: Pixels) -> Self;
-    fn text_align(self, align: TextAlign) -> Self;
-    fn text_wrap(self, wrap: TextWrap) -> Self;
+    fn text_style_mut(&mut self) -> &mut TextStyle;
+
+    fn font(mut self, font: FontId) -> Self {
+        self.text_style_mut().font = Some(font);
+        self
+    }
+
+    fn text_color(mut self, color: Color) -> Self {
+        self.text_style_mut().color = Some(color);
+        self
+    }
+
+    fn line_height(mut self, line_height: impl Into<LineHeight>) -> Self {
+        self.text_style_mut().line_height = Some(line_height.into());
+        self
+    }
+
+    fn line_height_normal(mut self) -> Self {
+        self.text_style_mut().line_height = Some(LineHeight::Normal);
+        self
+    }
+
+    fn text_align(mut self, align: TextAlign) -> Self {
+        self.text_style_mut().align = Some(align);
+        self
+    }
+
+    fn text_wrap(mut self, wrap: TextWrap) -> Self {
+        self.text_style_mut().wrap = Some(wrap);
+        self
+    }
 
     fn text_start(self) -> Self {
         self.text_align(TextAlign::Start)
@@ -144,28 +101,7 @@ impl<T> TextStyled for T
 where
     T: Styled,
 {
-    fn font(mut self, font: FontId) -> Self {
-        self.style_mut().font = Some(font);
-        self
-    }
-
-    fn text_color(mut self, color: Color) -> Self {
-        self.style_mut().text_color = Some(color);
-        self
-    }
-
-    fn line_height(mut self, line_height: Pixels) -> Self {
-        self.style_mut().line_height = Some(line_height.non_negative());
-        self
-    }
-
-    fn text_align(mut self, align: TextAlign) -> Self {
-        self.style_mut().text_align = Some(align);
-        self
-    }
-
-    fn text_wrap(mut self, wrap: TextWrap) -> Self {
-        self.style_mut().text_wrap = Some(wrap);
-        self
+    fn text_style_mut(&mut self) -> &mut TextStyle {
+        &mut self.style_mut().text
     }
 }

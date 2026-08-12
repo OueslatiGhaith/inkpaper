@@ -13,8 +13,8 @@ use embedded_graphics::{
 };
 
 use crate::{
-    BoxPaint, Color, FontId, Painter, Pixels, Rect, Size, TextAlign, TextMeasurer, TextStyle, px,
-    text_layout::for_each_text_line,
+    BoxPaint, Color, FontId, LineHeight, Painter, Pixels, Rect, ResolvedTextStyle, Size, TextAlign,
+    TextMeasurer, px, text_layout::for_each_text_line,
 };
 
 pub struct EmbeddedGraphicsPainter<'target, 'font, D, const FONTS: usize> {
@@ -42,7 +42,7 @@ impl<'target, 'font, D, const FONTS: usize> EmbeddedGraphicsPainter<'target, 'fo
 }
 
 impl<D, const FONTS: usize> TextMeasurer for EmbeddedGraphicsPainter<'_, '_, D, FONTS> {
-    fn measure(&self, text: &str, style: TextStyle, max_size: Size) -> Size {
+    fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size {
         if text.is_empty() {
             return Size::ZERO;
         }
@@ -109,7 +109,7 @@ where
         &mut self,
         text: &str,
         bounds: Rect,
-        style: TextStyle,
+        style: ResolvedTextStyle,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
         let font = self.resolve_font(style.font);
@@ -184,7 +184,7 @@ fn draw_text_to<D>(
     text: &str,
     bounds: Rect,
     font: &EgMonoFont<'_>,
-    style: TextStyle,
+    style: ResolvedTextStyle,
 ) -> Result<(), D::Error>
 where
     D: EgDrawTarget<Color = EgRgb888>,
@@ -248,11 +248,11 @@ fn font_character_spacing(font: &EgMonoFont<'_>) -> Pixels {
     px(i32::try_from(font.character_spacing).unwrap_or(i32::MAX))
 }
 
-fn text_line_advance(font: &EgMonoFont<'_>, style: TextStyle) -> Pixels {
-    style
-        .line_height
-        .unwrap_or_else(|| font_character_height(font))
-        .non_negative()
+fn text_line_advance(font: &EgMonoFont<'_>, style: ResolvedTextStyle) -> Pixels {
+    match style.line_height {
+        LineHeight::Normal => font_character_height(font),
+        LineHeight::Pixels(height) => height.non_negative(),
+    }
 }
 
 fn measure_mono_line(font: &EgMonoFont<'_>, text: &str) -> Pixels {
@@ -330,11 +330,11 @@ mod tests {
 
         let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
 
-        let size = painter.measure(
+        let size = painter.measure_text(
             "hello world",
-            TextStyle {
+            ResolvedTextStyle {
                 wrap: TextWrap::Word,
-                ..TextStyle::default()
+                ..ResolvedTextStyle::default()
             },
             Size::new(px(30), px(100)),
         );
@@ -348,11 +348,11 @@ mod tests {
 
         let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
 
-        let size = painter.measure(
+        let size = painter.measure_text(
             "first\nsecond",
-            TextStyle {
-                line_height: Some(px(15)),
-                ..TextStyle::default()
+            ResolvedTextStyle {
+                line_height: LineHeight::Pixels(px(15)),
+                ..ResolvedTextStyle::default()
             },
             Size::new(px(100), px(100)),
         );

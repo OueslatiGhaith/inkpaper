@@ -1,5 +1,6 @@
 use crate::{
-    Color, FrameArena, NodeId, NodeKind, Pixels, Rect, TextMeasurer, TextStyle, visual::VisualNode,
+    Color, FrameArena, NodeId, NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer,
+    visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +30,7 @@ pub trait Painter: TextMeasurer {
         &mut self,
         text: &str,
         bounds: Rect,
-        style: TextStyle,
+        style: ResolvedTextStyle,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error>;
 }
@@ -106,7 +107,7 @@ mod tests {
         Text {
             bounds: Rect,
             length: usize,
-            style: TextStyle,
+            style: ResolvedTextStyle,
             clip: Option<Rect>,
         },
     }
@@ -117,7 +118,7 @@ mod tests {
     }
 
     impl TextMeasurer for RecordingPainter {
-        fn measure(&self, text: &str, _style: TextStyle, max_size: Size) -> Size {
+        fn measure_text(&self, text: &str, _style: ResolvedTextStyle, max_size: Size) -> Size {
             let width = px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
                 .saturating_mul(6)
                 .min(max_size.width.non_negative());
@@ -153,7 +154,7 @@ mod tests {
             &mut self,
             text: &str,
             bounds: Rect,
-            style: TextStyle,
+            style: ResolvedTextStyle,
             clip: Option<Rect>,
         ) -> Result<(), Self::Error> {
             self.commands.push(Command::Text {
@@ -218,7 +219,7 @@ mod tests {
             Command::Text {
                 bounds: Rect::new(Point::new(px(0), px(10)), Size::new(px(12), px(10))),
                 length: 2,
-                style: TextStyle::default(),
+                style: ResolvedTextStyle::default(),
                 clip: None
             }
         );
@@ -361,10 +362,10 @@ mod tests {
             Command::Text {
                 bounds: Rect::new(Point::ZERO, Size::new(px(30), px(10),),),
                 length: "Hello".len(),
-                style: TextStyle {
+                style: ResolvedTextStyle {
                     font: FontId::new(1),
                     color: Color::RED,
-                    line_height: Some(px(16)),
+                    line_height: LineHeight::Pixels(px(16)),
                     ..Default::default()
                 },
                 clip: None,

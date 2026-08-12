@@ -1,4 +1,6 @@
-use crate::{Color, Invalidation, Length, Pixels, TextAlign, TextWrap, px, text_style::FontId};
+use crate::{
+    Color, Invalidation, Length, LineHeight, Pixels, TextAlign, TextWrap, px, text_style::FontId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Display {
@@ -61,28 +63,97 @@ macro_rules! declare_style {
                     $( $field_name:ident: $field_ty:ty = $field_default:expr ),* $(,)?
                 }
             )*
+            @text {
+                $(
+                    $text_invalidation:ident {
+                        $( $text_name:ident: $text_ty:ty = $text_default:expr ),* $(,)?
+                    }
+                )*
+            }
         }
     ) => {
         $(#[$attr])*
         pub struct Style {
             $( $( pub $field_name: $field_ty,)* )*
+            pub(crate) text: TextStyle,
         }
 
         impl Default for Style {
             fn default() -> Self {
                 Self {
-                    $(
-                        $(
-                            $field_name: $field_default,
-                        )*
-                    )*
+                    $( $( $field_name: $field_default, )* )*
+                    text: TextStyle::default(),
                 }
             }
         }
 
         #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+        pub struct TextStyle {
+            $( $( pub(crate) $text_name: Option< $text_ty >, )* )*
+        }
+
+        impl TextStyle {
+            pub(crate) fn between(base: Self, variant: Self) -> Self {
+                Self {
+                    $(
+                        $(
+                            $text_name: if base.$text_name != variant.$text_name {
+                                variant.$text_name
+                            } else {
+                                None
+                            },
+                        )*
+                    )*
+                }
+            }
+
+            pub(crate) fn resolve(self, inherited: ResolvedTextStyle) -> ResolvedTextStyle {
+                ResolvedTextStyle {
+                    $( $( $text_name: self.$text_name.unwrap_or(inherited.$text_name), )* )*
+                }
+            }
+
+            pub(crate) fn merge(self, later: Self) -> Self {
+                Self {
+                    $( $( $text_name: later.$text_name.or(self.$text_name), )* )*
+                }
+            }
+
+            pub(crate) const fn invalidation(self) -> Invalidation {
+                let mut invalidation = Invalidation::None;
+
+                $(
+                    $(
+                        if self.$text_name.is_some() {
+                            invalidation = invalidation.merge(
+                                declare_style!(@invalidation, $text_invalidation)
+                            );
+                        }
+                    )*
+                )*
+
+                invalidation
+            }
+        }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct ResolvedTextStyle {
+            $( $( pub(crate) $text_name: $text_ty, )* )*
+        }
+
+        impl Default for ResolvedTextStyle {
+            fn default() -> Self {
+                Self {
+                    $( $( $text_name: $text_default, )* )*
+                }
+            }
+        }
+
+
+        #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
         pub(crate) struct StylePatch {
             $( $( $field_name: Option< $field_ty >, )* )*
+            text: TextStyle,
         }
 
         impl StylePatch {
@@ -94,6 +165,7 @@ macro_rules! declare_style {
                                 .then_some(variant.$field_name),
                         )*
                     )*
+                    text: TextStyle::between(base.text, variant.text),
                 }
             }
 
@@ -105,6 +177,7 @@ macro_rules! declare_style {
                         }
                     )*
                 )*
+                style.text = style.text.merge(self.text);
 
                 style
             }
@@ -116,6 +189,7 @@ macro_rules! declare_style {
                             $field_name: later.$field_name.or(self.$field_name),
                         )*
                     )*
+                    text: self.text.merge(later.text),
                 }
             }
 
@@ -131,6 +205,7 @@ macro_rules! declare_style {
                         }
                     )*
                 )*
+                invalidation = invalidation.merge(self.text.invalidation());
 
                 invalidation
             }
@@ -168,10 +243,6 @@ declare_style! {
             gap: Pixels = px(0),
 
             border_width: Pixels = px(0),
-
-            font: Option<FontId> = None,
-            line_height: Option<Pixels> = None,
-            text_wrap: Option<TextWrap> = None,
         }
         paint {
             background: Option<Color> = None,
@@ -180,9 +251,17 @@ declare_style! {
             border_radius: Pixels = px(0),
 
             clip_children: bool = false,
-
-            text_color: Option<Color> = None,
-            text_align: Option<TextAlign> = None,
+        }
+        @text {
+            layout {
+                font: FontId = FontId::DEFAULT,
+                line_height: LineHeight = LineHeight::Normal,
+                wrap: TextWrap = TextWrap::NoWrap,
+            }
+            paint {
+                color: Color = Color::BLACK,
+                align: TextAlign = TextAlign::Start,
+            }
         }
     }
 }

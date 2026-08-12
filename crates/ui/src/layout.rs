@@ -1,10 +1,10 @@
 use crate::{
     AlignItems, Display, Edges, FlexBasis, FlexDirection, FrameArena, JustifyContent, Length,
-    NodeId, NodeKind, Offset, Pixels, Point, Rect, Size, Style, TextStyle, px,
+    NodeId, NodeKind, Offset, Pixels, Point, Rect, ResolvedTextStyle, Size, Style, px,
 };
 
 pub trait TextMeasurer {
-    fn measure(&self, text: &str, style: TextStyle, max_size: Size) -> Size;
+    fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,7 +209,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     ) -> Size {
         match self.node(node).kind {
             crate::NodeKind::Text { text } => {
-                let measured = text_measurer.measure(
+                let measured = text_measurer.measure_text(
                     self.text(text),
                     self.node(node).effective_text_style,
                     available,
@@ -793,7 +793,7 @@ mod tests {
     }
 
     impl TextMeasurer for TestTextMeasurer {
-        fn measure(&self, text: &str, _style: TextStyle, max_size: Size) -> Size {
+        fn measure_text(&self, text: &str, _style: ResolvedTextStyle, max_size: Size) -> Size {
             let character_count = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
             let desired_width = self.character_width.saturating_mul(character_count);
             let desired_height = if text.is_empty() {
@@ -1508,11 +1508,11 @@ mod tests {
     #[test]
     fn text_measurement_receives_resolved_text_style() {
         struct RecordingMeasurer {
-            style: Cell<Option<TextStyle>>,
+            style: Cell<Option<ResolvedTextStyle>>,
         }
 
         impl TextMeasurer for RecordingMeasurer {
-            fn measure(&self, text: &str, style: TextStyle, max_size: Size) -> Size {
+            fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size {
                 self.style.set(Some(style));
 
                 if text.is_empty() {
@@ -1546,10 +1546,10 @@ mod tests {
 
         assert_eq!(
             measurer.style.get(),
-            Some(TextStyle {
+            Some(ResolvedTextStyle {
                 font: FontId::new(3),
                 color: Color::GREEN,
-                line_height: Some(px(18)),
+                line_height: LineHeight::Pixels(px(18)),
                 ..Default::default()
             })
         );

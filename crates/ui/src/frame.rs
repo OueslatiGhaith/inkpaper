@@ -4,12 +4,11 @@ use heapless::Vec;
 
 use crate::{
     Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, IntoElement, ListenerId,
-    Offset, Rect, StatefulInteractivity, Style, StylePatch, TextStyle,
+    Offset, Rect, ResolvedTextStyle, StatefulInteractivity, Style, StylePatch, TextStyle,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     listener_store::ListenerStore,
     scroll::{ScrollAxes, ScrollStateTable},
-    text_style::TextStylePatch,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,8 +62,8 @@ pub(crate) struct Node {
     pub(crate) interaction: NodeInteraction,
     pub(crate) layout: NodeLayout,
     pub(crate) effective_style: Option<Style>,
-    pub(crate) text_style: TextStylePatch,
-    pub(crate) effective_text_style: TextStyle,
+    pub(crate) text_style: TextStyle,
+    pub(crate) effective_text_style: ResolvedTextStyle,
 }
 
 impl Node {
@@ -83,8 +82,8 @@ impl Node {
                 NodeKind::Div { style } => Some(style),
                 _ => None,
             },
-            text_style: TextStylePatch::default(),
-            effective_text_style: TextStyle::default(),
+            text_style: TextStyle::default(),
+            effective_text_style: ResolvedTextStyle::default(),
         }
     }
 
@@ -379,14 +378,12 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 .unwrap_or_default();
 
             let resolved = match self.node(node_id).kind {
-                NodeKind::Div { .. } => {
-                    let style = self
-                        .node(node_id)
-                        .style()
-                        .expect("div node must have style");
-
-                    TextStylePatch::from_style(style).resolve(inherited)
-                }
+                NodeKind::Div { .. } => self
+                    .node(node_id)
+                    .style()
+                    .expect("div node must have style")
+                    .text
+                    .resolve(inherited),
                 NodeKind::Text { .. } => self.node(node_id).text_style.resolve(inherited),
                 NodeKind::Entity { .. } => inherited,
             };
@@ -402,7 +399,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
         self.push_node(NodeKind::Div { style })
     }
 
-    fn push_text(&mut self, text: &str, style: TextStylePatch) -> Result<NodeId, MountError> {
+    fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
         let bytes = text.as_bytes();
         let start = self.text.len();
         let end = start
@@ -468,7 +465,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
 
 pub(crate) trait FrameStore {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError>;
-    fn push_text(&mut self, text: &str, style: TextStylePatch) -> Result<NodeId, MountError>;
+    fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError>;
     fn push_entity(
         &mut self,
         entity: EntityId,
@@ -493,11 +490,7 @@ impl MountCx<'_> {
         self.frame.push_div(style)
     }
 
-    pub(crate) fn push_text(
-        &mut self,
-        text: &str,
-        style: TextStylePatch,
-    ) -> Result<NodeId, MountError> {
+    pub(crate) fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
         self.frame.push_text(text, style)
     }
 
@@ -1742,7 +1735,7 @@ mod tests {
 
         let node = frame.mount("Hello").unwrap();
 
-        assert_eq!(frame.node(node).text_style, TextStylePatch::default());
+        assert_eq!(frame.node(node).text_style, TextStyle::default());
         assert_eq!(node_text(&frame, node), "Hello");
     }
 
@@ -1760,9 +1753,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(node_text(&frame, node), "Hello");
-        assert_eq!(frame.node(node).text_style.font(), Some(FontId::new(2)));
-        assert_eq!(frame.node(node).text_style.color(), Some(Color::RED));
-        assert_eq!(frame.node(node).text_style.line_height(), Some(px(18)));
+        assert_eq!(frame.node(node).text_style.font, Some(FontId::new(2)));
+        assert_eq!(frame.node(node).text_style.color, Some(Color::RED));
+        assert_eq!(
+            frame.node(node).text_style.line_height,
+            Some(LineHeight::Pixels(px(18)))
+        );
     }
 
     #[test]
@@ -1790,10 +1786,10 @@ mod tests {
 
         assert_eq!(
             frame.node(text_node).effective_text_style,
-            TextStyle {
+            ResolvedTextStyle {
                 font: FontId::new(2),
                 color: Color::RED,
-                line_height: Some(px(14)),
+                line_height: LineHeight::Pixels(px(14)),
                 ..Default::default()
             }
         );

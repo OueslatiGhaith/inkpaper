@@ -31,7 +31,7 @@ mod tests {
 
     struct TestTextMeasurer;
     impl TextMeasurer for TestTextMeasurer {
-        fn measure(&self, text: &str, _style: TextStyle, max_size: Size) -> Size {
+        fn measure_text(&self, text: &str, _style: ResolvedTextStyle, max_size: Size) -> Size {
             let width = px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
                 .saturating_mul(6)
                 .min(max_size.width.non_negative());
