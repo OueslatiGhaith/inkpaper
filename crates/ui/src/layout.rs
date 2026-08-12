@@ -1,7 +1,7 @@
 use crate::{
-    AlignItems, Display, Edges, FlexBasis, FlexDirection, FrameArena, ImageSource, ImageStyle,
-    JustifyContent, Length, NodeId, NodeKind, Offset, Pixels, Point, Rect, ResolvedTextStyle, Size,
-    Style, px,
+    AlignItems, CanvasStyle, Display, Edges, FlexBasis, FlexDirection, FrameArena, ImageSource,
+    ImageStyle, JustifyContent, Length, NodeId, NodeKind, Offset, Pixels, Point, Rect,
+    ResolvedTextStyle, Size, Style, px,
 };
 
 pub trait TextMeasurer {
@@ -228,6 +228,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 )
             }
             NodeKind::Image { source, style } => measure_image(source, style, available),
+            NodeKind::Canvas { style, .. } => measure_canvas(style, available),
             NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.measure_node(child, available, text_measurer),
                 None => Size::ZERO,
@@ -505,7 +506,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     .expect("div node must have style")
                     .margin
             }
-            NodeKind::Text { .. } | NodeKind::Image { .. } => Edges::all(px(0)),
+            NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => {
+                Edges::all(px(0))
+            }
             NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.node_margin(child),
                 None => Edges::all(px(0)),
@@ -516,7 +519,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     fn node_flex_style(&self, node: NodeId) -> Option<Style> {
         match self.node(node).kind {
             NodeKind::Div { .. } => self.node(node).style(),
-            NodeKind::Text { .. } | NodeKind::Image { .. } => None,
+            NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => None,
             NodeKind::Entity { .. } => self
                 .node(node)
                 .first_child
@@ -713,7 +716,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     ) {
         self.node_mut(node).layout.bounds = Rect::new(origin, size);
         match self.node(node).kind {
-            NodeKind::Text { .. } | NodeKind::Image { .. } => {}
+            NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => {}
             NodeKind::Entity { .. } => {
                 if let Some(child) = self.node(node).first_child {
                     self.layout_node_with_size(child, origin, size, text_measurer);
@@ -793,6 +796,21 @@ fn measure_image(source: ImageSource, style: ImageStyle, available: Size) -> Siz
         natural.width.min(available.width.non_negative()),
         natural.height.min(available.height.non_negative()),
     )
+}
+
+fn measure_canvas(style: CanvasStyle, available: Size) -> Size {
+    let width = style
+        .width
+        .unwrap_or(px(0))
+        .non_negative()
+        .min(available.width.non_negative());
+    let height = style
+        .height
+        .unwrap_or(px(0))
+        .non_negative()
+        .min(available.height.non_negative());
+
+    Size::new(width, height)
 }
 
 #[cfg(test)]
@@ -1711,5 +1729,78 @@ mod tests {
         let image_node = frame.node(root).first_child.unwrap();
 
         assert_bounds(frame.bounds(image_node), 0, 0, 30, 30);
+    }
+
+    fn draw_test_canvas(bounds: Rect, painter: &mut dyn CanvasPainter) {
+        painter.fill_rect(
+            Rect::new(Point::ZERO, Size::new(bounds.width(), px(4))),
+            Color::RED,
+        );
+        painter.line(
+            Point::new(px(0), px(0)),
+            Point::new(bounds.width() - px(1), bounds.height() - px(1)),
+            px(1),
+            Color::GREEN,
+        );
+        painter.fill_circle(Point::new(px(10), px(10)), px(3), Color::BLUE);
+    }
+
+    #[test]
+    fn mounts_canvas_as_leaf() {
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame
+            .mount(div().child(canvas(draw_test_canvas).size(Size::new(px(40), px(20)))))
+            .unwrap();
+
+        assert_eq!(frame.node_count(), 2);
+
+        let canvas_node = frame.node(root).first_child.unwrap();
+
+        assert_eq!(frame.node(canvas_node).parent, Some(root));
+        assert!(matches!(
+            frame.node(canvas_node).kind,
+            NodeKind::Canvas { .. }
+        ));
+        assert_eq!(frame.node(canvas_node).first_child, None);
+    }
+
+    #[test]
+    fn canvas_uses_explicit_size() {
+        let measurer = TestTextMeasurer::new(8, 10);
+
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame
+            .mount(div().child(canvas(draw_test_canvas).size(Size::new(px(40), px(20)))))
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let canvas_node = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(canvas_node), 0, 0, 40, 20);
+    }
+
+    #[test]
+    fn canvas_size_is_clamped_to_available_space() {
+        let measurer = TestTextMeasurer::new(8, 10);
+
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(30))
+                    .h(px(15))
+                    .child(canvas(draw_test_canvas).size(Size::new(px(100), px(50)))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(30), px(15)), &measurer);
+
+        let canvas_node = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(canvas_node), 0, 0, 30, 15);
     }
 }

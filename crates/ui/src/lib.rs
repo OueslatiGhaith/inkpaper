@@ -7,6 +7,7 @@ extern crate std;
 pub mod backend;
 
 mod arena;
+mod canvas;
 mod color;
 mod context;
 mod div;
@@ -36,6 +37,7 @@ mod units;
 mod visual;
 
 pub use arena::*;
+pub use canvas::*;
 pub use color::*;
 pub use context::*;
 pub use div::*;
@@ -63,6 +65,6 @@ pub mod prelude {
         ClickEvent, Color, Context, Entity, FontId, Image, ImageFit, ImageId, ImageSource,
         InteractiveElement, IntoElement, Invalidation, Listener, Offset, ParentElement, Pixels,
         Point, Rect, Render, Runtime, Size, StatefulInteractiveElementExt, Styled, TextAlign,
-        TextStyled, TextWrap, div, image::image, px, text,
+        TextStyled, TextWrap, canvas::canvas, div::div, image::image, px, text,
     };
 }

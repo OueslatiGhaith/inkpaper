@@ -1,6 +1,6 @@
 use crate::{
-    Color, FrameArena, ImageFit, ImageSource, NodeId, NodeKind, Pixels, Rect, ResolvedTextStyle,
-    TextMeasurer, visual::VisualNode,
+    CanvasDrawFn, Color, FrameArena, ImageFit, ImageSource, NodeId, NodeKind, Pixels, Rect,
+    ResolvedTextStyle, TextMeasurer, visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +39,13 @@ pub trait Painter: TextMeasurer {
         source: ImageSource,
         bounds: Rect,
         fit: ImageFit,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error>;
+
+    fn draw_canvas(
+        &mut self,
+        draw: CanvasDrawFn,
+        bounds: Rect,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error>;
 }
@@ -81,6 +88,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             NodeKind::Text { text } => {
                 painter.draw_text(self.text(text), bounds, node.effective_text_style, clip)
             }
+            NodeKind::Canvas { draw, .. } => painter.draw_canvas(draw, bounds, clip),
             NodeKind::Image { source, style } => {
                 painter.draw_image(source, bounds, style.fit, clip)
             }
@@ -126,11 +134,50 @@ mod tests {
             fit: ImageFit,
             clip: Option<Rect>,
         },
+        Canvas {
+            bounds: Rect,
+            clip: Option<Rect>,
+        },
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum CanvasCommand {
+        FillRect {
+            rect: Rect,
+            color: Color,
+        },
+
+        StrokeRect {
+            rect: Rect,
+            width: Pixels,
+            color: Color,
+        },
+
+        Line {
+            start: Point,
+            end: Point,
+            width: Pixels,
+            color: Color,
+        },
+
+        FillCircle {
+            center: Point,
+            radius: Pixels,
+            color: Color,
+        },
+
+        StrokeCircle {
+            center: Point,
+            radius: Pixels,
+            width: Pixels,
+            color: Color,
+        },
     }
 
     #[derive(Default)]
     struct RecordingPainter {
         commands: Vec<Command>,
+        canvas_commands: Vec<CanvasCommand>,
     }
 
     impl TextMeasurer for RecordingPainter {
@@ -199,6 +246,80 @@ mod tests {
 
             Ok(())
         }
+
+        fn draw_canvas(
+            &mut self,
+            draw: CanvasDrawFn,
+            bounds: Rect,
+            clip: Option<Rect>,
+        ) -> Result<(), Self::Error> {
+            self.commands.push(Command::Canvas { bounds, clip });
+
+            let local_bounds = Rect::new(Point::ZERO, Size::new(bounds.width(), bounds.height()));
+
+            let mut painter = RecordingCanvasPainter {
+                commands: &mut self.canvas_commands,
+            };
+
+            draw(local_bounds, &mut painter);
+
+            Ok(())
+        }
+    }
+
+    struct RecordingCanvasPainter<'a> {
+        commands: &'a mut Vec<CanvasCommand>,
+    }
+
+    impl CanvasPainter for RecordingCanvasPainter<'_> {
+        fn fill_rect(&mut self, rect: Rect, color: Color) {
+            self.commands.push(CanvasCommand::FillRect { rect, color });
+        }
+
+        fn stroke_rect(&mut self, rect: Rect, width: Pixels, color: Color) {
+            self.commands
+                .push(CanvasCommand::StrokeRect { rect, width, color });
+        }
+
+        fn line(&mut self, start: Point, end: Point, width: Pixels, color: Color) {
+            self.commands.push(CanvasCommand::Line {
+                start,
+                end,
+                width,
+                color,
+            });
+        }
+
+        fn fill_circle(&mut self, center: Point, radius: Pixels, color: Color) {
+            self.commands.push(CanvasCommand::FillCircle {
+                center,
+                radius,
+                color,
+            });
+        }
+
+        fn stroke_circle(&mut self, center: Point, radius: Pixels, width: Pixels, color: Color) {
+            self.commands.push(CanvasCommand::StrokeCircle {
+                center,
+                radius,
+                width,
+                color,
+            });
+        }
+    }
+
+    fn draw_test_canvas(bounds: Rect, painter: &mut dyn CanvasPainter) {
+        painter.fill_rect(
+            Rect::new(Point::ZERO, Size::new(bounds.width(), px(4))),
+            Color::RED,
+        );
+        painter.line(
+            Point::new(px(0), px(0)),
+            Point::new(bounds.width() - px(1), bounds.height() - px(1)),
+            px(1),
+            Color::GREEN,
+        );
+        painter.fill_circle(Point::new(px(10), px(10)), px(3), Color::BLUE);
     }
 
     #[test]
@@ -429,6 +550,49 @@ mod tests {
                 bounds: Rect::new(Point::new(px(0), px(0),), Size::new(px(20), px(12),),),
                 fit: ImageFit::None,
                 clip: None,
+            }
+        );
+    }
+
+    #[test]
+    fn canvas_callback_draws_in_local_coordinates() {
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .p(px(10))
+                    .child(canvas(draw_test_canvas).size(Size::new(px(30), px(20)))),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(100)), &painter);
+        frame.paint(root, &mut painter).unwrap();
+
+        assert_eq!(
+            painter.canvas_commands[0],
+            CanvasCommand::FillRect {
+                rect: Rect::new(Point::ZERO, Size::new(px(30), px(4),),),
+                color: Color::RED,
+            }
+        );
+        assert_eq!(
+            painter.canvas_commands[1],
+            CanvasCommand::Line {
+                start: Point::ZERO,
+                end: Point::new(px(29), px(19),),
+                width: px(1),
+                color: Color::GREEN,
+            }
+        );
+        assert_eq!(
+            painter.canvas_commands[2],
+            CanvasCommand::FillCircle {
+                center: Point::new(px(10), px(10),),
+                radius: px(3),
+                color: Color::BLUE,
             }
         );
     }

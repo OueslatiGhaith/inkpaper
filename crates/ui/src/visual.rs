@@ -447,6 +447,15 @@ mod tests {
 
             Ok(())
         }
+
+        fn draw_canvas(
+            &mut self,
+            _: CanvasDrawFn,
+            _: Rect,
+            _: Option<Rect>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
     }
 
     #[test]

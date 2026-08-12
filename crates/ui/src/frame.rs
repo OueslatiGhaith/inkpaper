@@ -3,9 +3,9 @@ use core::cell::Cell;
 use heapless::Vec;
 
 use crate::{
-    Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, ImageSource, ImageStyle,
-    IntoElement, ListenerId, Offset, Rect, ResolvedTextStyle, StatefulInteractivity, Style,
-    StylePatch, TextStyle,
+    CanvasDrawFn, CanvasStyle, Element, ElementId, EntityAccessError, EntityId, EntityRenderFn,
+    ImageSource, ImageStyle, IntoElement, ListenerId, Offset, Rect, ResolvedTextStyle,
+    StatefulInteractivity, Style, StylePatch, TextStyle,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     listener_store::ListenerStore,
@@ -42,6 +42,10 @@ pub(crate) enum NodeKind {
     Image {
         source: ImageSource,
         style: ImageStyle,
+    },
+    Canvas {
+        draw: CanvasDrawFn,
+        style: CanvasStyle,
     },
     Entity {
         entity: EntityId,
@@ -390,7 +394,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     .text
                     .resolve(inherited),
                 NodeKind::Text { .. } => self.node(node_id).text_style.resolve(inherited),
-                NodeKind::Image { .. } | NodeKind::Entity { .. } => inherited,
+                NodeKind::Image { .. } | NodeKind::Entity { .. } | NodeKind::Canvas { .. } => {
+                    inherited
+                }
             };
 
             self.node_mut(node_id).effective_text_style = resolved;
@@ -435,6 +441,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
         self.push_node(NodeKind::Image { source, style })
     }
 
+    fn push_canvas(
+        &mut self,
+        draw: CanvasDrawFn,
+        style: CanvasStyle,
+    ) -> Result<NodeId, MountError> {
+        self.push_node(NodeKind::Canvas { draw, style })
+    }
+
     fn push_entity(
         &mut self,
         entity: EntityId,
@@ -476,6 +490,8 @@ pub(crate) trait FrameStore {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError>;
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError>;
     fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError>;
+    fn push_canvas(&mut self, draw: CanvasDrawFn, style: CanvasStyle)
+    -> Result<NodeId, MountError>;
     fn push_entity(
         &mut self,
         entity: EntityId,
@@ -510,6 +526,14 @@ impl MountCx<'_> {
         style: ImageStyle,
     ) -> Result<NodeId, MountError> {
         self.frame.push_image(source, style)
+    }
+
+    pub(crate) fn push_canvas(
+        &mut self,
+        draw: CanvasDrawFn,
+        style: CanvasStyle,
+    ) -> Result<NodeId, MountError> {
+        self.frame.push_canvas(draw, style)
     }
 
     pub(crate) fn push_entity(
