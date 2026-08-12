@@ -3,9 +3,9 @@ use core::cell::Cell;
 use heapless::Vec;
 
 use crate::{
-    Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, ImageSource, IntoElement,
-    ListenerId, Offset, Rect, ResolvedTextStyle, StatefulInteractivity, Style, StylePatch,
-    TextStyle,
+    Element, ElementId, EntityAccessError, EntityId, EntityRenderFn, ImageSource, ImageStyle,
+    IntoElement, ListenerId, Offset, Rect, ResolvedTextStyle, StatefulInteractivity, Style,
+    StylePatch, TextStyle,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     listener_store::ListenerStore,
@@ -41,6 +41,7 @@ pub(crate) enum NodeKind {
     },
     Image {
         source: ImageSource,
+        style: ImageStyle,
     },
     Entity {
         entity: EntityId,
@@ -430,8 +431,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
         Ok(node)
     }
 
-    fn push_image(&mut self, source: ImageSource) -> Result<NodeId, MountError> {
-        self.push_node(NodeKind::Image { source })
+    fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError> {
+        self.push_node(NodeKind::Image { source, style })
     }
 
     fn push_entity(
@@ -474,7 +475,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
 pub(crate) trait FrameStore {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError>;
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError>;
-    fn push_image(&mut self, source: ImageSource) -> Result<NodeId, MountError>;
+    fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError>;
     fn push_entity(
         &mut self,
         entity: EntityId,
@@ -503,8 +504,12 @@ impl MountCx<'_> {
         self.frame.push_text(text, style)
     }
 
-    pub(crate) fn push_image(&mut self, source: ImageSource) -> Result<NodeId, MountError> {
-        self.frame.push_image(source)
+    pub(crate) fn push_image(
+        &mut self,
+        source: ImageSource,
+        style: ImageStyle,
+    ) -> Result<NodeId, MountError> {
+        self.frame.push_image(source, style)
     }
 
     pub(crate) fn push_entity(
@@ -1813,7 +1818,7 @@ mod tests {
         node: NodeId,
     ) -> ImageSource {
         match frame.node(node).kind {
-            NodeKind::Image { source } => source,
+            NodeKind::Image { source, .. } => source,
             _ => panic!("expected image node"),
         }
     }

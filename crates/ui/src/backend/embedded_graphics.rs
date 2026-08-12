@@ -1,10 +1,10 @@
 use core::marker::PhantomData;
 
 use embedded_graphics::{
-    Drawable,
+    Drawable, Pixel as EgPixel,
     draw_target::DrawTargetExt,
     geometry::{Point as EgPoint, Size as EgSize},
-    image::{Image as EgImage, ImageDrawable as EgImageDrawable},
+    image::{GetPixel as EgGetPixel, Image as EgImage, ImageDrawable as EgImageDrawable},
     mono_font::{MonoFont as EgMonoFont, MonoTextStyle as EgMonoTextStyle},
     pixelcolor::Rgb888 as EgRgb888,
     prelude::DrawTarget as EgDrawTarget,
@@ -16,8 +16,8 @@ use embedded_graphics::{
 };
 
 use crate::{
-    BoxPaint, Color, FontId, ImageId, ImageSource, LineHeight, Painter, Pixels, Point, Rect,
-    ResolvedTextStyle, Size, TextAlign, TextMeasurer, px,
+    BoxPaint, Color, FontId, ImageFit, ImageId, ImageSource, LineHeight, Painter, Pixels, Point,
+    Rect, ResolvedTextStyle, Size, TextAlign, TextMeasurer, fitted_image_bounds, px,
     text_layout::{ELLIPSIS, for_each_visible_text_line},
 };
 
@@ -31,6 +31,12 @@ where
         image: *const (),
         target: &mut D,
         origin: Point,
+        clip: Option<Rect>,
+    ) -> Result<(), D::Error>,
+    draw_scaled_fn: unsafe fn(
+        image: *const (),
+        target: &mut D,
+        destination: Rect,
         clip: Option<Rect>,
     ) -> Result<(), D::Error>,
     _lifetime: PhantomData<&'image ()>,
@@ -52,13 +58,14 @@ where
 {
     pub fn new<T>(image: &'image T) -> Self
     where
-        T: EgImageDrawable,
-        T::Color: Into<D::Color>,
+        T: EgImageDrawable + EgGetPixel<Color = <T as EgImageDrawable>::Color>,
+        <T as EgImageDrawable>::Color: Into<D::Color>,
     {
         Self {
             image: core::ptr::from_ref(image).cast(),
             size: from_embedded_size(image.size()),
             draw_fn: draw_erased_image::<T, D>,
+            draw_scaled_fn: draw_erased_scaled_image::<T, D>,
             _lifetime: PhantomData,
         }
     }
@@ -71,8 +78,22 @@ where
         ImageSource::new(id, self.size)
     }
 
-    fn draw(self, target: &mut D, origin: Point, clip: Option<Rect>) -> Result<(), D::Error> {
-        unsafe { (self.draw_fn)(self.image, target, origin, clip) }
+    fn draw(
+        self,
+        target: &mut D,
+        bounds: Rect,
+        fit: ImageFit,
+        clip: Option<Rect>,
+    ) -> Result<(), D::Error> {
+        let destination = fitted_image_bounds(self.size, bounds, fit);
+        if destination.width().is_non_positive() || destination.height().is_non_positive() {
+            return Ok(());
+        }
+        if fit == ImageFit::None || destination.size == self.size {
+            return unsafe { (self.draw_fn)(self.image, target, destination.origin, clip) };
+        }
+
+        unsafe { (self.draw_scaled_fn)(self.image, target, destination, clip) }
     }
 }
 
@@ -228,6 +249,7 @@ where
         &mut self,
         source: ImageSource,
         bounds: Rect,
+        fit: ImageFit,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
         if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
@@ -253,7 +275,7 @@ where
             return Ok(());
         };
 
-        image.draw(self.target, bounds.origin, Some(image_clip))
+        image.draw(self.target, bounds, fit, Some(image_clip))
     }
 }
 
@@ -494,12 +516,89 @@ where
     }
 }
 
+unsafe fn draw_erased_scaled_image<T, D>(
+    image: *const (),
+    target: &mut D,
+    destination: Rect,
+    clip: Option<Rect>,
+) -> Result<(), D::Error>
+where
+    D: EgDrawTarget,
+    T: EgImageDrawable + EgGetPixel<Color = <T as EgImageDrawable>::Color>,
+    <T as EgImageDrawable>::Color: Into<D::Color>,
+{
+    let image = unsafe { &*image.cast::<T>() };
+    let source_size = image.size();
+    if source_size.width == 0
+        || source_size.height == 0
+        || destination.width().is_non_positive()
+        || destination.height().is_non_positive()
+    {
+        return Ok(());
+    }
+
+    let Some(visible) = (match clip {
+        Some(clip) => destination.intersection(clip),
+        None => Some(destination),
+    }) else {
+        return Ok(());
+    };
+
+    let destination_x = destination.x().get();
+    let destination_y = destination.y().get();
+    let destination_width = destination.width().get().max(1);
+    let destination_height = destination.height().get().max(1);
+
+    let left = visible.x().get();
+    let top = visible.y().get();
+    let right = visible.right().get();
+    let bottom = visible.bottom().get();
+
+    let source_width = u64::from(source_size.width);
+    let source_height = u64::from(source_size.height);
+
+    let pixels = (top..bottom).flat_map(|y| {
+        (left..right).filter_map(move |x| {
+            let relative_x = i64::from(x) - i64::from(destination_x);
+            let relative_y = i64::from(y) - i64::from(destination_y);
+            if relative_x < 0 || relative_y < 0 {
+                return None;
+            }
+
+            let source_x = (u64::try_from(relative_x)
+                .unwrap_or(0)
+                .saturating_mul(source_width)
+                / u64::try_from(destination_width).unwrap_or(1))
+            .min(source_width.saturating_sub(1));
+
+            let source_y = (u64::try_from(relative_y)
+                .unwrap_or(0)
+                .saturating_mul(source_height)
+                / u64::try_from(destination_height).unwrap_or(1))
+            .min(source_height.saturating_sub(1));
+
+            let source_point = EgPoint::new(
+                i32::try_from(source_x).unwrap_or(i32::MAX),
+                i32::try_from(source_y).unwrap_or(i32::MAX),
+            );
+
+            image
+                .pixel(source_point)
+                .map(|color| EgPixel(EgPoint::new(x, y), color))
+        })
+    });
+
+    let mut target = target.color_converted::<<T as EgImageDrawable>::Color>();
+
+    target.draw_iter(pixels)
+}
+
 #[cfg(test)]
 mod tests {
     use embedded_graphics::{
         draw_target::DrawTarget as EgDrawTarget,
         geometry::{OriginDimensions, Point as EgPoint, Size as EgSize},
-        image::ImageDrawable as EgImageDrawable,
+        image::{GetPixel as EgGetPixel, ImageDrawable as EgImageDrawable},
         mock_display::MockDisplay,
         mono_font::ascii::FONT_6X10,
         pixelcolor::Rgb888,
@@ -678,6 +777,24 @@ mod tests {
         }
     }
 
+    impl EgGetPixel for SolidTestImage {
+        type Color = Rgb888;
+
+        fn pixel(&self, point: EgPoint) -> Option<Self::Color> {
+            if point.x < 0 || point.y < 0 {
+                return None;
+            }
+
+            let x = u32::try_from(point.x).ok()?;
+            let y = u32::try_from(point.y).ok()?;
+            if x >= self.size.width || y >= self.size.height {
+                return None;
+            }
+
+            Some(self.color)
+        }
+    }
+
     #[test]
     fn embedded_graphics_backend_draws_registered_image() {
         let bitmap = SolidTestImage {
@@ -697,6 +814,7 @@ mod tests {
                 .draw_image(
                     source,
                     Rect::new(Point::new(px(2), px(3)), source.size()),
+                    ImageFit::None,
                     None,
                 )
                 .unwrap();
@@ -732,6 +850,7 @@ mod tests {
                 .draw_image(
                     source,
                     Rect::new(Point::new(px(10), px(10)), Size::new(px(2), px(2))),
+                    ImageFit::None,
                     None,
                 )
                 .unwrap();
@@ -769,6 +888,7 @@ mod tests {
                 .draw_image(
                     source,
                     Rect::new(Point::new(px(4), px(4)), source.size()),
+                    ImageFit::None,
                     Some(Rect::new(Point::new(px(5), px(5)), Size::new(px(2), px(2)))),
                 )
                 .unwrap();
@@ -784,5 +904,43 @@ mod tests {
         );
         assert_eq!(display.get_pixel(EgPoint::new(4, 4,)), None);
         assert_eq!(display.get_pixel(EgPoint::new(7, 5,)), None);
+    }
+
+    #[test]
+    fn embedded_graphics_backend_scales_image_with_contain() {
+        let bitmap = SolidTestImage {
+            size: EgSize::new(4, 2),
+            color: Rgb888::new(255, 0, 0),
+        };
+
+        let registered = EmbeddedGraphicsImage::new(&bitmap);
+        let source = registered.source(ImageId::new(0));
+
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        {
+            let mut painter =
+                EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], [registered]);
+
+            painter
+                .draw_image(
+                    source,
+                    Rect::new(Point::ZERO, Size::new(px(8), px(8))),
+                    ImageFit::Contain,
+                    None,
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            display.get_pixel(EgPoint::new(0, 2,)),
+            Some(Rgb888::new(255, 0, 0,))
+        );
+        assert_eq!(
+            display.get_pixel(EgPoint::new(7, 5,)),
+            Some(Rgb888::new(255, 0, 0,))
+        );
+        assert_eq!(display.get_pixel(EgPoint::new(0, 1,)), None);
+        assert_eq!(display.get_pixel(EgPoint::new(0, 6,)), None);
     }
 }

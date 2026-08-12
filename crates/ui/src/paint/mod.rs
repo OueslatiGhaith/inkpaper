@@ -1,5 +1,5 @@
 use crate::{
-    Color, FrameArena, ImageSource, NodeId, NodeKind, Pixels, Rect, ResolvedTextStyle,
+    Color, FrameArena, ImageFit, ImageSource, NodeId, NodeKind, Pixels, Rect, ResolvedTextStyle,
     TextMeasurer, visual::VisualNode,
 };
 
@@ -38,6 +38,7 @@ pub trait Painter: TextMeasurer {
         &mut self,
         source: ImageSource,
         bounds: Rect,
+        fit: ImageFit,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error>;
 }
@@ -80,7 +81,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             NodeKind::Text { text } => {
                 painter.draw_text(self.text(text), bounds, node.effective_text_style, clip)
             }
-            NodeKind::Image { source } => painter.draw_image(source, bounds, clip),
+            NodeKind::Image { source, style } => {
+                painter.draw_image(source, bounds, style.fit, clip)
+            }
             NodeKind::Entity { .. } => Ok(()),
         }
     }
@@ -120,6 +123,7 @@ mod tests {
         Image {
             source: ImageSource,
             bounds: Rect,
+            fit: ImageFit,
             clip: Option<Rect>,
         },
     }
@@ -183,11 +187,13 @@ mod tests {
             &mut self,
             source: ImageSource,
             bounds: Rect,
+            fit: ImageFit,
             clip: Option<Rect>,
         ) -> Result<(), Self::Error> {
             self.commands.push(Command::Image {
                 source,
                 bounds,
+                fit,
                 clip,
             });
 
@@ -421,6 +427,7 @@ mod tests {
             Command::Image {
                 source,
                 bounds: Rect::new(Point::new(px(0), px(0),), Size::new(px(20), px(12),),),
+                fit: ImageFit::None,
                 clip: None,
             }
         );

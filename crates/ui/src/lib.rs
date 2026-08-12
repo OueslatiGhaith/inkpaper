@@ -60,9 +60,9 @@ pub use units::*;
 pub mod prelude {
     // TODO: fill predlude
     pub use crate::{
-        ClickEvent, Color, Context, Entity, FontId, Image, ImageId, ImageSource,
+        ClickEvent, Color, Context, Entity, FontId, Image, ImageFit, ImageId, ImageSource,
         InteractiveElement, IntoElement, Invalidation, Offset, ParentElement, Pixels, Point, Rect,
         Render, Runtime, Size, StatefulInteractiveElementExt, Styled, TextAlign, TextStyled,
-        TextWrap, div, image, px, text,
+        TextWrap, div, image::image, px, text,
     };
 }

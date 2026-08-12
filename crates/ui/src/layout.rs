@@ -1,6 +1,7 @@
 use crate::{
-    AlignItems, Display, Edges, FlexBasis, FlexDirection, FrameArena, JustifyContent, Length,
-    NodeId, NodeKind, Offset, Pixels, Point, Rect, ResolvedTextStyle, Size, Style, px,
+    AlignItems, Display, Edges, FlexBasis, FlexDirection, FrameArena, ImageSource, ImageStyle,
+    JustifyContent, Length, NodeId, NodeKind, Offset, Pixels, Point, Rect, ResolvedTextStyle, Size,
+    Style, px,
 };
 
 pub trait TextMeasurer {
@@ -226,20 +227,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                         .min(available.height.non_negative()),
                 )
             }
-            NodeKind::Image { source } => {
-                let intrinsic = source.size();
-
-                Size::new(
-                    intrinsic
-                        .width
-                        .non_negative()
-                        .min(available.width.non_negative()),
-                    intrinsic
-                        .height
-                        .non_negative()
-                        .min(available.height.non_negative()),
-                )
-            }
+            NodeKind::Image { source, style } => measure_image(source, style, available),
             NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.measure_node(child, available, text_measurer),
                 None => Size::ZERO,
@@ -782,6 +770,29 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             (bottom - bounds.bottom()).non_negative(),
         )
     }
+}
+
+fn measure_image(source: ImageSource, style: ImageStyle, available: Size) -> Size {
+    let intrinsic = source.size();
+    let natural = match (style.width, style.height) {
+        (None, None) => intrinsic,
+        (Some(width), None) => {
+            let width = width.non_negative();
+            let height = intrinsic.height.scale_ratio_floor(width, intrinsic.width);
+            Size::new(width, height)
+        }
+        (None, Some(height)) => {
+            let height = height.non_negative();
+            let width = intrinsic.width.scale_ratio_floor(height, intrinsic.height);
+            Size::new(width, height)
+        }
+        (Some(width), Some(height)) => Size::new(width.non_negative(), height.non_negative()),
+    };
+
+    Size::new(
+        natural.width.min(available.width.non_negative()),
+        natural.height.min(available.height.non_negative()),
+    )
 }
 
 #[cfg(test)]
@@ -1653,5 +1664,52 @@ mod tests {
 
         assert_bounds(frame.bounds(first_node), 0, 0, 20, 10);
         assert_bounds(frame.bounds(second_node), 25, 0, 30, 15);
+    }
+
+    #[test]
+    fn image_width_preserves_intrinsic_aspect_ratio() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let source = ImageSource::new(ImageId::new(0), Size::new(px(40), px(20)));
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame.mount(div().child(image(source).w(px(20)))).unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let image_node = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(image_node), 0, 0, 20, 10);
+    }
+
+    #[test]
+    fn image_height_preserves_intrinsic_aspect_ratio() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let source = ImageSource::new(ImageId::new(0), Size::new(px(40), px(20)));
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame.mount(div().child(image(source).h(px(10)))).unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let image_node = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(image_node), 0, 0, 20, 10);
+    }
+
+    #[test]
+    fn image_can_use_explicit_box_size() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let source = ImageSource::new(ImageId::new(0), Size::new(px(40), px(20)));
+        let mut frame = FrameArena::<8, 128>::default();
+
+        let root = frame
+            .mount(div().child(image(source).size(Size::new(px(30), px(30))).contain()))
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let image_node = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(image_node), 0, 0, 30, 30);
     }
 }

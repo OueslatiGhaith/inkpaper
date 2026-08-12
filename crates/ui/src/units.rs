@@ -50,6 +50,35 @@ impl Pixels {
     pub const fn is_non_positive(self) -> bool {
         self.0 <= 0
     }
+
+    pub(crate) fn scale_ratio_floor(&self, numerator: Pixels, denominator: Pixels) -> Self {
+        let value = i64::from(self.0.max(0));
+        let numerator = i64::from(numerator.0.max(0));
+        let denominator = i64::from(denominator.0.max(0));
+
+        if value == 0 || numerator == 0 || denominator == 0 {
+            return px(0);
+        }
+
+        let result = value.saturating_mul(numerator) / denominator;
+
+        Self(i32::try_from(result).unwrap_or(i32::MAX))
+    }
+
+    pub(crate) fn scale_ratio_ceil(self, numerator: Self, denominator: Self) -> Self {
+        let value = i64::from(self.0.max(0));
+        let numerator = i64::from(numerator.0.max(0));
+        let denominator = i64::from(denominator.0.max(0));
+
+        if value == 0 || numerator == 0 || denominator == 0 {
+            return Self::ZERO;
+        }
+
+        let product = value.saturating_mul(numerator);
+        let result = product.saturating_add(denominator.saturating_sub(1)) / denominator;
+
+        Self(i32::try_from(result).unwrap_or(i32::MAX))
+    }
 }
 
 impl Add for Pixels {

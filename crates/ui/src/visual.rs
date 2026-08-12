@@ -436,6 +436,7 @@ mod tests {
             &mut self,
             source: ImageSource,
             bounds: Rect,
+            _fit: ImageFit,
             clip: Option<Rect>,
         ) -> Result<(), Self::Error> {
             self.commands.push(Command::Image {
