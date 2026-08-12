@@ -2,16 +2,23 @@ use std::fmt::Write;
 
 use embedded_graphics::{
     draw_target::DrawTarget,
+    geometry::OriginDimensions,
+    image::{GetPixel, ImageDrawable},
     mono_font::ascii::FONT_6X10,
     pixelcolor::{Rgb888, RgbColor},
-    prelude::{Point as EgPoint, Size as EgSize},
+    prelude::{Pixel as EgPixel, Point as EgPoint, Size as EgSize},
+    primitives::Rectangle,
 };
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     sdl2::{Keycode, MouseButton},
 };
 use heapless::String;
-use inkpaper_ui::{Offset, backend::EmbeddedGraphicsPainter, prelude::*};
+use inkpaper_ui::{
+    Offset,
+    backend::{EmbeddedGraphicsImage, EmbeddedGraphicsPainter},
+    prelude::*,
+};
 
 const DISPLAY_WIDTH: u32 = 320;
 const DISPLAY_HEIGHT: u32 = 240;
@@ -27,6 +34,80 @@ type UiRuntime = Runtime<
     4_096,  // frame text bytes
     128,    // persistent element states
 >;
+
+const DEMO_IMAGE_WIDTH: u32 = 48;
+const DEMO_IMAGE_HEIGHT: u32 = 24;
+
+const DEMO_IMAGE_SOURCE: ImageSource = ImageSource::new(
+    ImageId::new(0),
+    Size::new(px(DEMO_IMAGE_WIDTH as i32), px(DEMO_IMAGE_HEIGHT as i32)),
+);
+
+struct DemoImage;
+
+static DEMO_IMAGE: DemoImage = DemoImage;
+
+impl OriginDimensions for DemoImage {
+    fn size(&self) -> EgSize {
+        EgSize::new(DEMO_IMAGE_WIDTH, DEMO_IMAGE_HEIGHT)
+    }
+}
+
+impl GetPixel for DemoImage {
+    type Color = Rgb888;
+
+    fn pixel(&self, point: EgPoint) -> Option<Self::Color> {
+        if point.x < 0 || point.y < 0 {
+            return None;
+        }
+
+        let x = u32::try_from(point.x).ok()?;
+        let y = u32::try_from(point.y).ok()?;
+        if x >= DEMO_IMAGE_WIDTH || y >= DEMO_IMAGE_HEIGHT {
+            return None;
+        }
+
+        let color = if x == y.saturating_mul(2)
+            || x.saturating_add(y.saturating_mul(2)) == DEMO_IMAGE_WIDTH - 1
+        {
+            Rgb888::new(245, 245, 245)
+        } else if x < 16 {
+            Rgb888::new(55, 122, 190)
+        } else if x < 32 {
+            Rgb888::new(58, 151, 105)
+        } else {
+            Rgb888::new(202, 126, 65)
+        };
+
+        Some(color)
+    }
+}
+
+impl ImageDrawable for DemoImage {
+    type Color = Rgb888;
+
+    fn draw<D>(&self, target: &mut D) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Self::Color>,
+    {
+        let pixels = (0..DEMO_IMAGE_HEIGHT as i32).flat_map(|y| {
+            (0..DEMO_IMAGE_WIDTH as i32).filter_map(move |x| {
+                let point = EgPoint::new(x, y);
+
+                self.pixel(point).map(|color| EgPixel(point, color))
+            })
+        });
+
+        target.draw_iter(pixels)
+    }
+
+    fn draw_sub_image<D>(&self, target: &mut D, _: &Rectangle) -> Result<(), D::Error>
+    where
+        D: DrawTarget<Color = Self::Color>,
+    {
+        self.draw(target)
+    }
+}
 
 struct Header {
     title: &'static str,
@@ -44,13 +125,17 @@ impl Render for Header {
         div()
             .w_full()
             .p(px(10))
-            .gap(px(3))
+            .gap(px(4))
             .bg(Color::rgb(30, 36, 48))
             .border(px(1))
             .border_color(Color::rgb(65, 74, 92))
             .rounded(px(6))
-            .child(self.title)
-            .child(self.subtitle)
+            .child(
+                text(self.title)
+                    .font(FontId::new(1))
+                    .text_color(Color::WHITE),
+            )
+            .child(text(self.subtitle).text_color(Color::rgb(169, 179, 197)))
     }
 }
 
@@ -103,14 +188,14 @@ impl Render for Counter {
 
         div()
             .w_full()
-            .p(px(12))
-            .gap(px(10))
+            .p(px(10))
+            .gap(px(8))
             .bg(Color::rgb(48, 57, 72))
             .border(px(1))
             .border_color(Color::rgb(69, 80, 101))
             .rounded(px(6))
-            .child("Interaction + Focus")
-            .child(self.label.as_str())
+            .child(section_title("Interaction + focus"))
+            .child(text(self.label.as_str()).text_color(Color::rgb(208, 217, 232)))
             .child(
                 div()
                     .flex()
@@ -173,6 +258,12 @@ impl Render for Counter {
     }
 }
 
+fn section_title(label: &'static str) -> impl IntoElement {
+    text(label)
+        .font(FontId::new(1))
+        .text_color(Color::rgb(225, 231, 240))
+}
+
 fn weighted_flex_block(label: &'static str, grow: u16, color: Color) -> impl IntoElement {
     div()
         .flex_basis(px(0))
@@ -188,14 +279,45 @@ fn weighted_flex_block(label: &'static str, grow: u16, color: Color) -> impl Int
         .child(label)
 }
 
-fn scroll_row(label: &'static str, color: Color) -> impl IntoElement {
+fn scroll_row(
+    id: &'static str,
+    label: &'static str,
+    color: Color,
+    listener: Listener<ClickEvent>,
+) -> impl IntoElement {
     div()
+        .id(id)
         .w_full()
         .h(px(24))
         .p(px(6))
         .bg(color)
+        .border(px(1))
+        .border_color(color)
         .rounded(px(3))
+        .when_focused(|style| style.border_color(Color::WHITE))
+        .on_click(listener)
         .child(label)
+}
+
+fn image_fit_card(label: &'static str, fit: ImageFit) -> impl IntoElement {
+    div()
+        .w(px(88))
+        .p(px(4))
+        .gap(px(4))
+        .bg(Color::rgb(28, 33, 43))
+        .border(px(1))
+        .border_color(Color::rgb(73, 84, 106))
+        .rounded(px(4))
+        .child(
+            text(label)
+                .text_center()
+                .text_color(Color::rgb(193, 203, 219)),
+        )
+        .child(
+            image(DEMO_IMAGE_SOURCE)
+                .size(Size::new(px(78), px(52)))
+                .fit(fit),
+        )
 }
 
 struct App {
@@ -210,10 +332,321 @@ impl App {
 
         Self { header, counter }
     }
+
+    fn demo_clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+}
+
+fn text_styling_section() -> impl IntoElement {
+    div()
+        .w_full()
+        .p(px(8))
+        .gap(px(6))
+        .bg(Color::rgb(37, 43, 55))
+        .border(px(1))
+        .border_color(Color::rgb(62,72,91))
+        .rounded(px(6))
+        .child(
+            section_title("Text styling + inheritance")
+        )
+        .child(
+            div()
+                .w_full()
+                .p(px(6))
+                .gap(px(4))
+                .bg(Color::rgb(27, 31, 41))
+                .rounded(px(4))
+                .text_color(Color::rgb( 108, 190, 144))
+                .line_height(px(13))
+                .child("Inherited green text and custom line height")
+                .child(
+                    text("Local override on the child")
+                    .text_color(Color::rgb(230, 167, 87)),
+                ),
+        )
+        .child(
+            div()
+                .w_full()
+                .p(px(6))
+                .bg(Color::rgb(27, 31, 41))
+                .rounded(px(4))
+                .child(
+                    text(
+                        "Word wrapping is shared by measurement and painting. This deliberately long sentence is clamped to two lines and ends with an ellipsis when more content remains."
+                    )
+                    .wrap()
+                    .max_lines(2)
+                    .text_ellipsis()
+                    .text_color(Color::rgb(190, 201, 221)),
+                ),
+        )
+        .child(
+            div()
+                .w_full()
+                .p(px(6))
+                .bg(Color::rgb(27, 31, 41))
+                .rounded(px(4))
+                .child(
+                    text("Centered line\nsecond line")
+                    .font(FontId::new(1))
+                    .text_center()
+                    .text_color(Color::rgb(126, 172, 235)),
+                ),
+        )
+}
+
+fn images_section() -> impl IntoElement {
+    div()
+        .w_full()
+        .p(px(8))
+        .gap(px(6))
+        .bg(Color::rgb(37, 43, 55))
+        .border(px(1))
+        .border_color(Color::rgb(62, 72, 91))
+        .rounded(px(6))
+        .child(section_title("Images + fitting"))
+        .child(
+            text("Same 48x24 procedural image rendered into three 78x52 boxes.")
+                .wrap()
+                .text_color(Color::rgb(164, 176, 196)),
+        )
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .gap(px(5))
+                .child(image_fit_card("contain", ImageFit::Contain))
+                .child(image_fit_card("cover", ImageFit::Cover))
+                .child(image_fit_card("fill", ImageFit::Fill)),
+        )
+        .child(
+            div()
+                .w_full()
+                .p(px(5))
+                .gap(px(4))
+                .bg(Color::rgb(27, 31, 41))
+                .rounded(px(4))
+                .child(text("Native size").text_color(Color::rgb(190, 201, 221)))
+                .child(image(DEMO_IMAGE_SOURCE).native()),
+        )
+}
+
+fn alignment_section() -> impl IntoElement {
+    div()
+        .w_full()
+        .p(px(7))
+        .gap(px(5))
+        .bg(Color::rgb(37, 43, 55))
+        .border(px(1))
+        .border_color(Color::rgb(62, 72, 91))
+        .rounded(px(6))
+        .child(section_title("Alignment + margins + min/max"))
+        .child(
+            div()
+                .w_full()
+                .h(px(38))
+                .flex()
+                .items_center()
+                .justify_between()
+                .bg(Color::rgb(28, 32, 42))
+                .rounded(px(4))
+                .child(
+                    div()
+                        .min_w(px(54))
+                        .max_w(px(72))
+                        .h(px(20))
+                        .ml(px(5))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(Color::rgb(68, 89, 130))
+                        .rounded(px(3))
+                        .child("min/max"),
+                )
+                .child(
+                    div()
+                        .w(px(26))
+                        .h(px(26))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(Color::rgb(68, 130, 104))
+                        .rounded(px(13))
+                        .child("C"),
+                )
+                .child(
+                    div()
+                        .w(px(48))
+                        .h(px(16))
+                        .mr(px(5))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(Color::rgb(130, 84, 68))
+                        .rounded(px(3))
+                        .child("end"),
+                ),
+        )
+}
+
+fn weighted_flex_section() -> impl IntoElement {
+    div()
+        .w_full()
+        .p(px(7))
+        .gap(px(5))
+        .bg(Color::rgb(37, 43, 55))
+        .border(px(1))
+        .border_color(Color::rgb(62, 72, 91))
+        .rounded(px(6))
+        .child(section_title("Weighted flex grow: 1 : 2 : 1"))
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .gap(px(4))
+                .child(weighted_flex_block("1x", 1, Color::rgb(68, 91, 148)))
+                .child(weighted_flex_block("2x", 2, Color::rgb(75, 126, 101)))
+                .child(weighted_flex_block("1x", 1, Color::rgb(139, 91, 67))),
+        )
+}
+
+fn overflow_clipping_section() -> impl IntoElement {
+    div()
+        .w_full()
+        .p(px(7))
+        .gap(px(5))
+        .bg(Color::rgb(37, 43, 55))
+        .border(px(1))
+        .border_color(Color::rgb(62, 72, 91))
+        .rounded(px(6))
+        .child(section_title("overflow_hidden clipping"))
+        .child(
+            div()
+                .w_full()
+                .h(px(34))
+                .overflow_hidden()
+                .border(px(1))
+                .border_color(Color::rgb(96, 108, 131))
+                .rounded(px(4))
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(22))
+                        .p(px(5))
+                        .bg(Color::rgb(65, 104, 145))
+                        .child("Visible child"),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(22))
+                        .p(px(5))
+                        .bg(Color::rgb(145, 73, 75))
+                        .child("Partly clipped child"),
+                ),
+        )
+}
+
+fn nested_scroll_section(demo_click: Listener<ClickEvent>) -> impl IntoElement {
+    div()
+        .w_full()
+        .p(px(7))
+        .gap(px(5))
+        .bg(Color::rgb(37, 43, 55))
+        .border(px(1))
+        .border_color(Color::rgb(62, 72, 91))
+        .rounded(px(6))
+        .child(
+            section_title("Nested scroll + focus into view")
+        )
+        .child(
+            text(
+                "Tab or arrow through these rows. Focusing an off-screen row should scroll it into view."
+            )
+            .wrap()
+            .text_color(Color::rgb(164, 176, 196)),
+        )
+        .child(
+            div()
+                .id("nested-scroll")
+                .w_full()
+                .h(px(76))
+                .gap(px(3))
+                .p(px(3))
+                .bg(Color::rgb(25, 29, 38))
+                .border(px(1))
+                .border_color(Color::rgb(86, 100, 126))
+                .rounded(px(4))
+                .overflow_y_scroll()
+                .child(
+                    scroll_row(
+                        "scroll-row-1",
+                        "Row 1 - focus me",
+                        Color::rgb(58, 76, 105),
+                        demo_click,
+                    ),
+                )
+                .child(
+                    scroll_row(
+                        "scroll-row-2",
+                        "Row 2 - focus scroll",
+                        Color::rgb(61, 91, 83),
+                        demo_click,
+                    ),
+                )
+                .child(
+                    scroll_row(
+                        "scroll-row-3",
+                        "Row 3 - focus scroll",
+                        Color::rgb(94, 76, 58),
+                        demo_click,
+                    ),
+                )
+                .child(
+                    scroll_row(
+                        "scroll-row-4",
+                        "Row 4 - nested focus",
+                        Color::rgb(76, 65, 102),
+                        demo_click,
+                    ),
+                )
+                .child(
+                    scroll_row(
+                        "scroll-row-5",
+                        "Row 5 - nested focus",
+                        Color::rgb(104, 62, 77),
+                        demo_click,
+                    ),
+                )
+                .child(
+                    scroll_row(
+                        "scroll-row-6",
+                        "Row 6 - end",
+                        Color::rgb(54, 94, 111),
+                        demo_click,
+                    ),
+                ),
+        )
+}
+
+fn gallery_footer() -> impl IntoElement {
+    div()
+        .w_full()
+        .h(px(32))
+        .flex()
+        .items_center()
+        .justify_center()
+        .mb(px(8))
+        .bg(Color::rgb(30, 36, 48))
+        .border(px(1))
+        .border_color(Color::rgb(65, 74, 92))
+        .rounded(px(6))
+        .child(text("End of feature gallery").text_color(Color::rgb(170, 181, 200)))
 }
 
 impl Render for App {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let demo_click = cx.listener(Self::demo_clicked);
+
         div()
             .id("page")
             .w_full()
@@ -223,177 +656,15 @@ impl Render for App {
             .gap(px(8))
             .bg(Color::rgb(18, 21, 28))
             .overflow_y_scroll()
-            // persistent child entities
             .child(self.header)
             .child(self.counter)
-            // alignment, justification, margins and min/max
-            .child(
-                div()
-                    .w_full()
-                    .p(px(7))
-                    .gap(px(5))
-                    .bg(Color::rgb(37, 43, 55))
-                    .border(px(1))
-                    .border_color(Color::rgb(62, 72, 91))
-                    .rounded(px(6))
-                    .child("Alignment + margins + min/max")
-                    .child(
-                        div()
-                            .w_full()
-                            .h(px(38))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .bg(Color::rgb(28, 32, 42))
-                            .rounded(px(4))
-                            .child(
-                                div()
-                                    .min_w(px(54))
-                                    .max_w(px(72))
-                                    .h(px(20))
-                                    .ml(px(5))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .bg(Color::rgb(68, 89, 130))
-                                    .rounded(px(3))
-                                    .child("min/max"),
-                            )
-                            .child(
-                                div()
-                                    .w(px(26))
-                                    .h(px(26))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .bg(Color::rgb(68, 130, 104))
-                                    .rounded(px(13))
-                                    .child("C"),
-                            )
-                            .child(
-                                div()
-                                    .w(px(48))
-                                    .h(px(16))
-                                    .mr(px(5))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .bg(Color::rgb(130, 84, 68))
-                                    .rounded(px(3))
-                                    .child("end"),
-                            ),
-                    ),
-            )
-            // explicit weighted flex
-            .child(
-                div()
-                    .w_full()
-                    .p(px(7))
-                    .gap(px(5))
-                    .bg(Color::rgb(37, 43, 55))
-                    .border(px(1))
-                    .border_color(Color::rgb(62, 72, 91))
-                    .rounded(px(6))
-                    .child("Weighted flex grow: 1 : 2 : 1")
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .gap(px(4))
-                            .child(weighted_flex_block("1x", 1, Color::rgb(68, 91, 148)))
-                            .child(weighted_flex_block("2x", 2, Color::rgb(75, 126, 101)))
-                            .child(weighted_flex_block("1x", 1, Color::rgb(139, 91, 67))),
-                    ),
-            )
-            // pure clipping demonstration.
-            // the second row extends outside the 34px viewport.
-            .child(
-                div()
-                    .w_full()
-                    .p(px(7))
-                    .gap(px(5))
-                    .bg(Color::rgb(37, 43, 55))
-                    .border(px(1))
-                    .border_color(Color::rgb(62, 72, 91))
-                    .rounded(px(6))
-                    .child("overflow_hidden clipping")
-                    .child(
-                        div()
-                            .w_full()
-                            .h(px(34))
-                            .overflow_hidden()
-                            .border(px(1))
-                            .border_color(Color::rgb(96, 108, 131))
-                            .rounded(px(4))
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(22))
-                                    .p(px(5))
-                                    .bg(Color::rgb(65, 104, 145))
-                                    .child("Visible child"),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(22))
-                                    .p(px(5))
-                                    .bg(Color::rgb(145, 73, 75))
-                                    .child("Partly clipped child"),
-                            ),
-                    ),
-            )
-            // nested scrolling. Because hit testing chooses the
-            // deepest scroll target, the wheel scrolls this list
-            // when the mouse is over it, and the page otherwise.
-            .child(
-                div()
-                    .w_full()
-                    .p(px(7))
-                    .gap(px(5))
-                    .bg(Color::rgb(37, 43, 55))
-                    .border(px(1))
-                    .border_color(Color::rgb(62, 72, 91))
-                    .rounded(px(6))
-                    .child("Nested persistent scroll area")
-                    .child(
-                        div()
-                            .id("nested-scroll")
-                            .w_full()
-                            .h(px(76))
-                            .gap(px(3))
-                            .p(px(3))
-                            .bg(Color::rgb(25, 29, 38))
-                            .border(px(1))
-                            .border_color(Color::rgb(86, 100, 126))
-                            .rounded(px(4))
-                            .overflow_y_scroll()
-                            .child(scroll_row("Row 1 - persistent", Color::rgb(58, 76, 105)))
-                            .child(scroll_row("Row 2 - clipped", Color::rgb(61, 91, 83)))
-                            .child(scroll_row("Row 3 - scroll", Color::rgb(94, 76, 58)))
-                            .child(scroll_row(
-                                "Row 4 - survives rebuild",
-                                Color::rgb(76, 65, 102),
-                            ))
-                            .child(scroll_row("Row 5 - paint only", Color::rgb(104, 62, 77)))
-                            .child(scroll_row("Row 6 - end", Color::rgb(54, 94, 111))),
-                    ),
-            )
-            // bottom marker makes page scrolling obvious.
-            .child(
-                div()
-                    .w_full()
-                    .h(px(28))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .mb(px(8))
-                    .bg(Color::rgb(30, 36, 48))
-                    .border(px(1))
-                    .border_color(Color::rgb(65, 74, 92))
-                    .rounded(px(6))
-                    .child("End of feature gallery"),
-            )
+            .child(text_styling_section())
+            .child(images_section())
+            .child(alignment_section())
+            .child(weighted_flex_section())
+            .child(overflow_clipping_section())
+            .child(nested_scroll_section(demo_click))
+            .child(gallery_footer())
     }
 }
 
@@ -421,7 +692,10 @@ fn layout_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
 fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
     display.clear(Rgb888::BLACK).unwrap();
 
-    let mut painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10], []);
+    let demo_image: EmbeddedGraphicsImage<'static, SimulatorDisplay<Rgb888>> =
+        EmbeddedGraphicsImage::new(&DEMO_IMAGE);
+
+    let mut painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10], [demo_image]);
     runtime.paint(&mut painter).unwrap().unwrap();
 }
 

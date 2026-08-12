@@ -180,7 +180,7 @@ pub(crate) fn for_each_text_line<'a, M, V>(
     }
 }
 
-pub(crate) const ELLIPSIS: &str = "…";
+pub(crate) const ELLIPSIS: &str = "...";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VisibleTextLine<'a> {
