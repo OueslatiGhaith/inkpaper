@@ -1,5 +1,6 @@
 use crate::{
-    Color, Invalidation, Length, LineHeight, Pixels, TextAlign, TextWrap, px, text_style::FontId,
+    Color, Invalidation, Length, LineHeight, Pixels, TextAlign, TextMaxLines, TextOverflow,
+    TextWrap, px, text_style::FontId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,6 +258,8 @@ declare_style! {
                 font: FontId = FontId::DEFAULT,
                 line_height: LineHeight = LineHeight::Normal,
                 wrap: TextWrap = TextWrap::NoWrap,
+                max_lines: TextMaxLines = TextMaxLines::Unlimited,
+                overflow: TextOverflow = TextOverflow::Clip,
             }
             paint {
                 color: Color = Color::BLACK,

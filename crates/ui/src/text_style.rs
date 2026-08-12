@@ -37,6 +37,32 @@ pub enum LineHeight {
     Pixels(Pixels),
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TextMaxLines {
+    #[default]
+    Unlimited,
+    Limited(u16),
+}
+
+impl TextMaxLines {
+    pub(crate) const fn limit(self) -> Option<usize> {
+        match self {
+            Self::Unlimited => None,
+            Self::Limited(lines) => {
+                let lines = if lines == 0 { 1 } else { lines };
+                Some(lines as usize)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TextOverflow {
+    #[default]
+    Clip,
+    Ellipsis,
+}
+
 impl From<Pixels> for LineHeight {
     fn from(value: Pixels) -> Self {
         Self::Pixels(value.non_negative())
@@ -66,13 +92,21 @@ pub trait TextStyled: Sized {
         self
     }
 
-    fn text_align(mut self, align: TextAlign) -> Self {
-        self.text_style_mut().align = Some(align);
+    fn text_wrap(mut self, wrap: TextWrap) -> Self {
+        self.text_style_mut().wrap = Some(wrap);
         self
     }
 
-    fn text_wrap(mut self, wrap: TextWrap) -> Self {
-        self.text_style_mut().wrap = Some(wrap);
+    fn wrap(self) -> Self {
+        self.text_wrap(TextWrap::Word)
+    }
+
+    fn no_wrap(self) -> Self {
+        self.text_wrap(TextWrap::NoWrap)
+    }
+
+    fn text_align(mut self, align: TextAlign) -> Self {
+        self.text_style_mut().align = Some(align);
         self
     }
 
@@ -88,12 +122,27 @@ pub trait TextStyled: Sized {
         self.text_align(TextAlign::End)
     }
 
-    fn wrap(self) -> Self {
-        self.text_wrap(TextWrap::Word)
+    fn max_lines(mut self, lines: u16) -> Self {
+        self.text_style_mut().max_lines = Some(TextMaxLines::Limited(lines));
+        self
     }
 
-    fn no_wrap(self) -> Self {
-        self.text_wrap(TextWrap::NoWrap)
+    fn unlimited_lines(mut self) -> Self {
+        self.text_style_mut().max_lines = Some(TextMaxLines::Unlimited);
+        self
+    }
+
+    fn text_overflow(mut self, overflow: TextOverflow) -> Self {
+        self.text_style_mut().overflow = Some(overflow);
+        self
+    }
+
+    fn text_ellipsis(self) -> Self {
+        self.text_overflow(TextOverflow::Ellipsis)
+    }
+
+    fn text_clip(self) -> Self {
+        self.text_overflow(TextOverflow::Clip)
     }
 }
 

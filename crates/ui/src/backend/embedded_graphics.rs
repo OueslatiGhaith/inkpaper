@@ -14,7 +14,8 @@ use embedded_graphics::{
 
 use crate::{
     BoxPaint, Color, FontId, LineHeight, Painter, Pixels, Rect, ResolvedTextStyle, Size, TextAlign,
-    TextMeasurer, px, text_layout::for_each_text_line,
+    TextMeasurer, px,
+    text_layout::{ELLIPSIS, for_each_text_line, for_each_visible_text_line},
 };
 
 pub struct EmbeddedGraphicsPainter<'target, 'font, D, const FONTS: usize> {
@@ -54,14 +55,16 @@ impl<D, const FONTS: usize> TextMeasurer for EmbeddedGraphicsPainter<'_, '_, D, 
         let mut longest_line = Pixels::ZERO;
         let mut line_count: i32 = 0;
 
-        for_each_text_line(
+        for_each_visible_text_line(
             text,
             style.wrap,
             max_size.width,
+            style.max_lines,
+            style.overflow,
             |line| measure_mono_line(font, line),
-            |_, width| {
-                longest_line = longest_line.max(width);
-
+            |line| measure_mono_line_with_ellipsis(font, line),
+            |line| {
+                longest_line = longest_line.max(line.width);
                 line_count = line_count.saturating_add(1);
             },
         );
@@ -112,17 +115,24 @@ where
         style: ResolvedTextStyle,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
+        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
+            return Ok(());
+        }
+
+        let Some(text_clip) = (match clip {
+            Some(clip) => clip.intersection(bounds),
+
+            None => Some(bounds),
+        }) else {
+            return Ok(());
+        };
+
         let font = self.resolve_font(style.font);
         let mut target = self.target.color_converted();
+        let clip = to_embedded_rect(text_clip);
+        let mut clipped = target.clipped(&clip);
 
-        if let Some(clip) = clip {
-            let clip = to_embedded_rect(clip);
-            let mut clipped = target.clipped(&clip);
-
-            draw_text_to(&mut clipped, text, bounds, font, style)
-        } else {
-            draw_text_to(&mut target, text, bounds, font, style)
-        }
+        draw_text_to(&mut clipped, text, bounds, font, style)
     }
 }
 
@@ -194,35 +204,58 @@ where
     }
 
     let line_advance = text_line_advance(font, style);
+    let color = to_rgb888(style.color);
 
     let mut y = bounds.origin.y;
     let mut error = None;
 
-    for_each_text_line(
+    for_each_visible_text_line(
         text,
         style.wrap,
         bounds.width(),
+        style.max_lines,
+        style.overflow,
         |line| measure_mono_line(font, line),
-        |line, width| {
+        |line| measure_mono_line_with_ellipsis(font, line),
+        |line| {
             if error.is_some() {
                 return;
             }
 
-            if !line.is_empty() {
-                let x = aligned_line_x(bounds, width, style.align);
-                let text_style = EgMonoTextStyle::new(font, to_rgb888(style.color));
+            let x = aligned_line_x(bounds, line.width, style.align);
 
-                let result = EgText::with_baseline(
-                    line,
+            if !line.text.is_empty() {
+                let text_style = EgMonoTextStyle::new(font, color);
+
+                if let Err(draw_error) = EgText::with_baseline(
+                    line.text,
                     EgPoint::new(x.get(), y.get()),
                     text_style,
                     EgBaseline::Top,
                 )
                 .draw(target)
-                .map(|_| ());
-
-                if let Err(draw_error) = result {
+                .map(|_| ())
+                {
                     error = Some(draw_error);
+                    return;
+                }
+            }
+
+            if line.ellipsis {
+                let ellipsis_x = x + mono_text_advance(font, line.text);
+                let text_style = EgMonoTextStyle::new(font, color);
+
+                if let Err(draw_error) = EgText::with_baseline(
+                    ELLIPSIS,
+                    EgPoint::new(ellipsis_x.get(), y.get()),
+                    text_style,
+                    EgBaseline::Top,
+                )
+                .draw(target)
+                .map(|_| ())
+                {
+                    error = Some(draw_error);
+                    return;
                 }
             }
 
@@ -255,10 +288,13 @@ fn text_line_advance(font: &EgMonoFont<'_>, style: ResolvedTextStyle) -> Pixels 
     }
 }
 
-fn measure_mono_line(font: &EgMonoFont<'_>, text: &str) -> Pixels {
-    let characters = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
-    if characters == 0 {
-        return Pixels::ZERO;
+fn mono_character_count(text: &str) -> i32 {
+    i32::try_from(text.chars().count()).unwrap_or(i32::MAX)
+}
+
+fn measure_mono_characters(font: &EgMonoFont<'_>, characters: i32) -> Pixels {
+    if characters <= 0 {
+        return px(0);
     }
 
     let character_width = font_character_width(font);
@@ -268,6 +304,27 @@ fn measure_mono_line(font: &EgMonoFont<'_>, text: &str) -> Pixels {
         .saturating_add(spacing)
         .saturating_mul(characters)
         .saturating_sub(spacing)
+}
+
+fn measure_mono_line(font: &EgMonoFont<'_>, text: &str) -> Pixels {
+    measure_mono_characters(font, mono_character_count(text))
+}
+
+fn measure_mono_line_with_ellipsis(font: &EgMonoFont<'_>, text: &str) -> Pixels {
+    let characters = mono_character_count(text).saturating_add(mono_character_count(ELLIPSIS));
+
+    measure_mono_characters(font, characters)
+}
+
+fn mono_text_advance(font: &EgMonoFont<'_>, text: &str) -> Pixels {
+    let characters = mono_character_count(text);
+    if characters <= 0 {
+        return px(0);
+    }
+
+    font_character_width(font)
+        .saturating_add(font_character_spacing(font))
+        .saturating_mul(characters)
 }
 
 fn aligned_line_x(bounds: Rect, line_width: Pixels, align: TextAlign) -> Pixels {
@@ -367,5 +424,62 @@ mod tests {
         assert_eq!(aligned_line_x(bounds, px(40), TextAlign::Center,), px(40));
         assert_eq!(aligned_line_x(bounds, px(40), TextAlign::End,), px(70));
         assert_eq!(aligned_line_x(bounds, px(40), TextAlign::Start,), px(10));
+    }
+
+    #[test]
+    fn max_lines_limits_measured_height() {
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+
+        let size = painter.measure_text(
+            "hello world again",
+            ResolvedTextStyle {
+                wrap: TextWrap::Word,
+                max_lines: TextMaxLines::Limited(2),
+                ..ResolvedTextStyle::default()
+            },
+            Size::new(px(30), px(100)),
+        );
+
+        assert_eq!(size.height, px(20));
+    }
+
+    #[test]
+    fn ellipsis_respects_available_width() {
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+
+        let size = painter.measure_text(
+            "abcdefghij",
+            ResolvedTextStyle {
+                overflow: TextOverflow::Ellipsis,
+                ..ResolvedTextStyle::default()
+            },
+            Size::new(px(30), px(100)),
+        );
+
+        assert_eq!(size, Size::new(px(30), px(10),));
+    }
+
+    #[test]
+    fn wrapped_text_can_be_clamped_with_ellipsis() {
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10]);
+
+        let size = painter.measure_text(
+            "hello world again",
+            ResolvedTextStyle {
+                wrap: TextWrap::Word,
+                max_lines: TextMaxLines::Limited(1),
+                overflow: TextOverflow::Ellipsis,
+                ..ResolvedTextStyle::default()
+            },
+            Size::new(px(30), px(100)),
+        );
+
+        assert_eq!(size, Size::new(px(30), px(10),));
     }
 }

@@ -476,4 +476,28 @@ mod tests {
         assert!(runtime.focus_next());
         assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
     }
+
+    #[test]
+    fn max_lines_change_requires_layout() {
+        let base = Style::default();
+
+        let mut variant = base;
+        variant.text.max_lines = Some(TextMaxLines::Limited(2));
+
+        let patch = StylePatch::between(base, variant);
+
+        assert_eq!(patch.invalidation(), Invalidation::Layout);
+    }
+
+    #[test]
+    fn text_overflow_change_requires_layout() {
+        let base = Style::default();
+
+        let mut variant = base;
+        variant.text.overflow = Some(TextOverflow::Ellipsis);
+
+        let patch = StylePatch::between(base, variant);
+
+        assert_eq!(patch.invalidation(), Invalidation::Layout);
+    }
 }
