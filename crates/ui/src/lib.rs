@@ -63,9 +63,9 @@ pub use units::*;
 pub mod prelude {
     // TODO: fill predlude
     pub use crate::{
-        ClickEvent, Color, Context, Entity, FontId, Image, ImageFit, ImageId, ImageSource,
-        InteractiveElement, IntoElement, Invalidation, Listener, Offset, ParentElement, Pixels,
-        Point, Rect, Render, Runtime, Size, StatefulInteractiveElementExt, Styled, TextAlign,
-        TextStyled, TextWrap, canvas::canvas, div::div, image::image, px, text,
+        CanvasPainter, ClickEvent, Color, Context, Entity, FontId, Image, ImageFit, ImageId,
+        ImageSource, InteractiveElement, IntoElement, Invalidation, Listener, Offset,
+        ParentElement, Pixels, Point, Rect, Render, Runtime, Size, StatefulInteractiveElementExt,
+        Styled, TextAlign, TextStyled, TextWrap, canvas::canvas, div::div, image::image, px, text,
     };
 }

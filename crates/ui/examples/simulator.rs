@@ -178,6 +178,48 @@ impl Counter {
         self.update_label();
         cx.notify();
     }
+
+    fn draw_meter(&self, bounds: Rect, painter: &mut dyn CanvasPainter) {
+        painter.fill_rect(bounds, Color::rgb(25, 30, 39));
+        painter.stroke_rect(bounds, px(1), Color::rgb(86, 100, 126));
+
+        let active = self.value.min(10);
+        for index in 0..10 {
+            let x = px(8 + index * 25);
+            let color = if index < active as i32 {
+                Color::rgb(54, 170, 105)
+            } else {
+                Color::rgb(49, 57, 72)
+            };
+
+            painter.fill_rect(
+                Rect::new(Point::new(x, px(8)), Size::new(px(18), px(16))),
+                color,
+            );
+            painter.stroke_rect(
+                Rect::new(Point::new(x, px(8)), Size::new(px(18), px(16))),
+                px(1),
+                Color::rgb(91, 105, 130),
+            );
+        }
+
+        let marker_index = active.min(9);
+        let marker_x = px(17 + i32::try_from(marker_index).unwrap_or(9) * 25);
+
+        painter.line(
+            Point::new(px(8), px(31)),
+            Point::new(px(251), px(31)),
+            px(1),
+            Color::rgb(69, 80, 101),
+        );
+        painter.fill_circle(Point::new(marker_x, px(31)), px(3), Color::WHITE);
+        painter.stroke_circle(
+            Point::new(marker_x, px(31)),
+            px(5),
+            px(1),
+            Color::rgb(90, 140, 220),
+        );
+    }
 }
 
 impl Render for Counter {
@@ -185,17 +227,19 @@ impl Render for Counter {
         let increment = cx.listener(Self::increment);
         let decrement = cx.listener(Self::decrement);
         let reset = cx.listener(Self::reset);
+        let meter = cx.canvas(Self::draw_meter);
 
         div()
             .w_full()
-            .p(px(10))
-            .gap(px(8))
+            .p(px(12))
+            .gap(px(10))
             .bg(Color::rgb(48, 57, 72))
             .border(px(1))
             .border_color(Color::rgb(69, 80, 101))
             .rounded(px(6))
-            .child(section_title("Interaction + focus"))
-            .child(text(self.label.as_str()).text_color(Color::rgb(208, 217, 232)))
+            .child("Interaction + Focus + Canvas")
+            .child(self.label.as_str())
+            .child(meter.size(Size::new(px(260), px(40))))
             .child(
                 div()
                     .flex()
