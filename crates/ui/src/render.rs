@@ -7,8 +7,34 @@ use crate::{
     entity_store::{EntityStore, RawEntityBorrow},
 };
 
+/// a persistent component backed by an [`Entity`]
+///
+/// `Render` components may hold mutable state across frames and receive a [`Context`]
+/// for interacting with the runtimes
 pub trait Render: Sized + 'static {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a;
+}
+
+/// a temporary, stateless component that is rendered exactly once.
+///
+/// unlike [`Render`], a `RenderOnce` value:
+/// - does not require an [`Entity`]
+/// - does not occupy persistent runtime storage
+/// - may borrow non-`'static` data
+/// - is consumed when rendered
+///
+/// `RenderOnce` is intended for reusable composition
+pub trait RenderOnce: Sized {
+    fn render(self) -> impl IntoElement;
+}
+
+impl<T> Element for T
+where
+    T: RenderOnce,
+{
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+        self.render().into_element().mount(cx)
+    }
 }
 
 pub(crate) type EntityRenderFn = fn(
