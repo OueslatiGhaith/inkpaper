@@ -1,3 +1,5 @@
+use core::any::TypeId;
+
 use crate::{
     FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect,
     callback::CallbackId,
@@ -77,6 +79,28 @@ fn scroll_axis_into_view(
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
+    pub(crate) fn hit_test_event(
+        &self,
+        root: NodeId,
+        position: Point,
+        event_type: TypeId,
+    ) -> Option<NodeId> {
+        let mut hit = None;
+
+        for visual in self.visual_nodes(root) {
+            if !visual.contains(position) {
+                continue;
+            }
+
+            let node = visual.node();
+            if self.event_callbacks(node, event_type).next().is_some() {
+                hit = Some(node);
+            }
+        }
+
+        hit
+    }
+
     pub(crate) fn hit_test_click(&self, root: NodeId, position: Point) -> Option<ClickTarget> {
         let mut hit = None;
 
@@ -1656,5 +1680,277 @@ mod tests {
         );
         assert_eq!(first.get(), 1);
         assert_eq!(second.get(), 1);
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct TouchContact {
+        pressure: u16,
+    }
+
+    struct SpatialDispatchApp {
+        value: Rc<Cell<u16>>,
+    }
+
+    impl SpatialDispatchApp {
+        fn touched(&mut self, event: &TouchContact, cx: &mut Context<Self>) {
+            self.value.set(event.pressure);
+            cx.notify();
+        }
+    }
+
+    impl Render for SpatialDispatchApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().w(px(100)).h(px(100)).p(px(10)).child(
+                div()
+                    .id("target")
+                    .w(px(40))
+                    .h(px(30))
+                    .on(cx.listener(Self::touched)),
+            )
+        }
+    }
+
+    #[test]
+    fn dispatch_at_invokes_matching_event_under_position() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| SpatialDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(
+            runtime
+                .dispatch_at(Point::new(px(20), px(20)), &TouchContact { pressure: 42 },)
+                .unwrap()
+        );
+        assert_eq!(value.get(), 42);
+        assert_eq!(runtime.invalidation(), Invalidation::Rebuild);
+    }
+
+    #[test]
+    fn dispatch_at_outside_target_is_not_handled() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| SpatialDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(
+            !runtime
+                .dispatch_at(Point::new(px(80), px(80)), &TouchContact { pressure: 42 },)
+                .unwrap()
+        );
+        assert_eq!(value.get(), 0);
+    }
+
+    #[test]
+    fn dispatch_at_ignores_unbound_event_type() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| SpatialDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(
+            !runtime
+                .dispatch_at(Point::new(px(20), px(20)), &EncoderPress,)
+                .unwrap()
+        );
+
+        assert_eq!(value.get(), 0);
+    }
+
+    struct NestedSpatialDispatchApp {
+        parent: Rc<Cell<u32>>,
+        child: Rc<Cell<u32>>,
+    }
+
+    impl NestedSpatialDispatchApp {
+        fn parent_touched(&mut self, _: &TouchContact, _: &mut Context<Self>) {
+            self.parent.set(self.parent.get().saturating_add(1));
+        }
+
+        fn child_touched(&mut self, _: &TouchContact, _: &mut Context<Self>) {
+            self.child.set(self.child.get().saturating_add(1));
+        }
+    }
+
+    impl Render for NestedSpatialDispatchApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            let parent = cx.listener(Self::parent_touched);
+            let child = cx.listener(Self::child_touched);
+
+            div()
+                .id("parent")
+                .w(px(100))
+                .h(px(100))
+                .p(px(10))
+                .on(parent)
+                .child(div().id("child").w(px(40)).h(px(40)).on(child))
+        }
+    }
+
+    #[test]
+    fn dispatch_at_prefers_topmost_matching_element() {
+        let parent = Rc::new(Cell::new(0));
+        let child = Rc::new(Cell::new(0));
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let parent = parent.clone();
+                let child = child.clone();
+
+                move |_| NestedSpatialDispatchApp { parent, child }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(
+            runtime
+                .dispatch_at(Point::new(px(20), px(20)), &TouchContact { pressure: 1 },)
+                .unwrap()
+        );
+        assert_eq!(parent.get(), 0);
+        assert_eq!(child.get(), 1);
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct ParentOnlyEvent;
+
+    struct EventTypeSpatialApp {
+        hits: Rc<Cell<u32>>,
+    }
+
+    impl EventTypeSpatialApp {
+        fn parent_event(&mut self, _: &ParentOnlyEvent, _: &mut Context<Self>) {
+            self.hits.set(self.hits.get().saturating_add(1));
+        }
+    }
+
+    impl Render for EventTypeSpatialApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .id("parent")
+                .w(px(100))
+                .h(px(100))
+                .on(cx.listener(Self::parent_event))
+                .child(div().id("child").w(px(50)).h(px(50)))
+        }
+    }
+
+    #[test]
+    fn dispatch_at_can_target_ancestor_when_child_has_no_matching_event() {
+        let hits = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let hits = hits.clone();
+
+                move |_| EventTypeSpatialApp { hits }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(
+            runtime
+                .dispatch_at(Point::new(px(20), px(20)), &ParentOnlyEvent,)
+                .unwrap()
+        );
+        assert_eq!(hits.get(), 1);
+    }
+
+    struct ClippedSpatialApp {
+        hits: Rc<Cell<u32>>,
+    }
+
+    impl ClippedSpatialApp {
+        fn touched(&mut self, _: &TouchContact, _: &mut Context<Self>) {
+            self.hits.set(self.hits.get().saturating_add(1));
+        }
+    }
+
+    impl Render for ClippedSpatialApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().w(px(40)).h(px(40)).overflow_hidden().child(
+                div()
+                    .id("large-child")
+                    .w(px(80))
+                    .h(px(80))
+                    .on(cx.listener(Self::touched)),
+            )
+        }
+    }
+
+    #[test]
+    fn dispatch_at_respects_ancestor_clipping() {
+        let hits = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let hits = hits.clone();
+
+                move |_| ClippedSpatialApp { hits }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(
+            runtime
+                .dispatch_at(Point::new(px(20), px(20)), &TouchContact { pressure: 1 },)
+                .unwrap()
+        );
+        assert_eq!(hits.get(), 1);
+        assert!(
+            !runtime
+                .dispatch_at(Point::new(px(60), px(20)), &TouchContact { pressure: 1 },)
+                .unwrap()
+        );
+        assert_eq!(hits.get(), 1);
     }
 }

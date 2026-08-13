@@ -583,4 +583,19 @@ impl<
 
         self.dispatch_to_node(node, event)
     }
+
+    pub fn dispatch_at<E>(&self, position: Point, event: &E) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        let Some(root) = self.root else {
+            return Ok(false);
+        };
+
+        let Some(node) = self.frame.hit_test_event(root, position, TypeId::of::<E>()) else {
+            return Ok(false);
+        };
+
+        self.dispatch_to_node(node, event)
+    }
 }
