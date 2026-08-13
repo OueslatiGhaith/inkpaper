@@ -75,6 +75,7 @@ where
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StatefulInteractivity {
     pub(crate) click: Option<CallbackId>,
+    pub(crate) focusable: bool,
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
     pub(crate) scroll_axes: ScrollAxes,
@@ -95,7 +96,14 @@ where
 
 pub trait StatefulInteractiveElementExt: StatefulInteractiveElement {
     fn on_click(mut self, listener: Listener<ClickEvent>) -> Self {
-        self.stateful_interactivity_mut().click = Some(listener.id);
+        let interaction = self.stateful_interactivity_mut();
+        interaction.click = Some(listener.id);
+        interaction.focusable = true;
+        self
+    }
+
+    fn focusable(mut self) -> Self {
+        self.stateful_interactivity_mut().focusable = true;
         self
     }
 

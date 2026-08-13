@@ -314,17 +314,27 @@ impl<
     }
 
     fn reconcile_interaction_state(&mut self) {
-        if let Some(focused) = self.focused
-            && !self.element_states.contains(focused)
-        {
-            self.focused = None;
-            self.pending_scroll_into_view = None;
+        if let Some(focused) = self.focused {
+            let still_focusable = self
+                .root
+                .and_then(|root| self.frame.focus_target_for_element(root, focused))
+                .is_some();
+
+            if !still_focusable {
+                self.focused = None;
+                self.pending_scroll_into_view = None;
+            }
         }
 
-        if let Some(pending) = self.pending_scroll_into_view
-            && !self.element_states.contains(pending)
-        {
-            self.pending_scroll_into_view = None;
+        if let Some(pending) = self.pending_scroll_into_view {
+            let still_focusable = self
+                .root
+                .and_then(|root| self.frame.focus_target_for_element(root, pending))
+                .is_some();
+
+            if !still_focusable {
+                self.pending_scroll_into_view = None;
+            }
         }
 
         if let Some(pressed) = self.pointer.pressed()
@@ -340,7 +350,8 @@ impl<
             self.invalidate(invalidation);
             return false;
         };
-        let Some(target) = self.frame.next_click_target(root, self.focused) else {
+
+        let Some(target) = self.frame.next_focus_target(root, self.focused) else {
             let invalidation = self.set_focus(None);
             self.invalidate(invalidation);
             return false;
@@ -358,7 +369,8 @@ impl<
             self.invalidate(invalidation);
             return false;
         };
-        let Some(target) = self.frame.previous_click_target(root, self.focused) else {
+
+        let Some(target) = self.frame.previous_focus_target(root, self.focused) else {
             let invalidation = self.set_focus(None);
             self.invalidate(invalidation);
             return false;

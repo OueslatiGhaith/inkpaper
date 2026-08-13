@@ -12,6 +12,11 @@ pub(crate) struct ClickTarget {
     pub(crate) listener: CallbackId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FocusTarget {
+    pub(crate) element: ElementStateId,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ScrollTarget {
     pub(crate) node: NodeId,
@@ -114,40 +119,28 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         None
     }
 
-    pub(crate) fn next_click_target(
-        &self,
-        root: NodeId,
-        current_element: Option<ElementStateId>,
-    ) -> Option<ClickTarget> {
-        let first = self.first_click_target(root)?;
-        let Some(current_element) = current_element else {
-            return Some(first);
-        };
-
-        let mut found_current = false;
-        let mut current = Some(root);
-
-        while let Some(node_id) = current {
-            if let Some(target) = self.click_target_from_node(node_id) {
-                if found_current {
-                    return Some(target);
-                }
-                if target.element == current_element {
-                    found_current = true
-                }
-            }
-
-            current = self.next_depth_first_node(node_id);
+    fn focus_target_from_node(&self, node_id: NodeId) -> Option<FocusTarget> {
+        let node = self.node(node_id);
+        if !node.interaction.focusable {
+            return None;
         }
 
-        Some(first)
+        let element = node.element_state_id?;
+
+        Some(FocusTarget { element })
     }
 
-    fn first_click_target(&self, root: NodeId) -> Option<ClickTarget> {
+    pub(crate) fn focus_target_for_element(
+        &self,
+        root: NodeId,
+        element: ElementStateId,
+    ) -> Option<FocusTarget> {
         let mut current = Some(root);
 
         while let Some(node_id) = current {
-            if let Some(target) = self.click_target_from_node(node_id) {
+            if let Some(target) = self.focus_target_from_node(node_id)
+                && target.element == element
+            {
                 return Some(target);
             }
 
@@ -157,12 +150,26 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         None
     }
 
-    fn last_click_target(&self, root: NodeId) -> Option<ClickTarget> {
+    fn first_focus_target(&self, root: NodeId) -> Option<FocusTarget> {
+        let mut current = Some(root);
+
+        while let Some(node_id) = current {
+            if let Some(target) = self.focus_target_from_node(node_id) {
+                return Some(target);
+            }
+
+            current = self.next_depth_first_node(node_id);
+        }
+
+        None
+    }
+
+    fn last_focus_target(&self, root: NodeId) -> Option<FocusTarget> {
         let mut current = Some(root);
         let mut last = None;
 
         while let Some(node_id) = current {
-            if let Some(target) = self.click_target_from_node(node_id) {
+            if let Some(target) = self.focus_target_from_node(node_id) {
                 last = Some(target);
             }
 
@@ -172,12 +179,44 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         last
     }
 
-    pub(crate) fn previous_click_target(
+    pub(crate) fn next_focus_target(
         &self,
         root: NodeId,
         current_element: Option<ElementStateId>,
-    ) -> Option<ClickTarget> {
-        let last = self.last_click_target(root)?;
+    ) -> Option<FocusTarget> {
+        let first = self.first_focus_target(root)?;
+
+        let Some(current_element) = current_element else {
+            return Some(first);
+        };
+
+        let mut found_current = false;
+        let mut current = Some(root);
+
+        while let Some(node_id) = current {
+            if let Some(target) = self.focus_target_from_node(node_id) {
+                if found_current {
+                    return Some(target);
+                }
+
+                if target.element == current_element {
+                    found_current = true;
+                }
+            }
+
+            current = self.next_depth_first_node(node_id);
+        }
+
+        Some(first)
+    }
+
+    pub(crate) fn previous_focus_target(
+        &self,
+        root: NodeId,
+        current_element: Option<ElementStateId>,
+    ) -> Option<FocusTarget> {
+        let last = self.last_focus_target(root)?;
+
         let Some(current_element) = current_element else {
             return Some(last);
         };
@@ -186,7 +225,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = Some(root);
 
         while let Some(node_id) = current {
-            if let Some(target) = self.click_target_from_node(node_id) {
+            if let Some(target) = self.focus_target_from_node(node_id) {
                 if target.element == current_element {
                     return previous.or(Some(last));
                 }
@@ -1192,5 +1231,69 @@ mod tests {
             runtime.frame().node(scroll).interaction.scroll_offset,
             Offset::new(px(0), px(20),)
         );
+    }
+
+    struct ExplicitFocusApp;
+
+    impl Render for ExplicitFocusApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child(div().id("ignored").w(px(40)).h(px(20))).child(
+                div()
+                    .id("focusable")
+                    .focusable()
+                    .w(px(40))
+                    .h(px(20))
+                    .when_focused(|style| style.bg(Color::GREEN)),
+            )
+        }
+    }
+
+    #[test]
+    fn element_can_be_focusable_without_click_listener() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| ExplicitFocusApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Paint,);
+        assert!(!runtime.activate_focused().unwrap());
+    }
+
+    struct ClickRemainsFocusableApp;
+
+    impl ClickRemainsFocusableApp {
+        fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+    }
+
+    impl Render for ClickRemainsFocusableApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child(
+                div()
+                    .id("button")
+                    .w(px(40))
+                    .h(px(20))
+                    .on_click(cx.listener(Self::clicked)),
+            )
+        }
+    }
+
+    #[test]
+    fn click_listener_still_makes_element_focusable() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| ClickRemainsFocusableApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+        assert!(runtime.activate_focused().unwrap());
     }
 }

@@ -108,6 +108,7 @@ impl Node {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NodeInteraction {
     pub(crate) click: Option<CallbackId>,
+    pub(crate) focusable: bool,
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
     pub(crate) scroll_axes: ScrollAxes,
@@ -118,6 +119,7 @@ impl From<StatefulInteractivity> for NodeInteraction {
     fn from(value: StatefulInteractivity) -> Self {
         Self {
             click: value.click,
+            focusable: value.focusable,
             focused_style: value.focused_style,
             pressed_style: value.pressed_style,
             scroll_axes: value.scroll_axes,
