@@ -1,4 +1,4 @@
-use core::cell::Cell;
+use core::{any::TypeId, cell::Cell};
 
 use crate::{
     ClickEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Invalidation, Listener,
@@ -550,5 +550,37 @@ impl<
         }
 
         invalidation
+    }
+
+    fn dispatch_to_node<E>(&self, node: NodeId, event: &E) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        let mut handled = false;
+
+        for callback in self.frame.event_callbacks(node, TypeId::of::<E>()) {
+            let listener = Listener::from_id(callback);
+            self.invoke(listener, event)?;
+            handled = true;
+        }
+
+        Ok(handled)
+    }
+
+    pub fn dispatch_to_focused<E>(&self, event: &E) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        let Some(root) = self.root else {
+            return Ok(false);
+        };
+        let Some(focused) = self.focused else {
+            return Ok(false);
+        };
+        let Some(node) = self.frame.node_for_element(root, focused) else {
+            return Ok(false);
+        };
+
+        self.dispatch_to_node(node, event)
     }
 }

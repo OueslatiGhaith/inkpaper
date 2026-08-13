@@ -1436,4 +1436,225 @@ mod tests {
             2,
         );
     }
+
+    struct FocusedDispatchApp {
+        value: Rc<Cell<i32>>,
+    }
+
+    impl FocusedDispatchApp {
+        fn turned(&mut self, event: &EncoderTurn, cx: &mut Context<Self>) {
+            self.value.set(self.value.get() + i32::from(event.delta));
+
+            cx.notify();
+        }
+    }
+
+    impl Render for FocusedDispatchApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .id("control")
+                .focusable()
+                .on(cx.listener(Self::turned))
+                .w(px(80))
+                .h(px(30))
+        }
+    }
+
+    #[test]
+    fn dispatch_to_focused_invokes_matching_custom_event() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| FocusedDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+
+        runtime.take_invalidation();
+
+        assert!(
+            runtime
+                .dispatch_to_focused(&EncoderTurn { delta: 3 })
+                .unwrap()
+        );
+
+        assert_eq!(value.get(), 3);
+        assert_eq!(runtime.invalidation(), Invalidation::Rebuild);
+    }
+
+    #[test]
+    fn dispatch_to_focused_ignores_unbound_event_type() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| FocusedDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+
+        runtime.take_invalidation();
+
+        assert!(!runtime.dispatch_to_focused(&EncoderPress).unwrap());
+        assert_eq!(value.get(), 0);
+        assert_eq!(runtime.invalidation(), Invalidation::None);
+    }
+
+    #[test]
+    fn dispatch_to_focused_without_focus_is_not_handled() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| FocusedDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        assert!(
+            !runtime
+                .dispatch_to_focused(&EncoderTurn { delta: 1 })
+                .unwrap()
+        );
+        assert_eq!(value.get(), 0);
+    }
+
+    struct MultipleDispatchApp {
+        sequence: Rc<Cell<u32>>,
+    }
+
+    impl MultipleDispatchApp {
+        fn first(&mut self, _: &EncoderTurn, _: &mut Context<Self>) {
+            self.sequence.set(self.sequence.get() * 10 + 1);
+        }
+
+        fn second(&mut self, _: &EncoderTurn, _: &mut Context<Self>) {
+            self.sequence.set(self.sequence.get() * 10 + 2);
+        }
+    }
+
+    impl Render for MultipleDispatchApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            let first = cx.listener(Self::first);
+            let second = cx.listener(Self::second);
+
+            div().id("control").focusable().on(first).on(second)
+        }
+    }
+
+    #[test]
+    fn dispatch_to_focused_invokes_all_matching_handlers_in_order() {
+        let sequence = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let sequence = sequence.clone();
+
+                move |_| MultipleDispatchApp { sequence }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        assert!(runtime.focus_next());
+        assert!(
+            runtime
+                .dispatch_to_focused(&EncoderTurn { delta: 1 })
+                .unwrap()
+        );
+        assert_eq!(sequence.get(), 12);
+    }
+
+    struct FocusRoutingApp {
+        first: Rc<Cell<u32>>,
+        second: Rc<Cell<u32>>,
+    }
+
+    impl FocusRoutingApp {
+        fn first_turned(&mut self, _: &EncoderTurn, _: &mut Context<Self>) {
+            self.first.set(self.first.get().saturating_add(1));
+        }
+
+        fn second_turned(&mut self, _: &EncoderTurn, _: &mut Context<Self>) {
+            self.second.set(self.second.get().saturating_add(1));
+        }
+    }
+
+    impl Render for FocusRoutingApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            let first = cx.listener(Self::first_turned);
+            let second = cx.listener(Self::second_turned);
+
+            div()
+                .child(div().id("first").focusable().on(first).w(px(80)).h(px(30)))
+                .child(
+                    div()
+                        .id("second")
+                        .focusable()
+                        .on(second)
+                        .w(px(80))
+                        .h(px(30)),
+                )
+        }
+    }
+
+    #[test]
+    fn dispatch_to_focused_only_invokes_focused_element() {
+        let first = Rc::new(Cell::new(0));
+        let second = Rc::new(Cell::new(0));
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let first = first.clone();
+                let second = second.clone();
+
+                move |_| FocusRoutingApp { first, second }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        assert!(runtime.focus_next());
+        assert!(
+            runtime
+                .dispatch_to_focused(&EncoderTurn { delta: 1 })
+                .unwrap()
+        );
+        assert_eq!(first.get(), 1);
+        assert_eq!(second.get(), 0);
+        assert!(runtime.focus_next());
+        assert!(
+            runtime
+                .dispatch_to_focused(&EncoderTurn { delta: 1 })
+                .unwrap()
+        );
+        assert_eq!(first.get(), 1);
+        assert_eq!(second.get(), 1);
+    }
 }
