@@ -1,6 +1,6 @@
 use crate::{
     ClickEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
-    ListenerId, MountCx, MountError, NodeId, ParentElement, Style, StylePatch, Styled,
+    MountCx, MountError, NodeId, ParentElement, Style, StylePatch, Styled, callback::CallbackId,
     scroll::ScrollAxes,
 };
 
@@ -74,7 +74,7 @@ where
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StatefulInteractivity {
-    pub(crate) click: Option<ListenerId>,
+    pub(crate) click: Option<CallbackId>,
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
     pub(crate) scroll_axes: ScrollAxes,

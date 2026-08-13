@@ -1,5 +1,6 @@
 use crate::{
-    FrameArena, Invalidation, ListenerId, NodeId, Offset, Pixels, Point, Rect,
+    FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect,
+    callback::CallbackId,
     element_state::ElementStateId,
     px,
     scroll::{ScrollAxes, ScrollStateTable},
@@ -8,7 +9,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ClickTarget {
     pub(crate) element: ElementStateId,
-    pub(crate) listener: ListenerId,
+    pub(crate) listener: CallbackId,
 }
 
 #[derive(Debug, Clone, Copy)]

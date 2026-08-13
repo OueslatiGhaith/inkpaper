@@ -3,8 +3,8 @@ use core::{any::TypeId, cell::Cell};
 use crate::{
     Context, Element, Entity, EntityBorrowKind, EntityId, FrameStore, IntoElement, MountCx,
     MountError, NodeId,
+    callback_store::CallbackStore,
     entity_store::{EntityStore, RawEntityBorrow},
-    listener_store::ListenerStore,
 };
 
 pub trait Render: Sized + 'static {
@@ -14,7 +14,7 @@ pub trait Render: Sized + 'static {
 pub(crate) type EntityRenderFn = fn(
     entity: EntityId,
     entities: &dyn EntityStore,
-    listeners: &dyn ListenerStore,
+    callbacks: &dyn CallbackStore,
     notified: &Cell<bool>,
     frame: &mut dyn FrameStore,
 ) -> Result<NodeId, MountError>;
@@ -22,7 +22,7 @@ pub(crate) type EntityRenderFn = fn(
 pub(crate) fn render_entity<T>(
     entity_id: EntityId,
     entities: &dyn EntityStore,
-    listeners: &dyn ListenerStore,
+    callbacks: &dyn CallbackStore,
     notified: &Cell<bool>,
     frame: &mut dyn FrameStore,
 ) -> Result<NodeId, MountError>
@@ -38,7 +38,7 @@ where
 
     let state = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
     let entity = Entity::<T>::from_id(entity_id);
-    let mut cx = Context::from_parts(entity, entities, listeners, notified);
+    let mut cx = Context::from_parts(entity, entities, callbacks, notified);
     let element = state.render(&mut cx).into_element();
     let mut mount_cx = MountCx::new(frame);
     let root = element.mount(&mut mount_cx)?;

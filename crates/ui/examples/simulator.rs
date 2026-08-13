@@ -28,8 +28,8 @@ const DISPLAY_SIZE: Size = Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT
 type UiRuntime = Runtime<
     16_384, // entity bytes
     32,     // entity slots
-    8_192,  // listener bytes
-    64,     // listener slots
+    8_192,  // callback bytes
+    64,     // callback slots
     256,    // frame nodes
     4_096,  // frame text bytes
     128,    // persistent element states

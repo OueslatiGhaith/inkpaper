@@ -3,12 +3,13 @@ use core::cell::Cell;
 use heapless::Vec;
 
 use crate::{
-    CanvasDraw, CanvasDrawFn, CanvasStyle, Element, ElementId, EntityAccessError, EntityId,
-    EntityRenderFn, ImageSource, ImageStyle, IntoElement, ListenerId, Offset, Rect,
-    ResolvedTextStyle, StatefulInteractivity, Style, StylePatch, TextStyle,
+    CanvasDraw, CanvasStyle, Element, ElementId, EntityAccessError, EntityId, EntityRenderFn,
+    ImageSource, ImageStyle, IntoElement, Offset, Rect, ResolvedTextStyle, StatefulInteractivity,
+    Style, StylePatch, TextStyle,
+    callback::CallbackId,
+    callback_store::CallbackStore,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
-    listener_store::ListenerStore,
     scroll::{ScrollAxes, ScrollStateTable},
 };
 
@@ -106,7 +107,7 @@ impl Node {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NodeInteraction {
-    pub(crate) click: Option<ListenerId>,
+    pub(crate) click: Option<CallbackId>,
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
     pub(crate) scroll_axes: ScrollAxes,
@@ -228,7 +229,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     pub(crate) fn expand_entities(
         &mut self,
         entities: &dyn EntityStore,
-        listeners: &dyn ListenerStore,
+        callbacks: &dyn CallbackStore,
         notified: &Cell<bool>,
     ) -> Result<(), MountError> {
         let mut index = 0;
@@ -245,7 +246,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
             if let Some((entity, render)) = pending {
                 let entity_node = NodeId::new(index as u16);
-                let root = render(entity, entities, listeners, notified, self)?;
+                let root = render(entity, entities, callbacks, notified, self)?;
                 self.append_child(entity_node, root);
 
                 match &mut self.nodes[index].kind {
@@ -264,14 +265,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         &mut self,
         element: E,
         entities: &dyn EntityStore,
-        listeners: &dyn ListenerStore,
+        callbacks: &dyn CallbackStore,
         notified: &Cell<bool>,
     ) -> Result<NodeId, MountError>
     where
         E: IntoElement,
     {
         let root = self.mount(element)?;
-        self.expand_entities(entities, listeners, notified)?;
+        self.expand_entities(entities, callbacks, notified)?;
 
         Ok(root)
     }
@@ -559,8 +560,8 @@ mod tests {
     use std::string::String;
 
     use crate::{
+        callback_store::CallbackArena,
         element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
-        listener_store::ListenerArena,
         *,
     };
 
@@ -610,14 +611,14 @@ mod tests {
         const STATES: usize,
         const ENTITY_BYTES: usize,
         const ENTITY_SLOTS: usize,
-        const LISTENER_BYTES: usize,
-        const LISTENER_SLOTS: usize,
+        const CALLBACK_BYTES: usize,
+        const CALLBACK_SLOTS: usize,
     >(
         frame: &mut FrameArena<NODES, TEXT_BYTES>,
         states: &mut ElementStateTable<STATES>,
         root: Entity<Root>,
         entities: &EntityArena<ENTITY_BYTES, ENTITY_SLOTS>,
-        listeners: &ListenerArena<LISTENER_BYTES, LISTENER_SLOTS>,
+        callbacks: &CallbackArena<CALLBACK_BYTES, CALLBACK_SLOTS>,
         notified: &Cell<bool>,
         generation: u32,
     ) -> Result<NodeId, IdentityError>
@@ -629,7 +630,7 @@ mod tests {
         let root = frame.mount(root).expect("mount should succeed");
 
         frame
-            .expand_entities(entities, listeners, notified)
+            .expand_entities(entities, callbacks, notified)
             .expect("entity expansion should succeed");
 
         frame.resolve_identities(states, generation)?;
@@ -843,7 +844,7 @@ mod tests {
     fn expands_nested_entities() {
         let entities = EntityArena::<2048, 16>::default();
         let mut frame = FrameArena::<32, 256>::default();
-        let listeners = ListenerArena::<2048, 16>::default();
+        let callbacks = CallbackArena::<2048, 16>::default();
         let notified = Cell::new(false);
 
         let child = entities.insert(Child).unwrap();
@@ -851,7 +852,7 @@ mod tests {
         let root = frame.mount(parent).unwrap();
 
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         assert_eq!(frame.node_count(), 6);
@@ -898,7 +899,7 @@ mod tests {
     #[test]
     fn releases_entity_borrows_after_rendering() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<2048, 16>::default();
+        let callbacks = CallbackArena::<2048, 16>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -907,7 +908,7 @@ mod tests {
 
         frame.mount(parent).unwrap();
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         // if rendering leaked the exclusive borrow, either of these would return BorrowConflict.
@@ -928,7 +929,7 @@ mod tests {
     #[test]
     fn copies_entity_text_into_frame_storage() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<2048, 16>::default();
+        let callbacks = CallbackArena::<2048, 16>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -940,7 +941,7 @@ mod tests {
 
         let root = frame.mount(label).unwrap();
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         // mutate the original persistent state after the frame has already been built.
@@ -970,7 +971,7 @@ mod tests {
     #[test]
     fn rejects_duplicate_entity_mounts() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<2048, 16>::default();
+        let callbacks = CallbackArena::<2048, 16>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -979,7 +980,7 @@ mod tests {
 
         frame.mount(parent).unwrap();
 
-        let result = frame.expand_entities(&entities, &listeners, &notified);
+        let result = frame.expand_entities(&entities, &callbacks, &notified);
 
         assert_eq!(
             result,
@@ -990,7 +991,7 @@ mod tests {
     #[test]
     fn expanding_entities_twice_does_not_duplicate_nodes() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<2048, 16>::default();
+        let callbacks = CallbackArena::<2048, 16>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -999,13 +1000,13 @@ mod tests {
 
         frame.mount(parent).unwrap();
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         let first_count = frame.node_count();
 
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         assert_eq!(frame.node_count(), first_count);
@@ -1037,7 +1038,7 @@ mod tests {
     #[test]
     fn entity_render_mounts_click_listener() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<2048, 16>::default();
+        let callbacks = CallbackArena::<2048, 16>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -1045,7 +1046,7 @@ mod tests {
 
         frame.mount(counter).unwrap();
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         let button =
@@ -1057,7 +1058,7 @@ mod tests {
     #[test]
     fn mounted_listener_updates_owning_entity() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<2048, 16>::default();
+        let callbacks = CallbackArena::<2048, 16>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -1065,7 +1066,7 @@ mod tests {
 
         frame.mount(counter).unwrap();
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         let button =
@@ -1078,8 +1079,8 @@ mod tests {
             .expect("click listener missing");
 
         let listener = Listener::<ClickEvent>::from_id(listener_id);
-        listeners
-            .invoke(listener, &ClickEvent, &entities, &notified)
+        callbacks
+            .invoke_listener(listener, &ClickEvent, &entities, &notified)
             .unwrap();
 
         let value = entities.read(counter, |counter| counter.value);
@@ -1121,7 +1122,7 @@ mod tests {
     #[test]
     fn rendered_listener_can_update_another_entity() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<2048, 16>::default();
+        let callbacks = CallbackArena::<2048, 16>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -1130,15 +1131,15 @@ mod tests {
 
         frame.mount(controller).unwrap();
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         let button = find_element(&frame, ElementId::Name("update-status")).unwrap();
 
         let listener_id = frame.node(button).interaction.click.unwrap();
         let listener = Listener::<ClickEvent>::from_id(listener_id);
-        listeners
-            .invoke(listener, &ClickEvent, &entities, &notified)
+        callbacks
+            .invoke_listener(listener, &ClickEvent, &entities, &notified)
             .unwrap();
 
         assert_eq!(entities.read(status, |status| status.value,), Ok(10));
@@ -1148,7 +1149,7 @@ mod tests {
     #[test]
     fn entity_render_access_errors_become_mount_errors() {
         let entities = EntityArena::<1024, 8>::default();
-        let listeners = ListenerArena::<1024, 8>::default();
+        let callbacks = CallbackArena::<1024, 8>::default();
         let mut frame = FrameArena::<16, 128>::default();
         let notified = Cell::new(false);
 
@@ -1157,7 +1158,7 @@ mod tests {
 
         frame.mount(fake).unwrap();
 
-        let result = frame.expand_entities(&entities, &listeners, &notified);
+        let result = frame.expand_entities(&entities, &callbacks, &notified);
 
         assert_eq!(
             result,
@@ -1168,7 +1169,7 @@ mod tests {
     #[test]
     fn expanded_entity_root_is_child_of_entity_node() {
         let entities = EntityArena::<1024, 8>::default();
-        let listeners = ListenerArena::<1024, 8>::default();
+        let callbacks = CallbackArena::<1024, 8>::default();
         let mut frame = FrameArena::<16, 128>::default();
         let notified = Cell::new(false);
 
@@ -1176,7 +1177,7 @@ mod tests {
         let entity_node = frame.mount(child).unwrap();
 
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         let rendered_root = frame.node(entity_node).first_child.unwrap();
@@ -1196,7 +1197,7 @@ mod tests {
     #[test]
     fn element_identity_is_stable_across_frames() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
@@ -1208,7 +1209,7 @@ mod tests {
             &mut states,
             app,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             1,
         )
@@ -1222,7 +1223,7 @@ mod tests {
             &mut states,
             app,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             2,
         )
@@ -1262,7 +1263,7 @@ mod tests {
     #[test]
     fn unnamed_wrappers_do_not_affect_identity_path() {
         let entities = EntityArena::<4096, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
         let mut frame = FrameArena::<64, 256>::default();
         let notified = Cell::new(false);
@@ -1279,7 +1280,7 @@ mod tests {
             &mut states,
             plain,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             1,
         )
@@ -1301,7 +1302,7 @@ mod tests {
             &mut states,
             wrapped,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             2,
         )
@@ -1330,7 +1331,7 @@ mod tests {
     #[test]
     fn nested_element_uses_nearest_identified_parent() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
@@ -1342,7 +1343,7 @@ mod tests {
             &mut states,
             app,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             1,
         )
@@ -1381,7 +1382,7 @@ mod tests {
     #[test]
     fn duplicate_ids_in_same_scope_are_rejected() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
@@ -1390,7 +1391,7 @@ mod tests {
 
         frame.mount(app).unwrap();
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         let result = frame.resolve_identities(&mut states, 1);
@@ -1416,7 +1417,7 @@ mod tests {
     #[test]
     fn same_local_id_is_allowed_under_different_identified_parents() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
@@ -1428,7 +1429,7 @@ mod tests {
             &mut states,
             app,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             1,
         )
@@ -1471,7 +1472,7 @@ mod tests {
     #[test]
     fn separate_entities_have_separate_identity_namespaces() {
         let entities = EntityArena::<4096, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
         let mut frame = FrameArena::<64, 256>::default();
         let notified = Cell::new(false);
@@ -1485,7 +1486,7 @@ mod tests {
             &mut states,
             app,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             1,
         )
@@ -1549,7 +1550,7 @@ mod tests {
     #[test]
     fn moving_entity_does_not_change_internal_element_identity() {
         let entities = EntityArena::<4096, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
         let mut frame = FrameArena::<64, 256>::default();
         let notified = Cell::new(false);
@@ -1563,7 +1564,7 @@ mod tests {
             &mut states,
             parent_a,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             1,
         )
@@ -1580,7 +1581,7 @@ mod tests {
             &mut states,
             parent_b,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             2,
         )
@@ -1615,7 +1616,7 @@ mod tests {
     #[test]
     fn element_state_is_removed_when_element_disappears() {
         let entities = EntityArena::<4096, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
@@ -1628,7 +1629,7 @@ mod tests {
             &mut states,
             with_button,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             1,
         )
@@ -1644,7 +1645,7 @@ mod tests {
             &mut states,
             without_button,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             2,
         )
@@ -1657,7 +1658,7 @@ mod tests {
     #[test]
     fn reappearing_element_gets_new_generation() {
         let entities = EntityArena::<4096, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
@@ -1671,7 +1672,7 @@ mod tests {
             &mut states,
             with_button,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             1,
         )
@@ -1686,7 +1687,7 @@ mod tests {
             &mut states,
             without_button,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             2,
         )
@@ -1700,7 +1701,7 @@ mod tests {
             &mut states,
             with_button,
             &entities,
-            &listeners,
+            &callbacks,
             &notified,
             3,
         )
@@ -1729,7 +1730,7 @@ mod tests {
     #[test]
     fn identity_resolution_reports_state_capacity_exhaustion() {
         let entities = EntityArena::<2048, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<1>::default();
         let mut frame = FrameArena::<16, 128>::default();
         let notified = Cell::new(false);
@@ -1738,7 +1739,7 @@ mod tests {
 
         frame.mount(app).unwrap();
         frame
-            .expand_entities(&entities, &listeners, &notified)
+            .expand_entities(&entities, &callbacks, &notified)
             .unwrap();
 
         assert_eq!(

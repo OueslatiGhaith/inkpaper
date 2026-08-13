@@ -3,10 +3,10 @@ use core::cell::Cell;
 use crate::{
     ClickEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Invalidation, Listener,
     MountError, NodeId, Offset, Painter, Point, Render, Size, TextMeasurer,
+    callback_store::{CallbackArena, ListenerInvokeError},
     element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
     input::PointerState,
-    listener_store::{ListenerArena, ListenerInvokeError},
     px,
     scroll::ScrollStateTable,
 };
@@ -32,14 +32,14 @@ impl From<IdentityError> for FrameBuildError {
 pub struct Runtime<
     const ENTITY_BYTES: usize,
     const ENTITY_SLOTS: usize,
-    const LISTENER_BYTES: usize,
-    const LISTENER_SLOTS: usize,
+    const CALLBACK_BYTES: usize,
+    const CALLBACK_SLOTS: usize,
     const FRAME_NODES: usize,
     const FRAME_TEXT_BYTES: usize,
     const ELEMENT_STATES: usize,
 > {
     entities: EntityArena<ENTITY_BYTES, ENTITY_SLOTS>,
-    listeners: ListenerArena<LISTENER_BYTES, LISTENER_SLOTS>,
+    callbacks: CallbackArena<CALLBACK_BYTES, CALLBACK_SLOTS>,
     frame: FrameArena<FRAME_NODES, FRAME_TEXT_BYTES>,
     element_states: ElementStateTable<ELEMENT_STATES>,
     scroll_states: ScrollStateTable<ELEMENT_STATES>,
@@ -55,17 +55,17 @@ pub struct Runtime<
 impl<
     const EB: usize,
     const ES: usize,
-    const LB: usize,
-    const LS: usize,
+    const CB: usize,
+    const CS: usize,
     const FN: usize,
     const FT: usize,
     const ST: usize,
-> Default for Runtime<EB, ES, LB, LS, FN, FT, ST>
+> Default for Runtime<EB, ES, CB, CS, FN, FT, ST>
 {
     fn default() -> Self {
         Self {
             entities: EntityArena::default(),
-            listeners: ListenerArena::default(),
+            callbacks: CallbackArena::default(),
             frame: FrameArena::default(),
             element_states: ElementStateTable::default(),
             scroll_states: ScrollStateTable::default(),
@@ -97,7 +97,7 @@ impl<
     where
         T: 'static,
     {
-        create_entity(&self.entities, &self.listeners, &self.notified, build)
+        create_entity(&self.entities, &self.callbacks, &self.notified, build)
     }
 
     fn next_frame_generation(&mut self) -> u32 {
@@ -122,8 +122,8 @@ impl<
         self.root = None;
         self.frame.clear();
 
-        // invalidate every ListenerId from the previous frame
-        self.listeners.reset();
+        // invalidate every CallbackId from the previous frame
+        self.callbacks.reset();
         // consume the previous dirty request.
         // if render/event logic calls notify during this build, it becomes dirty again
         self.notified.set(false);
@@ -147,8 +147,8 @@ impl<
                 self.element_states.abort_frame(generation);
                 // never expose a partial frame
                 self.frame.clear();
-                // never keep listeners registered by a failed render
-                self.listeners.reset();
+                // never keep callbacks registered by a failed render
+                self.callbacks.reset();
                 self.pointer.cancel();
                 self.visual_invalidation.set(Invalidation::None);
                 self.root = None;
@@ -170,7 +170,7 @@ impl<
     {
         let root_node =
             self.frame
-                .mount_and_expand(root, &self.entities, &self.listeners, &self.notified)?;
+                .mount_and_expand(root, &self.entities, &self.callbacks, &self.notified)?;
 
         self.frame
             .resolve_identities(&mut self.element_states, generation)?;
@@ -210,8 +210,8 @@ impl<
     where
         E: 'static,
     {
-        self.listeners
-            .invoke(listener, event, &self.entities, &self.notified)
+        self.callbacks
+            .invoke_listener(listener, event, &self.entities, &self.notified)
     }
 
     pub fn layout(&mut self, viewport: Size, text_measurer: &dyn TextMeasurer) -> Option<Size> {
@@ -236,7 +236,7 @@ impl<
         };
 
         self.frame
-            .paint_with_runtime(root, &self.entities, &self.listeners, painter)?;
+            .paint_with_runtime(root, &self.entities, &self.callbacks, painter)?;
 
         Ok(Some(()))
     }
@@ -291,8 +291,12 @@ impl<
 
         if let Some(listener) = listener {
             let listener = Listener::from_id(listener);
-            self.listeners
-                .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
+            self.callbacks.invoke_listener(
+                listener,
+                &ClickEvent,
+                &self.entities,
+                &self.notified,
+            )?;
         }
 
         Ok(activated)
@@ -385,8 +389,8 @@ impl<
         };
 
         let listener = Listener::from_id(target.listener);
-        self.listeners
-            .invoke(listener, &ClickEvent, &self.entities, &self.notified)?;
+        self.callbacks
+            .invoke_listener(listener, &ClickEvent, &self.entities, &self.notified)?;
 
         Ok(true)
     }

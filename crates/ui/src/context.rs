@@ -2,16 +2,16 @@ use core::cell::Cell;
 
 use crate::{
     Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, Rect,
-    entity_store::{EntityStore, create_entity},
-    listener_store::{
-        ListenerAllocError, ListenerStore, register_canvas_callback, register_listener,
+    callback_store::{
+        CallbackAllocError, CallbackStore, register_canvas_callback, register_listener,
     },
+    entity_store::{EntityStore, create_entity},
 };
 
 pub struct Context<'a, T> {
     pub(crate) entity: Entity<T>,
     pub(crate) store: &'a dyn EntityStore,
-    pub(crate) listeners: &'a dyn ListenerStore,
+    pub(crate) callbacks: &'a dyn CallbackStore,
     pub(crate) notified: &'a Cell<bool>,
 }
 
@@ -19,13 +19,13 @@ impl<'a, T> Context<'a, T> {
     pub(crate) fn from_parts(
         entity: Entity<T>,
         store: &'a dyn EntityStore,
-        listeners: &'a dyn ListenerStore,
+        callbacks: &'a dyn CallbackStore,
         notified: &'a Cell<bool>,
     ) -> Self {
         Self {
             entity,
             store,
-            listeners,
+            callbacks,
             notified,
         }
     }
@@ -52,17 +52,17 @@ impl<T> Context<'_, T> {
     where
         U: 'static,
     {
-        create_entity(self.store, self.listeners, self.notified, build)
+        create_entity(self.store, self.callbacks, self.notified, build)
     }
 }
 
 impl<T: 'static> Context<'_, T> {
-    pub fn try_listener<E, F>(&mut self, callback: F) -> Result<Listener<E>, ListenerAllocError>
+    pub fn try_listener<E, F>(&mut self, callback: F) -> Result<Listener<E>, CallbackAllocError>
     where
         E: 'static,
         F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
     {
-        register_listener(self.listeners, self.entity, callback)
+        register_listener(self.callbacks, self.entity, callback)
     }
 
     pub fn listener<E, F>(&mut self, callback: F) -> Listener<E>
@@ -76,11 +76,11 @@ impl<T: 'static> Context<'_, T> {
         }
     }
 
-    pub fn try_canvas<F>(&mut self, callback: F) -> Result<Canvas, ListenerAllocError>
+    pub fn try_canvas<F>(&mut self, callback: F) -> Result<Canvas, CallbackAllocError>
     where
         F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
     {
-        let callback = register_canvas_callback(self.listeners, self.entity, callback)?;
+        let callback = register_canvas_callback(self.callbacks, self.entity, callback)?;
 
         Ok(Canvas::from_entity_callback(callback))
     }
@@ -98,7 +98,7 @@ impl<T: 'static> Context<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{EntityAccessError, EntityArena, listener_store::ListenerArena};
+    use crate::{EntityAccessError, EntityArena, callback_store::CallbackArena};
 
     use super::*;
 
@@ -111,11 +111,11 @@ mod tests {
     #[test]
     fn context_can_create_entities() {
         let arena = EntityArena::<1024, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
+        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
 
         let counter = cx.new(|_| Counter { value: 42 }).unwrap();
 
@@ -125,11 +125,11 @@ mod tests {
     #[test]
     fn entity_can_update_through_context() {
         let arena = EntityArena::<1024, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
+        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
 
         let counter = cx.new(|_| Counter { value: 1 }).unwrap();
 
@@ -155,11 +155,11 @@ mod tests {
         }
 
         let arena = EntityArena::<1024, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
+        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
 
         let parent = cx
             .new(|cx| {
@@ -184,11 +184,11 @@ mod tests {
         }
 
         let arena = EntityArena::<1024, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
+        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
 
         let parent = cx
             .new(|cx| {
@@ -210,11 +210,11 @@ mod tests {
     #[test]
     fn initializing_entity_cannot_be_read() {
         let arena = EntityArena::<1024, 16>::default();
-        let listeners = ListenerArena::<1024, 16>::default();
+        let callbacks = CallbackArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &listeners, &notified);
+        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
 
         let _ = cx
             .new(|cx| {

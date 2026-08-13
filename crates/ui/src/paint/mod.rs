@@ -1,7 +1,7 @@
 use crate::{
     CanvasDraw, CanvasDrawFn, CanvasPainter, Color, FrameArena, ImageFit, ImageSource, NodeId,
-    NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer, entity_store::EntityStore,
-    listener_store::ListenerStore, visual::VisualNode,
+    NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer, callback_store::CallbackStore,
+    entity_store::EntityStore, visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +54,7 @@ pub trait Painter: TextMeasurer {
 #[derive(Clone, Copy)]
 struct PaintRuntime<'a> {
     entities: &'a dyn EntityStore,
-    listeners: &'a dyn ListenerStore,
+    callbacks: &'a dyn CallbackStore,
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
@@ -113,7 +113,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                                 return;
                             };
 
-                            let result = runtime.listeners.invoke_canvas(
+                            let result = runtime.callbacks.invoke_canvas(
                                 callback,
                                 local_bounds,
                                 canvas_painter,
@@ -151,7 +151,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         &self,
         root: NodeId,
         entities: &dyn EntityStore,
-        listeners: &dyn ListenerStore,
+        callbacks: &dyn CallbackStore,
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
@@ -159,7 +159,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     {
         let runtime = PaintRuntime {
             entities,
-            listeners,
+            callbacks,
         };
 
         for visual in self.visual_nodes(root) {
