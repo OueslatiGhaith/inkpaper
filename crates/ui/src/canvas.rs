@@ -1,4 +1,4 @@
-use crate::{Color, Element, MountCx, MountError, NodeId, Pixels, Point, Rect, Size};
+use crate::{Color, Element, ListenerId, MountCx, MountError, NodeId, Pixels, Point, Rect, Size};
 
 pub trait CanvasPainter {
     fn fill_rect(&mut self, rect: Rect, color: Color);
@@ -10,6 +10,12 @@ pub trait CanvasPainter {
 
 pub type CanvasDrawFn = fn(bounds: Rect, painter: &mut dyn CanvasPainter);
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum CanvasDraw {
+    Static(CanvasDrawFn),
+    Entity(ListenerId),
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CanvasStyle {
     pub(crate) width: Option<Pixels>,
@@ -18,14 +24,24 @@ pub struct CanvasStyle {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Canvas {
-    draw: CanvasDrawFn,
+    draw: CanvasDraw,
     style: CanvasStyle,
 }
 
 impl Canvas {
     pub const fn new(draw: CanvasDrawFn) -> Self {
         Self {
-            draw,
+            draw: CanvasDraw::Static(draw),
+            style: CanvasStyle {
+                width: None,
+                height: None,
+            },
+        }
+    }
+
+    pub(crate) const fn from_entity_callback(callback: ListenerId) -> Self {
+        Self {
+            draw: CanvasDraw::Entity(callback),
             style: CanvasStyle {
                 width: None,
                 height: None,

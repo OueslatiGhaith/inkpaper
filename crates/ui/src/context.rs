@@ -1,9 +1,11 @@
 use core::cell::Cell;
 
 use crate::{
-    Entity, EntityAllocError, EntityId, Listener,
+    Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, Rect,
     entity_store::{EntityStore, create_entity},
-    listener_store::{ListenerAllocError, ListenerStore, register_listener},
+    listener_store::{
+        ListenerAllocError, ListenerStore, register_canvas_callback, register_listener,
+    },
 };
 
 pub struct Context<'a, T> {
@@ -71,6 +73,25 @@ impl<T: 'static> Context<'_, T> {
         match self.try_listener(callback) {
             Ok(listener) => listener,
             Err(_) => panic!("listener arena capacity exceeded"),
+        }
+    }
+
+    pub fn try_canvas<F>(&mut self, callback: F) -> Result<Canvas, ListenerAllocError>
+    where
+        F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
+    {
+        let callback = register_canvas_callback(self.listeners, self.entity, callback)?;
+
+        Ok(Canvas::from_entity_callback(callback))
+    }
+
+    pub fn canvas<F>(&mut self, callback: F) -> Canvas
+    where
+        F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
+    {
+        match self.try_canvas(callback) {
+            Ok(canvas) => canvas,
+            Err(_) => panic!("callback arena capacity exceeded"),
         }
     }
 }

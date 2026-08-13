@@ -3,9 +3,9 @@ use core::cell::Cell;
 use heapless::Vec;
 
 use crate::{
-    CanvasDrawFn, CanvasStyle, Element, ElementId, EntityAccessError, EntityId, EntityRenderFn,
-    ImageSource, ImageStyle, IntoElement, ListenerId, Offset, Rect, ResolvedTextStyle,
-    StatefulInteractivity, Style, StylePatch, TextStyle,
+    CanvasDraw, CanvasDrawFn, CanvasStyle, Element, ElementId, EntityAccessError, EntityId,
+    EntityRenderFn, ImageSource, ImageStyle, IntoElement, ListenerId, Offset, Rect,
+    ResolvedTextStyle, StatefulInteractivity, Style, StylePatch, TextStyle,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     listener_store::ListenerStore,
@@ -44,7 +44,7 @@ pub(crate) enum NodeKind {
         style: ImageStyle,
     },
     Canvas {
-        draw: CanvasDrawFn,
+        draw: CanvasDraw,
         style: CanvasStyle,
     },
     Entity {
@@ -441,11 +441,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
         self.push_node(NodeKind::Image { source, style })
     }
 
-    fn push_canvas(
-        &mut self,
-        draw: CanvasDrawFn,
-        style: CanvasStyle,
-    ) -> Result<NodeId, MountError> {
+    fn push_canvas(&mut self, draw: CanvasDraw, style: CanvasStyle) -> Result<NodeId, MountError> {
         self.push_node(NodeKind::Canvas { draw, style })
     }
 
@@ -490,8 +486,7 @@ pub(crate) trait FrameStore {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError>;
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError>;
     fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError>;
-    fn push_canvas(&mut self, draw: CanvasDrawFn, style: CanvasStyle)
-    -> Result<NodeId, MountError>;
+    fn push_canvas(&mut self, draw: CanvasDraw, style: CanvasStyle) -> Result<NodeId, MountError>;
     fn push_entity(
         &mut self,
         entity: EntityId,
@@ -530,7 +525,7 @@ impl MountCx<'_> {
 
     pub(crate) fn push_canvas(
         &mut self,
-        draw: CanvasDrawFn,
+        draw: CanvasDraw,
         style: CanvasStyle,
     ) -> Result<NodeId, MountError> {
         self.frame.push_canvas(draw, style)

@@ -9,7 +9,8 @@ use core::{
 use heapless::Vec;
 
 use crate::{
-    Context, Entity, EntityAccessError, EntityBorrowKind, EntityId, Listener, ListenerId, align_up,
+    CanvasPainter, Context, Entity, EntityAccessError, EntityBorrowKind, EntityId, Listener,
+    ListenerId, Rect, align_up,
     entity_store::{EntityStore, RawEntityBorrow},
 };
 
@@ -33,6 +34,19 @@ impl From<EntityAccessError> for ListenerInvokeError {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CanvasInvokeError {
+    InvalidCallback,
+    CallbackKindMismatch,
+    Entity(EntityAccessError),
+}
+
+impl From<EntityAccessError> for CanvasInvokeError {
+    fn from(value: EntityAccessError) -> Self {
+        Self::Entity(value)
+    }
+}
+
 type ListenerInvokeFn = unsafe fn(
     closure: *const u8,
     target: EntityId,
@@ -42,13 +56,31 @@ type ListenerInvokeFn = unsafe fn(
     notified: &Cell<bool>,
 ) -> Result<(), ListenerInvokeError>;
 
+type CanvasInvokeFn = unsafe fn(
+    closure: *const u8,
+    target: EntityId,
+    bounds: Rect,
+    painter: &mut dyn CanvasPainter,
+    entities: &dyn EntityStore,
+) -> Result<(), CanvasInvokeError>;
+
 #[derive(Clone, Copy)]
-struct ListenerMeta {
+pub(crate) enum CallbackKind {
+    Listener {
+        event_type: TypeId,
+        invoke_fn: ListenerInvokeFn,
+    },
+    Canvas {
+        invoke_fn: CanvasInvokeFn,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct CallbackMeta {
     offset: usize,
     target: EntityId,
-    event_type: TypeId,
     generation: u32,
-    invoke_fn: ListenerInvokeFn,
+    kind: CallbackKind,
     drop_fn: unsafe fn(*mut u8),
 }
 
@@ -74,12 +106,19 @@ pub(crate) unsafe trait ListenerStore {
         &self,
         layout: Layout,
         target: EntityId,
-        event_type: TypeId,
-        invoke_fn: ListenerInvokeFn,
+        kind: CallbackKind,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<RawListenerReservation, ListenerAllocError>;
 
     unsafe fn commit(&self, listener: ListenerId);
+
+    fn invoke_canvas(
+        &self,
+        callback: ListenerId,
+        bounds: Rect,
+        painter: &mut dyn CanvasPainter,
+        entities: &dyn EntityStore,
+    ) -> Result<(), CanvasInvokeError>;
 }
 
 const LISTENER_ARENA_ALIGNMENT: usize = 16;
@@ -99,7 +138,7 @@ impl<const N: usize> ListenerStorage<N> {
 
 /// SAFETY INVARIANTS:
 ///
-/// 1. every Live [`ListenerMeta`] refers to one initialized callback F.
+/// 1. every Live [`CallbackMeta`] refers to one initialized callback F.
 /// 2. callback storage remains fixed until reset.
 /// 3. listener generation must match metadata generation before invocation.
 /// 4. event [`TypeId`] is checked before casting event pointer to E.
@@ -111,7 +150,7 @@ impl<const N: usize> ListenerStorage<N> {
 /// 8. each live callback is dropped exactly once.
 pub(crate) struct ListenerArena<const BYTES: usize, const SLOTS: usize> {
     storage: UnsafeCell<ListenerStorage<BYTES>>,
-    entries: RefCell<Vec<ListenerMeta, SLOTS>>,
+    entries: RefCell<Vec<CallbackMeta, SLOTS>>,
     states: [Cell<ListenerSlotState>; SLOTS],
     cursor: Cell<usize>,
     generation: Cell<u32>,
@@ -167,14 +206,23 @@ impl<const BYTES: usize, const SLOTS: usize> ListenerArena<BYTES, SLOTS> {
         if self.states[slot].get() != ListenerSlotState::Live {
             return Err(ListenerInvokeError::InvalidListener);
         }
-        if meta.event_type != TypeId::of::<E>() {
+
+        let CallbackKind::Listener {
+            event_type,
+            invoke_fn,
+        } = meta.kind
+        else {
+            return Err(ListenerInvokeError::InvalidListener);
+        };
+
+        if event_type != TypeId::of::<E>() {
             return Err(ListenerInvokeError::EventTypeMismatch);
         }
 
         let closure = unsafe { self.storage_ptr().add(meta.offset) };
 
         unsafe {
-            (meta.invoke_fn)(
+            invoke_fn(
                 closure,
                 meta.target,
                 event as *const E as *const u8,
@@ -221,6 +269,37 @@ impl<const BYTES: usize, const SLOTS: usize> ListenerArena<BYTES, SLOTS> {
         self.cursor.set(0);
         self.generation.set(self.generation.get().wrapping_add(1));
     }
+
+    fn invoke_canvas_callback(
+        &self,
+        callback: ListenerId,
+        bounds: Rect,
+        painter: &mut dyn CanvasPainter,
+        entities: &dyn EntityStore,
+    ) -> Result<(), CanvasInvokeError> {
+        let slot = callback.slot() as usize;
+        let meta = self
+            .entries
+            .borrow()
+            .get(slot)
+            .copied()
+            .ok_or(CanvasInvokeError::InvalidCallback)?;
+
+        if meta.generation != callback.generation() {
+            return Err(CanvasInvokeError::InvalidCallback);
+        }
+        if self.states[slot].get() != ListenerSlotState::Live {
+            return Err(CanvasInvokeError::InvalidCallback);
+        }
+
+        let CallbackKind::Canvas { invoke_fn } = meta.kind else {
+            return Err(CanvasInvokeError::CallbackKindMismatch);
+        };
+
+        let closure = unsafe { self.storage_ptr().add(meta.offset) };
+
+        unsafe { invoke_fn(closure, meta.target, bounds, painter, entities) }
+    }
 }
 
 unsafe impl<const BYTES: usize, const SLOTS: usize> ListenerStore for ListenerArena<BYTES, SLOTS> {
@@ -228,8 +307,7 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> ListenerStore for ListenerAr
         &self,
         layout: Layout,
         target: EntityId,
-        event_type: TypeId,
-        invoke_fn: ListenerInvokeFn,
+        kind: CallbackKind,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<RawListenerReservation, ListenerAllocError> {
         let mut entries = self.entries.borrow_mut();
@@ -264,12 +342,11 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> ListenerStore for ListenerAr
         let generation = self.generation.get();
         let id = ListenerId::new(slot as u16, generation);
 
-        let meta = ListenerMeta {
+        let meta = CallbackMeta {
             offset,
             target,
-            event_type,
             generation,
-            invoke_fn,
+            kind,
             drop_fn,
         };
 
@@ -290,6 +367,16 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> ListenerStore for ListenerAr
         let slot = listener.slot() as usize;
         self.states[slot].set(ListenerSlotState::Live);
     }
+
+    fn invoke_canvas(
+        &self,
+        callback: ListenerId,
+        bounds: Rect,
+        painter: &mut dyn CanvasPainter,
+        entities: &dyn EntityStore,
+    ) -> Result<(), CanvasInvokeError> {
+        self.invoke_canvas_callback(callback, bounds, painter, entities)
+    }
 }
 
 impl<const BYTES: usize, const SLOTS: usize> Drop for ListenerArena<BYTES, SLOTS> {
@@ -298,7 +385,7 @@ impl<const BYTES: usize, const SLOTS: usize> Drop for ListenerArena<BYTES, SLOTS
     }
 }
 
-unsafe fn drop_listener<F>(ptr: *mut u8) {
+unsafe fn drop_callback<F>(ptr: *mut u8) {
     unsafe { core::ptr::drop_in_place(ptr.cast::<F>()) };
 }
 
@@ -333,6 +420,32 @@ where
     Ok(())
 }
 
+unsafe fn invoke_canvas<T, F>(
+    closure: *const u8,
+    target: EntityId,
+    bounds: Rect,
+    painter: &mut dyn CanvasPainter,
+    entities: &dyn EntityStore,
+) -> Result<(), CanvasInvokeError>
+where
+    T: 'static,
+    F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
+{
+    let borrow = RawEntityBorrow::acquire(
+        entities,
+        target,
+        TypeId::of::<T>(),
+        EntityBorrowKind::Shared,
+    )?;
+
+    let state = unsafe { &*borrow.ptr().cast::<T>().as_ptr() };
+    let callback = unsafe { &*closure.cast::<F>() };
+
+    callback(state, bounds, painter);
+
+    Ok(())
+}
+
 pub(crate) fn register_listener<T, E, F>(
     store: &dyn ListenerStore,
     entity: Entity<T>,
@@ -346,15 +459,41 @@ where
     let reservation = store.reserve(
         Layout::new::<F>(),
         entity.entity_id(),
-        TypeId::of::<E>(),
-        invoke_listener::<T, E, F>,
-        drop_listener::<F>,
+        CallbackKind::Listener {
+            event_type: TypeId::of::<E>(),
+            invoke_fn: invoke_listener::<T, E, F>,
+        },
+        drop_callback::<F>,
     )?;
 
     unsafe { reservation.ptr.cast::<F>().as_ptr().write(callback) };
     unsafe { store.commit(reservation.id) };
 
     Ok(Listener::from_id(reservation.id))
+}
+
+pub(crate) fn register_canvas_callback<T, F>(
+    store: &dyn ListenerStore,
+    entity: Entity<T>,
+    callback: F,
+) -> Result<ListenerId, ListenerAllocError>
+where
+    T: 'static,
+    F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
+{
+    let reservation = store.reserve(
+        Layout::new::<F>(),
+        entity.entity_id(),
+        CallbackKind::Canvas {
+            invoke_fn: invoke_canvas::<T, F>,
+        },
+        drop_callback::<F>,
+    )?;
+
+    unsafe { reservation.ptr.cast::<F>().as_ptr().write(callback) };
+    unsafe { store.commit(reservation.id) };
+
+    Ok(reservation.id)
 }
 
 #[cfg(test)]

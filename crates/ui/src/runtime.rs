@@ -235,7 +235,8 @@ impl<
             return Ok(None);
         };
 
-        self.frame.paint(root, painter)?;
+        self.frame
+            .paint_with_runtime(root, &self.entities, &self.listeners, painter)?;
 
         Ok(Some(()))
     }

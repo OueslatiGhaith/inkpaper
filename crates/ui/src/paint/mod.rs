@@ -1,6 +1,7 @@
 use crate::{
-    CanvasDrawFn, Color, FrameArena, ImageFit, ImageSource, NodeId, NodeKind, Pixels, Rect,
-    ResolvedTextStyle, TextMeasurer, visual::VisualNode,
+    CanvasDraw, CanvasDrawFn, CanvasPainter, Color, FrameArena, ImageFit, ImageSource, NodeId,
+    NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer, entity_store::EntityStore,
+    listener_store::ListenerStore, visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,14 +45,25 @@ pub trait Painter: TextMeasurer {
 
     fn draw_canvas(
         &mut self,
-        draw: CanvasDrawFn,
         bounds: Rect,
         clip: Option<Rect>,
+        draw: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
     ) -> Result<(), Self::Error>;
 }
 
+#[derive(Clone, Copy)]
+struct PaintRuntime<'a> {
+    entities: &'a dyn EntityStore,
+    listeners: &'a dyn ListenerStore,
+}
+
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
-    fn paint_visual_node<P>(&self, visual: VisualNode, painter: &mut P) -> Result<(), P::Error>
+    fn paint_visual_node<P>(
+        &self,
+        visual: VisualNode,
+        runtime: Option<PaintRuntime<'_>>,
+        painter: &mut P,
+    ) -> Result<(), P::Error>
     where
         P: Painter,
     {
@@ -88,7 +100,35 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             NodeKind::Text { text } => {
                 painter.draw_text(self.text(text), bounds, node.effective_text_style, clip)
             }
-            NodeKind::Canvas { draw, .. } => painter.draw_canvas(draw, bounds, clip),
+            NodeKind::Canvas { draw, .. } => {
+                let mut invoke =
+                    |local_bounds: Rect, canvas_painter: &mut dyn CanvasPainter| match draw {
+                        CanvasDraw::Static(draw) => draw(local_bounds, canvas_painter),
+                        CanvasDraw::Entity(callback) => {
+                            let Some(runtime) = runtime else {
+                                debug_assert!(
+                                    false,
+                                    "entity canvas painted without callback context"
+                                );
+                                return;
+                            };
+
+                            let result = runtime.listeners.invoke_canvas(
+                                callback,
+                                local_bounds,
+                                canvas_painter,
+                                runtime.entities,
+                            );
+
+                            debug_assert!(
+                                result.is_ok(),
+                                "entity canvas callback invocation failed: {result:?}"
+                            );
+                        }
+                    };
+
+                painter.draw_canvas(bounds, clip, &mut invoke)
+            }
             NodeKind::Image { source, style } => {
                 painter.draw_image(source, bounds, style.fit, clip)
             }
@@ -101,7 +141,29 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         P: Painter,
     {
         for visual in self.visual_nodes(root) {
-            self.paint_visual_node(visual, painter)?;
+            self.paint_visual_node(visual, None, painter)?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn paint_with_runtime<P>(
+        &self,
+        root: NodeId,
+        entities: &dyn EntityStore,
+        listeners: &dyn ListenerStore,
+        painter: &mut P,
+    ) -> Result<(), P::Error>
+    where
+        P: Painter,
+    {
+        let runtime = PaintRuntime {
+            entities,
+            listeners,
+        };
+
+        for visual in self.visual_nodes(root) {
+            self.paint_visual_node(visual, Some(runtime), painter)?;
         }
 
         Ok(())
@@ -249,9 +311,9 @@ mod tests {
 
         fn draw_canvas(
             &mut self,
-            draw: CanvasDrawFn,
             bounds: Rect,
             clip: Option<Rect>,
+            draw: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
         ) -> Result<(), Self::Error> {
             self.commands.push(Command::Canvas { bounds, clip });
 
@@ -594,6 +656,99 @@ mod tests {
                 radius: px(3),
                 color: Color::BLUE,
             }
+        );
+    }
+
+    #[test]
+    fn entity_canvas_can_draw_from_entity_state() {
+        struct Gauge {
+            value: Pixels,
+        }
+
+        impl Render for Gauge {
+            fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div().w(px(100)).h(px(20)).child(
+                    cx.canvas(|this, bounds, painter| {
+                        painter.fill_rect(
+                            Rect::new(Point::ZERO, Size::new(this.value, bounds.height())),
+                            Color::GREEN,
+                        );
+                    })
+                    .size(Size::new(px(100), px(20))),
+                )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let gauge = runtime.create(|_| Gauge { value: px(37) }).unwrap();
+
+        runtime.rebuild(gauge).unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        runtime.layout(Size::new(px(100), px(20)), &painter);
+        runtime.paint(&mut painter).unwrap();
+
+        assert_eq!(
+            painter.canvas_commands,
+            vec![CanvasCommand::FillRect {
+                rect: Rect::new(Point::ZERO, Size::new(px(37), px(20),),),
+                color: Color::GREEN,
+            },]
+        );
+    }
+
+    type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
+
+    #[test]
+    fn entity_canvas_callback_can_capture_render_data() {
+        struct Gauge {
+            value: Pixels,
+            inset: Pixels,
+        }
+
+        impl Render for Gauge {
+            fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                let inset = self.inset;
+
+                div().child(
+                    cx.canvas(move |this, bounds, painter| {
+                        painter.fill_rect(
+                            Rect::new(
+                                Point::new(inset, Pixels::ZERO),
+                                Size::new(this.value, bounds.height()),
+                            ),
+                            Color::BLUE,
+                        );
+                    })
+                    .size(Size::new(px(100), px(20))),
+                )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let gauge = runtime
+            .create(|_| Gauge {
+                value: px(25),
+                inset: px(4),
+            })
+            .unwrap();
+
+        runtime.rebuild(gauge).unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        runtime.layout(Size::new(px(100), px(20)), &painter);
+        runtime.paint(&mut painter).unwrap();
+
+        assert_eq!(
+            painter.canvas_commands,
+            vec![CanvasCommand::FillRect {
+                rect: Rect::new(Point::new(px(4), px(0),), Size::new(px(25), px(20),),),
+                color: Color::BLUE,
+            },]
         );
     }
 }

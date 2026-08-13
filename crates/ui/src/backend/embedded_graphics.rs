@@ -431,9 +431,9 @@ where
 
     fn draw_canvas(
         &mut self,
-        draw: CanvasDrawFn,
         bounds: Rect,
         clip: Option<Rect>,
+        draw: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
     ) -> Result<(), Self::Error> {
         if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
             return Ok(());
@@ -446,11 +446,16 @@ where
             return Ok(());
         };
 
-        let clip = to_embedded_rect(canvas_clip);
         let mut target = self.target.color_converted::<EgRgb888>();
+        let clip = to_embedded_rect(canvas_clip);
         let mut clipped = target.clipped(&clip);
 
-        draw_canvas_to(&mut clipped, draw, bounds)
+        let local_bounds = Rect::new(Point::ZERO, bounds.size);
+        let mut canvas_painter = EmbeddedGraphicsCanvasPainter::new(&mut clipped, bounds.origin);
+
+        draw(local_bounds, &mut canvas_painter);
+
+        canvas_painter.finish()
     }
 }
 
@@ -766,17 +771,6 @@ where
     let mut target = target.color_converted::<<T as EgImageDrawable>::Color>();
 
     target.draw_iter(pixels)
-}
-
-fn draw_canvas_to<D>(target: &mut D, draw: CanvasDrawFn, bounds: Rect) -> Result<(), D::Error>
-where
-    D: EgDrawTarget<Color = EgRgb888>,
-{
-    let local_bounds = Rect::new(Point::ZERO, Size::new(bounds.width(), bounds.height()));
-    let mut painter = EmbeddedGraphicsCanvasPainter::new(target, bounds.origin);
-
-    draw(local_bounds, &mut painter);
-    painter.finish()
 }
 
 #[cfg(test)]
@@ -1152,9 +1146,9 @@ mod tests {
 
             painter
                 .draw_canvas(
-                    draw_backend_test_canvas,
                     Rect::new(Point::new(px(10), px(20)), Size::new(px(8), px(6))),
                     None,
+                    &mut draw_backend_test_canvas,
                 )
                 .unwrap();
         }
@@ -1183,9 +1177,9 @@ mod tests {
 
             painter
                 .draw_canvas(
-                    draw_oversized_canvas,
                     Rect::new(Point::new(px(5), px(5)), Size::new(px(4), px(4))),
                     None,
+                    &mut draw_oversized_canvas,
                 )
                 .unwrap();
         }
@@ -1211,9 +1205,9 @@ mod tests {
 
             painter
                 .draw_canvas(
-                    draw_oversized_canvas,
                     Rect::new(Point::new(px(5), px(5)), Size::new(px(10), px(10))),
                     Some(Rect::new(Point::new(px(8), px(8)), Size::new(px(3), px(3)))),
+                    &mut draw_oversized_canvas,
                 )
                 .unwrap();
         }

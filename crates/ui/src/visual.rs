@@ -450,9 +450,9 @@ mod tests {
 
         fn draw_canvas(
             &mut self,
-            _: CanvasDrawFn,
             _: Rect,
             _: Option<Rect>,
+            _: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
         ) -> Result<(), Self::Error> {
             Ok(())
         }
