@@ -1,7 +1,7 @@
 use crate::{
-    ClickEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
+    ActivateEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
     MountCx, MountError, NodeId, OnEvent, ParentElement, Style, StylePatch, Styled,
-    callback::CallbackId, scroll::ScrollAxes,
+    scroll::ScrollAxes,
 };
 
 pub struct Stateful<E> {
@@ -74,7 +74,6 @@ where
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StatefulInteractivity {
-    pub(crate) click: Option<CallbackId>,
     pub(crate) focusable: bool,
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
@@ -102,11 +101,9 @@ pub trait StatefulInteractiveElementExt: StatefulInteractiveElement {
         OnEvent::new(self, listener)
     }
 
-    fn on_click(mut self, listener: Listener<ClickEvent>) -> Self {
-        let interaction = self.stateful_interactivity_mut();
-        interaction.click = Some(listener.id);
-        interaction.focusable = true;
-        self
+    fn on_activate(mut self, listener: Listener<ActivateEvent>) -> OnEvent<Self, ActivateEvent> {
+        self.stateful_interactivity_mut().focusable = true;
+        OnEvent::new(self, listener)
     }
 
     fn focusable(mut self) -> Self {

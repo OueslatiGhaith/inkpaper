@@ -6,7 +6,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ClickEvent;
+pub struct ActivateEvent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct EventBindingId(u16);

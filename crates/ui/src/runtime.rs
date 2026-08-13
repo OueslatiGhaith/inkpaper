@@ -1,12 +1,12 @@
 use core::{any::TypeId, cell::Cell};
 
 use crate::{
-    ClickEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Invalidation, Listener,
-    MountError, NodeId, Offset, Painter, Point, Render, Size, TextMeasurer,
+    ActivateEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Invalidation,
+    Listener, MountError, NodeId, Offset, Painter, Point, Render, Size, TextMeasurer,
     callback_store::{CallbackArena, ListenerInvokeError},
     element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
-    input::PointerState,
+    input::ActivationState,
     px,
     scroll::ScrollStateTable,
 };
@@ -47,7 +47,7 @@ pub struct Runtime<
     visual_invalidation: Cell<Invalidation>,
     frame_generation: u32,
     root: Option<NodeId>,
-    pointer: PointerState,
+    activation: ActivationState,
     focused: Option<ElementStateId>,
     pending_scroll_into_view: Option<ElementStateId>,
 }
@@ -73,7 +73,7 @@ impl<
             visual_invalidation: Cell::new(Invalidation::None),
             frame_generation: 0,
             root: None,
-            pointer: PointerState::default(),
+            activation: ActivationState::default(),
             focused: None,
             pending_scroll_into_view: None,
         }
@@ -149,7 +149,7 @@ impl<
                 self.frame.clear();
                 // never keep callbacks registered by a failed render
                 self.callbacks.reset();
-                self.pointer.cancel();
+                self.activation.cancel();
                 self.visual_invalidation.set(Invalidation::None);
                 self.root = None;
                 self.focused = None;
@@ -241,78 +241,6 @@ impl<
         Ok(Some(()))
     }
 
-    pub fn pointer_down(&mut self, position: Point) -> bool {
-        let previous = self.pointer.pressed();
-        let Some(root) = self.root else {
-            if previous.is_some() {
-                let invalidation = self.pressed_transition_invalidation(previous, None);
-                self.pointer.cancel();
-                self.refresh_interaction_styles();
-                self.invalidate(invalidation);
-            }
-
-            return false;
-        };
-
-        let target = self.frame.hit_test_click(root, position);
-        let next = target.map(|target| target.element);
-        if previous != next {
-            let invalidation = self.pressed_transition_invalidation(previous, next);
-            self.pointer.press(next);
-            self.refresh_interaction_styles();
-            self.invalidate(invalidation);
-        }
-
-        target.is_some()
-    }
-
-    pub fn pointer_up(&mut self, position: Point) -> Result<bool, ListenerInvokeError> {
-        let Some(pressed) = self.pointer.take_pressed() else {
-            return Ok(false);
-        };
-
-        let mut next_focus = self.focused;
-        let mut listener = None;
-        let mut activated = false;
-
-        if let Some(root) = self.root
-            && let Some(target) = self.frame.hit_test_click(root, position)
-            && target.element == pressed
-        {
-            next_focus = Some(target.element);
-            listener = Some(target.listener);
-            activated = true;
-        }
-
-        let pressed_invalidation = self.pressed_transition_invalidation(Some(pressed), None);
-        let focus_invalidation = self.set_focus(next_focus);
-
-        self.invalidate(pressed_invalidation.merge(focus_invalidation));
-
-        if let Some(listener) = listener {
-            let listener = Listener::from_id(listener);
-            self.callbacks.invoke_listener(
-                listener,
-                &ClickEvent,
-                &self.entities,
-                &self.notified,
-            )?;
-        }
-
-        Ok(activated)
-    }
-
-    pub fn pointer_cancel(&mut self) {
-        let Some(previous) = self.pointer.pressed() else {
-            return;
-        };
-
-        let invalidation = self.pressed_transition_invalidation(Some(previous), None);
-        self.pointer.cancel();
-        self.refresh_interaction_styles();
-        self.invalidate(invalidation);
-    }
-
     fn reconcile_interaction_state(&mut self) {
         if let Some(focused) = self.focused {
             let still_focusable = self
@@ -337,10 +265,10 @@ impl<
             }
         }
 
-        if let Some(pressed) = self.pointer.pressed()
+        if let Some(pressed) = self.activation.pressed()
             && !self.element_states.contains(pressed)
         {
-            self.pointer.cancel();
+            self.activation.cancel();
         }
     }
 
@@ -388,23 +316,7 @@ impl<
     }
 
     pub fn activate_focused(&mut self) -> Result<bool, ListenerInvokeError> {
-        let Some(root) = self.root else {
-            self.focused = None;
-            return Ok(false);
-        };
-        let Some(focused) = self.focused else {
-            return Ok(false);
-        };
-        let Some(target) = self.frame.click_target_for_element(root, focused) else {
-            self.focused = None;
-            return Ok(false);
-        };
-
-        let listener = Listener::from_id(target.listener);
-        self.callbacks
-            .invoke_listener(listener, &ClickEvent, &self.entities, &self.notified)?;
-
-        Ok(true)
+        self.dispatch_to_focused(&ActivateEvent)
     }
 
     fn invalidate(&self, invalidation: Invalidation) {
@@ -434,7 +346,7 @@ impl<
 
     fn refresh_interaction_styles(&mut self) {
         self.frame
-            .resolve_interaction_styles(self.focused, self.pointer.pressed());
+            .resolve_interaction_styles(self.focused, self.activation.pressed());
 
         if let Some(root) = self.root {
             self.frame.resolve_text_styles(root);
@@ -597,5 +509,110 @@ impl<
         };
 
         self.dispatch_to_node(node, event)
+    }
+
+    fn activation_node_for_element(&self, element: ElementStateId) -> Option<NodeId> {
+        let root = self.root?;
+        let node = self.frame.node_for_element(root, element)?;
+        self.frame
+            .event_callbacks(node, TypeId::of::<ActivateEvent>())
+            .next()?;
+
+        Some(node)
+    }
+
+    fn activation_target_at(&self, position: Point) -> Option<(NodeId, ElementStateId)> {
+        let root = self.root?;
+        let node = self
+            .frame
+            .hit_test_event(root, position, TypeId::of::<ActivateEvent>())?;
+        let element = self.frame.node(node).element_state_id?;
+
+        Some((node, element))
+    }
+
+    fn set_pressed(&mut self, next: Option<ElementStateId>) -> Invalidation {
+        let previous = self.activation.pressed();
+        if previous == next {
+            return Invalidation::None;
+        }
+
+        let invalidation = self.pressed_transition_invalidation(previous, next);
+
+        self.activation.set_pressed(next);
+        self.refresh_interaction_styles();
+
+        invalidation
+    }
+
+    pub fn begin_activation_at(&mut self, position: Point) -> bool {
+        let target = self.activation_target_at(position);
+        let next = target.map(|(_, element)| element);
+        let invalidation = self.set_pressed(next);
+
+        self.invalidate(invalidation);
+
+        target.is_some()
+    }
+
+    pub fn complete_activation_at(&mut self, position: Point) -> Result<bool, ListenerInvokeError> {
+        let Some(pressed) = self.activation.pressed() else {
+            return Ok(false);
+        };
+
+        let target = self.activation_target_at(position);
+        let activated = matches!(target, Some((_, element)) if element == pressed);
+
+        let pressed_invalidation = self.set_pressed(None);
+        let focus_invalidation = if activated {
+            self.set_focus(Some(pressed))
+        } else {
+            Invalidation::None
+        };
+
+        self.invalidate(pressed_invalidation.merge(focus_invalidation));
+
+        let Some((node, _)) = target.filter(|(_, element)| *element == pressed) else {
+            return Ok(false);
+        };
+
+        self.dispatch_to_node(node, &ActivateEvent)
+    }
+
+    pub fn cancel_activation(&mut self) {
+        let invalidation = self.set_pressed(None);
+        self.invalidate(invalidation);
+    }
+
+    pub fn begin_focused_activation(&mut self) -> bool {
+        let next = self
+            .focused
+            .filter(|element| self.activation_node_for_element(*element).is_some());
+        let invalidation = self.set_pressed(next);
+
+        self.invalidate(invalidation);
+
+        next.is_some()
+    }
+
+    pub fn complete_focused_activation(&mut self) -> Result<bool, ListenerInvokeError> {
+        let Some(pressed) = self.activation.pressed() else {
+            return Ok(false);
+        };
+        let node = if self.focused == Some(pressed) {
+            self.activation_node_for_element(pressed)
+        } else {
+            None
+        };
+
+        let invalidation = self.set_pressed(None);
+
+        self.invalidate(invalidation);
+
+        let Some(node) = node else {
+            return Ok(false);
+        };
+
+        self.dispatch_to_node(node, &ActivateEvent)
     }
 }

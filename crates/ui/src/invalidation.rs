@@ -48,7 +48,7 @@ mod tests {
 
     struct PaintFocusApp;
     impl PaintFocusApp {
-        fn clicked(&mut self, _: &ClickEvent, _cx: &mut Context<Self>) {}
+        fn clicked(&mut self, _: &ActivateEvent, _cx: &mut Context<Self>) {}
     }
 
     impl Render for PaintFocusApp {
@@ -61,7 +61,7 @@ mod tests {
                         .h(px(30))
                         .bg(Color::BLUE)
                         .when_focused(|style| style.bg(Color::GREEN))
-                        .on_click(cx.listener(Self::clicked)),
+                        .on_activate(cx.listener(Self::clicked)),
                 )
                 .child(
                     div()
@@ -70,7 +70,7 @@ mod tests {
                         .h(px(30))
                         .bg(Color::BLUE)
                         .when_focused(|style| style.bg(Color::RED))
-                        .on_click(cx.listener(Self::clicked)),
+                        .on_activate(cx.listener(Self::clicked)),
                 )
         }
     }
@@ -112,7 +112,7 @@ mod tests {
     struct LayoutFocusApp;
 
     impl LayoutFocusApp {
-        fn clicked(&mut self, _: &ClickEvent, _cx: &mut Context<Self>) {}
+        fn clicked(&mut self, _: &ActivateEvent, _cx: &mut Context<Self>) {}
     }
 
     impl Render for LayoutFocusApp {
@@ -126,7 +126,7 @@ mod tests {
                         .w(px(60))
                         .h(px(30))
                         .when_focused(|style| style.w(px(100)))
-                        .on_click(cx.listener(Self::clicked)),
+                        .on_activate(cx.listener(Self::clicked)),
                 )
                 .child(
                     div()
@@ -134,7 +134,7 @@ mod tests {
                         .w(px(60))
                         .h(px(30))
                         .when_focused(|style| style.bg(Color::GREEN))
-                        .on_click(cx.listener(Self::clicked)),
+                        .on_activate(cx.listener(Self::clicked)),
                 )
         }
     }
@@ -176,7 +176,7 @@ mod tests {
     struct PaintPressApp;
 
     impl PaintPressApp {
-        fn clicked(&mut self, _: &ClickEvent, _cx: &mut Context<Self>) {}
+        fn clicked(&mut self, _: &ActivateEvent, _cx: &mut Context<Self>) {}
     }
 
     impl Render for PaintPressApp {
@@ -188,7 +188,7 @@ mod tests {
                     .h(px(30))
                     .bg(Color::BLUE)
                     .when_pressed(|style| style.bg(Color::RED))
-                    .on_click(cx.listener(Self::clicked)),
+                    .on_activate(cx.listener(Self::clicked)),
             )
         }
     }
@@ -204,7 +204,7 @@ mod tests {
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
+        assert!(runtime.begin_activation_at(Point::new(px(10), px(10),)));
         assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
     }
 
@@ -219,18 +219,22 @@ mod tests {
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
+        assert!(runtime.begin_activation_at(Point::new(px(10), px(10),)));
 
         runtime.take_invalidation();
 
-        assert!(runtime.pointer_up(Point::new(px(10), px(10),)).unwrap());
+        assert!(
+            runtime
+                .complete_activation_at(Point::new(px(10), px(10),))
+                .unwrap()
+        );
         assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
     }
 
     struct LayoutPressApp;
 
     impl LayoutPressApp {
-        fn clicked(&mut self, _: &ClickEvent, _cx: &mut Context<Self>) {}
+        fn clicked(&mut self, _: &ActivateEvent, _cx: &mut Context<Self>) {}
     }
 
     impl Render for LayoutPressApp {
@@ -241,7 +245,7 @@ mod tests {
                     .w(px(80))
                     .h(px(30))
                     .when_pressed(|style| style.w(px(120)).h(px(40)))
-                    .on_click(cx.listener(Self::clicked)),
+                    .on_activate(cx.listener(Self::clicked)),
             )
         }
     }
@@ -257,14 +261,14 @@ mod tests {
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
+        assert!(runtime.begin_activation_at(Point::new(px(10), px(10),)));
         assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
     }
 
     struct NoVisualFocusApp;
 
     impl NoVisualFocusApp {
-        fn clicked(&mut self, _: &ClickEvent, _cx: &mut Context<Self>) {}
+        fn clicked(&mut self, _: &ActivateEvent, _cx: &mut Context<Self>) {}
     }
 
     impl Render for NoVisualFocusApp {
@@ -274,7 +278,7 @@ mod tests {
                     .id("button")
                     .w(px(80))
                     .h(px(30))
-                    .on_click(cx.listener(Self::clicked)),
+                    .on_activate(cx.listener(Self::clicked)),
             )
         }
     }
@@ -299,7 +303,7 @@ mod tests {
     }
 
     impl NotifyApp {
-        fn clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn clicked(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.clicks.set(self.clicks.get().saturating_add(1));
 
             cx.notify();
@@ -315,7 +319,7 @@ mod tests {
                     .h(px(30))
                     .bg(Color::BLUE)
                     .when_pressed(|style| style.bg(Color::RED))
-                    .on_click(cx.listener(Self::clicked)),
+                    .on_activate(cx.listener(Self::clicked)),
             )
         }
     }
@@ -338,9 +342,13 @@ mod tests {
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_down(Point::new(px(10), px(10),)));
+        assert!(runtime.begin_activation_at(Point::new(px(10), px(10),)));
         assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
-        assert!(runtime.pointer_up(Point::new(px(10), px(10),)).unwrap());
+        assert!(
+            runtime
+                .complete_activation_at(Point::new(px(10), px(10),))
+                .unwrap()
+        );
         assert_eq!(clicks.get(), 1);
         assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
     }
@@ -349,7 +357,7 @@ mod tests {
     fn focused_text_color_change_requires_paint_only() {
         struct App;
         impl App {
-            fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+            fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
         }
 
         impl Render for App {
@@ -359,7 +367,7 @@ mod tests {
                         .id("button")
                         .text_color(Color::WHITE)
                         .when_focused(|style| style.text_color(Color::RED))
-                        .on_click(cx.listener(Self::clicked))
+                        .on_activate(cx.listener(Self::clicked))
                         .child("Button"),
                 )
             }
@@ -382,7 +390,7 @@ mod tests {
     fn focused_font_change_requires_layout() {
         struct App;
         impl App {
-            fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+            fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
         }
 
         impl Render for App {
@@ -392,7 +400,7 @@ mod tests {
                         .id("button")
                         .font(FontId::new(0))
                         .when_focused(|style| style.font(FontId::new(1)))
-                        .on_click(cx.listener(Self::clicked))
+                        .on_activate(cx.listener(Self::clicked))
                         .child("Button"),
                 )
             }
@@ -415,7 +423,7 @@ mod tests {
     fn focused_text_alignment_change_requires_paint_only() {
         struct App;
         impl App {
-            fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+            fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
         }
 
         impl Render for App {
@@ -425,7 +433,7 @@ mod tests {
                         .id("button")
                         .text_start()
                         .when_focused(|style| style.text_center())
-                        .on_click(cx.listener(Self::clicked))
+                        .on_activate(cx.listener(Self::clicked))
                         .child("Button"),
                 )
             }
@@ -448,7 +456,7 @@ mod tests {
     fn focused_text_wrap_change_requires_layout() {
         struct App;
         impl App {
-            fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+            fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
         }
 
         impl Render for App {
@@ -458,7 +466,7 @@ mod tests {
                         .id("button")
                         .no_wrap()
                         .when_focused(|style| style.wrap())
-                        .on_click(cx.listener(Self::clicked))
+                        .on_activate(cx.listener(Self::clicked))
                         .child("A long button label"),
                 )
             }

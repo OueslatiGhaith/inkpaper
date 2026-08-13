@@ -161,19 +161,19 @@ impl Counter {
         write!(&mut self.label, "Count: {}", self.value,).unwrap();
     }
 
-    fn increment(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+    fn increment(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
         self.value = self.value.saturating_add(1);
         self.update_label();
         cx.notify();
     }
 
-    fn decrement(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+    fn decrement(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
         self.value = self.value.saturating_sub(1);
         self.update_label();
         cx.notify();
     }
 
-    fn reset(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+    fn reset(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
         self.value = 0;
         self.update_label();
         cx.notify();
@@ -260,7 +260,7 @@ impl Render for Counter {
                             .rounded(px(5))
                             .when_focused(|style| style.border_color(Color::WHITE))
                             .when_pressed(|style| style.bg(Color::rgb(108, 62, 70)))
-                            .on_click(decrement)
+                            .on_activate(decrement)
                             .child("-1"),
                     )
                     .child(
@@ -277,7 +277,7 @@ impl Render for Counter {
                             .rounded(px(5))
                             .when_focused(|style| style.w(px(76)).border_color(Color::WHITE))
                             .when_pressed(|style| style.bg(Color::rgb(128, 90, 45)))
-                            .on_click(reset)
+                            .on_activate(reset)
                             .child("Reset"),
                     )
                     .child(
@@ -295,7 +295,7 @@ impl Render for Counter {
                             .rounded(px(5))
                             .when_focused(|style| style.border(px(2)).border_color(Color::WHITE))
                             .when_pressed(|style| style.bg(Color::rgb(48, 138, 92)).min_w(px(82)))
-                            .on_click(increment)
+                            .on_activate(increment)
                             .child("+1"),
                     ),
             )
@@ -327,7 +327,7 @@ fn scroll_row(
     id: &'static str,
     label: &'static str,
     color: Color,
-    listener: Listener<ClickEvent>,
+    listener: Listener<ActivateEvent>,
 ) -> impl IntoElement {
     div()
         .id(id)
@@ -339,7 +339,7 @@ fn scroll_row(
         .border_color(color)
         .rounded(px(3))
         .when_focused(|style| style.border_color(Color::WHITE))
-        .on_click(listener)
+        .on_activate(listener)
         .child(label)
 }
 
@@ -377,7 +377,7 @@ impl App {
         Self { header, counter }
     }
 
-    fn demo_clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+    fn demo_clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
 }
 
 fn text_styling_section() -> impl IntoElement {
@@ -590,7 +590,7 @@ fn overflow_clipping_section() -> impl IntoElement {
         )
 }
 
-fn nested_scroll_section(demo_click: Listener<ClickEvent>) -> impl IntoElement {
+fn nested_scroll_section(demo_click: Listener<ActivateEvent>) -> impl IntoElement {
     div()
         .w_full()
         .p(px(7))
@@ -792,14 +792,14 @@ fn main() {
                     point,
                 } => {
                     mouse_position = to_ui_point(point);
-                    runtime.pointer_down(mouse_position);
+                    runtime.begin_activation_at(mouse_position);
                 }
                 SimulatorEvent::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     point,
                 } => {
                     mouse_position = to_ui_point(point);
-                    runtime.pointer_up(mouse_position).unwrap();
+                    runtime.complete_activation_at(mouse_position).unwrap();
                 }
                 SimulatorEvent::MouseWheel { scroll_delta, .. } => {
                     const SCROLL_STEP: i32 = 12;

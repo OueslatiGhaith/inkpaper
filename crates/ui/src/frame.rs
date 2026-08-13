@@ -111,7 +111,6 @@ impl Node {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NodeInteraction {
-    pub(crate) click: Option<CallbackId>,
     pub(crate) focusable: bool,
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
@@ -122,7 +121,6 @@ pub(crate) struct NodeInteraction {
 impl From<StatefulInteractivity> for NodeInteraction {
     fn from(value: StatefulInteractivity) -> Self {
         Self {
-            click: value.click,
             focusable: value.focusable,
             focused_style: value.focused_style,
             pressed_style: value.pressed_style,
@@ -629,7 +627,7 @@ impl MountCx<'_> {
 
 #[cfg(test)]
 mod tests {
-    use core::cell::Cell;
+    use core::{any::TypeId, cell::Cell};
     use std::string::String;
 
     use crate::{
@@ -1091,7 +1089,7 @@ mod tests {
     }
 
     impl Counter {
-        fn increment(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn increment(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.value += 1;
             cx.notify();
         }
@@ -1102,7 +1100,7 @@ mod tests {
             div().child(
                 div()
                     .id("increment")
-                    .on_click(cx.listener(Self::increment))
+                    .on_activate(cx.listener(Self::increment))
                     .child("+"),
             )
         }
@@ -1125,7 +1123,7 @@ mod tests {
         let button =
             find_element(&frame, ElementId::Name("increment")).expect("increment element missing");
 
-        assert!(frame.node(button).interaction.click.is_some());
+        assert!(frame.node(button).interaction.focusable);
     }
 
     #[test]
@@ -1146,14 +1144,13 @@ mod tests {
             find_element(&frame, ElementId::Name("increment")).expect("increment element missing");
 
         let listener_id = frame
-            .node(button)
-            .interaction
-            .click
-            .expect("click listener missing");
+            .event_callbacks(button, TypeId::of::<ActivateEvent>())
+            .next()
+            .expect("activation listener missing");
 
-        let listener = Listener::<ClickEvent>::from_id(listener_id);
+        let listener = Listener::<ActivateEvent>::from_id(listener_id);
         callbacks
-            .invoke_listener(listener, &ClickEvent, &entities, &notified)
+            .invoke_listener(listener, &ActivateEvent, &entities, &notified)
             .unwrap();
 
         let value = entities.read(counter, |counter| counter.value);
@@ -1171,7 +1168,7 @@ mod tests {
     }
 
     impl Controller {
-        fn update_status(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn update_status(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.status
                 .update(cx, |status, cx| {
                     status.value += 10;
@@ -1186,7 +1183,7 @@ mod tests {
             div().child(
                 div()
                     .id("update-status")
-                    .on_click(cx.listener(Self::update_status))
+                    .on_activate(cx.listener(Self::update_status))
                     .child("Update"),
             )
         }
@@ -1209,10 +1206,13 @@ mod tests {
 
         let button = find_element(&frame, ElementId::Name("update-status")).unwrap();
 
-        let listener_id = frame.node(button).interaction.click.unwrap();
-        let listener = Listener::<ClickEvent>::from_id(listener_id);
+        let listener_id = frame
+            .event_callbacks(button, core::any::TypeId::of::<ActivateEvent>())
+            .next()
+            .expect("activation listener missing");
+        let listener = Listener::<ActivateEvent>::from_id(listener_id);
         callbacks
-            .invoke_listener(listener, &ClickEvent, &entities, &notified)
+            .invoke_listener(listener, &ActivateEvent, &entities, &notified)
             .unwrap();
 
         assert_eq!(entities.read(status, |status| status.value,), Ok(10));

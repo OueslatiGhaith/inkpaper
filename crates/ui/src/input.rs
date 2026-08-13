@@ -2,17 +2,10 @@ use core::any::TypeId;
 
 use crate::{
     FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect,
-    callback::CallbackId,
     element_state::ElementStateId,
     px,
     scroll::{ScrollAxes, ScrollStateTable},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ClickTarget {
-    pub(crate) element: ElementStateId,
-    pub(crate) listener: CallbackId,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FocusTarget {
@@ -28,21 +21,17 @@ pub(crate) struct ScrollTarget {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-pub(crate) struct PointerState {
+pub(crate) struct ActivationState {
     pressed: Option<ElementStateId>,
 }
 
-impl PointerState {
-    pub(crate) fn press(&mut self, element: Option<ElementStateId>) {
+impl ActivationState {
+    pub(crate) fn set_pressed(&mut self, element: Option<ElementStateId>) {
         self.pressed = element;
     }
 
     pub(crate) fn pressed(&self) -> Option<ElementStateId> {
         self.pressed
-    }
-
-    pub(crate) fn take_pressed(&mut self) -> Option<ElementStateId> {
-        self.pressed.take()
     }
 
     pub(crate) fn cancel(&mut self) {
@@ -99,48 +88,6 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         }
 
         hit
-    }
-
-    pub(crate) fn hit_test_click(&self, root: NodeId, position: Point) -> Option<ClickTarget> {
-        let mut hit = None;
-
-        for visual in self.visual_nodes(root) {
-            if !visual.contains(position) {
-                continue;
-            }
-            if let Some(target) = self.click_target_from_node(visual.node()) {
-                hit = Some(target)
-            }
-        }
-
-        hit
-    }
-
-    fn click_target_from_node(&self, node_id: NodeId) -> Option<ClickTarget> {
-        let node = self.node(node_id);
-        let element = node.element_state_id?;
-        let listener = node.interaction.click?;
-
-        Some(ClickTarget { element, listener })
-    }
-
-    pub(crate) fn click_target_for_element(
-        &self,
-        root: NodeId,
-        element: ElementStateId,
-    ) -> Option<ClickTarget> {
-        let mut current = Some(root);
-        while let Some(node_id) = current {
-            if let Some(target) = self.click_target_from_node(node_id)
-                && target.element == element
-            {
-                return Some(target);
-            }
-
-            current = self.next_depth_first_node(node_id);
-        }
-
-        None
     }
 
     fn focus_target_from_node(&self, node_id: NodeId) -> Option<FocusTarget> {
@@ -470,7 +417,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
 #[cfg(test)]
 mod tests {
-    use core::{any::TypeId, cell::Cell};
+    use core::cell::Cell;
     use std::rc::Rc;
 
     use crate::*;
@@ -500,7 +447,7 @@ mod tests {
     }
 
     impl Counter {
-        fn clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn clicked(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.clicks.set(self.clicks.get().saturating_add(1));
             cx.notify();
         }
@@ -514,7 +461,7 @@ mod tests {
                     .w(px(80))
                     .h(px(30))
                     .bg(Color::BLUE)
-                    .on_click(cx.listener(Self::clicked))
+                    .on_activate(cx.listener(Self::clicked))
                     .child("Button"),
             )
         }
@@ -538,8 +485,12 @@ mod tests {
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_down(Point::new(px(20), px(20),)));
-        assert!(runtime.pointer_up(Point::new(px(20), px(20),)).unwrap());
+        assert!(runtime.begin_activation_at(Point::new(px(20), px(20),)));
+        assert!(
+            runtime
+                .complete_activation_at(Point::new(px(20), px(20),))
+                .unwrap()
+        );
         assert_eq!(clicks.get(), 1);
         assert!(runtime.is_dirty());
     }
@@ -562,9 +513,13 @@ mod tests {
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_down(Point::new(px(20), px(20),)));
+        assert!(runtime.begin_activation_at(Point::new(px(20), px(20),)));
         assert_eq!(runtime.take_invalidation(), Invalidation::None);
-        assert!(!runtime.pointer_up(Point::new(px(150), px(80),)).unwrap());
+        assert!(
+            !runtime
+                .complete_activation_at(Point::new(px(150), px(80),))
+                .unwrap()
+        );
         assert_eq!(clicks.get(), 0);
         assert_eq!(runtime.take_invalidation(), Invalidation::None);
         assert!(!runtime.is_dirty());
@@ -588,8 +543,12 @@ mod tests {
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(!runtime.pointer_down(Point::new(px(150), px(80),)));
-        assert!(!runtime.pointer_up(Point::new(px(150), px(80),)).unwrap());
+        assert!(!runtime.begin_activation_at(Point::new(px(150), px(80),)));
+        assert!(
+            !runtime
+                .complete_activation_at(Point::new(px(150), px(80),))
+                .unwrap()
+        );
         assert_eq!(clicks.get(), 0);
     }
 
@@ -599,13 +558,13 @@ mod tests {
     }
 
     impl NestedButtons {
-        fn parent_clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn parent_clicked(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.parent_clicks
                 .set(self.parent_clicks.get().saturating_add(1));
             cx.notify();
         }
 
-        fn child_clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn child_clicked(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.child_clicks
                 .set(self.child_clicks.get().saturating_add(1));
             cx.notify();
@@ -623,13 +582,13 @@ mod tests {
                     .id("parent")
                     .w(px(100))
                     .h(px(100))
-                    .on_click(parent_listener)
+                    .on_activate(parent_listener)
                     .child(
                         div()
                             .id("child")
                             .w(px(50))
                             .h(px(50))
-                            .on_click(child_listener),
+                            .on_activate(child_listener),
                     ),
             )
         }
@@ -658,8 +617,12 @@ mod tests {
             .layout(Size::new(px(200), px(120)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_down(Point::new(px(20), px(20),)));
-        assert!(runtime.pointer_up(Point::new(px(20), px(20),)).unwrap());
+        assert!(runtime.begin_activation_at(Point::new(px(20), px(20),)));
+        assert!(
+            runtime
+                .complete_activation_at(Point::new(px(20), px(20),))
+                .unwrap()
+        );
         assert_eq!(parent_clicks.get(), 0);
         assert_eq!(child_clicks.get(), 1);
     }
@@ -682,14 +645,18 @@ mod tests {
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_down(Point::new(px(20), px(20),)));
+        assert!(runtime.begin_activation_at(Point::new(px(20), px(20),)));
 
         runtime.rebuild(counter).unwrap();
         runtime
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_up(Point::new(px(20), px(20),)).unwrap());
+        assert!(
+            runtime
+                .complete_activation_at(Point::new(px(20), px(20),))
+                .unwrap()
+        );
         assert_eq!(clicks.get(), 1);
     }
 
@@ -700,17 +667,17 @@ mod tests {
     }
 
     impl FocusApp {
-        fn first_clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn first_clicked(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.first.set(self.first.get().saturating_add(1));
             cx.notify();
         }
 
-        fn second_clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn second_clicked(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.second.set(self.second.get().saturating_add(1));
             cx.notify();
         }
 
-        fn third_clicked(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn third_clicked(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.third.set(self.third.get().saturating_add(1));
             cx.notify();
         }
@@ -731,7 +698,7 @@ mod tests {
                         .id("first")
                         .w(px(80))
                         .h(px(20))
-                        .on_click(first)
+                        .on_activate(first)
                         .child("First"),
                 )
                 .child(
@@ -746,7 +713,7 @@ mod tests {
                         .id("second")
                         .w(px(80))
                         .h(px(20))
-                        .on_click(second)
+                        .on_activate(second)
                         .child("Second"),
                 )
                 .child(
@@ -754,7 +721,7 @@ mod tests {
                         .id("third")
                         .w(px(80))
                         .h(px(20))
-                        .on_click(third)
+                        .on_activate(third)
                         .child("Third"),
                 )
         }
@@ -973,8 +940,12 @@ mod tests {
             .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.pointer_down(Point::new(px(10), px(55),)));
-        assert!(runtime.pointer_up(Point::new(px(10), px(55),)).unwrap());
+        assert!(runtime.begin_activation_at(Point::new(px(10), px(55),)));
+        assert!(
+            runtime
+                .complete_activation_at(Point::new(px(10), px(55),))
+                .unwrap()
+        );
         assert_eq!(second.get(), 1);
 
         runtime.take_dirty();
@@ -1031,7 +1002,7 @@ mod tests {
 
     struct FocusScrollApp;
     impl FocusScrollApp {
-        fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+        fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
     }
 
     impl Render for FocusScrollApp {
@@ -1046,7 +1017,7 @@ mod tests {
                         .id("first")
                         .w(px(100))
                         .h(px(30))
-                        .on_click(cx.listener(Self::clicked))
+                        .on_activate(cx.listener(Self::clicked))
                         .child("First"),
                 )
                 .child(
@@ -1054,7 +1025,7 @@ mod tests {
                         .id("second")
                         .w(px(100))
                         .h(px(30))
-                        .on_click(cx.listener(Self::clicked))
+                        .on_activate(cx.listener(Self::clicked))
                         .child("Second"),
                 )
                 .child(
@@ -1062,7 +1033,7 @@ mod tests {
                         .id("third")
                         .w(px(100))
                         .h(px(30))
-                        .on_click(cx.listener(Self::clicked))
+                        .on_activate(cx.listener(Self::clicked))
                         .child("Third"),
                 )
         }
@@ -1113,7 +1084,7 @@ mod tests {
 
     struct NestedFocusScrollApp;
     impl NestedFocusScrollApp {
-        fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+        fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
     }
 
     impl Render for NestedFocusScrollApp {
@@ -1135,7 +1106,7 @@ mod tests {
                                 .id("first")
                                 .w(px(100))
                                 .h(px(30))
-                                .on_click(cx.listener(Self::clicked))
+                                .on_activate(cx.listener(Self::clicked))
                                 .child("First"),
                         )
                         .child(
@@ -1143,7 +1114,7 @@ mod tests {
                                 .id("second")
                                 .w(px(100))
                                 .h(px(30))
-                                .on_click(cx.listener(Self::clicked))
+                                .on_activate(cx.listener(Self::clicked))
                                 .child("Second"),
                         ),
                 )
@@ -1183,7 +1154,7 @@ mod tests {
 
     struct LayoutFocusScrollApp;
     impl LayoutFocusScrollApp {
-        fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+        fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
     }
 
     impl Render for LayoutFocusScrollApp {
@@ -1198,7 +1169,7 @@ mod tests {
                         .id("first")
                         .w(px(100))
                         .h(px(30))
-                        .on_click(cx.listener(Self::clicked))
+                        .on_activate(cx.listener(Self::clicked))
                         .child("First"),
                 )
                 .child(
@@ -1207,7 +1178,7 @@ mod tests {
                         .w(px(100))
                         .h(px(10))
                         .when_focused(|style| style.h(px(30)))
-                        .on_click(cx.listener(Self::clicked))
+                        .on_activate(cx.listener(Self::clicked))
                         .child("Second"),
                 )
         }
@@ -1291,7 +1262,7 @@ mod tests {
     struct ClickRemainsFocusableApp;
 
     impl ClickRemainsFocusableApp {
-        fn clicked(&mut self, _: &ClickEvent, _: &mut Context<Self>) {}
+        fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
     }
 
     impl Render for ClickRemainsFocusableApp {
@@ -1301,7 +1272,7 @@ mod tests {
                     .id("button")
                     .w(px(40))
                     .h(px(20))
-                    .on_click(cx.listener(Self::clicked)),
+                    .on_activate(cx.listener(Self::clicked)),
             )
         }
     }

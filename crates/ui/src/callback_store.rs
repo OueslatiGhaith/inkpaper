@@ -509,7 +509,7 @@ mod tests {
     }
 
     impl Counter {
-        fn increment(&mut self, _: &ClickEvent, cx: &mut Context<Self>) {
+        fn increment(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
             self.value += 1;
             cx.notify();
         }
@@ -530,7 +530,7 @@ mod tests {
         };
 
         callbacks
-            .invoke_listener(listener, &ClickEvent, &entities, &notified)
+            .invoke_listener(listener, &ActivateEvent, &entities, &notified)
             .unwrap();
 
         assert_eq!(entities.read(root, |counter| { counter.value }), Ok(1));
@@ -548,14 +548,14 @@ mod tests {
         let listener = {
             let mut cx = Context::from_parts(counter, &entities, &callbacks, &notified);
 
-            cx.listener(move |counter: &mut Counter, _: &ClickEvent, cx| {
+            cx.listener(move |counter: &mut Counter, _: &ActivateEvent, cx| {
                 counter.value += amount;
                 cx.notify();
             })
         };
 
         callbacks
-            .invoke_listener(listener, &ClickEvent, &entities, &notified)
+            .invoke_listener(listener, &ActivateEvent, &entities, &notified)
             .unwrap();
 
         assert_eq!(entities.read(counter, |counter| counter.value), Ok(5));
@@ -572,7 +572,7 @@ mod tests {
         let listener = {
             let mut cx = Context::from_parts(counter, &entities, &callbacks, &notified);
 
-            cx.listener(move |_: &mut Counter, _: &ClickEvent, cx| {
+            cx.listener(move |_: &mut Counter, _: &ActivateEvent, cx| {
                 let result = counter.update(cx, |_, _| {});
 
                 assert!(matches!(result, Err(EntityAccessError::BorrowConflict)));
@@ -580,7 +580,7 @@ mod tests {
         };
 
         callbacks
-            .invoke_listener(listener, &ClickEvent, &entities, &notified)
+            .invoke_listener(listener, &ActivateEvent, &entities, &notified)
             .unwrap();
     }
 
@@ -599,7 +599,7 @@ mod tests {
         let listener = {
             let mut cx = Context::from_parts(counter, &entities, &callbacks, &notified);
 
-            cx.listener(move |counter: &mut Counter, _: &ClickEvent, cx| {
+            cx.listener(move |counter: &mut Counter, _: &ActivateEvent, cx| {
                 counter.value += 1;
 
                 settings
@@ -612,7 +612,7 @@ mod tests {
         };
 
         callbacks
-            .invoke_listener(listener, &ClickEvent, &entities, &notified)
+            .invoke_listener(listener, &ActivateEvent, &entities, &notified)
             .unwrap();
 
         assert_eq!(entities.read(counter, |counter| counter.value), Ok(1));
@@ -635,7 +635,7 @@ mod tests {
 
         callbacks.reset();
 
-        let result = callbacks.invoke_listener(listener, &ClickEvent, &entities, &notified);
+        let result = callbacks.invoke_listener(listener, &ActivateEvent, &entities, &notified);
 
         assert!(matches!(result, Err(ListenerInvokeError::InvalidListener)));
     }
@@ -664,7 +664,7 @@ mod tests {
 
             let mut cx = Context::from_parts(counter, &entities, &callbacks, &notified);
 
-            let _listener = cx.listener(move |_: &mut Counter, _: &ClickEvent, _| {
+            let _listener = cx.listener(move |_: &mut Counter, _: &ActivateEvent, _| {
                 let _ = &capture;
             });
         }
@@ -685,10 +685,10 @@ mod tests {
 
         let mut cx = Context::from_parts(counter, &entities, &callbacks, &notified);
 
-        cx.try_listener::<ClickEvent, _>(|_: &mut Counter, _, _| {})
+        cx.try_listener::<ActivateEvent, _>(|_: &mut Counter, _, _| {})
             .unwrap();
 
-        let result = cx.try_listener::<ClickEvent, _>(|_: &mut Counter, _, _| {});
+        let result = cx.try_listener::<ActivateEvent, _>(|_: &mut Counter, _, _| {});
 
         assert!(matches!(result, Err(CallbackAllocError::SlotsFull)));
     }
@@ -703,7 +703,7 @@ mod tests {
 
         let mut cx = Context::from_parts(counter, &entities, &callbacks, &notified);
 
-        let result = cx.try_listener::<ClickEvent, _>(move |_: &mut Counter, _, _| {
+        let result = cx.try_listener::<ActivateEvent, _>(move |_: &mut Counter, _, _| {
             let _ = &capture;
         });
 
@@ -721,7 +721,7 @@ mod tests {
 
         let listener = cx.listener(Counter::increment);
 
-        let _element = div().id("increment").on_click(listener).child("+");
+        let _element = div().id("increment").on_activate(listener).child("+");
     }
 
     #[test]
@@ -737,7 +737,7 @@ mod tests {
 
         let _element = div()
             .id("increment")
-            .on_click(listener)
+            .on_activate(listener)
             .flex()
             .p(px(8))
             .child("+");
@@ -756,7 +756,7 @@ mod tests {
 
         let _element = div()
             .id("increment")
-            .on_click(listener)
+            .on_activate(listener)
             .child("+")
             .child("Increment");
     }
@@ -772,6 +772,10 @@ mod tests {
 
         let listener = cx.listener(Counter::increment);
 
-        let _element = div().child("+").id("increment").p(px(8)).on_click(listener);
+        let _element = div()
+            .child("+")
+            .id("increment")
+            .p(px(8))
+            .on_activate(listener);
     }
 }
