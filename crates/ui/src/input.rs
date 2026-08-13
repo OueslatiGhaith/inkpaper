@@ -1924,4 +1924,208 @@ mod tests {
         );
         assert_eq!(hits.get(), 1);
     }
+
+    #[test]
+    fn explicit_target_dispatches_custom_event() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| FocusedDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        assert!(runtime.focus_next());
+
+        let target = runtime
+            .focused_target()
+            .expect("focused element should have an event target");
+
+        runtime.take_invalidation();
+
+        assert!(
+            runtime
+                .dispatch_to(target, &EncoderTurn { delta: 4 },)
+                .unwrap()
+        );
+        assert_eq!(value.get(), 4);
+    }
+
+    #[test]
+    fn event_target_survives_rebuild_when_identity_survives() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| FocusedDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        assert!(runtime.focus_next());
+
+        let target = runtime
+            .focused_target()
+            .expect("focused element should have an event target");
+
+        runtime.rebuild(app).unwrap();
+
+        assert!(
+            runtime
+                .dispatch_to(target, &EncoderTurn { delta: 5 },)
+                .unwrap()
+        );
+        assert_eq!(value.get(), 5);
+    }
+
+    struct TargetEmptyApp;
+
+    impl Render for TargetEmptyApp {
+        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+        }
+    }
+
+    #[test]
+    fn event_target_becomes_stale_when_element_disappears() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| FocusedDispatchApp { value }
+            })
+            .unwrap();
+
+        let empty = runtime.create(|_| TargetEmptyApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        assert!(runtime.focus_next());
+
+        let old_target = runtime
+            .focused_target()
+            .expect("focused element should have a target");
+
+        runtime.rebuild(empty).unwrap();
+
+        assert!(
+            !runtime
+                .dispatch_to(old_target, &EncoderTurn { delta: 1 },)
+                .unwrap()
+        );
+        assert_eq!(value.get(), 0);
+    }
+
+    #[test]
+    fn stale_event_target_does_not_alias_reappearing_element() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| FocusedDispatchApp { value }
+            })
+            .unwrap();
+
+        let empty = runtime.create(|_| TargetEmptyApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        assert!(runtime.focus_next());
+
+        let old_target = runtime
+            .focused_target()
+            .expect("focused element should have a target");
+
+        runtime.rebuild(empty).unwrap();
+        runtime.rebuild(app).unwrap();
+
+        assert!(runtime.focus_next());
+
+        let new_target = runtime
+            .focused_target()
+            .expect("reappearing element should have a target");
+
+        assert_ne!(old_target, new_target);
+        assert!(
+            !runtime
+                .dispatch_to(old_target, &EncoderTurn { delta: 1 },)
+                .unwrap()
+        );
+
+        assert!(
+            runtime
+                .dispatch_to(new_target, &EncoderTurn { delta: 2 },)
+                .unwrap()
+        );
+        assert_eq!(value.get(), 2);
+    }
+
+    #[test]
+    fn target_at_returns_dispatchable_spatial_target() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| SpatialDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        let target = runtime
+            .target_at::<TouchContact>(Point::new(px(20), px(20)))
+            .expect("touch handler should exist at position");
+
+        assert!(
+            runtime
+                .dispatch_to(target, &TouchContact { pressure: 73 },)
+                .unwrap()
+        );
+        assert_eq!(value.get(), 73);
+    }
+
+    #[test]
+    fn target_at_is_event_type_specific() {
+        let value = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let value = value.clone();
+
+                move |_| SpatialDispatchApp { value }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        let position = Point::new(px(20), px(20));
+
+        assert!(runtime.target_at::<TouchContact>(position).is_some());
+        assert!(runtime.target_at::<EncoderPress>(position).is_none());
+    }
 }

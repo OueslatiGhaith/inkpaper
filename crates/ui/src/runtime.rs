@@ -1,8 +1,8 @@
 use core::{any::TypeId, cell::Cell};
 
 use crate::{
-    ActivateEvent, Context, Entity, EntityAllocError, EntityArena, FrameArena, Invalidation,
-    Listener, MountError, NodeId, Offset, Painter, Point, Render, Size, TextMeasurer,
+    ActivateEvent, Context, Entity, EntityAllocError, EntityArena, EventTarget, FrameArena,
+    Invalidation, Listener, MountError, NodeId, Offset, Painter, Point, Render, Size, TextMeasurer,
     callback_store::{CallbackArena, ListenerInvokeError},
     element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
@@ -266,7 +266,7 @@ impl<
         }
 
         if let Some(pressed) = self.activation.pressed()
-            && !self.element_states.contains(pressed)
+            && self.activation_target_for_element(pressed).is_none()
         {
             self.activation.cancel();
         }
@@ -483,52 +483,37 @@ impl<
     where
         E: 'static,
     {
-        let Some(root) = self.root else {
-            return Ok(false);
-        };
-        let Some(focused) = self.focused else {
-            return Ok(false);
-        };
-        let Some(node) = self.frame.node_for_element(root, focused) else {
+        let Some(target) = self.focused_target() else {
             return Ok(false);
         };
 
-        self.dispatch_to_node(node, event)
+        self.dispatch_to(target, event)
     }
 
     pub fn dispatch_at<E>(&self, position: Point, event: &E) -> Result<bool, ListenerInvokeError>
     where
         E: 'static,
     {
-        let Some(root) = self.root else {
+        let Some(target) = self.target_at::<E>(position) else {
             return Ok(false);
         };
 
-        let Some(node) = self.frame.hit_test_event(root, position, TypeId::of::<E>()) else {
-            return Ok(false);
-        };
-
-        self.dispatch_to_node(node, event)
+        self.dispatch_to(target, event)
     }
 
-    fn activation_node_for_element(&self, element: ElementStateId) -> Option<NodeId> {
-        let root = self.root?;
-        let node = self.frame.node_for_element(root, element)?;
+    fn activation_target_for_element(&self, element: ElementStateId) -> Option<EventTarget> {
+        let target = EventTarget::new(element);
+        let node = self.node_for_target(target)?;
+
         self.frame
             .event_callbacks(node, TypeId::of::<ActivateEvent>())
             .next()?;
 
-        Some(node)
+        Some(target)
     }
 
-    fn activation_target_at(&self, position: Point) -> Option<(NodeId, ElementStateId)> {
-        let root = self.root?;
-        let node = self
-            .frame
-            .hit_test_event(root, position, TypeId::of::<ActivateEvent>())?;
-        let element = self.frame.node(node).element_state_id?;
-
-        Some((node, element))
+    fn activation_target_at(&self, position: Point) -> Option<EventTarget> {
+        self.target_at::<ActivateEvent>(position)
     }
 
     fn set_pressed(&mut self, next: Option<ElementStateId>) -> Invalidation {
@@ -547,7 +532,7 @@ impl<
 
     pub fn begin_activation_at(&mut self, position: Point) -> bool {
         let target = self.activation_target_at(position);
-        let next = target.map(|(_, element)| element);
+        let next = target.map(EventTarget::element);
         let invalidation = self.set_pressed(next);
 
         self.invalidate(invalidation);
@@ -561,7 +546,7 @@ impl<
         };
 
         let target = self.activation_target_at(position);
-        let activated = matches!(target, Some((_, element)) if element == pressed);
+        let activated = target.map(EventTarget::element) == Some(pressed);
 
         let pressed_invalidation = self.set_pressed(None);
         let focus_invalidation = if activated {
@@ -572,11 +557,11 @@ impl<
 
         self.invalidate(pressed_invalidation.merge(focus_invalidation));
 
-        let Some((node, _)) = target.filter(|(_, element)| *element == pressed) else {
+        let Some(target) = target.filter(|target| target.element() == pressed) else {
             return Ok(false);
         };
 
-        self.dispatch_to_node(node, &ActivateEvent)
+        self.dispatch_to(target, &ActivateEvent)
     }
 
     pub fn cancel_activation(&mut self) {
@@ -585,9 +570,10 @@ impl<
     }
 
     pub fn begin_focused_activation(&mut self) -> bool {
-        let next = self
+        let target = self
             .focused
-            .filter(|element| self.activation_node_for_element(*element).is_some());
+            .and_then(|element| self.activation_target_for_element(element));
+        let next = target.map(EventTarget::element);
         let invalidation = self.set_pressed(next);
 
         self.invalidate(invalidation);
@@ -599,8 +585,8 @@ impl<
         let Some(pressed) = self.activation.pressed() else {
             return Ok(false);
         };
-        let node = if self.focused == Some(pressed) {
-            self.activation_node_for_element(pressed)
+        let target = if self.focused == Some(pressed) {
+            self.activation_target_for_element(pressed)
         } else {
             None
         };
@@ -609,10 +595,51 @@ impl<
 
         self.invalidate(invalidation);
 
-        let Some(node) = node else {
+        let Some(target) = target else {
             return Ok(false);
         };
 
-        self.dispatch_to_node(node, &ActivateEvent)
+        self.dispatch_to(target, &ActivateEvent)
+    }
+
+    fn node_for_target(&self, target: EventTarget) -> Option<NodeId> {
+        let root = self.root?;
+        self.frame.node_for_element(root, target.element())
+    }
+
+    pub fn focused_target(&self) -> Option<EventTarget> {
+        let focused = self.focused?;
+        let target = EventTarget::new(focused);
+        self.node_for_target(target)?;
+
+        Some(target)
+    }
+
+    pub fn target_at<E>(&self, position: Point) -> Option<EventTarget>
+    where
+        E: 'static,
+    {
+        let root = self.root?;
+        let node = self
+            .frame
+            .hit_test_event(root, position, TypeId::of::<E>())?;
+        let element = self.frame.node(node).element_state_id?;
+
+        Some(EventTarget::new(element))
+    }
+
+    pub fn dispatch_to<E>(
+        &self,
+        target: EventTarget,
+        event: &E,
+    ) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        let Some(node) = self.node_for_target(target) else {
+            return Ok(false);
+        };
+
+        self.dispatch_to_node(node, event)
     }
 }

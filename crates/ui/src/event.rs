@@ -3,10 +3,26 @@ use core::any::TypeId;
 use crate::{
     Element, IntoElement, Listener, MountCx, MountError, NodeId, ParentElement,
     StatefulInteractiveElement, StatefulInteractivity, Style, Styled, callback::CallbackId,
+    element_state::ElementStateId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivateEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EventTarget {
+    element: ElementStateId,
+}
+
+impl EventTarget {
+    pub(crate) const fn new(element: ElementStateId) -> Self {
+        Self { element }
+    }
+
+    pub(crate) const fn element(self) -> ElementStateId {
+        self.element
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct EventBindingId(u16);
