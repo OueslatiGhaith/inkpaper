@@ -749,7 +749,7 @@ fn rebuild_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut Simulator
     paint_ui(runtime, display);
 }
 
-fn handle_key(runtime: &mut UiRuntime, keycode: Keycode) {
+fn handle_key_down(runtime: &mut UiRuntime, keycode: Keycode) {
     match keycode {
         Keycode::Down | Keycode::Right | Keycode::Tab => {
             runtime.focus_next();
@@ -758,10 +758,20 @@ fn handle_key(runtime: &mut UiRuntime, keycode: Keycode) {
             runtime.focus_previous();
         }
         Keycode::Return | Keycode::Space => {
-            runtime.activate_focused().unwrap();
+            runtime.begin_focused_activation();
         }
-        Keycode::Escape => {
+        Keycode::C => {
+            runtime.cancel_activation();
             runtime.clear_focus();
+        }
+        _ => {}
+    };
+}
+
+fn handle_key_up(runtime: &mut UiRuntime, keycode: Keycode) {
+    match keycode {
+        Keycode::Return | Keycode::Space => {
+            runtime.complete_focused_activation().unwrap();
         }
         _ => {}
     }
@@ -815,7 +825,8 @@ fn main() {
                     keycode,
                     repeat: false,
                     ..
-                } => handle_key(&mut runtime, keycode),
+                } => handle_key_down(&mut runtime, keycode),
+                SimulatorEvent::KeyUp { keycode, .. } => handle_key_up(&mut runtime, keycode),
                 _ => {}
             }
         }
