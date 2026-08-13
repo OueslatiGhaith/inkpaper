@@ -1,7 +1,7 @@
 use crate::{
     ClickEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
-    MountCx, MountError, NodeId, ParentElement, Style, StylePatch, Styled, callback::CallbackId,
-    scroll::ScrollAxes,
+    MountCx, MountError, NodeId, OnEvent, ParentElement, Style, StylePatch, Styled,
+    callback::CallbackId, scroll::ScrollAxes,
 };
 
 pub struct Stateful<E> {
@@ -95,6 +95,13 @@ where
 }
 
 pub trait StatefulInteractiveElementExt: StatefulInteractiveElement {
+    fn on<Event>(self, listener: Listener<Event>) -> OnEvent<Self, Event>
+    where
+        Event: 'static,
+    {
+        OnEvent::new(self, listener)
+    }
+
     fn on_click(mut self, listener: Listener<ClickEvent>) -> Self {
         let interaction = self.stateful_interactivity_mut();
         interaction.click = Some(listener.id);

@@ -1,11 +1,11 @@
-use core::cell::Cell;
+use core::{any::TypeId, cell::Cell};
 
 use heapless::Vec;
 
 use crate::{
     CanvasDraw, CanvasStyle, Element, ElementId, EntityAccessError, EntityId, EntityRenderFn,
-    ImageSource, ImageStyle, IntoElement, Offset, Rect, ResolvedTextStyle, StatefulInteractivity,
-    Style, StylePatch, TextStyle,
+    EventBinding, EventBindingId, EventCallbacks, ImageSource, ImageStyle, IntoElement, Offset,
+    Rect, ResolvedTextStyle, StatefulInteractivity, Style, StylePatch, TextStyle,
     callback::CallbackId,
     callback_store::CallbackStore,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
@@ -74,6 +74,8 @@ pub(crate) struct Node {
     pub(crate) effective_style: Option<Style>,
     pub(crate) text_style: TextStyle,
     pub(crate) effective_text_style: ResolvedTextStyle,
+    pub(crate) first_event_binding: Option<EventBindingId>,
+    pub(crate) last_event_binding: Option<EventBindingId>,
 }
 
 impl Node {
@@ -94,6 +96,8 @@ impl Node {
             },
             text_style: TextStyle::default(),
             effective_text_style: ResolvedTextStyle::default(),
+            first_event_binding: None,
+            last_event_binding: None,
         }
     }
 
@@ -132,6 +136,7 @@ impl From<StatefulInteractivity> for NodeInteraction {
 pub enum MountError {
     NodesFull,
     TextStorageFull,
+    EventBindingsFull,
     EntityAccess(EntityAccessError),
     DuplicateEntityMount(EntityId),
 }
@@ -145,6 +150,7 @@ impl From<EntityAccessError> for MountError {
 pub(crate) struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
     pub(crate) nodes: Vec<Node, NODES>,
     text: Vec<u8, TEXT_BYTES>,
+    pub(crate) event_bindings: Vec<EventBinding, NODES>,
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, TEXT_BYTES> {
@@ -152,6 +158,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, 
         Self {
             nodes: Vec::new(),
             text: Vec::new(),
+            event_bindings: Vec::new(),
         }
     }
 }
@@ -176,6 +183,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.text.clear();
+        self.event_bindings.clear();
     }
 
     fn push_node(&mut self, kind: NodeKind) -> Result<NodeId, MountError> {
@@ -406,6 +414,45 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             current = self.next_depth_first_node(node_id);
         }
     }
+
+    pub(crate) fn bind_event(
+        &mut self,
+        node: NodeId,
+        event_type: TypeId,
+        callback: CallbackId,
+    ) -> Result<(), MountError> {
+        if self.event_bindings.len() >= NODES || self.event_bindings.len() > u16::MAX as usize {
+            return Err(MountError::EventBindingsFull);
+        }
+
+        let binding_id = EventBindingId::new(self.event_bindings.len() as u16);
+        self.event_bindings
+            .push(EventBinding {
+                event_type,
+                callback,
+                next: None,
+            })
+            .map_err(|_| MountError::EventBindingsFull)?;
+
+        let node_index = node.index();
+
+        match self.nodes[node_index].last_event_binding {
+            Some(previous) => self.event_bindings[previous.index()].next = Some(binding_id),
+            None => self.nodes[node_index].first_event_binding = Some(binding_id),
+        }
+
+        self.nodes[node_index].last_event_binding = Some(binding_id);
+
+        Ok(())
+    }
+
+    pub(crate) fn event_callbacks(&self, node: NodeId, event_type: TypeId) -> EventCallbacks<'_> {
+        EventCallbacks::new(
+            &self.event_bindings.as_slice(),
+            self.node(node).first_event_binding,
+            event_type,
+        )
+    }
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODES, TEXT_BYTES> {
@@ -483,6 +530,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
         node.element_id = Some(id);
         node.interaction = interaction;
     }
+
+    fn bind_event(
+        &mut self,
+        node: NodeId,
+        event_type: TypeId,
+        callback: CallbackId,
+    ) -> Result<(), MountError> {
+        FrameArena::bind_event(self, node, event_type, callback)
+    }
 }
 
 pub(crate) trait FrameStore {
@@ -497,6 +553,12 @@ pub(crate) trait FrameStore {
     ) -> Result<NodeId, MountError>;
     fn append_child(&mut self, parent: NodeId, child: NodeId);
     fn make_stateful(&mut self, node: NodeId, id: ElementId, interaction: NodeInteraction);
+    fn bind_event(
+        &mut self,
+        node: NodeId,
+        event_type: TypeId,
+        callback: CallbackId,
+    ) -> Result<(), MountError>;
 }
 
 pub struct MountCx<'a> {
@@ -553,6 +615,15 @@ impl MountCx<'_> {
         interaction: NodeInteraction,
     ) {
         self.frame.make_stateful(node, id, interaction);
+    }
+
+    pub(crate) fn bind_event(
+        &mut self,
+        node: NodeId,
+        event_type: TypeId,
+        callback: CallbackId,
+    ) -> Result<(), MountError> {
+        self.frame.bind_event(node, event_type, callback)
     }
 }
 

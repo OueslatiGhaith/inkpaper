@@ -64,7 +64,7 @@ pub mod prelude {
     // TODO: fill predlude
     pub use crate::{
         CanvasPainter, ClickEvent, Color, Context, Entity, FontId, Image, ImageFit, ImageId,
-        ImageSource, InteractiveElement, IntoElement, Invalidation, Listener, Offset,
+        ImageSource, InteractiveElement, IntoElement, Invalidation, Listener, Offset, OnEvent,
         ParentElement, Pixels, Point, Rect, Render, Runtime, Size, StatefulInteractiveElementExt,
         Styled, TextAlign, TextStyled, TextWrap, canvas::canvas, div::div, image::image, px, text,
     };

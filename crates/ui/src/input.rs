@@ -446,7 +446,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
 #[cfg(test)]
 mod tests {
-    use core::cell::Cell;
+    use core::{any::TypeId, cell::Cell};
     use std::rc::Rc;
 
     use crate::*;
@@ -1295,5 +1295,145 @@ mod tests {
 
         assert!(runtime.focus_next());
         assert!(runtime.activate_focused().unwrap());
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct EncoderTurn {
+        delta: i8,
+    }
+
+    struct GenericEventApp;
+
+    impl GenericEventApp {
+        fn turned(&mut self, _: &EncoderTurn, _: &mut Context<Self>) {}
+    }
+
+    impl Render for GenericEventApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            let turn = cx.listener(Self::turned);
+
+            div()
+                .id("encoder-target")
+                .focusable()
+                .on(turn)
+                .w(px(80))
+                .h(px(30))
+        }
+    }
+
+    #[test]
+    fn arbitrary_event_can_be_bound_to_element() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| GenericEventApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        let root = runtime.root_node().unwrap();
+        let element = runtime
+            .frame()
+            .node(root)
+            .first_child
+            .expect("entity should contain rendered root element");
+
+        let callbacks: std::vec::Vec<_> = runtime
+            .frame()
+            .event_callbacks(element, core::any::TypeId::of::<EncoderTurn>())
+            .collect();
+
+        assert_eq!(callbacks.len(), 1);
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct EncoderPress;
+
+    struct MultipleEventsApp;
+
+    impl MultipleEventsApp {
+        fn turned(&mut self, _: &EncoderTurn, _: &mut Context<Self>) {}
+        fn pressed(&mut self, _: &EncoderPress, _: &mut Context<Self>) {}
+    }
+
+    impl Render for MultipleEventsApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            let turn = cx.listener(Self::turned);
+
+            let press = cx.listener(Self::pressed);
+
+            div()
+                .id("control")
+                .focusable()
+                .on(turn)
+                .on(press)
+                .w(px(80))
+                .h(px(30))
+        }
+    }
+
+    #[test]
+    fn element_can_bind_multiple_event_types() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| MultipleEventsApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        let root = runtime.root_node().unwrap();
+        let element = runtime
+            .frame()
+            .node(root)
+            .first_child
+            .expect("entity should contain rendered root element");
+        let turns = runtime
+            .frame()
+            .event_callbacks(element, core::any::TypeId::of::<EncoderTurn>())
+            .count();
+        let presses = runtime
+            .frame()
+            .event_callbacks(element, core::any::TypeId::of::<EncoderPress>())
+            .count();
+
+        assert_eq!(turns, 1);
+        assert_eq!(presses, 1);
+    }
+
+    struct DuplicateEventApp;
+
+    impl DuplicateEventApp {
+        fn first(&mut self, _: &EncoderTurn, _: &mut Context<Self>) {}
+        fn second(&mut self, _: &EncoderTurn, _: &mut Context<Self>) {}
+    }
+
+    impl Render for DuplicateEventApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            let first = cx.listener(Self::first);
+            let second = cx.listener(Self::second);
+
+            div().id("control").on(first).on(second)
+        }
+    }
+
+    #[test]
+    fn element_can_bind_multiple_handlers_for_same_event() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| DuplicateEventApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        let root = runtime.root_node().unwrap();
+        let element = runtime
+            .frame()
+            .node(root)
+            .first_child
+            .expect("entity should contain rendered root element");
+
+        assert_eq!(
+            runtime
+                .frame()
+                .event_callbacks(element, core::any::TypeId::of::<EncoderTurn>(),)
+                .count(),
+            2,
+        );
     }
 }
