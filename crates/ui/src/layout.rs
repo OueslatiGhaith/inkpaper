@@ -14,6 +14,13 @@ enum Axis {
     Vertical,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct FlexTotals {
+    base_size: Pixels,
+    grow_weight: u64,
+    shrink_factor: u64,
+}
+
 fn main_size(size: Size, axis: Axis) -> Pixels {
     match axis {
         Axis::Horizontal => size.width,
@@ -366,6 +373,12 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let available_main = main_size(viewport_content_size, axis);
         let available_cross = cross_size(viewport_content_size, axis);
 
+        let totals = if scrolling_main {
+            None
+        } else {
+            Some(self.flex_totals(node, axis, child_available, text_measurer))
+        };
+
         let mut occupied_main = total_gap;
         let mut grow_before = 0u64;
         let mut shrink_before = 0u64;
@@ -374,7 +387,6 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         while let Some(child) = current {
             let margin = self.node_margin(child);
             let target_main = self.flex_item_main_size(
-                node,
                 child,
                 axis,
                 child_available,
@@ -382,7 +394,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 total_gap,
                 grow_before,
                 shrink_before,
-                scrolling_main,
+                totals,
                 text_measurer,
             );
 
@@ -434,7 +446,6 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             let next = self.node(child).next_sibling;
             let margin = self.node_margin(child);
             let target_main = self.flex_item_main_size(
-                node,
                 child,
                 axis,
                 child_available,
@@ -442,7 +453,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 total_gap,
                 grow_before,
                 shrink_before,
-                scrolling_main,
+                totals,
                 text_measurer,
             );
 
@@ -603,65 +614,45 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.clamp_flex_main_size(node, axis, base)
     }
 
-    fn total_flex_grow_weight(&self, parent: NodeId, axis: Axis) -> u64 {
-        let mut total = 0u64;
-        let mut current = self.node(parent).first_child;
-
-        while let Some(child) = current {
-            count_metric!(self, flex_sibling_visits);
-            total = total.saturating_add(self.node_flex_grow(child, axis) as u64);
-            current = self.node(child).next_sibling;
-        }
-
-        total
-    }
-
-    fn total_flex_shrink_factor(
+    fn flex_totals(
         &self,
         parent: NodeId,
         axis: Axis,
         available: Size,
         text_measurer: &dyn TextMeasurer,
-    ) -> u64 {
-        let mut total = 0u64;
+    ) -> FlexTotals {
+        let mut base_size = px(0);
+        let mut grow_weight = 0u64;
+        let mut shrink_factor = 0u64;
+
         let mut current = self.node(parent).first_child;
 
         while let Some(child) = current {
             count_metric!(self, flex_sibling_visits);
-            let weight = self.node_flex_shrink(child, axis) as u64;
-            let base = self.flex_base_main_size(child, axis, available, text_measurer);
-            total = total.saturating_add(weight.saturating_mul(base.non_negative().get() as u64));
-            current = self.node(child).next_sibling;
-        }
 
-        total
-    }
-
-    fn total_flex_base_size(
-        &self,
-        parent: NodeId,
-        axis: Axis,
-        available: Size,
-        text_measurer: &dyn TextMeasurer,
-    ) -> Pixels {
-        let mut total = px(0);
-        let mut current = self.node(parent).first_child;
-
-        while let Some(child) = current {
-            count_metric!(self, flex_sibling_visits);
             let margin = self.node_margin(child);
             let base = self.flex_base_main_size(child, axis, available, text_measurer);
-            total += base + main_margin_total(margin, axis);
+            let grow = self.node_flex_grow(child, axis) as u64;
+            let shrink = self.node_flex_shrink(child, axis) as u64;
+
+            base_size += base + main_margin_total(margin, axis);
+            grow_weight = grow_weight.saturating_add(grow);
+            shrink_factor = shrink_factor
+                .saturating_add(shrink.saturating_mul(base.non_negative().get() as u64));
+
             current = self.node(child).next_sibling;
         }
 
-        total
+        FlexTotals {
+            base_size,
+            grow_weight,
+            shrink_factor,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn flex_item_main_size(
         &self,
-        parent: NodeId,
         child: NodeId,
         axis: Axis,
         layout_available: Size,
@@ -669,27 +660,25 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         total_gap: Pixels,
         grow_before: u64,
         shrink_before: u64,
-        scrolling_main: bool,
+        totals: Option<FlexTotals>,
         text_measurer: &dyn TextMeasurer,
     ) -> Pixels {
         count_metric!(self, flex_item_main_size_calls);
         let base = self.flex_base_main_size(child, axis, layout_available, text_measurer);
-        if scrolling_main {
+        let Some(totals) = totals else {
             return base;
-        }
+        };
 
-        let total_base =
-            total_gap + self.total_flex_base_size(parent, axis, layout_available, text_measurer);
+        let total_base = total_gap + totals.base_size;
 
         if total_base < viewport_main {
             let free = viewport_main - total_base;
             let weight = self.node_flex_grow(child, axis) as u64;
-            let total_weight = self.total_flex_grow_weight(parent, axis);
             let added = weighted_share(
                 free,
                 grow_before,
                 grow_before.saturating_add(weight),
-                total_weight,
+                totals.grow_weight,
             );
 
             return self.clamp_flex_main_size(child, axis, base + added);
@@ -699,13 +688,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             let deficit = total_base - viewport_main;
             let shrink_weight = self.node_flex_shrink(child, axis) as u64;
             let shrink_factor = shrink_weight.saturating_mul(base.non_negative().get() as u64);
-            let total_factor =
-                self.total_flex_shrink_factor(parent, axis, layout_available, text_measurer);
             let removed = weighted_share(
                 deficit,
                 shrink_before,
                 shrink_before.saturating_add(shrink_factor),
-                total_factor,
+                totals.shrink_factor,
             );
 
             return self.clamp_flex_main_size(child, axis, base - removed);

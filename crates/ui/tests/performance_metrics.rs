@@ -106,3 +106,45 @@ fn performance_metrics_track_rebuild_layout_and_paint_work() {
     assert_eq!(paint.visible_nodes, 3,);
     assert_eq!(paint.nodes_painted, 2,);
 }
+
+struct FlexListApp;
+
+impl Render for FlexListApp {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        div()
+            .w(px(320))
+            .h(px(64))
+            .flex()
+            .flex_row()
+            .children((0..16).map(|_| {
+                div()
+                    .w(px(24))
+                    .h_full()
+                    .flex_basis(px(24))
+                    .flex_grow(1)
+                    .flex_shrink(1)
+            }))
+    }
+}
+
+#[test]
+fn flex_layout_scans_siblings_once_per_container() {
+    const ITEMS: u64 = 16;
+
+    let mut runtime = TestRuntime::default();
+
+    let app = runtime.create(|_| FlexListApp).unwrap();
+
+    let painter = TestPainter;
+
+    runtime.rebuild(app).unwrap();
+    runtime.reset_performance_metrics();
+    runtime
+        .layout(Size::new(px(320), px(64)), &painter)
+        .unwrap();
+
+    let metrics = runtime.performance_metrics();
+
+    assert_eq!(metrics.flex_sibling_visits, ITEMS,);
+    assert_eq!(metrics.flex_item_main_size_calls, ITEMS * 2,);
+}
