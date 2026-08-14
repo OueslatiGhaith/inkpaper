@@ -1,6 +1,6 @@
 use crate::{
     ActivateEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
-    MountCx, MountError, NodeId, OnEvent, ParentElement, Style, StylePatch, Styled,
+    MountCx, MountError, NodeId, OnEvent, ParentElement, RenderOnce, Style, StylePatch, Styled,
     scroll::ScrollAxes,
 };
 
@@ -41,6 +41,8 @@ pub trait InteractiveElement: Element + Sized {
         Stateful::new(self, id.into_element_id())
     }
 }
+
+impl<T> InteractiveElement for T where T: RenderOnce {}
 
 impl<E> Styled for Stateful<E>
 where

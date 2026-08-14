@@ -68,7 +68,7 @@ pub mod prelude {
         ActivateEvent, CanvasPainter, Color, ComponentSlot, Context, EmptySlot, Entity,
         EventTarget, FontId, Image, ImageFit, ImageId, ImageSource, InteractiveElement,
         IntoElement, Invalidation, Listener, Offset, OnEvent, ParentElement, Pixels, Point, Rect,
-        Render, RenderOnce, Runtime, Size, StatefulInteractiveElementExt, Styled, TextAlign,
+        Render, RenderOnce, Runtime, Size, StatefulInteractiveElementExt, Style, Styled, TextAlign,
         TextStyled, TextWrap, canvas::canvas, div::div, image::image, px, text,
     };
 }
