@@ -110,6 +110,14 @@ fn performance_metrics_track_rebuild_layout_and_paint_work() {
 
     let paint = runtime.performance_metrics();
 
+    assert_eq!(paint.visual_traversal_passes, 1,);
+    assert_eq!(paint.visual_traversal_nodes, 3,);
+    assert_eq!(paint.visual_context_derivations, 2,);
+    assert_eq!(paint.visual_clip_intersections, 0,);
+    assert_eq!(paint.visual_ancestor_pushes, 2,);
+    assert_eq!(paint.visual_ancestor_pops, 2,);
+    assert_eq!(paint.visual_ancestor_depth_peak, 2,);
+    assert_eq!(paint.visual_bounds_ancestor_visits, 0,);
     assert_eq!(paint.visual_nodes_visited, 3,);
     assert_eq!(paint.visible_nodes, 3,);
     assert_eq!(paint.nodes_painted, 2,);

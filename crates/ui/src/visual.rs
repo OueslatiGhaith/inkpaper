@@ -1,6 +1,6 @@
 use heapless::Vec;
 
-use crate::{FrameArena, NodeId, Offset, Point, Rect, px};
+use crate::{FrameArena, NodeId, Offset, Point, Rect, count_metric, px};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClipRegion {
@@ -114,6 +114,8 @@ pub(crate) struct VisualTraversal<'a, const NODES: usize, const TEXT_BYTES: usiz
 
 impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES, TEXT_BYTES> {
     pub(crate) fn new(frame: &'a FrameArena<NODES, TEXT_BYTES>, root: NodeId) -> Self {
+        count_metric!(frame, visual_traversal_passes);
+
         Self {
             frame,
             current: Some((root, VisualContext::ROOT)),
@@ -126,6 +128,14 @@ impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES,
             self.ancestors
                 .push((node, context))
                 .expect("visual traversal depth exceeds frame capacity");
+
+            count_metric!(self.frame, visual_ancestor_pushes);
+            #[cfg(feature = "metrics")]
+            self.frame.metrics.increment(|metrics| {
+                let depth = self.ancestors.len() as u64;
+                metrics.visual_ancestor_depth_peak = metrics.visual_ancestor_depth_peak.max(depth);
+            });
+
             let child_context = self.frame.child_visual_context(node, context);
             self.current = Some((child, child_context));
             return;
@@ -144,6 +154,8 @@ impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES,
                 return;
             };
 
+            count_metric!(self.frame, visual_ancestor_pops);
+
             cursor = parent;
             cursor_context = parent_context;
         }
@@ -157,6 +169,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Iterator
 
     fn next(&mut self) -> Option<Self::Item> {
         let (node, context) = self.current?;
+        count_metric!(self.frame, visual_traversal_nodes);
+
         let bounds = context.translate_rect(self.frame.node(node).layout.bounds);
         self.advance(node, context);
 
@@ -178,8 +192,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         parent: NodeId,
         parent_context: VisualContext,
     ) -> VisualContext {
+        count_metric!(self, visual_context_derivations);
         let mut clip = parent_context.clip;
         if self.node_clips_children(parent) {
+            count_metric!(self, visual_clip_intersections);
             let parent_clip = self.children_clip_bounds(parent, parent_context);
             clip = clip.intersect(parent_clip);
         }
@@ -215,6 +231,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = self.node(node).parent;
 
         while let Some(parent) = current {
+            count_metric!(self, visual_bounds_ancestor_visits);
             translation -= self.node(parent).interaction.scroll_offset;
             current = self.node(parent).parent;
         }

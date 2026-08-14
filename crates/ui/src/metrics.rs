@@ -15,6 +15,15 @@ pub struct PerformanceMetrics {
     pub flex_sibling_visits: u64,
     pub nodes_laid_out: u64,
 
+    pub visual_traversal_passes: u64,
+    pub visual_traversal_nodes: u64,
+    pub visual_context_derivations: u64,
+    pub visual_clip_intersections: u64,
+    pub visual_ancestor_pushes: u64,
+    pub visual_ancestor_pops: u64,
+    pub visual_ancestor_depth_peak: u64,
+    pub visual_bounds_ancestor_visits: u64,
+
     pub visual_nodes_visited: u64,
     pub visible_nodes: u64,
     pub nodes_painted: u64,

@@ -15,6 +15,7 @@ pub const NESTED_SIZES: &[usize] = &[4, 16, 64, 256];
 pub const TEXT_HEAVY_SIZES: &[usize] = &[8, 32, 128, 512];
 pub const SCROLL_LIST_SIZES: &[usize] = &[8, 32, 128, 512];
 pub const MIXED_SCREEN_SIZES: &[usize] = &[8, 32, 128];
+pub const DEEP_CHAIN_SIZES: &[usize] = &[8, 32, 128, 512];
 
 pub const REPRESENTATIVE_CASES: &[(BenchScenario, &[usize])] = &[
     (BenchScenario::FlexRow, FLEX_ROW_SIZES),
@@ -28,6 +29,7 @@ pub const ALL_CASES: &[(BenchScenario, &[usize])] = &[
     (BenchScenario::FlatList, FLAT_LIST_SIZES),
     (BenchScenario::FlexRow, FLEX_ROW_SIZES),
     (BenchScenario::Nested, NESTED_SIZES),
+    (BenchScenario::DeepChain, DEEP_CHAIN_SIZES),
     (BenchScenario::TextHeavy, TEXT_HEAVY_SIZES),
     (BenchScenario::ScrollList, SCROLL_LIST_SIZES),
     (BenchScenario::MixedScreen, MIXED_SCREEN_SIZES),
@@ -48,6 +50,7 @@ pub enum BenchScenario {
     FlatList,
     FlexRow,
     Nested,
+    DeepChain,
     TextHeavy,
     ScrollList,
     MixedScreen,
@@ -59,6 +62,7 @@ impl BenchScenario {
             Self::FlatList => "flat_list",
             Self::FlexRow => "flex_row",
             Self::Nested => "nested",
+            Self::DeepChain => "deep_chain",
             Self::TextHeavy => "text_heavy",
             Self::ScrollList => "scroll_list",
             Self::MixedScreen => "mixed_screen",
@@ -183,6 +187,7 @@ impl Element for BenchScene {
             BenchScenario::FlatList => flat_list(self.size).mount(cx),
             BenchScenario::FlexRow => flex_row(self.size).mount(cx),
             BenchScenario::Nested => nested(self.size).mount(cx),
+            BenchScenario::DeepChain => DeepChain { depth: self.size }.mount(cx),
             BenchScenario::TextHeavy => text_heavy(self.size).mount(cx),
             BenchScenario::ScrollList => scroll_list(self.size).mount(cx),
             BenchScenario::MixedScreen => mixed_screen(self.size).mount(cx),
@@ -229,6 +234,25 @@ fn nested_item() -> impl Element {
             ),
         ),
     )
+}
+
+struct DeepChain {
+    depth: usize,
+}
+
+impl Element for DeepChain {
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+        if self.depth == 0 {
+            return div().w_full().h(px(1)).mount(cx);
+        }
+
+        div()
+            .w_full()
+            .child(DeepChain {
+                depth: self.depth - 1,
+            })
+            .mount(cx)
+    }
 }
 
 fn text_heavy(rows: usize) -> impl Element {

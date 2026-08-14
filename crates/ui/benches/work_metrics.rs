@@ -15,6 +15,14 @@ flex_base_calls,\
 flex_item_calls,\
 flex_sibling_visits,\
 nodes_laid_out,\
+visual_traversal_passes,\
+visual_traversal_nodes,\
+visual_context_derivations,\
+visual_clip_intersections,\
+visual_ancestor_pushes,\
+visual_ancestor_pops,\
+visual_ancestor_depth_peak,\
+visual_bounds_ancestor_visits,\
 visual_nodes_visited,\
 visible_nodes,\
 nodes_painted"
@@ -43,7 +51,7 @@ nodes_painted"
             let paint = runtime.performance_metrics();
 
             println!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 scenario.name(),
                 size,
                 rebuild.entity_render_calls,
@@ -56,6 +64,14 @@ nodes_painted"
                 layout.flex_item_main_size_calls,
                 layout.flex_sibling_visits,
                 layout.nodes_laid_out,
+                paint.visual_traversal_passes,
+                paint.visual_traversal_nodes,
+                paint.visual_context_derivations,
+                paint.visual_clip_intersections,
+                paint.visual_ancestor_pushes,
+                paint.visual_ancestor_pops,
+                paint.visual_ancestor_depth_peak,
+                paint.visual_bounds_ancestor_visits,
                 paint.visual_nodes_visited,
                 paint.visible_nodes,
                 paint.nodes_painted,
