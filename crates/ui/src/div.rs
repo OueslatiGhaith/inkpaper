@@ -1,6 +1,5 @@
 use crate::{
-    Children, Element, InteractiveElement, MountCx, MountError, NoChildren, NodeId, ParentElement,
-    Push, Style, Styled,
+    Children, Element, MountCx, MountError, NoChildren, NodeId, ParentElement, Push, Style, Styled,
 };
 
 pub struct Div<C = NoChildren> {
@@ -52,5 +51,3 @@ impl<C> ParentElement for Div<C> {
         }
     }
 }
-
-impl<C> InteractiveElement for Div<C> where C: Children {}

@@ -1,6 +1,6 @@
 use crate::{
-    Element, InteractiveElement, IntoElement, MountCx, MountError, NodeId, ParentElement,
-    StatefulInteractiveElement, StatefulInteractivity, Style, Styled,
+    Element, IntoElement, MountCx, MountError, NodeId, ParentElement, StatefulInteractiveElement,
+    StatefulInteractivity, Style, Styled,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,13 +54,6 @@ where
             Either::Right(right) => Either::Right(right.child(child)),
         }
     }
-}
-
-impl<L, R> InteractiveElement for Either<L, R>
-where
-    L: InteractiveElement,
-    R: InteractiveElement,
-{
 }
 
 impl<L, R> StatefulInteractiveElement for Either<L, R>

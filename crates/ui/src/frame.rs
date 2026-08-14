@@ -118,14 +118,13 @@ pub(crate) struct NodeInteraction {
     pub(crate) scroll_offset: Offset,
 }
 
-impl From<StatefulInteractivity> for NodeInteraction {
-    fn from(value: StatefulInteractivity) -> Self {
-        Self {
-            focusable: value.focusable,
-            focused_style: value.focused_style,
-            pressed_style: value.pressed_style,
-            scroll_axes: value.scroll_axes,
-            scroll_offset: Offset::ZERO,
+impl NodeInteraction {
+    fn apply(&mut self, interaction: StatefulInteractivity) {
+        self.focusable |= interaction.focusable;
+        self.focused_style = self.focused_style.merge(interaction.focused_style);
+        self.pressed_style = self.pressed_style.merge(interaction.pressed_style);
+        if interaction.scroll_axes.any() {
+            self.scroll_axes = interaction.scroll_axes;
         }
     }
 }
@@ -523,10 +522,12 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
         self.nodes[parent_idx].last_child = Some(child);
     }
 
-    fn make_stateful(&mut self, node: NodeId, id: ElementId, interaction: NodeInteraction) {
-        let node = &mut self.nodes[node.index()];
-        node.element_id = Some(id);
-        node.interaction = interaction;
+    fn identify(&mut self, node: NodeId, id: ElementId) {
+        self.nodes[node.index()].element_id = Some(id);
+    }
+
+    fn apply_interactivity(&mut self, node: NodeId, interactivity: StatefulInteractivity) {
+        self.nodes[node.index()].interaction.apply(interactivity);
     }
 
     fn bind_event(
@@ -550,7 +551,8 @@ pub(crate) trait FrameStore {
         render: EntityRenderFn,
     ) -> Result<NodeId, MountError>;
     fn append_child(&mut self, parent: NodeId, child: NodeId);
-    fn make_stateful(&mut self, node: NodeId, id: ElementId, interaction: NodeInteraction);
+    fn identify(&mut self, node: NodeId, id: ElementId);
+    fn apply_interactivity(&mut self, node: NodeId, interactivity: StatefulInteractivity);
     fn bind_event(
         &mut self,
         node: NodeId,
@@ -606,13 +608,16 @@ impl MountCx<'_> {
         self.frame.append_child(parent, child);
     }
 
-    pub(crate) fn make_stateful(
+    pub(crate) fn identify(&mut self, node: NodeId, id: ElementId) {
+        self.frame.identify(node, id);
+    }
+
+    pub(crate) fn apply_interactivity(
         &mut self,
         node: NodeId,
-        id: ElementId,
-        interaction: NodeInteraction,
+        interactivity: StatefulInteractivity,
     ) {
-        self.frame.make_stateful(node, id, interaction);
+        self.frame.apply_interactivity(node, interactivity);
     }
 
     pub(crate) fn bind_event(

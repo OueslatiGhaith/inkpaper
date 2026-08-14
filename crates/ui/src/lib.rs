@@ -67,11 +67,10 @@ pub use units::*;
 pub mod prelude {
     // TODO: fill predlude
     pub use crate::{
-        ActivateEvent, CanvasPainter, Color, ComponentSlot, ConditionalElementExt, Context,
-        EmptySlot, Entity, EventTarget, FontId, Image, ImageFit, ImageId, ImageSource,
-        InteractiveElement, IntoElement, Invalidation, Listener, Offset, OnEvent, ParentElement,
-        Pixels, Point, Rect, Render, RenderOnce, Runtime, Size, StatefulInteractiveElementExt,
-        Style, Styled, TextAlign, TextStyled, TextWrap, canvas::canvas, div::div, image::image, px,
-        text,
+        ActivateEvent, CanvasPainter, Color, ComponentSlot, ConditionalElementExt, Context, Either,
+        EmptySlot, Entity, EventTarget, FontId, IdentifiableElementExt, Image, ImageFit, ImageId,
+        ImageSource, IntoElement, Invalidation, Listener, Offset, OnEvent, ParentElement, Pixels,
+        Point, Rect, Render, RenderOnce, Runtime, Size, StatefulInteractiveElementExt, Style,
+        Styled, TextAlign, TextStyled, TextWrap, canvas::canvas, div::div, image::image, px, text,
     };
 }

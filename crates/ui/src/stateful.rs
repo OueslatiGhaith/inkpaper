@@ -1,6 +1,6 @@
 use crate::{
     ActivateEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
-    MountCx, MountError, NodeId, OnEvent, ParentElement, RenderOnce, Style, StylePatch, Styled,
+    MountCx, MountError, NodeId, OnEvent, ParentElement, Style, StylePatch, Styled,
     scroll::ScrollAxes,
 };
 
@@ -30,19 +30,21 @@ where
 {
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
         let node = self.element.mount(cx)?;
-        cx.make_stateful(node, self.id, self.stateful_interactivity.into());
+
+        cx.identify(node, self.id);
+        cx.apply_interactivity(node, self.stateful_interactivity);
 
         Ok(node)
     }
 }
 
-pub trait InteractiveElement: Element + Sized {
+pub trait IdentifiableElementExt: Element {
     fn id(self, id: impl IntoElementId) -> Stateful<Self> {
         Stateful::new(self, id.into_element_id())
     }
 }
 
-impl<T> InteractiveElement for T where T: RenderOnce {}
+impl<E> IdentifiableElementExt for E where E: Element {}
 
 impl<E> Styled for Stateful<E>
 where
@@ -88,7 +90,7 @@ pub trait StatefulInteractiveElement: Element + Sized {
 
 impl<E> StatefulInteractiveElement for Stateful<E>
 where
-    E: InteractiveElement,
+    E: Element,
 {
     fn stateful_interactivity_mut(&mut self) -> &mut StatefulInteractivity {
         &mut self.stateful_interactivity
