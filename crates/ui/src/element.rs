@@ -66,6 +66,11 @@ pub struct Push<C, E> {
     pub element: E,
 }
 
+pub struct PushMany<C, I> {
+    pub previous: C,
+    pub elements: I,
+}
+
 pub trait Children {
     fn mount_children(self, parent: NodeId, cx: &mut MountCx<'_>) -> Result<(), MountError>;
 }
@@ -93,12 +98,41 @@ where
     }
 }
 
+impl<C, I> Children for PushMany<C, I>
+where
+    C: Children,
+    I: IntoIterator,
+    I::Item: IntoElement,
+{
+    fn mount_children(self, parent: NodeId, cx: &mut MountCx<'_>) -> Result<(), MountError> {
+        self.previous.mount_children(parent, cx)?;
+
+        for element in self.elements {
+            let child = element.into_element();
+            let child = child.mount(cx)?;
+            cx.append_child(parent, child);
+        }
+
+        Ok(())
+    }
+}
+
 pub trait ParentElement: Sized {
     type WithChild<E>: ParentElement
     where
         E: IntoElement;
 
+    type WithChildren<I>: ParentElement
+    where
+        I: IntoIterator,
+        I::Item: IntoElement;
+
     fn child<E>(self, child: E) -> Self::WithChild<E>
     where
         E: IntoElement;
+
+    fn children<I>(self, children: I) -> Self::WithChildren<I>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement;
 }

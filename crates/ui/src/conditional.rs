@@ -45,6 +45,12 @@ where
     where
         E: IntoElement;
 
+    type WithChildren<I>
+        = Either<L::WithChildren<I>, R::WithChildren<I>>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement;
+
     fn child<E>(self, child: E) -> Self::WithChild<E>
     where
         E: IntoElement,
@@ -52,6 +58,17 @@ where
         match self {
             Either::Left(left) => Either::Left(left.child(child)),
             Either::Right(right) => Either::Right(right.child(child)),
+        }
+    }
+
+    fn children<I>(self, children: I) -> Self::WithChildren<I>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement,
+    {
+        match self {
+            Either::Left(left) => Either::Left(left.children(children)),
+            Either::Right(right) => Either::Right(right.children(children)),
         }
     }
 }

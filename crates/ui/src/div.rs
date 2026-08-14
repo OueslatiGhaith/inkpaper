@@ -1,5 +1,6 @@
 use crate::{
-    Children, Element, MountCx, MountError, NoChildren, NodeId, ParentElement, Push, Style, Styled,
+    Children, Element, IntoElement, MountCx, MountError, NoChildren, NodeId, ParentElement, Push,
+    PushMany, Style, Styled,
 };
 
 pub struct Div<C = NoChildren> {
@@ -36,7 +37,13 @@ impl<C> ParentElement for Div<C> {
     type WithChild<E>
         = Div<Push<C, E>>
     where
-        E: crate::IntoElement;
+        E: IntoElement;
+
+    type WithChildren<I>
+        = Div<PushMany<C, I>>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement;
 
     fn child<E>(self, child: E) -> Self::WithChild<E>
     where
@@ -47,6 +54,20 @@ impl<C> ParentElement for Div<C> {
             children: Push {
                 previous: self.children,
                 element: child,
+            },
+        }
+    }
+
+    fn children<I>(self, children: I) -> Self::WithChildren<I>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement,
+    {
+        Div {
+            style: self.style,
+            children: PushMany {
+                previous: self.children,
+                elements: children,
             },
         }
     }

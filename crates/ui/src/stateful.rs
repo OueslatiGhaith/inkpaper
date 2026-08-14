@@ -64,6 +64,12 @@ where
     where
         C: IntoElement;
 
+    type WithChildren<I>
+        = Stateful<E::WithChildren<I>>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement;
+
     fn child<C>(self, child: C) -> Self::WithChild<C>
     where
         C: IntoElement,
@@ -71,6 +77,18 @@ where
         Stateful {
             id: self.id,
             element: self.element.child(child),
+            stateful_interactivity: self.stateful_interactivity,
+        }
+    }
+
+    fn children<I>(self, children: I) -> Self::WithChildren<I>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement,
+    {
+        Stateful {
+            id: self.id,
+            element: self.element.children(children),
             stateful_interactivity: self.stateful_interactivity,
         }
     }

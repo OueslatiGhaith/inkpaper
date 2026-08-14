@@ -88,12 +88,29 @@ where
     where
         C: IntoElement;
 
+    type WithChildren<I>
+        = OnEvent<E::WithChildren<I>, Event>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement;
+
     fn child<C>(self, child: C) -> Self::WithChild<C>
     where
         C: IntoElement,
     {
         OnEvent {
             element: self.element.child(child),
+            listener: self.listener,
+        }
+    }
+
+    fn children<I>(self, children: I) -> Self::WithChildren<I>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement,
+    {
+        OnEvent {
+            element: self.element.children(children),
             listener: self.listener,
         }
     }
