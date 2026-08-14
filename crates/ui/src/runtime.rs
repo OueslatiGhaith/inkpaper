@@ -1,5 +1,7 @@
 use core::{any::TypeId, cell::Cell};
 
+#[cfg(feature = "metrics")]
+use crate::PerformanceMetrics;
 use crate::{
     ActivateEvent, Context, Entity, EntityAllocError, EntityArena, EventTarget, FrameArena,
     Invalidation, Listener, MountError, NodeId, Offset, Painter, Point, Render, Size, TextMeasurer,
@@ -641,5 +643,15 @@ impl<
         };
 
         self.dispatch_to_node(node, event)
+    }
+
+    #[cfg(feature = "metrics")]
+    pub fn reset_performance_metrics(&self) {
+        self.frame.reset_performance_metrics();
+    }
+
+    #[cfg(feature = "metrics")]
+    pub fn performance_metrics(&self) -> PerformanceMetrics {
+        self.frame.performance_metrics()
     }
 }

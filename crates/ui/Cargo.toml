@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default = ["embedded-graphics"]
 embedded-graphics = ["dep:embedded-graphics"]
+metrics = []
 
 [dependencies]
 embedded-graphics = { version = "0.8.2", optional = true }
@@ -18,3 +19,8 @@ embedded-graphics-simulator = "0.8.0"
 [[bench]]
 name = "rendering"
 harness = false
+
+[[bench]]
+name = "work_metrics"
+harness = false
+required-features = ["metrics"]

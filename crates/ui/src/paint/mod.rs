@@ -1,7 +1,7 @@
 use crate::{
     CanvasDraw, CanvasDrawFn, CanvasPainter, Color, FrameArena, ImageFit, ImageSource, NodeId,
     NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer, callback_store::CallbackStore,
-    entity_store::EntityStore, visual::VisualNode,
+    count_metric, entity_store::EntityStore, visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,10 +67,12 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     where
         P: Painter,
     {
+        count_metric!(self, visual_nodes_visited);
         if !visual.is_visible() {
             return Ok(());
         }
 
+        count_metric!(self, visible_nodes);
         let node_id = visual.node();
         let node = self.node(node_id);
         let bounds = visual.bounds();
@@ -78,6 +80,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         match node.kind {
             NodeKind::Div { .. } => {
+                count_metric!(self, nodes_painted);
                 let style = node.style().expect("div node must have style");
                 let border = match (style.border_width.is_positive(), style.border_color) {
                     (true, Some(color)) => Some(BorderPaint {
@@ -98,9 +101,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 )
             }
             NodeKind::Text { text } => {
+                count_metric!(self, nodes_painted);
                 painter.draw_text(self.text(text), bounds, node.effective_text_style, clip)
             }
             NodeKind::Canvas { draw, .. } => {
+                count_metric!(self, nodes_painted);
                 let mut invoke =
                     |local_bounds: Rect, canvas_painter: &mut dyn CanvasPainter| match draw {
                         CanvasDraw::Static(draw) => draw(local_bounds, canvas_painter),
@@ -130,6 +135,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 painter.draw_canvas(bounds, clip, &mut invoke)
             }
             NodeKind::Image { source, style } => {
+                count_metric!(self, nodes_painted);
                 painter.draw_image(source, bounds, style.fit, clip)
             }
             NodeKind::Entity { .. } => Ok(()),

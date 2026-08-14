@@ -8,10 +8,13 @@ use crate::{
     Rect, ResolvedTextStyle, StatefulInteractivity, Style, StylePatch, TextStyle,
     callback::CallbackId,
     callback_store::CallbackStore,
+    count_metric,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
     scroll::{ScrollAxes, ScrollStateTable},
 };
+#[cfg(feature = "metrics")]
+use crate::{PerformanceMetrics, PerformanceMetricsCell};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(u16);
@@ -148,6 +151,8 @@ pub(crate) struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
     pub(crate) nodes: Vec<Node, NODES>,
     text: Vec<u8, TEXT_BYTES>,
     pub(crate) event_bindings: Vec<EventBinding, NODES>,
+    #[cfg(feature = "metrics")]
+    pub(crate) metrics: PerformanceMetricsCell,
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, TEXT_BYTES> {
@@ -156,6 +161,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, 
             nodes: Vec::new(),
             text: Vec::new(),
             event_bindings: Vec::new(),
+            #[cfg(feature = "metrics")]
+            metrics: PerformanceMetricsCell::default(),
         }
     }
 }
@@ -192,6 +199,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.nodes
             .push(Node::new(kind))
             .map_err(|_| MountError::NodesFull)?;
+
+        count_metric!(self, nodes_mounted);
 
         Ok(id)
     }
@@ -252,6 +261,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             };
 
             if let Some((entity, render)) = pending {
+                count_metric!(self, entity_render_calls);
                 let entity_node = NodeId::new(index as u16);
                 let root = render(entity, entities, callbacks, notified, self)?;
                 self.append_child(entity_node, root);
@@ -449,6 +459,16 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             self.node(node).first_event_binding,
             event_type,
         )
+    }
+
+    #[cfg(feature = "metrics")]
+    pub(crate) fn reset_performance_metrics(&self) {
+        self.metrics.reset();
+    }
+
+    #[cfg(feature = "metrics")]
+    pub(crate) fn performance_metrics(&self) -> PerformanceMetrics {
+        self.metrics.snapshot()
     }
 }
 

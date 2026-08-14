@@ -1,7 +1,7 @@
 use crate::{
     AlignItems, CanvasStyle, Display, Edges, FlexBasis, FlexDirection, FrameArena, ImageSource,
     ImageStyle, JustifyContent, Length, NodeId, NodeKind, Offset, Pixels, Point, Rect,
-    ResolvedTextStyle, Size, Style, px,
+    ResolvedTextStyle, Size, Style, count_metric, px,
 };
 
 pub trait TextMeasurer {
@@ -208,8 +208,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         available: Size,
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
+        count_metric!(self, measure_node_calls);
         match self.node(node).kind {
             NodeKind::Text { text } => {
+                count_metric!(self, text_measurements);
                 let measured = text_measurer.measure_text(
                     self.text(text),
                     self.node(node).effective_text_style,
@@ -582,6 +584,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         available: Size,
         text_measurer: &dyn TextMeasurer,
     ) -> Pixels {
+        count_metric!(self, flex_base_main_size_calls);
         let style = self.node_flex_style(node);
         let requested = style.map(|style| requested_length(style, axis));
         let basis = style.map(|style| style.flex_basis);
@@ -605,6 +608,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = self.node(parent).first_child;
 
         while let Some(child) = current {
+            count_metric!(self, flex_sibling_visits);
             total = total.saturating_add(self.node_flex_grow(child, axis) as u64);
             current = self.node(child).next_sibling;
         }
@@ -623,6 +627,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = self.node(parent).first_child;
 
         while let Some(child) = current {
+            count_metric!(self, flex_sibling_visits);
             let weight = self.node_flex_shrink(child, axis) as u64;
             let base = self.flex_base_main_size(child, axis, available, text_measurer);
             total = total.saturating_add(weight.saturating_mul(base.non_negative().get() as u64));
@@ -643,6 +648,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = self.node(parent).first_child;
 
         while let Some(child) = current {
+            count_metric!(self, flex_sibling_visits);
             let margin = self.node_margin(child);
             let base = self.flex_base_main_size(child, axis, available, text_measurer);
             total += base + main_margin_total(margin, axis);
@@ -666,6 +672,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         scrolling_main: bool,
         text_measurer: &dyn TextMeasurer,
     ) -> Pixels {
+        count_metric!(self, flex_item_main_size_calls);
         let base = self.flex_base_main_size(child, axis, layout_available, text_measurer);
         if scrolling_main {
             return base;
@@ -714,6 +721,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         size: Size,
         text_measurer: &dyn TextMeasurer,
     ) {
+        count_metric!(self, nodes_laid_out);
         self.node_mut(node).layout.bounds = Rect::new(origin, size);
         match self.node(node).kind {
             NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => {}
