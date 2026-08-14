@@ -4,9 +4,8 @@ use support::{ALL_CASES, VIEWPORT, setup};
 
 fn main() {
     println!(
-        "rows,entity_renders,nodes_mounted,measure_calls,text_measurements,flex_base_calls,\
-flex_item_calls,flex_sibling_visits,nodes_laid_out,visual_nodes_visited,visible_nodes,\
-nodes_painted"
+        "scenario,size,entity_renders,nodes_mounted,measure_calls,text_measurements,flex_base_calls,\
+flex_item_calls,flex_sibling_visits,nodes_laid_out,visual_nodes_visited,visible_nodes,nodes_painted"
     );
 
     for &(scenario, sizes) in ALL_CASES {

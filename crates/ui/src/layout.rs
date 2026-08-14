@@ -386,22 +386,21 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         while let Some(child) = current {
             let margin = self.node_margin(child);
+            let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
             let target_main = self.flex_item_main_size(
                 child,
                 axis,
-                child_available,
+                base,
                 available_main,
                 total_gap,
                 grow_before,
                 shrink_before,
                 totals,
-                text_measurer,
             );
 
             occupied_main += target_main + main_margin_total(margin, axis);
             grow_before = grow_before.saturating_add(self.node_flex_grow(child, axis) as u64);
 
-            let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
             let shrink_factor = (self.node_flex_shrink(child, axis) as u64)
                 .saturating_mul(base.non_negative().get() as u64);
 
@@ -445,16 +444,16 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         while let Some(child) = current {
             let next = self.node(child).next_sibling;
             let margin = self.node_margin(child);
+            let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
             let target_main = self.flex_item_main_size(
                 child,
                 axis,
-                child_available,
+                base,
                 available_main,
                 total_gap,
                 grow_before,
                 shrink_before,
                 totals,
-                text_measurer,
             );
 
             let constraint = child_constraint(child_available, margin, axis, Some(target_main));
@@ -485,18 +484,16 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 cursor += gap + between_extra;
                 if between_remainder.is_positive() {
                     cursor += px(1);
-                    between_remainder -= px(1)
+                    between_remainder -= px(1);
                 }
             }
 
             grow_before = grow_before.saturating_add(self.node_flex_grow(child, axis) as u64);
 
-            let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
             let shrink_factor = (self.node_flex_shrink(child, axis) as u64)
                 .saturating_mul(base.non_negative().get() as u64);
 
             shrink_before = shrink_before.saturating_add(shrink_factor);
-            // child_index += 1; // TODO: check
             current = next;
         }
     }
@@ -655,16 +652,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         &self,
         child: NodeId,
         axis: Axis,
-        layout_available: Size,
+        base: Pixels,
         viewport_main: Pixels,
         total_gap: Pixels,
         grow_before: u64,
         shrink_before: u64,
         totals: Option<FlexTotals>,
-        text_measurer: &dyn TextMeasurer,
     ) -> Pixels {
         count_metric!(self, flex_item_main_size_calls);
-        let base = self.flex_base_main_size(child, axis, layout_available, text_measurer);
         let Some(totals) = totals else {
             return base;
         };
