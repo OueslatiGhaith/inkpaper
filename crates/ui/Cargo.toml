@@ -12,4 +12,9 @@ embedded-graphics = { version = "0.8.2", optional = true }
 heapless = "0.9.3"
 
 [dev-dependencies]
+criterion = "0.8.2"
 embedded-graphics-simulator = "0.8.0"
+
+[[bench]]
+name = "rendering"
+harness = false
