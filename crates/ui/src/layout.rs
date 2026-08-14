@@ -210,13 +210,21 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     fn measure_node(
-        &self,
+        &mut self,
         node: NodeId,
         available: Size,
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         count_metric!(self, measure_node_calls);
-        match self.node(node).kind {
+
+        if let Some(measured) = self.cached_measurement(node, available) {
+            count_metric!(self, measurement_cache_hits);
+
+            return measured;
+        }
+
+        count_metric!(self, measurement_cache_misses);
+        let measured = match self.node(node).kind {
             NodeKind::Text { text } => {
                 count_metric!(self, text_measurements);
                 let measured = text_measurer.measure_text(
@@ -246,11 +254,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 let style = self.node(node).style().expect("div node must have style");
                 self.measure_div(node, style, available, text_measurer)
             }
-        }
+        };
+
+        self.cache_measurement(node, available, measured);
+
+        measured
     }
 
     fn measure_div(
-        &self,
+        &mut self,
         node: NodeId,
         style: Style,
         available: Size,
@@ -505,6 +517,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         self.resolve_text_styles(root);
+        self.clear_measurement_caches();
         self.layout_node(root, Point::ZERO, viewport, text_measurer)
     }
 
@@ -586,7 +599,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     fn flex_base_main_size(
-        &self,
+        &mut self,
         node: NodeId,
         axis: Axis,
         available: Size,
@@ -612,7 +625,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     fn flex_totals(
-        &self,
+        &mut self,
         parent: NodeId,
         axis: Axis,
         available: Size,

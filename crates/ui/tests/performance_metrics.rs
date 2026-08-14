@@ -93,6 +93,14 @@ fn performance_metrics_track_rebuild_layout_and_paint_work() {
     let layout = runtime.performance_metrics();
 
     assert!(layout.measure_node_calls > 0);
+    assert!(layout.measurement_cache_hits > 0);
+    assert!(layout.measurement_cache_misses > 0);
+    assert_eq!(
+        layout.measure_node_calls,
+        layout
+            .measurement_cache_hits
+            .saturating_add(layout.measurement_cache_misses,),
+    );
     assert!(layout.text_measurements > 0);
     assert!(layout.flex_base_main_size_calls > 0);
     assert!(layout.nodes_laid_out > 0);

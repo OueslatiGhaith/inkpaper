@@ -7,6 +7,8 @@ pub struct PerformanceMetrics {
     pub nodes_mounted: u64,
 
     pub measure_node_calls: u64,
+    pub measurement_cache_hits: u64,
+    pub measurement_cache_misses: u64,
     pub text_measurements: u64,
     pub flex_base_main_size_calls: u64,
     pub flex_item_main_size_calls: u64,

@@ -5,7 +5,7 @@ use heapless::Vec;
 use crate::{
     CanvasDraw, CanvasStyle, Element, ElementId, EntityAccessError, EntityId, EntityRenderFn,
     EventBinding, EventBindingId, EventCallbacks, ImageSource, ImageStyle, IntoElement, Offset,
-    Rect, ResolvedTextStyle, StatefulInteractivity, Style, StylePatch, TextStyle,
+    Rect, ResolvedTextStyle, Size, StatefulInteractivity, Style, StylePatch, TextStyle,
     callback::CallbackId,
     callback_store::CallbackStore,
     count_metric,
@@ -147,10 +147,17 @@ impl From<EntityAccessError> for MountError {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MeasurementCache {
+    available: Size,
+    measured: Size,
+}
+
 pub(crate) struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
     pub(crate) nodes: Vec<Node, NODES>,
-    text: Vec<u8, TEXT_BYTES>,
     pub(crate) event_bindings: Vec<EventBinding, NODES>,
+    text: Vec<u8, TEXT_BYTES>,
+    measurement_cache: [Option<MeasurementCache>; NODES],
     #[cfg(feature = "metrics")]
     pub(crate) metrics: PerformanceMetricsCell,
 }
@@ -159,8 +166,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, 
     fn default() -> Self {
         Self {
             nodes: Vec::new(),
-            text: Vec::new(),
             event_bindings: Vec::new(),
+            text: Vec::new(),
+            measurement_cache: [None; NODES],
             #[cfg(feature = "metrics")]
             metrics: PerformanceMetricsCell::default(),
         }
@@ -469,6 +477,27 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     #[cfg(feature = "metrics")]
     pub(crate) fn performance_metrics(&self) -> PerformanceMetrics {
         self.metrics.snapshot()
+    }
+
+    pub(crate) fn cached_measurement(&self, node: NodeId, available: Size) -> Option<Size> {
+        match self.measurement_cache[node.index()] {
+            Some(cache) if cache.available == available => Some(cache.measured),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn cache_measurement(&mut self, node: NodeId, available: Size, measured: Size) {
+        self.measurement_cache[node.index()] = Some(MeasurementCache {
+            available,
+            measured,
+        });
+    }
+
+    pub(crate) fn clear_measurement_caches(&mut self) {
+        let node_count = self.nodes.len();
+        for cache in &mut self.measurement_cache[..node_count] {
+            *cache = None;
+        }
     }
 }
 
