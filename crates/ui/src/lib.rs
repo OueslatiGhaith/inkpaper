@@ -12,6 +12,7 @@ mod callback_store;
 mod canvas;
 mod color;
 mod component;
+mod conditional;
 mod context;
 mod div;
 mod element;
@@ -42,6 +43,7 @@ pub use arena::*;
 pub use canvas::*;
 pub use color::*;
 pub use component::*;
+pub use conditional::*;
 pub use context::*;
 pub use div::*;
 pub use element::*;
@@ -65,10 +67,11 @@ pub use units::*;
 pub mod prelude {
     // TODO: fill predlude
     pub use crate::{
-        ActivateEvent, CanvasPainter, Color, ComponentSlot, Context, EmptySlot, Entity,
-        EventTarget, FontId, Image, ImageFit, ImageId, ImageSource, InteractiveElement,
-        IntoElement, Invalidation, Listener, Offset, OnEvent, ParentElement, Pixels, Point, Rect,
-        Render, RenderOnce, Runtime, Size, StatefulInteractiveElementExt, Style, Styled, TextAlign,
-        TextStyled, TextWrap, canvas::canvas, div::div, image::image, px, text,
+        ActivateEvent, CanvasPainter, Color, ComponentSlot, ConditionalElementExt, Context,
+        EmptySlot, Entity, EventTarget, FontId, Image, ImageFit, ImageId, ImageSource,
+        InteractiveElement, IntoElement, Invalidation, Listener, Offset, OnEvent, ParentElement,
+        Pixels, Point, Rect, Render, RenderOnce, Runtime, Size, StatefulInteractiveElementExt,
+        Style, Styled, TextAlign, TextStyled, TextWrap, canvas::canvas, div::div, image::image, px,
+        text,
     };
 }
