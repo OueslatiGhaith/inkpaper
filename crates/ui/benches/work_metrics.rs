@@ -22,6 +22,11 @@ visual_clip_intersections,\
 visual_ancestor_pushes,\
 visual_ancestor_pops,\
 visual_ancestor_depth_peak,\
+visual_context_stack_pushes,\
+visual_context_stack_pops,\
+visual_context_stack_depth_peak,\
+visual_context_stack_overflows,\
+visual_context_recomputations,\
 visual_bounds_ancestor_visits,\
 visual_nodes_visited,\
 visible_nodes,\
@@ -51,7 +56,7 @@ nodes_painted"
             let paint = runtime.performance_metrics();
 
             println!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 scenario.name(),
                 size,
                 rebuild.entity_render_calls,
@@ -71,6 +76,11 @@ nodes_painted"
                 paint.visual_ancestor_pushes,
                 paint.visual_ancestor_pops,
                 paint.visual_ancestor_depth_peak,
+                paint.visual_context_stack_pushes,
+                paint.visual_context_stack_pops,
+                paint.visual_context_stack_depth_peak,
+                paint.visual_context_stack_overflows,
+                paint.visual_context_recomputations,
                 paint.visual_bounds_ancestor_visits,
                 paint.visual_nodes_visited,
                 paint.visible_nodes,

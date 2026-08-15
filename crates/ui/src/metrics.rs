@@ -19,9 +19,17 @@ pub struct PerformanceMetrics {
     pub visual_traversal_nodes: u64,
     pub visual_context_derivations: u64,
     pub visual_clip_intersections: u64,
+
     pub visual_ancestor_pushes: u64,
     pub visual_ancestor_pops: u64,
     pub visual_ancestor_depth_peak: u64,
+
+    pub visual_context_stack_pushes: u64,
+    pub visual_context_stack_pops: u64,
+    pub visual_context_stack_depth_peak: u64,
+    pub visual_context_stack_overflows: u64,
+    pub visual_context_recomputations: u64,
+
     pub visual_bounds_ancestor_visits: u64,
 
     pub visual_nodes_visited: u64,

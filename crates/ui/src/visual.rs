@@ -106,10 +106,24 @@ impl VisualNode {
     }
 }
 
+const VISUAL_CONTEXT_STACK_CAPACITY: usize = 16;
+
+#[derive(Debug, Clone, Copy)]
+struct VisualContinuation {
+    sibling: NodeId,
+    context: VisualContext,
+    #[cfg(feature = "metrics")]
+    depth: u16,
+}
+
 pub(crate) struct VisualTraversal<'a, const NODES: usize, const TEXT_BYTES: usize> {
     frame: &'a FrameArena<NODES, TEXT_BYTES>,
+    root: NodeId,
     current: Option<(NodeId, VisualContext)>,
-    ancestors: Vec<(NodeId, VisualContext), NODES>,
+    branch_continuations: Vec<VisualContinuation, VISUAL_CONTEXT_STACK_CAPACITY>,
+    overflowed_branch_continuations: u16,
+    #[cfg(feature = "metrics")]
+    depth: u16,
 }
 
 impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES, TEXT_BYTES> {
@@ -118,47 +132,155 @@ impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES,
 
         Self {
             frame,
+            root,
             current: Some((root, VisualContext::ROOT)),
-            ancestors: Vec::new(),
+            branch_continuations: Vec::new(),
+            overflowed_branch_continuations: 0,
+            #[cfg(feature = "metrics")]
+            depth: 0,
         }
     }
 
-    fn advance(&mut self, node: NodeId, context: VisualContext) {
-        if let Some(child) = self.frame.node(node).first_child {
-            self.ancestors
-                .push((node, context))
-                .expect("visual traversal depth exceeds frame capacity");
+    fn record_descent(&mut self) {
+        count_metric!(self.frame, visual_ancestor_pushes);
 
-            count_metric!(self.frame, visual_ancestor_pushes);
-            #[cfg(feature = "metrics")]
+        #[cfg(feature = "metrics")]
+        {
+            self.depth = self.depth.saturating_add(1);
             self.frame.metrics.increment(|metrics| {
-                let depth = self.ancestors.len() as u64;
-                metrics.visual_ancestor_depth_peak = metrics.visual_ancestor_depth_peak.max(depth);
+                metrics.visual_ancestor_depth_peak =
+                    metrics.visual_ancestor_depth_peak.max(self.depth as u64);
             });
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_ascents_to(&mut self, depth: u16) {
+        let ascents = self.depth.saturating_sub(depth);
+        self.frame.metrics.increment(|metrics| {
+            metrics.visual_ancestor_pops =
+                metrics.visual_ancestor_pops.saturating_add(ascents as u64);
+        });
+
+        self.depth = depth;
+    }
+
+    fn save_branch_continuation(&mut self, sibling: NodeId, context: VisualContext) {
+        let continuation = VisualContinuation {
+            sibling,
+            context,
+            #[cfg(feature = "metrics")]
+            depth: self.depth,
+        };
+
+        match self.branch_continuations.push(continuation) {
+            Ok(()) => {
+                count_metric!(self.frame, visual_context_stack_pushes);
+                #[cfg(feature = "metrics")]
+                self.frame.metrics.increment(|metrics| {
+                    let depth = self.branch_continuations.len() as u64;
+                    metrics.visual_context_stack_depth_peak =
+                        metrics.visual_context_stack_depth_peak.max(depth);
+                });
+            }
+
+            Err(_) => {
+                self.overflowed_branch_continuations =
+                    self.overflowed_branch_continuations.saturating_add(1);
+
+                count_metric!(self.frame, visual_context_stack_overflows);
+            }
+        }
+    }
+
+    fn restore_saved_continuation(&mut self) -> Option<(NodeId, VisualContext)> {
+        let continuation = self.branch_continuations.pop()?;
+        count_metric!(self.frame, visual_context_stack_pops);
+
+        #[cfg(feature = "metrics")]
+        self.record_ascents_to(continuation.depth);
+
+        Some((continuation.sibling, continuation.context))
+    }
+
+    fn restore_overflowed_continuation(&mut self, node: NodeId) -> (NodeId, VisualContext) {
+        debug_assert!(self.overflowed_branch_continuations > 0);
+        let mut cursor = node;
+
+        #[cfg(feature = "metrics")]
+        let mut ascents = 0u16;
+
+        loop {
+            let parent = self
+                .frame
+                .node(cursor)
+                .parent
+                .expect("overflowed visual continuation must have an ancestor");
+
+            #[cfg(feature = "metrics")]
+            {
+                ascents = ascents.saturating_add(1);
+            }
+
+            if let Some(sibling) = self.frame.node(parent).next_sibling {
+                self.overflowed_branch_continuations -= 1;
+                count_metric!(self.frame, visual_context_recomputations);
+
+                #[cfg(feature = "metrics")]
+                {
+                    let target_depth = self.depth.saturating_sub(ascents);
+                    self.record_ascents_to(target_depth);
+                }
+
+                let context = self.frame.visual_context_for_node(self.root, parent);
+
+                return (sibling, context);
+            }
+
+            cursor = parent;
+        }
+    }
+
+    fn finish_subtree(&mut self, node: NodeId) {
+        if self.overflowed_branch_continuations > 0 {
+            self.current = Some(self.restore_overflowed_continuation(node));
+            return;
+        }
+
+        if let Some(continuation) = self.restore_saved_continuation() {
+            self.current = Some(continuation);
+            return;
+        }
+
+        #[cfg(feature = "metrics")]
+        self.record_ascents_to(0);
+
+        self.current = None;
+    }
+
+    fn advance(&mut self, node: NodeId, context: VisualContext) {
+        let (first_child, next_sibling) = {
+            let node = self.frame.node(node);
+            (node.first_child, node.next_sibling)
+        };
+
+        if let Some(child) = first_child {
+            if let Some(sibling) = next_sibling {
+                self.save_branch_continuation(sibling, context);
+            }
+            self.record_descent();
 
             let child_context = self.frame.child_visual_context(node, context);
             self.current = Some((child, child_context));
             return;
         }
 
-        let mut cursor = node;
-        let mut cursor_context = context;
-
-        loop {
-            if let Some(sibling) = self.frame.node(cursor).next_sibling {
-                self.current = Some((sibling, cursor_context));
-                return;
-            }
-            let Some((parent, parent_context)) = self.ancestors.pop() else {
-                self.current = None;
-                return;
-            };
-
-            count_metric!(self.frame, visual_ancestor_pops);
-
-            cursor = parent;
-            cursor_context = parent_context;
+        if let Some(sibling) = next_sibling {
+            self.current = Some((sibling, context));
+            return;
         }
+
+        self.finish_subtree(node);
     }
 }
 
@@ -238,6 +360,44 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         self.node(node).layout.bounds.translated(translation)
     }
+
+    fn visual_context_for_node(&self, root: NodeId, node: NodeId) -> VisualContext {
+        if node == root {
+            return VisualContext::ROOT;
+        }
+
+        let mut depth = 0usize;
+        let mut cursor = node;
+
+        while cursor != root {
+            cursor = self
+                .node(cursor)
+                .parent
+                .expect("visual node must descend from traversal root");
+
+            depth = depth.saturating_add(1);
+        }
+
+        let mut context = VisualContext::ROOT;
+        let mut level = 0usize;
+
+        while level < depth {
+            let steps_up = depth - level;
+            let mut ancestor = node;
+
+            for _ in 0..steps_up {
+                ancestor = self
+                    .node(ancestor)
+                    .parent
+                    .expect("visual node must descend from traversal root");
+            }
+
+            context = self.child_visual_context(ancestor, context);
+            level += 1;
+        }
+
+        context
+    }
 }
 
 #[cfg(test)]
@@ -245,7 +405,7 @@ mod tests {
     use core::convert::Infallible;
     use std::vec::Vec;
 
-    use crate::*;
+    use crate::{visual::VisualTraversal, *};
 
     struct TestTextMeasurer;
 
@@ -564,5 +724,99 @@ mod tests {
 
         assert_eq!(frame.bounds(first).width(), px(50));
         assert_eq!(frame.bounds(second).width(), px(50));
+    }
+
+    #[test]
+    fn visual_traversal_size_does_not_scale_with_node_capacity() {
+        use core::mem::size_of;
+
+        let small = size_of::<VisualTraversal<'static, 8, 128>>();
+        let large = size_of::<VisualTraversal<'static, 2048, 128>>();
+
+        assert_eq!(small, large,);
+        assert!(large <= 1024, "visual traversal grew to {large} bytes",);
+    }
+
+    struct DeepBranching {
+        depth: usize,
+    }
+
+    impl Element for DeepBranching {
+        fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+            let root = div().w(px(100)).h(px(1)).mount(cx)?;
+            if self.depth == 0 {
+                return Ok(root);
+            }
+
+            let child = DeepBranching {
+                depth: self.depth - 1,
+            }
+            .mount(cx)?;
+            cx.append_child(root, child);
+
+            let sibling = div().w(px(100)).h(px(1)).mount(cx)?;
+            cx.append_child(root, sibling);
+
+            Ok(root)
+        }
+    }
+
+    #[test]
+    fn visual_traversal_handles_branch_depth_beyond_inline_stack() {
+        const EXTRA_DEPTH: usize = 8;
+
+        let mut frame = FrameArena::<128, 128>::default();
+
+        let root = frame
+            .mount(DeepBranching {
+                depth: super::VISUAL_CONTEXT_STACK_CAPACITY + EXTRA_DEPTH,
+            })
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(1000)), &TestTextMeasurer);
+
+        let mut current = Some(root);
+
+        while let Some(node) = current {
+            frame.node_mut(node).interaction.scroll_offset = Offset::new(px(0), px(1));
+
+            current = frame.node(node).first_child;
+        }
+
+        for visual in frame.visual_nodes(root) {
+            assert_eq!(visual.bounds(), frame.visual_bounds(visual.node(),),);
+        }
+    }
+
+    #[test]
+    fn visual_traversal_visits_branching_tree_in_depth_first_order() {
+        let mut frame = FrameArena::<16, 128>::default();
+        let mut cx = MountCx::new(&mut frame);
+
+        let root = div()
+            .child(div().child(div()).child(div()))
+            .child(div().child(div()))
+            .mount(&mut cx)
+            .unwrap();
+
+        let mut visited = heapless::Vec::<NodeId, 16>::new();
+
+        for visual in frame.visual_nodes(root) {
+            visited.push(visual.node()).unwrap();
+        }
+
+        let root_node = frame.node(root);
+
+        let first = root_node.first_child.unwrap();
+        let second = frame.node(first).next_sibling.unwrap();
+
+        let first_first = frame.node(first).first_child.unwrap();
+        let first_second = frame.node(first_first).next_sibling.unwrap();
+        let second_first = frame.node(second).first_child.unwrap();
+
+        assert_eq!(
+            visited.as_slice(),
+            &[root, first, first_first, first_second, second, second_first,],
+        );
     }
 }
