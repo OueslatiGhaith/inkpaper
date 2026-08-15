@@ -153,11 +153,18 @@ struct MeasurementCache {
     measured: Size,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeCache {
+    Empty,
+    Measurement(MeasurementCache),
+    SubtreePaintBounds(Rect),
+}
+
 pub(crate) struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
     pub(crate) nodes: Vec<Node, NODES>,
     pub(crate) event_bindings: Vec<EventBinding, NODES>,
     text: Vec<u8, TEXT_BYTES>,
-    measurement_cache: [Option<MeasurementCache>; NODES],
+    node_cache: [NodeCache; NODES],
     #[cfg(feature = "metrics")]
     pub(crate) metrics: PerformanceMetricsCell,
 }
@@ -168,7 +175,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, 
             nodes: Vec::new(),
             event_bindings: Vec::new(),
             text: Vec::new(),
-            measurement_cache: [None; NODES],
+            node_cache: [NodeCache::Empty; NODES],
             #[cfg(feature = "metrics")]
             metrics: PerformanceMetricsCell::default(),
         }
@@ -207,6 +214,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.nodes
             .push(Node::new(kind))
             .map_err(|_| MountError::NodesFull)?;
+
+        self.node_cache[id.index()] = NodeCache::Empty;
 
         count_metric!(self, nodes_mounted);
 
@@ -480,14 +489,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     pub(crate) fn cached_measurement(&self, node: NodeId, available: Size) -> Option<Size> {
-        match self.measurement_cache[node.index()] {
-            Some(cache) if cache.available == available => Some(cache.measured),
+        match self.node_cache[node.index()] {
+            NodeCache::Measurement(cache) if cache.available == available => Some(cache.measured),
             _ => None,
         }
     }
 
     pub(crate) fn cache_measurement(&mut self, node: NodeId, available: Size, measured: Size) {
-        self.measurement_cache[node.index()] = Some(MeasurementCache {
+        self.node_cache[node.index()] = NodeCache::Measurement(MeasurementCache {
             available,
             measured,
         });
@@ -495,8 +504,19 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
     pub(crate) fn clear_measurement_caches(&mut self) {
         let node_count = self.nodes.len();
-        for cache in &mut self.measurement_cache[..node_count] {
-            *cache = None;
+        for cache in &mut self.node_cache[..node_count] {
+            *cache = NodeCache::Empty;
+        }
+    }
+
+    pub(crate) fn set_subtree_paint_bounds(&mut self, node: NodeId, bounds: Rect) {
+        self.node_cache[node.index()] = NodeCache::SubtreePaintBounds(bounds);
+    }
+
+    pub(crate) fn subtree_paint_bounds(&self, node: NodeId) -> Option<Rect> {
+        match self.node_cache[node.index()] {
+            NodeCache::SubtreePaintBounds(bounds) => Some(bounds),
+            _ => None,
         }
     }
 }
@@ -560,6 +580,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
     fn append_child(&mut self, parent: NodeId, child: NodeId) {
         let parent_idx = parent.index();
         let child_idx = child.index();
+        debug_assert!(
+            child_idx > parent_idx,
+            "frame children must be mounted after their parents"
+        );
 
         self.nodes[child_idx].parent = Some(parent);
 

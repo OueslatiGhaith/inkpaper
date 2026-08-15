@@ -218,12 +218,30 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut traversal = self.visual_nodes(root);
 
         while let Some(visual) = traversal.next() {
-            // a finite inherited clip bounds the entire descendant subtree.
-            // if that clip cannot touch damage, neither this node's descendants nor
-            // any deeper descendant can contribute pixels to the repaint
-            if !damage.is_full() && !visual.clip_region().intersects_damage(damage) {
-                traversal.skip_children();
-                count_metric!(self, damage_pruned_subtrees);
+            // pruning only matters when there is actually a descendant subtree to skip.
+            // In particular, don't inflate pruning metrics for leaf nodes
+            let has_children = self.node(visual.node()).first_child.is_some();
+            if !damage.is_full() && has_children {
+                // a finite inherited clip bounds every descendant. If the clip misses
+                // damage, the entire descendant subtree is irrelevant
+                let clip_misses_damage = !visual.clip_region().intersects_damage(damage);
+                // the cached subtree extent conservatively contains every pixel this
+                // node or any of its descendants can affect.
+                // `None` means layout has not established the cache yet, so pruning
+                // is not allowed
+                let extent_misses_damage = match visual.subtree_bounds() {
+                    Some(bounds) => !damage.intersects_rect(bounds),
+                    None => false,
+                };
+
+                if clip_misses_damage {
+                    traversal.skip_children();
+                    count_metric!(self, damage_pruned_subtrees);
+                } else if extent_misses_damage {
+                    traversal.skip_children();
+                    count_metric!(self, damage_pruned_subtrees);
+                    count_metric!(self, damage_extent_pruned_subtrees);
+                }
             }
 
             self.paint_visual_node(visual, damage, runtime, painter)?;
@@ -1099,5 +1117,54 @@ mod tests {
                 ),),
             },
         );
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn damage_paint_prunes_off_damage_child_subtrees_by_extent() {
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(80))
+                    .bg(Color::BLACK)
+                    .child(div().w(px(100)).h(px(20)).bg(Color::RED).child("A"))
+                    .child(div().w(px(100)).h(px(20)).bg(Color::BLUE).child("B"))
+                    .child(div().w(px(100)).h(px(20)).bg(Color::GREEN).child("C"))
+                    .child(div().w(px(100)).h(px(20)).bg(Color::WHITE).child("D")),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(80)), &painter);
+
+        let damage = DamageRegion::from_rect(Rect::new(
+            Point::new(px(0), px(45)),
+            Size::new(px(100), px(5)),
+        ));
+
+        frame.reset_performance_metrics();
+        frame.paint_with_damage(root, damage, &mut painter).unwrap();
+
+        let metrics = frame.performance_metrics();
+
+        // rows A, B and D miss damage.
+        // their text children should never be traversed.
+        assert_eq!(metrics.damage_pruned_subtrees, 3,);
+        assert_eq!(metrics.damage_extent_pruned_subtrees, 3,);
+
+        // root
+        // row A
+        // row B
+        // row C
+        // text C
+        // row D
+        //
+        // the other three text nodes were skipped.
+        assert_eq!(metrics.visual_traversal_nodes, 6,);
+        assert_eq!(metrics.nodes_painted, 3,);
     }
 }

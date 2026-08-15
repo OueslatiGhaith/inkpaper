@@ -518,7 +518,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     ) -> Size {
         self.resolve_text_styles(root);
         self.clear_measurement_caches();
-        self.layout_node(root, Point::ZERO, viewport, text_measurer)
+
+        let size = self.layout_node(root, Point::ZERO, viewport, text_measurer);
+
+        // measurements are no longer needed after the layout pass. Reuse the same
+        // per-node cache storage for conservative subtree paint bounds
+        self.rebuild_subtree_paint_bounds();
+
+        size
     }
 
     fn node_margin(&self, node: NodeId) -> Edges<Pixels> {

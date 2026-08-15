@@ -152,6 +152,26 @@ impl Rect {
             ),
         )
     }
+
+    pub fn has_area(&self) -> bool {
+        self.width().is_positive() && self.height().is_positive()
+    }
+
+    pub fn union(self, other: Self) -> Self {
+        if !self.has_area() {
+            return other;
+        }
+        if !other.has_area() {
+            return self;
+        }
+
+        let left = self.x().min(other.x());
+        let top = self.y().min(other.y());
+        let right = self.right().max(other.right());
+        let bottom = self.bottom().max(other.bottom());
+
+        Self::new(Point::new(left, top), Size::new(right - left, bottom - top))
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

@@ -1,6 +1,8 @@
 use heapless::Vec;
 
-use crate::{DamageRegion, FrameArena, NodeId, Offset, Point, Rect, count_metric, px};
+use crate::{
+    DamageRegion, FrameArena, NodeId, NodeKind, Offset, Point, Rect, Size, count_metric, px,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClipRegion {
@@ -89,6 +91,7 @@ impl VisualContext {
 pub(crate) struct VisualNode {
     node: NodeId,
     bounds: Rect,
+    subtree_bounds: Option<Rect>,
     clip: ClipRegion,
 }
 
@@ -99,6 +102,10 @@ impl VisualNode {
 
     pub(crate) const fn bounds(self) -> Rect {
         self.bounds
+    }
+
+    pub(crate) const fn subtree_bounds(self) -> Option<Rect> {
+        self.subtree_bounds
     }
 
     pub(crate) fn clip(self) -> Option<Rect> {
@@ -338,6 +345,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Iterator
         count_metric!(self.frame, visual_traversal_nodes);
 
         let bounds = context.translate_rect(self.frame.node(node).layout.bounds);
+        let subtree_bounds = self
+            .frame
+            .subtree_paint_bounds(node)
+            .map(|bounds| context.translate_rect(bounds));
 
         // advancement is deferred until the caller asks for the next node. This gives
         // it one chance to replace normal descent with `skip_children()`
@@ -346,6 +357,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Iterator
         Some(VisualNode {
             node,
             bounds,
+            subtree_bounds,
             clip: context.clip,
         })
     }
@@ -385,7 +397,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     fn children_clip_bounds(&self, node: NodeId, context: VisualContext) -> Rect {
-        let bounds = context.translate_rect(self.node(node).layout.bounds);
+        context.translate_rect(self.children_clip_layout_bounds(node))
+    }
+
+    pub(crate) fn children_clip_layout_bounds(&self, node: NodeId) -> Rect {
+        let bounds = self.node(node).layout.bounds;
         let border = self
             .node(node)
             .style()
@@ -444,6 +460,68 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         }
 
         context
+    }
+
+    pub(crate) fn rebuild_subtree_paint_bounds(&mut self) {
+        let node_count = self.nodes.len();
+        let empty = Rect::new(Point::ZERO, Size::ZERO);
+
+        // start every subtree with the node's own conservative paint extent.
+        // entity nodes don't paint anything themselves. All concrete visual primitives
+        // are conservatively treated as capable of paiting anywhere inside their
+        // layout bounds
+        for index in 0..node_count {
+            let node = NodeId::new(index as u16);
+            let own_bounds = match self.node(node).kind {
+                NodeKind::Entity { .. } => empty,
+                NodeKind::Div { .. }
+                | NodeKind::Text { .. }
+                | NodeKind::Image { .. }
+                | NodeKind::Canvas { .. } => {
+                    let bounds = self.node(node).layout.bounds;
+                    if bounds.has_area() { bounds } else { empty }
+                }
+            };
+
+            self.set_subtree_paint_bounds(node, own_bounds);
+        }
+
+        // children are always mounted after parents.
+        // walking backwards therefore guarantees that a child's cached bounds already
+        // include all of its descendants before those bounds are propagated into its parent
+        for index in (0..node_count).rev() {
+            let node = NodeId::new(index as u16);
+            let subtree = self
+                .subtree_paint_bounds(node)
+                .expect("subtree paint bounds must be initialized");
+            if !subtree.has_area() {
+                continue;
+            }
+
+            let Some(parent) = self.node(node).parent else {
+                continue;
+            };
+
+            // if the parent clips its children, descendant painting can never escape that
+            // viewport.
+            // this also makes the cached extent independent of the parent's scroll offset:
+            // scrolling can move descendants internally, but whatever is visible remains
+            // inside this viewport
+            let contribution = if self.node_clips_children(parent) {
+                self.children_clip_layout_bounds(parent)
+            } else {
+                subtree
+            };
+            if !contribution.has_area() {
+                continue;
+            }
+
+            let parent_bounds = self
+                .subtree_paint_bounds(parent)
+                .expect("parent subtree paint bounds must be initialized");
+
+            self.set_subtree_paint_bounds(parent, parent_bounds.union(contribution));
+        }
     }
 }
 
@@ -864,6 +942,49 @@ mod tests {
         assert_eq!(
             visited.as_slice(),
             &[root, first, first_first, first_second, second, second_first,],
+        );
+    }
+
+    #[test]
+    fn subtree_paint_bounds_include_unclipped_overflow() {
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(20))
+                    .h(px(20))
+                    .child(div().w(px(40)).h(px(10)).bg(Color::RED)),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &TestTextMeasurer);
+
+        assert_eq!(
+            frame.subtree_paint_bounds(root,),
+            Some(Rect::new(Point::ZERO, Size::new(px(40), px(20),),),),
+        );
+    }
+
+    #[test]
+    fn clipping_bounds_the_cached_subtree_extent() {
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(20))
+                    .h(px(20))
+                    .overflow_hidden()
+                    .child(div().w(px(80)).h(px(80)).bg(Color::RED)),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &TestTextMeasurer);
+
+        assert_eq!(
+            frame.subtree_paint_bounds(root,),
+            Some(Rect::new(Point::ZERO, Size::new(px(20), px(20),),),),
         );
     }
 }
