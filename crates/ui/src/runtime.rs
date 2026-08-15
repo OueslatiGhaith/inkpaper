@@ -3,8 +3,9 @@ use core::{any::TypeId, cell::Cell};
 #[cfg(feature = "metrics")]
 use crate::PerformanceMetrics;
 use crate::{
-    ActivateEvent, Context, Entity, EntityAllocError, EntityArena, EventTarget, FrameArena,
-    Invalidation, Listener, MountError, NodeId, Offset, Painter, Point, Render, Size, TextMeasurer,
+    ActivateEvent, Context, DamageRegion, Entity, EntityAllocError, EntityArena, EventTarget,
+    FrameArena, Invalidation, Listener, MountError, NodeId, Offset, Painter, Point, Render,
+    RenderInvalidation, Size, TextMeasurer,
     callback_store::{CallbackArena, ListenerInvokeError},
     element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
@@ -46,7 +47,7 @@ pub struct Runtime<
     element_states: ElementStateTable<ELEMENT_STATES>,
     scroll_states: ScrollStateTable<ELEMENT_STATES>,
     notified: Cell<bool>,
-    visual_invalidation: Cell<Invalidation>,
+    visual_invalidation: Cell<RenderInvalidation>,
     frame_generation: u32,
     root: Option<NodeId>,
     activation: ActivationState,
@@ -72,7 +73,7 @@ impl<
             element_states: ElementStateTable::default(),
             scroll_states: ScrollStateTable::default(),
             notified: Cell::new(false),
-            visual_invalidation: Cell::new(Invalidation::None),
+            visual_invalidation: Cell::new(RenderInvalidation::none()),
             frame_generation: 0,
             root: None,
             activation: ActivationState::default(),
@@ -129,7 +130,7 @@ impl<
         // consume the previous dirty request.
         // if render/event logic calls notify during this build, it becomes dirty again
         self.notified.set(false);
-        self.visual_invalidation.set(Invalidation::None);
+        self.visual_invalidation.set(RenderInvalidation::none());
         let generation = self.next_frame_generation();
 
         let result = self.build_frame(root, generation);
@@ -152,7 +153,7 @@ impl<
                 // never keep callbacks registered by a failed render
                 self.callbacks.reset();
                 self.activation.cancel();
-                self.visual_invalidation.set(Invalidation::None);
+                self.visual_invalidation.set(RenderInvalidation::none());
                 self.root = None;
                 self.focused = None;
                 self.pending_scroll_into_view = None;
@@ -321,29 +322,46 @@ impl<
         self.dispatch_to_focused(&ActivateEvent)
     }
 
-    fn invalidate(&self, invalidation: Invalidation) {
+    fn invalidate_render(&self, invalidation: RenderInvalidation) {
         let current = self.visual_invalidation.get();
         self.visual_invalidation.set(current.merge(invalidation));
     }
 
-    pub fn invalidation(&self) -> Invalidation {
+    fn invalidate(&self, invalidation: Invalidation) {
+        self.invalidate_render(RenderInvalidation::full(invalidation));
+    }
+
+    pub fn render_invalidation(&self) -> RenderInvalidation {
         let visual = self.visual_invalidation.get();
         if self.notified.get() {
-            visual.merge(Invalidation::Rebuild)
+            visual.merge(RenderInvalidation::full(Invalidation::Rebuild))
         } else {
             visual
         }
     }
 
-    pub fn take_invalidation(&self) -> Invalidation {
-        let visual = self.visual_invalidation.replace(Invalidation::None);
+    pub fn invalidation(&self) -> Invalidation {
+        self.render_invalidation().kind()
+    }
+
+    pub fn damage(&self) -> DamageRegion {
+        self.render_invalidation().damage()
+    }
+
+    pub fn take_render_invalidation(&self) -> RenderInvalidation {
+        let visual = self.visual_invalidation.replace(RenderInvalidation::none());
+
         let application = if self.notified.replace(false) {
-            Invalidation::Rebuild
+            RenderInvalidation::full(Invalidation::Rebuild)
         } else {
-            Invalidation::None
+            RenderInvalidation::none()
         };
 
         visual.merge(application)
+    }
+
+    pub fn take_invalidation(&self) -> Invalidation {
+        self.take_render_invalidation().kind()
     }
 
     fn refresh_interaction_styles(&mut self) {
