@@ -19,6 +19,7 @@ pub(crate) struct ScrollTarget {
     pub(crate) element: ElementStateId,
     pub(crate) axes: ScrollAxes,
     pub(crate) max_offset: Offset,
+    pub(crate) damage: DamageRegion,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -249,11 +250,18 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 continue;
             };
 
+            let viewport = self.scroll_viewport_bounds(node_id, visual.bounds());
+            let damage = match visual.clip() {
+                Some(clip) => DamageRegion::from_rect(viewport).clipped_to(clip),
+                None => DamageRegion::from_rect(viewport),
+            };
+
             hit = Some(ScrollTarget {
                 node: node_id,
                 element,
                 axes,
                 max_offset: self.max_scroll_offset(node_id),
+                damage,
             });
         }
 
@@ -413,18 +421,17 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         root: NodeId,
         element: ElementStateId,
         states: &mut ScrollStateTable<SLOTS>,
-    ) -> bool {
+    ) -> DamageRegion {
         let Some(target_node) = self.node_for_element(root, element) else {
-            return false;
+            return DamageRegion::none();
         };
 
-        // keep the target in the coordinate space of the ancestor currently
-        // being considered.
-        // scroll translations belonging to ancestors outside that ancestor affect
-        // both the target and viewport equally, so they cancel and never need to
-        // be calculated
+        // `target_bounds` and `damage` start in the unscrolled layout coordinate system.
+        // as we walk ancestors inside-out, we progressively apply their final scroll
+        // translations. By the time we reach the root, damage is in visual/screen
+        // coordinates
         let mut target_bounds = self.node(target_node).layout.bounds;
-        let mut changed = false;
+        let mut damage = DamageRegion::none();
         let mut current = self.node(target_node).parent;
 
         while let Some(ancestor) = current {
@@ -439,9 +446,13 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 )
             };
 
-            // moving from a child coordinate space to its parent means accounting for
-            // the parent's current scroll translation
+            // first express the target using the currently applied scroll offset.
+            // if the offset changes below, `target_bounds` is adjusted again
             target_bounds = target_bounds.translated(Offset::ZERO - applied_scroll);
+
+            let viewport = self.scroll_viewport_bounds(ancestor, self.node(ancestor).layout.bounds);
+            let mut final_scroll = applied_scroll;
+            let mut scroll_changed = false;
 
             if axes.any()
                 && let Some(scroll_element) = scroll_element
@@ -452,11 +463,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     "persistent and frame scroll offsets must remain synchronized"
                 );
 
-                let viewport =
-                    self.scroll_viewport_bounds(ancestor, self.node(ancestor).layout.bounds);
                 let maximum = self.max_scroll_offset(ancestor);
-
                 let mut next = previous;
+
                 if axes.horizontal() {
                     next.x = scroll_axis_into_view(
                         previous.x,
@@ -479,19 +488,36 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 }
 
                 if next != previous {
-                    // target bounds alread contains `-previous`. Adjust fit so it contains
-                    // `-next` before continuing toward the out ancestor
+                    // target bounds already contains `-previous`. convert it to `-next`
                     target_bounds = target_bounds.translated(previous - next);
                     states.set_offset(scroll_element, next);
                     self.set_scroll_offset(ancestor, next);
-                    changed = true;
+                    final_scroll = next;
+                    scroll_changed = true;
                 }
+            }
+
+            // everything already damaged belongs to descendants of this ancestor, so
+            // its FINAL scroll offset moves all those rectangles
+            damage = damage.translated(Offset::ZERO - final_scroll);
+
+            // apply the same clipping rule used by visual traversal. This keeps nested
+            // scroll damage restricted to the part actually visible through this ancestor
+            if self.node_clips_children(ancestor) {
+                damage = damage.clipped_to(viewport);
+            }
+
+            // the viewport itself is unaffected by its own scroll translation. If this
+            // ancestor scrolled, every visible pixel inside its viewport may contain
+            // different content
+            if scroll_changed {
+                damage = damage.add_rect(viewport);
             }
 
             current = next_parent;
         }
 
-        changed
+        damage
     }
 }
 
@@ -1136,29 +1162,39 @@ mod tests {
         assert!(runtime.focus_next());
         assert_eq!(
             runtime.frame().node(scroll).interaction.scroll_offset,
-            Offset::ZERO
+            Offset::ZERO,
         );
 
-        runtime.take_invalidation();
+        runtime.take_render_invalidation();
 
         assert!(runtime.focus_next());
         assert_eq!(
             runtime.frame().node(scroll).interaction.scroll_offset,
-            Offset::new(px(0), px(20),)
+            Offset::new(px(0), px(20),),
         );
-        assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Paint,);
+        assert_eq!(
+            invalidation.damage().rects(),
+            &[Rect::new(
+                Point::new(px(0), px(0),),
+                Size::new(px(100), px(40),),
+            ),],
+        );
         assert!(runtime.focus_next());
         assert_eq!(
             runtime.frame().node(scroll).interaction.scroll_offset,
-            Offset::new(px(0), px(50),)
+            Offset::new(px(0), px(50),),
         );
 
-        runtime.take_invalidation();
+        runtime.take_render_invalidation();
 
         assert!(runtime.focus_previous());
         assert_eq!(
             runtime.frame().node(scroll).interaction.scroll_offset,
-            Offset::new(px(0), px(30),)
+            Offset::new(px(0), px(30),),
         );
     }
 
@@ -2207,5 +2243,89 @@ mod tests {
 
         assert!(runtime.target_at::<TouchContact>(position).is_some());
         assert!(runtime.target_at::<EncoderPress>(position).is_none());
+    }
+
+    #[test]
+    fn direct_scroll_damages_only_scroll_viewport() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| FocusScrollApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(40)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(10),),));
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Paint,);
+        assert!(!invalidation.damage().is_full());
+        assert_eq!(
+            invalidation.damage().rects(),
+            &[Rect::new(
+                Point::new(px(0), px(0),),
+                Size::new(px(100), px(40),),
+            ),],
+        );
+    }
+
+    #[test]
+    fn nested_direct_scroll_damage_is_clipped_by_outer_viewport() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| NestedFocusScrollApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(60)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.scroll_at(Point::new(px(10), px(35),), Offset::new(px(0), px(10),),));
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Paint,);
+        // inner viewport is y=30..70, but the outer viewport clips it at y=60.
+        assert_eq!(
+            invalidation.damage().rects(),
+            &[Rect::new(
+                Point::new(px(0), px(30),),
+                Size::new(px(100), px(30),),
+            ),],
+        );
+    }
+
+    #[test]
+    fn nested_focus_scroll_damage_collapses_to_outer_viewport() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| NestedFocusScrollApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(60)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+
+        runtime.take_render_invalidation();
+
+        assert!(runtime.focus_next());
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Paint,);
+        // both inner and outer containers scroll.
+        // once the outer container moves, its whole 100x60 viewport is damaged
+        // and subsumes the nested damage.
+        assert_eq!(
+            invalidation.damage().rects(),
+            &[Rect::new(
+                Point::new(px(0), px(0),),
+                Size::new(px(100), px(60),),
+            ),],
+        );
     }
 }

@@ -327,10 +327,6 @@ impl<
         self.visual_invalidation.set(current.merge(invalidation));
     }
 
-    fn invalidate(&self, invalidation: Invalidation) {
-        self.invalidate_render(RenderInvalidation::full(invalidation));
-    }
-
     pub fn render_invalidation(&self) -> RenderInvalidation {
         let visual = self.visual_invalidation.get();
         if self.notified.get() {
@@ -474,13 +470,21 @@ impl<
 
         self.scroll_states.set_offset(target.element, next);
         self.frame.set_scroll_offset(target.node, next);
-        self.invalidate(Invalidation::Paint);
+
+        if !target.damage.is_none() {
+            self.invalidate_render(RenderInvalidation::damaged(
+                Invalidation::Paint,
+                target.damage,
+            ));
+        }
 
         true
     }
 
-    fn scroll_element_into_view_now(&mut self, element: ElementStateId) -> bool {
-        let Some(root) = self.root else { return false };
+    fn scroll_element_into_view_now(&mut self, element: ElementStateId) -> DamageRegion {
+        let Some(root) = self.root else {
+            return DamageRegion::none();
+        };
         self.frame
             .scroll_element_into_view(root, element, &mut self.scroll_states)
     }
@@ -488,10 +492,11 @@ impl<
     fn set_focus(&mut self, next: Option<ElementStateId>) -> RenderInvalidation {
         let previous = self.focused;
         if previous == next {
-            if let Some(element) = next
-                && self.scroll_element_into_view_now(element)
-            {
-                return RenderInvalidation::full(Invalidation::Paint);
+            if let Some(element) = next {
+                let scroll_damage = self.scroll_element_into_view_now(element);
+                if !scroll_damage.is_none() {
+                    return RenderInvalidation::damaged(Invalidation::Paint, scroll_damage);
+                }
             }
 
             return RenderInvalidation::none();
@@ -518,9 +523,15 @@ impl<
             // focus styling changed geometry, current frame bounds are stale,
             // so wait until layout has recomputed them
             self.pending_scroll_into_view = Some(element);
-        } else if self.scroll_element_into_view_now(element) {
-            invalidation = invalidation.merge(RenderInvalidation::full(Invalidation::Paint));
-        };
+        } else {
+            let scroll_damage = self.scroll_element_into_view_now(element);
+            if !scroll_damage.is_none() {
+                invalidation = invalidation.merge(RenderInvalidation::damaged(
+                    Invalidation::Paint,
+                    scroll_damage,
+                ));
+            }
+        }
 
         invalidation
     }

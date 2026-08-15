@@ -327,7 +327,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         parent_context.translated_by_scroll(scroll).with_clip(clip)
     }
 
-    fn node_clips_children(&self, node: NodeId) -> bool {
+    pub(crate) fn node_clips_children(&self, node: NodeId) -> bool {
         let node = self.node(node);
         let style_clips = node
             .style()

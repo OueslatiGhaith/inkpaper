@@ -1,4 +1,4 @@
-use crate::{Point, Rect, Size};
+use crate::{Offset, Point, Rect, Size};
 
 const DAMAGE_RECT_CAPACITY: usize = 4;
 const EMPTY_DAMAGE_RECT: Rect = Rect::new(Point::ZERO, Size::ZERO);
@@ -88,13 +88,8 @@ impl DamageRegion {
             return self;
         }
 
-        /*
-         * Damage storage is deliberately bounded.
-         *
-         * If it fills up, correctness wins over
-         * precision: collapse all rectangles into one
-         * conservative bounding rectangle.
-         */
+        // damage storage is deliberately bounded. If it fills up, correctness wins over
+        // precision: collapse all rectangles into one conservative bounding rectangle.
         let mut collapsed = candidate;
 
         for index in 0..self.len as usize {
@@ -117,6 +112,37 @@ impl DamageRegion {
         }
 
         self
+    }
+
+    pub fn translated(mut self, delta: Offset) -> Self {
+        if self.full {
+            return self;
+        }
+
+        for index in 0..self.len as usize {
+            self.rects[index] = self.rects[index].translated(delta);
+        }
+
+        self
+    }
+
+    pub fn clipped_to(self, clip: Rect) -> Self {
+        if clip.width().is_non_positive() || clip.height().is_non_positive() {
+            return Self::none();
+        }
+        if self.full {
+            return Self::from_rect(clip);
+        }
+
+        let mut clipped = Self::none();
+
+        for rect in self.rects() {
+            if let Some(intersection) = rect.intersection(clip) {
+                clipped = clipped.add_rect(intersection);
+            }
+        }
+
+        clipped
     }
 
     fn remove_rect(&mut self, index: usize) {
@@ -922,6 +948,48 @@ mod tests {
             &[Rect::new(
                 Point::new(px(0), px(0),),
                 Size::new(px(80), px(20),),
+            ),],
+        );
+    }
+
+    #[test]
+    fn damage_region_translation_moves_every_rectangle() {
+        let damage = DamageRegion::none()
+            .add_rect(Rect::new(
+                Point::new(px(10), px(20)),
+                Size::new(px(30), px(40)),
+            ))
+            .add_rect(Rect::new(
+                Point::new(px(80), px(90)),
+                Size::new(px(10), px(10)),
+            ))
+            .translated(Offset::new(px(-5), px(7)));
+
+        assert_eq!(
+            damage.rects(),
+            &[
+                Rect::new(Point::new(px(5), px(27),), Size::new(px(30), px(40),),),
+                Rect::new(Point::new(px(75), px(97),), Size::new(px(10), px(10),),),
+            ],
+        );
+    }
+
+    #[test]
+    fn damage_region_clipping_discards_invisible_parts() {
+        let damage = DamageRegion::from_rect(Rect::new(
+            Point::new(px(10), px(10)),
+            Size::new(px(80), px(60)),
+        ))
+        .clipped_to(Rect::new(
+            Point::new(px(30), px(20)),
+            Size::new(px(30), px(20)),
+        ));
+
+        assert_eq!(
+            damage.rects(),
+            &[Rect::new(
+                Point::new(px(30), px(20),),
+                Size::new(px(30), px(20),),
             ),],
         );
     }
