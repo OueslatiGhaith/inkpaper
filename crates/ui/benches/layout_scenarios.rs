@@ -7,7 +7,7 @@ use support::{
     BenchScenario, MIXED_SCREEN_SIZES, REPRESENTATIVE_CASES, SCROLL_LIST_SIZES, VIEWPORT, setup,
 };
 
-use crate::support::DEEP_CHAIN_SIZES;
+use crate::support::{DEEP_CHAIN_SIZES, NESTED_SCROLL_DEPTHS};
 
 mod support;
 
@@ -48,6 +48,31 @@ fn benchmark_paint_scenario(criterion: &mut Criterion, scenario: BenchScenario, 
                 black_box(runtime.paint(black_box(&mut painter)).unwrap());
 
                 black_box(painter.draw_calls());
+            });
+        });
+    }
+
+    group.finish();
+}
+
+fn benchmark_focus_scroll_into_view(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("focus_scroll_into_view/nested_scroll");
+
+    for &depth in NESTED_SCROLL_DEPTHS {
+        group.throughput(Throughput::Elements(depth as u64));
+
+        let (mut runtime, _, _) = setup(BenchScenario::NestedScrollFocus, depth);
+
+        // establish focus and the final scroll offsets before timing.
+        //
+        // there is only one focusable element, so the following focus_next() calls
+        // wrap back to the same target and exercise the "ensure focused element is
+        // visible" path without changing the benchmark state each iteration.
+        assert!(runtime.focus_next(),);
+
+        group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |bencher, _| {
+            bencher.iter(|| {
+                black_box(runtime.focus_next());
             });
         });
     }
@@ -116,6 +141,7 @@ criterion_group!(
     benchmark_layout_scenarios,
     benchmark_paint_scenarios,
     benchmark_scroll_hit_test,
+    benchmark_focus_scroll_into_view,
     benchmark_mixed_full_frame,
 );
 

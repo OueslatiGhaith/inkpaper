@@ -31,6 +31,7 @@ pub struct PerformanceMetrics {
     pub visual_context_recomputations: u64,
 
     pub visual_bounds_ancestor_visits: u64,
+    pub scroll_into_view_ancestor_visits: u64,
 
     pub visual_nodes_visited: u64,
     pub visible_nodes: u64,

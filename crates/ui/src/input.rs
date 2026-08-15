@@ -1,7 +1,7 @@
 use core::any::TypeId;
 
 use crate::{
-    FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect,
+    FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect, count_metric,
     element_state::ElementStateId,
     px,
     scroll::{ScrollAxes, ScrollStateTable},
@@ -313,32 +313,6 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         None
     }
 
-    fn visual_bounds_for_pair(
-        &self,
-        root: NodeId,
-        first: NodeId,
-        second: NodeId,
-    ) -> Option<(Rect, Rect)> {
-        let mut first_bounds = None;
-        let mut second_bounds = None;
-
-        for visual in self.visual_nodes(root) {
-            let node = visual.node();
-            if node == first {
-                first_bounds = Some(visual.bounds());
-            }
-            if node == second {
-                second_bounds = Some(visual.bounds());
-            }
-
-            if let (Some(first), Some(second)) = (first_bounds, second_bounds) {
-                return Some((first, second));
-            }
-        }
-
-        None
-    }
-
     fn scroll_viewport_bounds(&self, node: NodeId, visual_bounds: Rect) -> Rect {
         let border = self
             .node(node)
@@ -359,28 +333,45 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             return false;
         };
 
-        // start with the nearest parent so nested scroll areas are adjusted
-        // from inside out
+        // keep the target in the coordinate space of the ancestor currently
+        // being considered.
+        // scroll translations belonging to ancestors outside that ancestor affect
+        // both the target and viewport equally, so they cancel and never need to
+        // be calculated
+        let mut target_bounds = self.node(target_node).layout.bounds;
         let mut changed = false;
         let mut current = self.node(target_node).parent;
 
-        while let Some(scroll_node) = current {
-            let next_parent = self.node(scroll_node).parent;
-            let (axes, scroll_element) = {
-                let node = self.node(scroll_node);
-                (node.interaction.scroll_axes, node.element_state_id)
+        while let Some(ancestor) = current {
+            count_metric!(self, scroll_into_view_ancestor_visits);
+            let next_parent = self.node(ancestor).parent;
+            let (axes, scroll_element, applied_scroll) = {
+                let node = self.node(ancestor);
+                (
+                    node.interaction.scroll_axes,
+                    node.element_state_id,
+                    node.interaction.scroll_offset,
+                )
             };
+
+            // moving from a child coordinate space to its parent means accounting for
+            // the parent's current scroll translation
+            target_bounds = target_bounds.translated(Offset::ZERO - applied_scroll);
 
             if axes.any()
                 && let Some(scroll_element) = scroll_element
-                && let Some((target_bounds, scroll_bounds)) =
-                    self.visual_bounds_for_pair(root, target_node, scroll_node)
             {
-                let viewport = self.scroll_viewport_bounds(scroll_node, scroll_bounds);
                 let previous = states.offset(scroll_element);
-                let maximum = self.max_scroll_offset(scroll_node);
-                let mut next = previous;
+                debug_assert_eq!(
+                    previous, applied_scroll,
+                    "persistent and frame scroll offsets must remain synchronized"
+                );
 
+                let viewport =
+                    self.scroll_viewport_bounds(ancestor, self.node(ancestor).layout.bounds);
+                let maximum = self.max_scroll_offset(ancestor);
+
+                let mut next = previous;
                 if axes.horizontal() {
                     next.x = scroll_axis_into_view(
                         previous.x,
@@ -401,9 +392,13 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                         viewport.bottom(),
                     );
                 }
+
                 if next != previous {
+                    // target bounds alread contains `-previous`. Adjust fit so it contains
+                    // `-next` before continuing toward the out ancestor
+                    target_bounds = target_bounds.translated(previous - next);
                     states.set_offset(scroll_element, next);
-                    self.set_scroll_offset(scroll_node, next);
+                    self.set_scroll_offset(ancestor, next);
                     changed = true;
                 }
             }

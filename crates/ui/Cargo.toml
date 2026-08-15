@@ -28,3 +28,8 @@ harness = false
 name = "work_metrics"
 harness = false
 required-features = ["metrics"]
+
+[[bench]]
+name = "visual_operation_metrics"
+harness = false
+required-features = ["metrics"]

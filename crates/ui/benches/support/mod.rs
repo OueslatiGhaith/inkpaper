@@ -16,6 +16,7 @@ pub const TEXT_HEAVY_SIZES: &[usize] = &[8, 32, 128, 512];
 pub const SCROLL_LIST_SIZES: &[usize] = &[8, 32, 128, 512];
 pub const MIXED_SCREEN_SIZES: &[usize] = &[8, 32, 128];
 pub const DEEP_CHAIN_SIZES: &[usize] = &[8, 32, 128, 512];
+pub const NESTED_SCROLL_DEPTHS: &[usize] = &[1, 2, 4, 8, 16, 32];
 
 pub const REPRESENTATIVE_CASES: &[(BenchScenario, &[usize])] = &[
     (BenchScenario::FlexRow, FLEX_ROW_SIZES),
@@ -54,6 +55,7 @@ pub enum BenchScenario {
     TextHeavy,
     ScrollList,
     MixedScreen,
+    NestedScrollFocus,
 }
 
 impl BenchScenario {
@@ -66,6 +68,7 @@ impl BenchScenario {
             Self::TextHeavy => "text_heavy",
             Self::ScrollList => "scroll_list",
             Self::MixedScreen => "mixed_screen",
+            Self::NestedScrollFocus => "nested_scroll_focus",
         }
     }
 }
@@ -191,6 +194,7 @@ impl Element for BenchScene {
             BenchScenario::TextHeavy => text_heavy(self.size).mount(cx),
             BenchScenario::ScrollList => scroll_list(self.size).mount(cx),
             BenchScenario::MixedScreen => mixed_screen(self.size).mount(cx),
+            BenchScenario::NestedScrollFocus => NestedScrollFocus { depth: self.size }.mount(cx),
         }
     }
 }
@@ -348,6 +352,36 @@ fn mixed_settings_row() -> impl Element {
         .justify_between()
         .child("Setting")
         .child("Value")
+}
+
+struct NestedScrollFocus {
+    depth: usize,
+}
+
+impl Element for NestedScrollFocus {
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+        if self.depth == 0 {
+            return div()
+                .w_full()
+                .h(px(16))
+                .id("nested-scroll-target")
+                .focusable()
+                .mount(cx);
+        }
+
+        div()
+            .w_full()
+            .h(px(80))
+            .flex()
+            .flex_col()
+            .id(("nested-scroll", self.depth))
+            .overflow_y_scroll()
+            .child(div().w_full().h(px(80)))
+            .child(NestedScrollFocus {
+                depth: self.depth - 1,
+            })
+            .mount(cx)
+    }
 }
 
 pub fn setup(
