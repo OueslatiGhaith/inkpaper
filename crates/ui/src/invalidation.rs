@@ -799,8 +799,130 @@ mod tests {
         let invalidation = runtime.take_render_invalidation();
 
         assert_eq!(invalidation.kind(), Invalidation::Paint,);
-        assert!(invalidation.damage().is_full());
+
+        let damage = invalidation.damage();
+
+        assert!(!damage.is_full());
+        assert_eq!(
+            damage.rects(),
+            &[Rect::new(
+                Point::new(px(0), px(0),),
+                Size::new(px(60), px(30),),
+            ),],
+        );
         assert_eq!(runtime.invalidation(), Invalidation::None,);
         assert!(runtime.damage().is_none());
+    }
+
+    #[test]
+    fn moving_focus_damages_old_and_new_elements() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| PaintFocusApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+
+        runtime.take_render_invalidation();
+
+        assert!(runtime.focus_next());
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Paint,);
+
+        let damage = invalidation.damage();
+
+        assert!(!damage.is_full());
+
+        // the two 60x30 buttons touch, so DamageRegion coalesces them into one
+        // 60x60 rectangle.
+        assert_eq!(
+            damage.rects(),
+            &[Rect::new(
+                Point::new(px(0), px(0),),
+                Size::new(px(60), px(60),),
+            ),],
+        );
+    }
+
+    #[test]
+    fn pressed_style_damages_only_pressed_element() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| PaintPressApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.begin_activation_at(Point::new(px(10), px(10),),));
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Paint,);
+        assert_eq!(
+            invalidation.damage().rects(),
+            &[Rect::new(
+                Point::new(px(0), px(0),),
+                Size::new(px(80), px(30),),
+            ),],
+        );
+    }
+
+    #[test]
+    fn clip_change_keeps_previous_overflow_in_damage() {
+        struct App;
+
+        impl App {
+            fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
+        }
+
+        impl Render for App {
+            fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div().w(px(100)).h(px(100)).child(
+                    div()
+                        .id("clip-target")
+                        .w(px(40))
+                        .h(px(20))
+                        .when_focused(|style| style.overflow_hidden())
+                        .on_activate(cx.listener(Self::clicked))
+                        .child(div().w(px(80)).h(px(20)).bg(Color::BLUE)),
+                )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Paint,);
+
+        // before focus, the 80px child overflows the 40px parent.
+        // after focus, overflow_hidden clips it to 40px.
+        // damage must retain the OLD 80px extent so those previously-painted
+        // pixels can be erased.
+        assert_eq!(
+            invalidation.damage().rects(),
+            &[Rect::new(
+                Point::new(px(0), px(0),),
+                Size::new(px(80), px(20),),
+            ),],
+        );
     }
 }

@@ -278,18 +278,18 @@ impl<
     pub fn focus_next(&mut self) -> bool {
         let Some(root) = self.root else {
             let invalidation = self.set_focus(None);
-            self.invalidate(invalidation);
+            self.invalidate_render(invalidation);
             return false;
         };
 
         let Some(target) = self.frame.next_focus_target(root, self.focused) else {
             let invalidation = self.set_focus(None);
-            self.invalidate(invalidation);
+            self.invalidate_render(invalidation);
             return false;
         };
 
         let invalidation = self.set_focus(Some(target.element));
-        self.invalidate(invalidation);
+        self.invalidate_render(invalidation);
 
         true
     }
@@ -297,25 +297,25 @@ impl<
     pub fn focus_previous(&mut self) -> bool {
         let Some(root) = self.root else {
             let invalidation = self.set_focus(None);
-            self.invalidate(invalidation);
+            self.invalidate_render(invalidation);
             return false;
         };
 
         let Some(target) = self.frame.previous_focus_target(root, self.focused) else {
             let invalidation = self.set_focus(None);
-            self.invalidate(invalidation);
+            self.invalidate_render(invalidation);
             return false;
         };
 
         let invalidation = self.set_focus(Some(target.element));
-        self.invalidate(invalidation);
+        self.invalidate_render(invalidation);
 
         true
     }
 
     pub fn clear_focus(&mut self) {
         let invalidation = self.set_focus(None);
-        self.invalidate(invalidation);
+        self.invalidate_render(invalidation);
     }
 
     pub fn activate_focused(&mut self) -> Result<bool, ListenerInvokeError> {
@@ -413,6 +413,39 @@ impl<
         invalidation
     }
 
+    fn interaction_damage(
+        &self,
+        previous: Option<ElementStateId>,
+        next: Option<ElementStateId>,
+    ) -> Option<DamageRegion> {
+        let root = self.root?;
+        self.frame.visual_damage_for_element(root, previous, next)
+    }
+
+    fn finish_interaction_invalidation(
+        &self,
+        kind: Invalidation,
+        before_damage: Option<DamageRegion>,
+        previous: Option<ElementStateId>,
+        next: Option<ElementStateId>,
+    ) -> RenderInvalidation {
+        match kind {
+            Invalidation::None => RenderInvalidation::none(),
+            Invalidation::Paint => {
+                let Some(before_damage) = before_damage else {
+                    return RenderInvalidation::full(Invalidation::Paint);
+                };
+                let Some(after_damage) = self.interaction_damage(previous, next) else {
+                    return RenderInvalidation::full(Invalidation::Paint);
+                };
+
+                RenderInvalidation::damaged(Invalidation::Paint, before_damage.merge(after_damage))
+            }
+            Invalidation::Layout => RenderInvalidation::full(Invalidation::Layout),
+            Invalidation::Rebuild => RenderInvalidation::full(Invalidation::Rebuild),
+        }
+    }
+
     pub fn scroll_at(&mut self, position: Point, delta: Offset) -> bool {
         let Some(root) = self.root else {
             return false;
@@ -452,34 +485,42 @@ impl<
             .scroll_element_into_view(root, element, &mut self.scroll_states)
     }
 
-    fn set_focus(&mut self, next: Option<ElementStateId>) -> Invalidation {
+    fn set_focus(&mut self, next: Option<ElementStateId>) -> RenderInvalidation {
         let previous = self.focused;
         if previous == next {
             if let Some(element) = next
                 && self.scroll_element_into_view_now(element)
             {
-                return Invalidation::Paint;
+                return RenderInvalidation::full(Invalidation::Paint);
             }
 
-            return Invalidation::None;
+            return RenderInvalidation::none();
         }
 
-        let mut invalidation = self.focus_transition_invalidation(previous, next);
+        let kind = self.focus_transition_invalidation(previous, next);
+        let before_damage = if kind == Invalidation::Paint {
+            self.interaction_damage(previous, next)
+        } else {
+            None
+        };
 
         self.focused = next;
         self.refresh_interaction_styles();
         self.pending_scroll_into_view = None;
 
+        let mut invalidation =
+            self.finish_interaction_invalidation(kind, before_damage, previous, next);
         let Some(element) = next else {
             return invalidation;
         };
-        if matches!(invalidation, Invalidation::Layout | Invalidation::Rebuild) {
-            // focus styling changed geometry. Current frame bounds are stale, so wait
-            // until layout has recomputed them
+
+        if matches!(kind, Invalidation::Layout | Invalidation::Rebuild) {
+            // focus styling changed geometry, current frame bounds are stale,
+            // so wait until layout has recomputed them
             self.pending_scroll_into_view = Some(element);
         } else if self.scroll_element_into_view_now(element) {
-            invalidation = invalidation.merge(Invalidation::Paint);
-        }
+            invalidation = invalidation.merge(RenderInvalidation::full(Invalidation::Paint));
+        };
 
         invalidation
     }
@@ -536,18 +577,23 @@ impl<
         self.target_at::<ActivateEvent>(position)
     }
 
-    fn set_pressed(&mut self, next: Option<ElementStateId>) -> Invalidation {
+    fn set_pressed(&mut self, next: Option<ElementStateId>) -> RenderInvalidation {
         let previous = self.activation.pressed();
         if previous == next {
-            return Invalidation::None;
+            return RenderInvalidation::none();
         }
 
-        let invalidation = self.pressed_transition_invalidation(previous, next);
+        let kind = self.pressed_transition_invalidation(previous, next);
+        let before_damage = if kind == Invalidation::Paint {
+            self.interaction_damage(previous, next)
+        } else {
+            None
+        };
 
         self.activation.set_pressed(next);
         self.refresh_interaction_styles();
 
-        invalidation
+        self.finish_interaction_invalidation(kind, before_damage, previous, next)
     }
 
     pub fn begin_activation_at(&mut self, position: Point) -> bool {
@@ -555,7 +601,7 @@ impl<
         let next = target.map(EventTarget::element);
         let invalidation = self.set_pressed(next);
 
-        self.invalidate(invalidation);
+        self.invalidate_render(invalidation);
 
         target.is_some()
     }
@@ -572,10 +618,10 @@ impl<
         let focus_invalidation = if activated {
             self.set_focus(Some(pressed))
         } else {
-            Invalidation::None
+            RenderInvalidation::none()
         };
 
-        self.invalidate(pressed_invalidation.merge(focus_invalidation));
+        self.invalidate_render(pressed_invalidation.merge(focus_invalidation));
 
         let Some(target) = target.filter(|target| target.element() == pressed) else {
             return Ok(false);
@@ -586,7 +632,7 @@ impl<
 
     pub fn cancel_activation(&mut self) {
         let invalidation = self.set_pressed(None);
-        self.invalidate(invalidation);
+        self.invalidate_render(invalidation);
     }
 
     pub fn begin_focused_activation(&mut self) -> bool {
@@ -596,7 +642,7 @@ impl<
         let next = target.map(EventTarget::element);
         let invalidation = self.set_pressed(next);
 
-        self.invalidate(invalidation);
+        self.invalidate_render(invalidation);
 
         next.is_some()
     }
@@ -613,7 +659,7 @@ impl<
 
         let invalidation = self.set_pressed(None);
 
-        self.invalidate(invalidation);
+        self.invalidate_render(invalidation);
 
         let Some(target) = target else {
             return Ok(false);

@@ -1,7 +1,8 @@
 use core::any::TypeId;
 
 use crate::{
-    FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect, count_metric,
+    DamageRegion, FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect, count_metric,
+    element,
     element_state::ElementStateId,
     px,
     scroll::{ScrollAxes, ScrollStateTable},
@@ -311,6 +312,90 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         }
 
         None
+    }
+
+    fn next_after_subtree(&self, node: NodeId) -> Option<NodeId> {
+        let mut current = node;
+
+        loop {
+            if let Some(sibling) = self.node(current).next_sibling {
+                return Some(sibling);
+            }
+
+            current = self.node(current).parent?;
+        }
+    }
+
+    pub(crate) fn visual_damage_for_element(
+        &self,
+        root: NodeId,
+        first: Option<ElementStateId>,
+        second: Option<ElementStateId>,
+    ) -> Option<DamageRegion> {
+        if first.is_none() && second.is_none() {
+            return Some(DamageRegion::none());
+        }
+
+        let first_node = match first {
+            Some(element) => Some(self.node_for_element(root, element)?),
+            None => None,
+        };
+        let second_node = match second {
+            Some(element) => Some(self.node_for_element(root, element)?),
+            None => None,
+        };
+
+        let first_end = first_node.and_then(|node| self.next_after_subtree(node));
+        let second_end = second_node.and_then(|node| self.next_after_subtree(node));
+
+        let mut first_active = false;
+        let mut second_active = false;
+        let mut damage = DamageRegion::none();
+
+        for visual in self.visual_nodes(root) {
+            let node = visual.node();
+
+            // end markers point to the first node outside the corresponding subtree,
+            // so deactivate before considering that node
+            if first_active && first_end == Some(node) {
+                first_active = false;
+            }
+            if second_active && second_end == Some(node) {
+                second_active = false;
+            }
+
+            if first_node == Some(node) {
+                first_active = true;
+            }
+            if second_node == Some(node) {
+                second_active = true;
+            }
+
+            if !first_active && !second_active {
+                continue;
+            }
+            if !visual.is_visible() {
+                continue;
+            }
+
+            // entity nodes do not issue paint commands, their painted descendants
+            // are still visited
+            if matches!(self.node(node).kind, crate::NodeKind::Entity { .. }) {
+                continue;
+            }
+
+            let mut bounds = visual.bounds();
+            if let Some(clip) = visual.clip() {
+                let Some(clipped) = bounds.intersection(clip) else {
+                    continue;
+                };
+                bounds = clipped;
+            }
+
+            damage = damage.add_rect(bounds);
+        }
+
+        Some(damage)
     }
 
     fn scroll_viewport_bounds(&self, node: NodeId, visual_bounds: Rect) -> Rect {
