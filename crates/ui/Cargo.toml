@@ -38,3 +38,8 @@ required-features = ["metrics"]
 name = "damage_metrics"
 harness = false
 required-features = ["metrics"]
+
+[[bench]]
+name = "partial_paint_metrics"
+harness = false
+required-features = ["metrics"]

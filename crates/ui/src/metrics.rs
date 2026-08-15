@@ -38,6 +38,9 @@ pub struct PerformanceMetrics {
     pub partial_damage_invalidations: u64,
     pub damage_rectangles: u64,
 
+    pub damage_culled_nodes: u64,
+    pub damage_clip_paints: u64,
+
     pub visual_nodes_visited: u64,
     pub visible_nodes: u64,
     pub nodes_painted: u64,

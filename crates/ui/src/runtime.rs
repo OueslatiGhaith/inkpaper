@@ -244,6 +244,29 @@ impl<
         Ok(Some(()))
     }
 
+    pub fn paint_with_damage<P>(
+        &self,
+        damage: DamageRegion,
+        painter: &mut P,
+    ) -> Result<Option<()>, P::Error>
+    where
+        P: Painter,
+    {
+        let Some(root) = self.root else {
+            return Ok(None);
+        };
+
+        self.frame.paint_with_runtime_and_damage(
+            root,
+            &self.entities,
+            &self.callbacks,
+            damage,
+            painter,
+        )?;
+
+        Ok(Some(()))
+    }
+
     fn reconcile_interaction_state(&mut self) {
         if let Some(focused) = self.focused {
             let still_focusable = self

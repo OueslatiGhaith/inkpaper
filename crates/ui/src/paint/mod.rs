@@ -1,7 +1,7 @@
 use crate::{
-    CanvasDraw, CanvasDrawFn, CanvasPainter, Color, FrameArena, ImageFit, ImageSource, NodeId,
-    NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer, callback_store::CallbackStore,
-    count_metric, entity_store::EntityStore, visual::VisualNode,
+    CanvasDraw, CanvasDrawFn, CanvasPainter, Color, DamageRegion, FrameArena, ImageFit,
+    ImageSource, NodeId, NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer,
+    callback_store::CallbackStore, count_metric, entity_store::EntityStore, visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,29 +58,20 @@ struct PaintRuntime<'a> {
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
-    fn paint_visual_node<P>(
+    fn paint_node<P>(
         &self,
-        visual: VisualNode,
+        node_id: NodeId,
+        bounds: Rect,
+        clip: Option<Rect>,
         runtime: Option<PaintRuntime<'_>>,
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
         P: Painter,
     {
-        count_metric!(self, visual_nodes_visited);
-        if !visual.is_visible() {
-            return Ok(());
-        }
-
-        count_metric!(self, visible_nodes);
-        let node_id = visual.node();
         let node = self.node(node_id);
-        let bounds = visual.bounds();
-        let clip = visual.clip();
-
         match node.kind {
             NodeKind::Div { .. } => {
-                count_metric!(self, nodes_painted);
                 let style = node.style().expect("div node must have style");
                 let border = match (style.border_width.is_positive(), style.border_color) {
                     (true, Some(color)) => Some(BorderPaint {
@@ -101,11 +92,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 )
             }
             NodeKind::Text { text } => {
-                count_metric!(self, nodes_painted);
                 painter.draw_text(self.text(text), bounds, node.effective_text_style, clip)
             }
             NodeKind::Canvas { draw, .. } => {
-                count_metric!(self, nodes_painted);
                 let mut invoke =
                     |local_bounds: Rect, canvas_painter: &mut dyn CanvasPainter| match draw {
                         CanvasDraw::Static(draw) => draw(local_bounds, canvas_painter),
@@ -113,7 +102,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                             let Some(runtime) = runtime else {
                                 debug_assert!(
                                     false,
-                                    "entity canvas painted without callback context"
+                                    "entity canvas painted without callback context",
                                 );
                                 return;
                             };
@@ -127,30 +116,126 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
                             debug_assert!(
                                 result.is_ok(),
-                                "entity canvas callback invocation failed: {result:?}"
+                                "entity canvas callback invocation failed: {result:?}",
                             );
                         }
                     };
 
                 painter.draw_canvas(bounds, clip, &mut invoke)
             }
+
             NodeKind::Image { source, style } => {
-                count_metric!(self, nodes_painted);
                 painter.draw_image(source, bounds, style.fit, clip)
             }
             NodeKind::Entity { .. } => Ok(()),
         }
     }
 
+    fn paint_visual_node<P>(
+        &self,
+        visual: VisualNode,
+        damage: DamageRegion,
+        runtime: Option<PaintRuntime<'_>>,
+        painter: &mut P,
+    ) -> Result<(), P::Error>
+    where
+        P: Painter,
+    {
+        count_metric!(self, visual_nodes_visited);
+        if !visual.is_visible() {
+            return Ok(());
+        }
+
+        count_metric!(self, visible_nodes);
+        let node_id = visual.node();
+        if matches!(self.node(node_id).kind, NodeKind::Entity { .. }) {
+            return Ok(());
+        }
+
+        let bounds = visual.bounds();
+
+        // full damage preserves the existing paiting behavior exactly, one paint
+        // invocation using the visual traversal's normal clip
+        if damage.is_full() {
+            count_metric!(self, nodes_painted);
+            return self.paint_node(node_id, bounds, visual.clip(), runtime, painter);
+        }
+
+        debug_assert!(
+            !damage.is_none(),
+            "empty damage must be rejected before visual traversal"
+        );
+
+        let mut painted = false;
+
+        for &damage_rect in damage.rects() {
+            // first restrict the dirty rectangle to the node's own painted bounds
+            let Some(mut clip) = bounds.intersection(damage_rect) else {
+                continue;
+            };
+            // then preserve any clipping inherited from overflow/scroll ancestors
+            if let Some(visual_clip) = visual.clip() {
+                let Some(intersection) = clip.intersection(visual_clip) else {
+                    continue;
+                };
+
+                clip = intersection;
+            }
+
+            if !painted {
+                count_metric!(self, nodes_painted);
+                painted = true;
+            }
+            count_metric!(self, damage_clip_paints);
+            self.paint_node(node_id, bounds, Some(clip), runtime, painter)?;
+        }
+
+        if !painted {
+            count_metric!(self, damage_culled_nodes);
+        }
+
+        Ok(())
+    }
+
+    fn paint_internal<P>(
+        &self,
+        root: NodeId,
+        runtime: Option<PaintRuntime<'_>>,
+        damage: DamageRegion,
+        painter: &mut P,
+    ) -> Result<(), P::Error>
+    where
+        P: Painter,
+    {
+        // empty damage should cost literally nothing: not even a visual-tree traversal
+        if damage.is_none() {
+            return Ok(());
+        }
+
+        for visual in self.visual_nodes(root) {
+            self.paint_visual_node(visual, damage, runtime, painter)?;
+        }
+
+        Ok(())
+    }
+
     pub fn paint<P>(&self, root: NodeId, painter: &mut P) -> Result<(), P::Error>
     where
         P: Painter,
     {
-        for visual in self.visual_nodes(root) {
-            self.paint_visual_node(visual, None, painter)?;
-        }
+        self.paint_internal(root, None, DamageRegion::full(), painter)
+    }
 
-        Ok(())
+    pub fn paint_with_damage<P>(
+        &self,
+        root: NodeId,
+        damage: DamageRegion,
+        painter: &mut P,
+    ) -> Result<(), P::Error>
+    where
+        P: Painter,
+    {
+        self.paint_internal(root, None, damage, painter)
     }
 
     pub(crate) fn paint_with_runtime<P>(
@@ -168,11 +253,26 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             callbacks,
         };
 
-        for visual in self.visual_nodes(root) {
-            self.paint_visual_node(visual, Some(runtime), painter)?;
-        }
+        self.paint_internal(root, Some(runtime), DamageRegion::full(), painter)
+    }
 
-        Ok(())
+    pub(crate) fn paint_with_runtime_and_damage<P>(
+        &self,
+        root: NodeId,
+        entities: &dyn EntityStore,
+        callbacks: &dyn CallbackStore,
+        damage: DamageRegion,
+        painter: &mut P,
+    ) -> Result<(), P::Error>
+    where
+        P: Painter,
+    {
+        let runtime = PaintRuntime {
+            entities,
+            callbacks,
+        };
+
+        self.paint_internal(root, Some(runtime), damage, painter)
     }
 }
 
@@ -756,5 +856,157 @@ mod tests {
                 color: Color::BLUE,
             },]
         );
+    }
+
+    #[test]
+    fn partial_damage_skips_non_intersecting_nodes() {
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(60))
+                    .bg(Color::BLACK)
+                    .child(div().w(px(100)).h(px(20)).bg(Color::RED))
+                    .child(div().w(px(100)).h(px(20)).bg(Color::BLUE))
+                    .child(div().w(px(100)).h(px(20)).bg(Color::GREEN)),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(60)), &painter);
+
+        let damage = Rect::new(Point::new(px(0), px(25)), Size::new(px(100), px(10)));
+
+        frame
+            .paint_with_damage(root, DamageRegion::from_rect(damage), &mut painter)
+            .unwrap();
+
+        assert_eq!(painter.commands.len(), 2,);
+        assert_eq!(
+            painter.commands[0],
+            Command::Box {
+                bounds: Rect::new(Point::ZERO, Size::new(px(100), px(60),),),
+                paint: BoxPaint {
+                    background: Some(Color::BLACK),
+                    border: None,
+                    radius: px(0),
+                },
+                clip: Some(damage),
+            },
+        );
+        assert_eq!(
+            painter.commands[1],
+            Command::Box {
+                bounds: Rect::new(Point::new(px(0), px(20),), Size::new(px(100), px(20),),),
+                paint: BoxPaint {
+                    background: Some(Color::BLUE),
+                    border: None,
+                    radius: px(0),
+                },
+                clip: Some(damage),
+            },
+        );
+    }
+
+    #[test]
+    fn disjoint_damage_rectangles_produce_disjoint_paint_clips() {
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let root = frame
+            .mount(div().w(px(100)).h(px(40)).bg(Color::BLUE))
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(40)), &painter);
+
+        let first = Rect::new(Point::new(px(0), px(0)), Size::new(px(10), px(10)));
+        let second = Rect::new(Point::new(px(80), px(20)), Size::new(px(10), px(10)));
+
+        let damage = DamageRegion::none().add_rect(first).add_rect(second);
+
+        frame.paint_with_damage(root, damage, &mut painter).unwrap();
+
+        assert_eq!(
+            painter.commands,
+            vec![
+                Command::Box {
+                    bounds: Rect::new(Point::ZERO, Size::new(px(100), px(40),),),
+                    paint: BoxPaint {
+                        background: Some(Color::BLUE),
+                        border: None,
+                        radius: px(0),
+                    },
+                    clip: Some(first),
+                },
+                Command::Box {
+                    bounds: Rect::new(Point::ZERO, Size::new(px(100), px(40),),),
+                    paint: BoxPaint {
+                        background: Some(Color::BLUE),
+                        border: None,
+                        radius: px(0),
+                    },
+                    clip: Some(second),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn partial_damage_respects_existing_visual_clip() {
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(40))
+                    .h(px(20))
+                    .overflow_hidden()
+                    .child(div().w(px(80)).h(px(20)).bg(Color::RED)),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(40)), &painter);
+
+        // the child physically extends to x=80, but its visible portion ends at x=40.
+        let damage = DamageRegion::from_rect(Rect::new(
+            Point::new(px(50), px(0)),
+            Size::new(px(10), px(20)),
+        ));
+
+        frame.paint_with_damage(root, damage, &mut painter).unwrap();
+
+        assert!(painter.commands.is_empty());
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn empty_damage_performs_no_visual_work() {
+        let mut frame = FrameArena::<8, 64>::default();
+
+        let root = frame
+            .mount(div().w(px(100)).h(px(40)).bg(Color::BLUE))
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(40)), &painter);
+        frame.reset_performance_metrics();
+        frame
+            .paint_with_damage(root, DamageRegion::none(), &mut painter)
+            .unwrap();
+
+        let metrics = frame.performance_metrics();
+
+        assert_eq!(metrics.visual_traversal_passes, 0,);
+        assert_eq!(metrics.visual_traversal_nodes, 0,);
+        assert_eq!(metrics.visual_nodes_visited, 0,);
+        assert_eq!(metrics.nodes_painted, 0,);
+        assert!(painter.commands.is_empty());
     }
 }
