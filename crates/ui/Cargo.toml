@@ -33,3 +33,8 @@ required-features = ["metrics"]
 name = "visual_operation_metrics"
 harness = false
 required-features = ["metrics"]
+
+[[bench]]
+name = "damage_metrics"
+harness = false
+required-features = ["metrics"]

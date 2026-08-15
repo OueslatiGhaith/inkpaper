@@ -344,6 +344,26 @@ impl<
         self.render_invalidation().damage()
     }
 
+    #[cfg(feature = "metrics")]
+    fn record_render_invalidation_metrics(&self, invalidation: RenderInvalidation) {
+        if invalidation.is_none() {
+            return;
+        }
+
+        let damage = invalidation.damage();
+        self.frame.metrics.increment(|metrics| {
+            metrics.render_invalidations_consumed += 1;
+            if damage.is_full() {
+                metrics.full_damage_invalidations += 1;
+            } else {
+                metrics.partial_damage_invalidations += 1;
+
+                let rectangle_count = damage.len() as u64;
+                metrics.damage_rectangles += rectangle_count;
+            }
+        });
+    }
+
     pub fn take_render_invalidation(&self) -> RenderInvalidation {
         let visual = self.visual_invalidation.replace(RenderInvalidation::none());
 
@@ -353,7 +373,12 @@ impl<
             RenderInvalidation::none()
         };
 
-        visual.merge(application)
+        let invalidation = visual.merge(application);
+
+        #[cfg(feature = "metrics")]
+        self.record_render_invalidation_metrics(invalidation);
+
+        invalidation
     }
 
     pub fn take_invalidation(&self) -> Invalidation {
@@ -435,7 +460,12 @@ impl<
                     return RenderInvalidation::full(Invalidation::Paint);
                 };
 
-                RenderInvalidation::damaged(Invalidation::Paint, before_damage.merge(after_damage))
+                let damage = before_damage.merge(after_damage);
+                if damage.is_none() {
+                    RenderInvalidation::full(Invalidation::Paint)
+                } else {
+                    RenderInvalidation::damaged(Invalidation::Paint, damage)
+                }
             }
             Invalidation::Layout => RenderInvalidation::full(Invalidation::Layout),
             Invalidation::Rebuild => RenderInvalidation::full(Invalidation::Rebuild),

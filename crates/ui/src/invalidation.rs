@@ -221,11 +221,17 @@ impl RenderInvalidation {
     }
 
     pub fn damaged(kind: Invalidation, damage: DamageRegion) -> Self {
-        if matches!(kind, Invalidation::None) {
-            return Self::none();
+        match kind {
+            Invalidation::None => Self::none(),
+            Invalidation::Paint => {
+                if damage.is_none() {
+                    Self::none()
+                } else {
+                    Self { kind, damage }
+                }
+            }
+            Invalidation::Layout | Invalidation::Rebuild => Self::full(kind),
         }
-
-        Self { kind, damage }
     }
 
     pub const fn kind(self) -> Invalidation {
@@ -241,10 +247,10 @@ impl RenderInvalidation {
     }
 
     pub fn merge(self, other: Self) -> Self {
-        Self {
-            kind: self.kind.merge(other.kind),
-            damage: self.damage.merge(other.damage),
-        }
+        let kind = self.kind.merge(other.kind);
+        let damage = self.damage.merge(other.damage);
+
+        Self::damaged(kind, damage)
     }
 }
 
@@ -267,7 +273,7 @@ mod tests {
             let height = if text.is_empty() {
                 px(0)
             } else {
-                px(0).min(max_size.height.non_negative())
+                px(10).min(max_size.height.non_negative())
             };
 
             Size::new(width, height)
@@ -366,7 +372,6 @@ mod tests {
                 )
         }
     }
-
     #[test]
     fn size_changing_focus_requires_layout() {
         let mut runtime = TestRuntime::default();
@@ -379,7 +384,11 @@ mod tests {
             .unwrap();
 
         assert!(runtime.focus_next());
-        assert_eq!(runtime.take_invalidation(), Invalidation::Layout);
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Layout,);
+        assert!(invalidation.damage().is_full());
     }
 
     #[test]
@@ -570,15 +579,23 @@ mod tests {
             .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
             .unwrap();
 
-        assert!(runtime.begin_activation_at(Point::new(px(10), px(10),)));
-        assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
+        assert!(runtime.begin_activation_at(Point::new(px(10), px(10),),));
+
+        let pressed = runtime.take_render_invalidation();
+
+        assert_eq!(pressed.kind(), Invalidation::Paint,);
+        assert!(!pressed.damage().is_full());
         assert!(
             runtime
-                .complete_activation_at(Point::new(px(10), px(10),))
+                .complete_activation_at(Point::new(px(10), px(10),),)
                 .unwrap()
         );
-        assert_eq!(clicks.get(), 1);
-        assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
+        assert_eq!(clicks.get(), 1,);
+
+        let rebuild = runtime.take_render_invalidation();
+
+        assert_eq!(rebuild.kind(), Invalidation::Rebuild);
+        assert!(rebuild.damage().is_full());
     }
 
     #[test]
@@ -992,5 +1009,89 @@ mod tests {
                 Size::new(px(30), px(20),),
             ),],
         );
+    }
+
+    #[test]
+    fn empty_paint_damage_becomes_no_invalidation() {
+        let invalidation = RenderInvalidation::damaged(Invalidation::Paint, DamageRegion::none());
+
+        assert_eq!(invalidation, RenderInvalidation::none(),);
+    }
+
+    #[test]
+    fn layout_invalidation_always_has_full_damage() {
+        let partial = DamageRegion::from_rect(Rect::new(
+            Point::new(px(10), px(20)),
+            Size::new(px(30), px(40)),
+        ));
+
+        let invalidation = RenderInvalidation::damaged(Invalidation::Layout, partial);
+
+        assert_eq!(invalidation.kind(), Invalidation::Layout,);
+        assert!(invalidation.damage().is_full());
+    }
+
+    #[test]
+    fn rebuild_invalidation_always_has_full_damage() {
+        let partial = DamageRegion::from_rect(Rect::new(
+            Point::new(px(10), px(20)),
+            Size::new(px(30), px(40)),
+        ));
+
+        let invalidation = RenderInvalidation::damaged(Invalidation::Rebuild, partial);
+
+        assert_eq!(invalidation.kind(), Invalidation::Rebuild,);
+        assert!(invalidation.damage().is_full());
+    }
+
+    #[test]
+    fn merging_partial_paint_with_layout_promotes_damage_to_full() {
+        let paint = RenderInvalidation::damaged(
+            Invalidation::Paint,
+            DamageRegion::from_rect(Rect::new(
+                Point::new(px(10), px(20)),
+                Size::new(px(30), px(40)),
+            )),
+        );
+
+        let layout = RenderInvalidation::damaged(
+            Invalidation::Layout,
+            DamageRegion::from_rect(Rect::new(
+                Point::new(px(50), px(60)),
+                Size::new(px(10), px(10)),
+            )),
+        );
+
+        let merged = paint.merge(layout);
+
+        assert_eq!(merged.kind(), Invalidation::Layout,);
+        assert!(merged.damage().is_full());
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn consuming_partial_damage_records_damage_metrics() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| PaintFocusApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+            .unwrap();
+        runtime.reset_performance_metrics();
+
+        assert!(runtime.focus_next());
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Paint,);
+
+        let metrics = runtime.performance_metrics();
+
+        assert_eq!(metrics.render_invalidations_consumed, 1,);
+        assert_eq!(metrics.full_damage_invalidations, 0,);
+        assert_eq!(metrics.partial_damage_invalidations, 1,);
+        assert_eq!(metrics.damage_rectangles, 1,);
     }
 }

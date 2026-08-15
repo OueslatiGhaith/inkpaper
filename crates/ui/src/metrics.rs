@@ -33,6 +33,11 @@ pub struct PerformanceMetrics {
     pub visual_bounds_ancestor_visits: u64,
     pub scroll_into_view_ancestor_visits: u64,
 
+    pub render_invalidations_consumed: u64,
+    pub full_damage_invalidations: u64,
+    pub partial_damage_invalidations: u64,
+    pub damage_rectangles: u64,
+
     pub visual_nodes_visited: u64,
     pub visible_nodes: u64,
     pub nodes_painted: u64,
