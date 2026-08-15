@@ -611,14 +611,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let basis = style.map(|style| style.flex_basis);
         let base = match basis {
             Some(FlexBasis::Pixels(value)) => value.non_negative(),
-            Some(FlexBasis::Auto) | None => {
-                if requested == Some(Length::Fill) {
-                    px(0)
-                } else {
+            Some(FlexBasis::Auto) | None => match requested {
+                Some(Length::Pixels(value)) => value.non_negative(),
+                Some(Length::Fill) => px(0),
+                Some(Length::Auto) | None => {
                     let measured = self.measure_node(node, available, text_measurer);
                     main_size(measured, axis)
                 }
-            }
+            },
         };
 
         self.clamp_flex_main_size(node, axis, base)
@@ -1805,5 +1805,35 @@ mod tests {
         let canvas_node = frame.node(root).first_child.unwrap();
 
         assert_bounds(frame.bounds(canvas_node), 0, 0, 30, 15);
+    }
+
+    #[test]
+    fn fixed_main_length_does_not_require_intrinsic_measurement() {
+        struct PanicTextMeasurer;
+        impl TextMeasurer for PanicTextMeasurer {
+            fn measure_text(&self, _: &str, _: ResolvedTextStyle, _: Size) -> Size {
+                panic!("fixed main length should not require intrinsic measurement");
+            }
+        }
+
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let node = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(80))
+                    .child("this must not be measured"),
+            )
+            .unwrap();
+
+        let base = frame.flex_base_main_size(
+            node,
+            super::Axis::Vertical,
+            Size::new(px(100), px(100)),
+            &PanicTextMeasurer,
+        );
+
+        assert_eq!(base, px(80),);
     }
 }
