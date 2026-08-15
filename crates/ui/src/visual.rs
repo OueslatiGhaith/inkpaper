@@ -1,6 +1,6 @@
 use heapless::Vec;
 
-use crate::{FrameArena, NodeId, Offset, Point, Rect, count_metric, px};
+use crate::{DamageRegion, FrameArena, NodeId, Offset, Point, Rect, count_metric, px};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClipRegion {
@@ -43,6 +43,14 @@ impl ClipRegion {
 
     pub(crate) const fn is_empty(self) -> bool {
         matches!(self, Self::Empty)
+    }
+
+    pub(crate) fn intersects_damage(self, damage: DamageRegion) -> bool {
+        match self {
+            ClipRegion::Unbounded => true,
+            ClipRegion::Rect(rect) => damage.intersects_rect(rect),
+            ClipRegion::Empty => false,
+        }
     }
 }
 
@@ -104,6 +112,10 @@ impl VisualNode {
     pub(crate) fn contains(self, point: Point) -> bool {
         self.bounds.contains(point) && self.clip.contains(point)
     }
+
+    pub(crate) fn clip_region(self) -> ClipRegion {
+        self.clip
+    }
 }
 
 const VISUAL_CONTEXT_STACK_CAPACITY: usize = 16;
@@ -120,6 +132,7 @@ pub(crate) struct VisualTraversal<'a, const NODES: usize, const TEXT_BYTES: usiz
     frame: &'a FrameArena<NODES, TEXT_BYTES>,
     root: NodeId,
     current: Option<(NodeId, VisualContext)>,
+    pending_advance: Option<(NodeId, VisualContext)>,
     branch_continuations: Vec<VisualContinuation, VISUAL_CONTEXT_STACK_CAPACITY>,
     overflowed_branch_continuations: u16,
     #[cfg(feature = "metrics")]
@@ -134,6 +147,7 @@ impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES,
             frame,
             root,
             current: Some((root, VisualContext::ROOT)),
+            pending_advance: None,
             branch_continuations: Vec::new(),
             overflowed_branch_continuations: 0,
             #[cfg(feature = "metrics")]
@@ -282,6 +296,32 @@ impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES,
 
         self.finish_subtree(node);
     }
+
+    fn advance_without_children(&mut self, node: NodeId, context: VisualContext) {
+        let next_sibling = self.frame.node(node).next_sibling;
+        if let Some(sibling) = next_sibling {
+            self.current = Some((sibling, context));
+            return;
+        }
+
+        self.finish_subtree(node);
+    }
+
+    pub(crate) fn skip_children(&mut self) {
+        let Some((node, context)) = self.pending_advance.take() else {
+            return;
+        };
+
+        self.advance_without_children(node, context);
+    }
+
+    fn finish_pending_advance(&mut self) {
+        let Some((node, context)) = self.pending_advance.take() else {
+            return;
+        };
+
+        self.advance(node, context);
+    }
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> Iterator
@@ -290,11 +330,18 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Iterator
     type Item = VisualNode;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (node, context) = self.current?;
+        // if the called did not explicitly prune the previously yielded node,
+        // descend normally
+        self.finish_pending_advance();
+
+        let (node, context) = self.current.take()?;
         count_metric!(self.frame, visual_traversal_nodes);
 
         let bounds = context.translate_rect(self.frame.node(node).layout.bounds);
-        self.advance(node, context);
+
+        // advancement is deferred until the caller asks for the next node. This gives
+        // it one chance to replace normal descent with `skip_children()`
+        self.pending_advance = Some((node, context));
 
         Some(VisualNode {
             node,

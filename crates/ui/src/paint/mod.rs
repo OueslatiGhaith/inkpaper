@@ -1,7 +1,10 @@
 use crate::{
     CanvasDraw, CanvasDrawFn, CanvasPainter, Color, DamageRegion, FrameArena, ImageFit,
     ImageSource, NodeId, NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer,
-    callback_store::CallbackStore, count_metric, entity_store::EntityStore, visual::VisualNode,
+    callback_store::CallbackStore,
+    count_metric,
+    entity_store::EntityStore,
+    visual::{self, VisualNode},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,7 +215,17 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             return Ok(());
         }
 
-        for visual in self.visual_nodes(root) {
+        let mut traversal = self.visual_nodes(root);
+
+        while let Some(visual) = traversal.next() {
+            // a finite inherited clip bounds the entire descendant subtree.
+            // if that clip cannot touch damage, neither this node's descendants nor
+            // any deeper descendant can contribute pixels to the repaint
+            if !damage.is_full() && !visual.clip_region().intersects_damage(damage) {
+                traversal.skip_children();
+                count_metric!(self, damage_pruned_subtrees);
+            }
+
             self.paint_visual_node(visual, damage, runtime, painter)?;
         }
 
@@ -1008,5 +1021,83 @@ mod tests {
         assert_eq!(metrics.visual_nodes_visited, 0,);
         assert_eq!(metrics.nodes_painted, 0,);
         assert!(painter.commands.is_empty());
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn damage_paint_prunes_subtree_when_inherited_clip_misses_damage() {
+        struct App;
+
+        impl Render for App {
+            fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+                div().w(px(100)).h(px(100)).bg(Color::BLACK).child(
+                    div().w(px(40)).h(px(20)).overflow_hidden().child(
+                        div()
+                            .w(px(80))
+                            .h(px(20))
+                            .bg(Color::RED)
+                            .child(div().w(px(80)).h(px(10)).bg(Color::BLUE)),
+                    ),
+                )
+            }
+        }
+
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| App).unwrap();
+
+        runtime.rebuild(app).unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        runtime
+            .layout(Size::new(px(100), px(100)), &painter)
+            .unwrap();
+
+        // Damage lies outside the 40px-wide overflow
+        // viewport.
+        //
+        // The wide red child geometrically reaches this
+        // damage rectangle, but its inherited visual clip
+        // does not. Therefore its descendants can safely
+        // be pruned.
+        let damage = DamageRegion::from_rect(Rect::new(
+            Point::new(px(60), px(0)),
+            Size::new(px(10), px(10)),
+        ));
+
+        runtime.reset_performance_metrics();
+        runtime
+            .paint_with_damage(damage, &mut painter)
+            .unwrap()
+            .unwrap();
+
+        let metrics = runtime.performance_metrics();
+
+        assert_eq!(metrics.damage_pruned_subtrees, 1,);
+        assert!(
+            metrics.visual_traversal_nodes
+                < u64::try_from(runtime.frame_node_count(),).unwrap_or(u64::MAX),
+        );
+
+        // only the black root intersects the damage.
+        // the clipped red subtree must produce no command.
+
+        assert_eq!(painter.commands.len(), 1,);
+        assert_eq!(
+            painter.commands[0],
+            Command::Box {
+                bounds: Rect::new(Point::ZERO, Size::new(px(100), px(100),),),
+                paint: BoxPaint {
+                    background: Some(Color::BLACK),
+                    border: None,
+                    radius: px(0),
+                },
+                clip: Some(Rect::new(
+                    Point::new(px(60), px(0),),
+                    Size::new(px(10), px(10),),
+                ),),
+            },
+        );
     }
 }

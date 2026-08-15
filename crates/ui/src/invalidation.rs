@@ -156,6 +156,19 @@ impl DamageRegion {
         self.len -= 1;
         self.rects[self.len as usize] = EMPTY_DAMAGE_RECT;
     }
+
+    pub fn intersects_rect(self, rect: Rect) -> bool {
+        if rect.width().is_non_positive() || rect.height().is_non_positive() {
+            return false;
+        }
+        if self.full {
+            return true;
+        }
+
+        self.rects()
+            .iter()
+            .any(|damage| damage.intersection(rect).is_some())
+    }
 }
 
 fn damage_rect_union(first: Rect, second: Rect) -> Rect {
@@ -1093,5 +1106,22 @@ mod tests {
         assert_eq!(metrics.full_damage_invalidations, 0,);
         assert_eq!(metrics.partial_damage_invalidations, 1,);
         assert_eq!(metrics.damage_rectangles, 1,);
+    }
+
+    #[test]
+    fn damage_region_reports_rectangle_intersection() {
+        let damage = DamageRegion::from_rect(Rect::new(
+            Point::new(px(20), px(20)),
+            Size::new(px(20), px(20)),
+        ));
+
+        assert!(damage.intersects_rect(Rect::new(
+            Point::new(px(30), px(30),),
+            Size::new(px(20), px(20),),
+        ),));
+        assert!(!damage.intersects_rect(Rect::new(
+            Point::new(px(60), px(60),),
+            Size::new(px(10), px(10),),
+        ),));
     }
 }

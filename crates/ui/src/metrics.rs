@@ -39,6 +39,7 @@ pub struct PerformanceMetrics {
     pub damage_rectangles: u64,
 
     pub damage_culled_nodes: u64,
+    pub damage_pruned_subtrees: u64,
     pub damage_clip_paints: u64,
 
     pub visual_nodes_visited: u64,
