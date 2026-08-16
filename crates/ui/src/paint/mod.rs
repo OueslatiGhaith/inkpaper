@@ -1177,4 +1177,50 @@ mod tests {
         assert_eq!(metrics.visual_traversal_nodes, 6,);
         assert_eq!(metrics.nodes_painted, 3,);
     }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn partial_paint_before_layout_does_not_use_stale_subtree_bounds() {
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let first_root = frame
+            .mount(
+                div()
+                    .w(px(20))
+                    .h(px(20))
+                    .child(div().w(px(20)).h(px(20)).child("old")),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(first_root, Size::new(px(100), px(100)), &painter);
+        frame.clear();
+
+        let second_root = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(100))
+                    .child(div().w(px(100)).h(px(100)).bg(Color::RED).child("new")),
+            )
+            .unwrap();
+
+        frame.reset_performance_metrics();
+
+        let damage = DamageRegion::from_rect(Rect::new(
+            Point::new(px(80), px(80)),
+            Size::new(px(10), px(10)),
+        ));
+
+        frame
+            .paint_with_damage(second_root, damage, &mut painter)
+            .unwrap();
+
+        let metrics = frame.performance_metrics();
+
+        // the old layout cache must not be trusted after rebuilding a new tree that
+        // has not yet been laid out.
+        assert_eq!(metrics.damage_extent_pruned_subtrees, 0,);
+    }
 }

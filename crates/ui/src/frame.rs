@@ -165,6 +165,7 @@ pub(crate) struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
     pub(crate) event_bindings: Vec<EventBinding, NODES>,
     text: Vec<u8, TEXT_BYTES>,
     node_cache: [NodeCache; NODES],
+    subtree_paint_bounds_valid: bool,
     #[cfg(feature = "metrics")]
     pub(crate) metrics: PerformanceMetricsCell,
 }
@@ -176,6 +177,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, 
             event_bindings: Vec::new(),
             text: Vec::new(),
             node_cache: [NodeCache::Empty; NODES],
+            subtree_paint_bounds_valid: false,
             #[cfg(feature = "metrics")]
             metrics: PerformanceMetricsCell::default(),
         }
@@ -203,6 +205,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.nodes.clear();
         self.text.clear();
         self.event_bindings.clear();
+        self.subtree_paint_bounds_valid = false;
     }
 
     fn push_node(&mut self, kind: NodeKind) -> Result<NodeId, MountError> {
@@ -215,7 +218,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             .push(Node::new(kind))
             .map_err(|_| MountError::NodesFull)?;
 
-        self.node_cache[id.index()] = NodeCache::Empty;
+        self.subtree_paint_bounds_valid = false;
 
         count_metric!(self, nodes_mounted);
 
@@ -507,6 +510,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         for cache in &mut self.node_cache[..node_count] {
             *cache = NodeCache::Empty;
         }
+        self.subtree_paint_bounds_valid = false;
     }
 
     pub(crate) fn set_subtree_paint_bounds(&mut self, node: NodeId, bounds: Rect) {
@@ -514,10 +518,18 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     pub(crate) fn subtree_paint_bounds(&self, node: NodeId) -> Option<Rect> {
+        if !self.subtree_paint_bounds_valid {
+            return None;
+        }
+
         match self.node_cache[node.index()] {
             NodeCache::SubtreePaintBounds(bounds) => Some(bounds),
-            _ => None,
+            NodeCache::Empty | NodeCache::Measurement(_) => None,
         }
+    }
+
+    pub(crate) fn finish_subtree_paint_bounds(&mut self) {
+        self.subtree_paint_bounds_valid = true;
     }
 }
 

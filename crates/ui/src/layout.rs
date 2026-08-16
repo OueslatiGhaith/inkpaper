@@ -337,7 +337,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         let measured = self.measure_node(node, available, text_measurer);
-        self.layout_node_with_size(node, origin, measured, text_measurer);
+        let _ = self.layout_node_with_size(node, origin, measured, text_measurer);
 
         measured
     }
@@ -349,10 +349,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         origin: Point,
         outer_size: Size,
         text_measurer: &dyn TextMeasurer,
-    ) {
+        mut subtree_bounds: Rect,
+    ) -> Rect {
         let child_count = self.child_count(node);
         if child_count == 0 {
-            return;
+            return subtree_bounds;
         }
 
         let axis = flow_axis(style);
@@ -372,6 +373,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let scrolling_cross = match axis {
             Axis::Horizontal => scroll_axes.vertical(),
             Axis::Vertical => scroll_axes.horizontal(),
+        };
+
+        // calculate this once for the whole parent.
+        // if children are clipped, every non-empty child subtree contributes at most
+        // this viewport.
+        let children_clip = if self.node_clips_children(node) {
+            Some(self.children_clip_layout_bounds(node))
+        } else {
+            None
         };
 
         let gap = style.gap.non_negative();
@@ -488,7 +498,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 content_cross_origin + cross_offset + cross_margin_start(margin, axis);
             let child_origin = point_from_axes(child_main_origin, child_cross_origin, axis);
 
-            self.layout_node_with_size(child, child_origin, child_size, text_measurer);
+            // the child returns its complete conservative subtree extent as part
+            // of normal recursive layout.
+            let child_subtree =
+                self.layout_node_with_size(child, child_origin, child_size, text_measurer);
+
+            if child_subtree.has_area() {
+                let contribution = children_clip.unwrap_or(child_subtree);
+                subtree_bounds = subtree_bounds.union(contribution);
+            }
 
             cursor += main_margin_start(margin, axis) + target_main + main_margin_end(margin, axis);
 
@@ -508,6 +526,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             shrink_before = shrink_before.saturating_add(shrink_factor);
             current = next;
         }
+
+        subtree_bounds
     }
 
     pub fn layout(
@@ -521,9 +541,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         let size = self.layout_node(root, Point::ZERO, viewport, text_measurer);
 
-        // measurements are no longer needed after the layout pass. Reuse the same
-        // per-node cache storage for conservative subtree paint bounds
-        self.rebuild_subtree_paint_bounds();
+        // all subtree extents were produced bottom-up as part of recursive layout.
+        self.finish_subtree_paint_bounds();
 
         size
     }
@@ -722,21 +741,34 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         origin: Point,
         size: Size,
         text_measurer: &dyn TextMeasurer,
-    ) {
+    ) -> Rect {
         count_metric!(self, nodes_laid_out);
         self.node_mut(node).layout.bounds = Rect::new(origin, size);
-        match self.node(node).kind {
-            NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => {}
-            NodeKind::Entity { .. } => {
-                if let Some(child) = self.node(node).first_child {
-                    self.layout_node_with_size(child, origin, size, text_measurer);
+        let own_bounds = self.own_paint_bounds(node);
+
+        let subtree_bounds = match self.node(node).kind {
+            NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => own_bounds,
+            NodeKind::Entity { .. } => match self.node(node).first_child {
+                Some(child) => {
+                    let child_subtree =
+                        self.layout_node_with_size(child, origin, size, text_measurer);
+
+                    own_bounds.union(child_subtree)
                 }
-            }
+                None => own_bounds,
+            },
             NodeKind::Div { .. } => {
                 let style = self.node(node).style().expect("div node must have style");
-                self.layout_div_children(node, style, origin, size, text_measurer);
+
+                self.layout_div_children(node, style, origin, size, text_measurer, own_bounds)
             }
-        }
+        };
+
+        // this overwrites this node's measurement cache only after every measurement
+        // needed for its layout has already completed.
+        self.set_subtree_paint_bounds(node, subtree_bounds);
+
+        subtree_bounds
     }
 
     fn child_layout_available(&self, node: NodeId, viewport: Size) -> Size {
@@ -782,6 +814,22 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             (right - bounds.right()).non_negative(),
             (bottom - bounds.bottom()).non_negative(),
         )
+    }
+
+    fn own_paint_bounds(&self, node: NodeId) -> Rect {
+        let empty = Rect::new(Point::ZERO, Size::ZERO);
+
+        match self.node(node).kind {
+            NodeKind::Entity { .. } => empty,
+            NodeKind::Div { .. }
+            | NodeKind::Text { .. }
+            | NodeKind::Image { .. }
+            | NodeKind::Canvas { .. } => {
+                let bounds = self.node(node).layout.bounds;
+
+                if bounds.has_area() { bounds } else { empty }
+            }
+        }
     }
 }
 
