@@ -91,7 +91,6 @@ impl VisualContext {
 pub(crate) struct VisualNode {
     node: NodeId,
     bounds: Rect,
-    subtree_bounds: Option<Rect>,
     clip: ClipRegion,
 }
 
@@ -102,10 +101,6 @@ impl VisualNode {
 
     pub(crate) const fn bounds(self) -> Rect {
         self.bounds
-    }
-
-    pub(crate) const fn subtree_bounds(self) -> Option<Rect> {
-        self.subtree_bounds
     }
 
     pub(crate) fn clip(self) -> Option<Rect> {
@@ -345,10 +340,6 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Iterator
         count_metric!(self.frame, visual_traversal_nodes);
 
         let bounds = context.translate_rect(self.frame.node(node).layout.bounds);
-        let subtree_bounds = self
-            .frame
-            .subtree_paint_bounds(node)
-            .map(|bounds| context.translate_rect(bounds));
 
         // advancement is deferred until the caller asks for the next node. This gives
         // it one chance to replace normal descent with `skip_children()`
@@ -357,7 +348,6 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Iterator
         Some(VisualNode {
             node,
             bounds,
-            subtree_bounds,
             clip: context.clip,
         })
     }

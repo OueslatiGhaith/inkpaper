@@ -200,6 +200,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         Ok(())
     }
 
+    fn visual_subtree_paint_bounds(&self, visual: VisualNode) -> Option<Rect> {
+        let node = visual.node();
+        let subtree = self.subtree_paint_bounds(node)?;
+        let layout_bounds = self.node(node).layout.bounds;
+        let translation = visual.bounds().origin - layout_bounds.origin;
+
+        Some(subtree.translated(translation))
+    }
+
     fn paint_internal<P>(
         &self,
         root: NodeId,
@@ -225,22 +234,23 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 // a finite inherited clip bounds every descendant. If the clip misses
                 // damage, the entire descendant subtree is irrelevant
                 let clip_misses_damage = !visual.clip_region().intersects_damage(damage);
-                // the cached subtree extent conservatively contains every pixel this
-                // node or any of its descendants can affect.
-                // `None` means layout has not established the cache yet, so pruning
-                // is not allowed
-                let extent_misses_damage = match visual.subtree_bounds() {
-                    Some(bounds) => !damage.intersects_rect(bounds),
-                    None => false,
-                };
-
                 if clip_misses_damage {
                     traversal.skip_children();
                     count_metric!(self, damage_pruned_subtrees);
-                } else if extent_misses_damage {
-                    traversal.skip_children();
-                    count_metric!(self, damage_pruned_subtrees);
-                    count_metric!(self, damage_extent_pruned_subtrees);
+                } else {
+                    // the cached subtree extent conservatively contains every pixel this
+                    // node or any of its descendants can affect.
+                    // `None` means layout has not established the cache yet, so pruning
+                    // is not allowed
+                    let extent_misses_damage = match self.visual_subtree_paint_bounds(visual) {
+                        Some(bounds) => !damage.intersects_rect(bounds),
+                        None => false,
+                    };
+                    if extent_misses_damage {
+                        traversal.skip_children();
+                        count_metric!(self, damage_pruned_subtrees);
+                        count_metric!(self, damage_extent_pruned_subtrees);
+                    }
                 }
             }
 
