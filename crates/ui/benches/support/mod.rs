@@ -17,6 +17,9 @@ pub const SCROLL_LIST_SIZES: &[usize] = &[8, 32, 128, 512];
 pub const MIXED_SCREEN_SIZES: &[usize] = &[8, 32, 128];
 pub const DEEP_CHAIN_SIZES: &[usize] = &[8, 32, 128, 512];
 pub const NESTED_SCROLL_DEPTHS: &[usize] = &[1, 2, 4, 8, 16, 32];
+pub const DEEP_SCROLL_LIST_SIZES: &[usize] = &[32, 128, 512];
+pub const SCROLL_LIST_ROW_HEIGHT: Pixels = px(16);
+pub const SCROLL_LIST_VIEWPORT_HEIGHT: Pixels = px(120);
 
 pub const REPRESENTATIVE_CASES: &[(BenchScenario, &[usize])] = &[
     (BenchScenario::FlexRow, FLEX_ROW_SIZES),
@@ -276,12 +279,24 @@ fn text_heavy(rows: usize) -> impl Element {
 fn scroll_list(rows: usize) -> impl Element {
     div()
         .w_full()
-        .h(px(120))
+        .h(SCROLL_LIST_VIEWPORT_HEIGHT)
         .flex()
         .flex_col()
         .id("benchmark-scroll")
         .overflow_y_scroll()
-        .children((0..rows).map(|_| div().w_full().h(px(16)).child("Scrollable row")))
+        .children((0..rows).map(|_| {
+            div()
+                .w_full()
+                .h(SCROLL_LIST_ROW_HEIGHT)
+                .child("Scrollable row")
+        }))
+}
+
+pub fn scroll_list_max_offset(rows: usize) -> Pixels {
+    let rows = i32::try_from(rows).unwrap_or(i32::MAX);
+    let content_height = SCROLL_LIST_ROW_HEIGHT.saturating_mul(rows);
+
+    (content_height - SCROLL_LIST_VIEWPORT_HEIGHT).non_negative()
 }
 
 fn mixed_screen(rows: usize) -> impl Element {

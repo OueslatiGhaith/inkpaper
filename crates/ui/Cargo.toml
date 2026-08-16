@@ -43,3 +43,8 @@ required-features = ["metrics"]
 name = "partial_paint_metrics"
 harness = false
 required-features = ["metrics"]
+
+[[bench]]
+name = "partial_paint_scroll_depth_metrics"
+harness = false
+required-features = ["metrics"]
