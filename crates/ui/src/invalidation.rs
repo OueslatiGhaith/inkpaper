@@ -169,6 +169,18 @@ impl DamageRegion {
             .iter()
             .any(|damage| damage.intersection(rect).is_some())
     }
+
+    pub fn partial_damage_bounds(&self) -> Rect {
+        debug_assert!(!self.is_none(), "empty damage has no bounds");
+        debug_assert!(!self.is_full(), "full damage has no finite boubds");
+
+        let mut rects = self.rects().iter().copied();
+        let first = rects
+            .next()
+            .expect("non-empty partial damage must contain a rectangle");
+
+        rects.fold(first, Rect::union)
+    }
 }
 
 fn damage_rect_union(first: Rect, second: Rect) -> Rect {

@@ -9,7 +9,7 @@ pub trait TextMeasurer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Axis {
+pub(crate) enum Axis {
     Horizontal,
     Vertical,
 }
@@ -56,7 +56,7 @@ fn requested_length(style: Style, axis: Axis) -> Length {
     }
 }
 
-fn flow_axis(style: Style) -> Axis {
+pub(crate) fn flow_axis(style: Style) -> Axis {
     match style.display {
         Display::Block => Axis::Vertical,
         Display::Flex => match style.flex_direction {

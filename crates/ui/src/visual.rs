@@ -317,6 +317,20 @@ impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES,
         self.advance_without_children(node, context);
     }
 
+    pub(crate) fn skip_children_and_remaining_siblings(&mut self) {
+        let Some((node, _)) = self.pending_advance.take() else {
+            return;
+        };
+
+        // treat the complete sibling suffix as consumed.
+        // `finish_subtree()` resumes the continuation of the parent/ancestor rather
+        // than following this node's `next_sibling`.
+        // this also preserves the bounded-stack overflow fallback, because that fallback
+        // already climbs from `node` to the next continuation outside the current
+        // sibling sequence
+        self.finish_subtree(node);
+    }
+
     fn finish_pending_advance(&mut self) {
         let Some((node, context)) = self.pending_advance.take() else {
             return;
@@ -914,5 +928,42 @@ mod tests {
             frame.subtree_paint_bounds(root,),
             Some(Rect::new(Point::ZERO, Size::new(px(20), px(20),),),),
         );
+    }
+
+    #[test]
+    fn visual_traversal_can_skip_children_and_remaining_siblings() {
+        let mut frame = FrameArena::<32, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .child(
+                        div()
+                            .child(div().child("A"))
+                            .child(div().child("B"))
+                            .child(div().child("C")),
+                    )
+                    .child(div().child("after")),
+            )
+            .unwrap();
+
+        let branch = frame.node(root).first_child.unwrap();
+        let first = frame.node(branch).first_child.unwrap();
+        let after = frame.node(branch).next_sibling.unwrap();
+        let after_text = frame.node(after).first_child.unwrap();
+
+        let mut traversal = frame.visual_nodes(root);
+
+        assert_eq!(traversal.next().unwrap().node(), root,);
+        assert_eq!(traversal.next().unwrap().node(), branch,);
+        assert_eq!(traversal.next().unwrap().node(), first,);
+
+        traversal.skip_children_and_remaining_siblings();
+
+        // first's child plus B and C must all have been skipped, but traversal must
+        // resume at branch's sibling.
+        assert_eq!(traversal.next().unwrap().node(), after,);
+        assert_eq!(traversal.next().unwrap().node(), after_text,);
+        assert!(traversal.next().is_none(),);
     }
 }
