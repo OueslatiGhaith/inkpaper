@@ -4,7 +4,10 @@ use embedded_graphics::{
     draw_target::DrawTarget,
     geometry::OriginDimensions,
     image::{GetPixel, ImageDrawable},
-    mono_font::ascii::FONT_6X10,
+    mono_font::{
+        MonoFont,
+        ascii::{FONT_6X10, FONT_10X20},
+    },
     pixelcolor::{Rgb888, RgbColor},
     prelude::{Pixel as EgPixel, Point as EgPoint, Size as EgSize},
     primitives::Rectangle,
@@ -34,6 +37,8 @@ type UiRuntime = Runtime<
     4_096,  // frame text bytes
     128,    // persistent element states
 >;
+
+const FONTS: [&MonoFont; 2] = [&FONT_6X10, &FONT_10X20];
 
 const DEMO_IMAGE_WIDTH: u32 = 48;
 const DEMO_IMAGE_HEIGHT: u32 = 24;
@@ -135,7 +140,12 @@ impl Render for Header {
                     .font(FontId::new(1))
                     .text_color(Color::WHITE),
             )
-            .child(text(self.subtitle).text_color(Color::rgb(169, 179, 197)))
+            .child(
+                text(self.subtitle)
+                    .wrap()
+                    .line_height(px(12))
+                    .text_color(Color::rgb(169, 179, 197)),
+            )
     }
 }
 
@@ -303,9 +313,7 @@ impl Render for Counter {
 }
 
 fn section_title(label: &'static str) -> impl IntoElement {
-    text(label)
-        .font(FontId::new(1))
-        .text_color(Color::rgb(225, 231, 240))
+    text(label).text_color(Color::rgb(225, 231, 240))
 }
 
 fn weighted_flex_block(label: &'static str, grow: u16, color: Color) -> impl IntoElement {
@@ -367,17 +375,27 @@ fn image_fit_card(label: &'static str, fit: ImageFit) -> impl IntoElement {
 struct App {
     header: Entity<Header>,
     counter: Entity<Counter>,
+    show_details: bool,
 }
 
 impl App {
     fn new(cx: &mut Context<Self>) -> Self {
-        let header = cx.new(|_| Header::new("InkPaper UI", "Gallery")).unwrap();
+        let header = cx.new(|_| Header::new("InkPaper UI", "Feature gallery - mouse wheel scrolls, Tab/arrows move focus, Enter/Space activates, C clears focus.")).unwrap();
         let counter = cx.new(|_| Counter::new()).unwrap();
 
-        Self { header, counter }
+        Self {
+            header,
+            counter,
+            show_details: false,
+        }
     }
 
     fn demo_clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
+
+    fn toggle_details(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
+        self.show_details = !self.show_details;
+        cx.notify();
+    }
 }
 
 fn text_styling_section() -> impl IntoElement {
@@ -387,11 +405,9 @@ fn text_styling_section() -> impl IntoElement {
         .gap(px(6))
         .bg(Color::rgb(37, 43, 55))
         .border(px(1))
-        .border_color(Color::rgb(62,72,91))
+        .border_color(Color::rgb(62, 72, 91))
         .rounded(px(6))
-        .child(
-            section_title("Text styling + inheritance")
-        )
+        .child(section_title("Text styling + inheritance"))
         .child(
             div()
                 .w_full()
@@ -399,7 +415,7 @@ fn text_styling_section() -> impl IntoElement {
                 .gap(px(4))
                 .bg(Color::rgb(27, 31, 41))
                 .rounded(px(4))
-                .text_color(Color::rgb( 108, 190, 144))
+                .text_color(Color::rgb(108, 190, 144))
                 .line_height(px(13))
                 .child("Inherited green text and custom line height")
                 .child(
@@ -415,7 +431,27 @@ fn text_styling_section() -> impl IntoElement {
                 .rounded(px(4))
                 .child(
                     text(
-                        "Word wrapping is shared by measurement and painting. This deliberately long sentence is clamped to two lines and ends with an ellipsis when more content remains."
+                        "Secondary 10x20 font",
+                    )
+                    .font(FontId::new(1))
+                    .text_color(
+                        Color::rgb(
+                            126,
+                            172,
+                            235,
+                        ),
+                    ),
+                ),
+        )
+        .child(
+            div()
+                .w_full()
+                .p(px(6))
+                .bg(Color::rgb(27, 31, 41))
+                .rounded(px(4))
+                .child(
+                    text(
+                        "Word wrapping is shared by measurement and painting. This deliberately long sentence is clamped to two lines and ends with an ellipsis when more content remains.",
                     )
                     .wrap()
                     .max_lines(2)
@@ -431,7 +467,6 @@ fn text_styling_section() -> impl IntoElement {
                 .rounded(px(4))
                 .child(
                     text("Centered line\nsecond line")
-                    .font(FontId::new(1))
                     .text_center()
                     .text_color(Color::rgb(126, 172, 235)),
                 ),
@@ -675,21 +710,99 @@ fn nested_scroll_section(demo_click: Listener<ActivateEvent>) -> impl IntoElemen
 fn gallery_footer() -> impl IntoElement {
     div()
         .w_full()
-        .h(px(32))
-        .flex()
-        .items_center()
-        .justify_center()
+        .p(px(8))
+        .gap(px(4))
         .mb(px(8))
         .bg(Color::rgb(30, 36, 48))
         .border(px(1))
         .border_color(Color::rgb(65, 74, 92))
         .rounded(px(6))
-        .child(text("End of feature gallery").text_color(Color::rgb(170, 181, 200)))
+        .child(
+            text("End of InkPaper UI feature gallery")
+                .text_center()
+                .text_color(Color::rgb(190, 200, 216)),
+        )
+        .child(
+            text("Rendering uses damage-aware partial painting.")
+                .text_center()
+                .text_color(Color::rgb(132, 145, 166)),
+        )
+}
+
+fn conditional_section(show_details: bool, toggle: Listener<ActivateEvent>) -> impl IntoElement {
+    let button_label = if show_details {
+        "Hide conditional child"
+    } else {
+        "Show conditional child"
+    };
+
+    div()
+        .w_full()
+        .p(px(7))
+        .gap(px(6))
+        .bg(Color::rgb(37, 43, 55))
+        .border(px(1))
+        .border_color(Color::rgb(62, 72, 91))
+        .rounded(px(6))
+        .child(section_title("Conditional rendering"))
+        .child(
+            text(
+                "This exercises Entity state, Context::notify(), rebuilding and ConditionalElementExt::when().",
+            )
+            .wrap()
+            .text_color(Color::rgb(164, 176, 196)),
+        )
+        .child(
+            div()
+                .id("toggle-details")
+                .w_full()
+                .h(px(28))
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(Color::rgb(58, 91, 146))
+                .border(px(1))
+                .border_color(Color::rgb(92,130,190))
+                .rounded(px(4))
+                .when_focused(|style| style.border_color(Color::WHITE))
+                .when_pressed(
+                    |style| style.bg(Color::rgb(47, 119, 91)))
+                .on_activate(toggle)
+                .child(button_label),
+        )
+        .when(
+            show_details,
+            |section| {
+                section.child(
+                    div()
+                        .w_full()
+                        .p(px(8))
+                        .gap(px(4))
+                        .bg(Color::rgb(28,52,43))
+                        .border(px(1))
+                        .border_color(Color::rgb(72,145,111))
+                        .rounded(px(4))
+                        .child(
+                            text("Conditional child mounted")
+                            .text_color(Color::rgb(156,225,184)),
+                        )
+                        .child(
+                            text(
+                                "Toggle the button again and this subtree disappears from the next frame.",
+                            )
+                            .wrap()
+                            .text_color(Color::rgb(174,195,183)),
+                        ),
+                )
+            },
+        )
 }
 
 impl Render for App {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         let demo_click = cx.listener(Self::demo_clicked);
+
+        let toggle_details = cx.listener(Self::toggle_details);
 
         div()
             .id("page")
@@ -702,6 +815,7 @@ impl Render for App {
             .overflow_y_scroll()
             .child(self.header)
             .child(self.counter)
+            .child(conditional_section(self.show_details, toggle_details))
             .child(text_styling_section())
             .child(images_section())
             .child(alignment_section())
@@ -730,7 +844,7 @@ fn update_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorD
 }
 
 fn layout_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
-    let painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10], []);
+    let painter = EmbeddedGraphicsPainter::new(display, FONTS, []);
     runtime.layout(DISPLAY_SIZE, &painter).unwrap();
 }
 
@@ -741,7 +855,7 @@ fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, dam
 
     let demo_image: EmbeddedGraphicsImage<'static, SimulatorDisplay<Rgb888>> =
         EmbeddedGraphicsImage::new(&DEMO_IMAGE);
-    let mut painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10], [demo_image]);
+    let mut painter = EmbeddedGraphicsPainter::new(display, FONTS, [demo_image]);
 
     painter.clear_damage(damage, Color::BLACK).unwrap();
     runtime
@@ -793,7 +907,10 @@ fn main() {
     rebuild_ui(&mut runtime, app, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
-    let mut window = Window::new("InkPaper UI", &output_settings);
+    let mut window = Window::new(
+        "InkPaper UI | wheel • tab/arrows • enter/space",
+        &output_settings,
+    );
 
     let mut mouse_position = Point::ZERO;
 
