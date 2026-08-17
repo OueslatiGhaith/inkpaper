@@ -1,7 +1,8 @@
 use crate::{
-    CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImageFit, ImageSource, NodeId,
-    NodeKind, Pixels, Rect, ResolvedTextStyle, TextMeasurer, callback_store::CallbackStore,
-    count_metric, entity_store::EntityStore, flow_axis, visual::VisualNode,
+    Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImageFit, ImageSource,
+    NodeId, NodeKind, Offset, Pixels, Rect, ResolvedTextStyle, TextMeasurer,
+    callback_store::CallbackStore, count_metric, entity_store::EntityStore, flow_axis,
+    visual::VisualNode,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,6 +207,108 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         Some(subtree.translated(translation))
     }
 
+    fn direct_child_for_mount_index(&self, parent: NodeId, index: usize) -> Option<NodeId> {
+        let raw = u16::try_from(index).ok()?;
+        let mut current = NodeId::new(raw);
+        if current.index() >= self.nodes.len() {
+            return None;
+        }
+
+        loop {
+            let ancestor = self.node(current).parent?;
+            if ancestor == parent {
+                return Some(current);
+            }
+
+            current = ancestor;
+        }
+    }
+
+    fn ordered_prefix_ends_before_damage(
+        &self,
+        child: NodeId,
+        axis: Axis,
+        child_translation: Offset,
+        damage_bounds: Rect,
+    ) -> Option<bool> {
+        let prefix = self.ordered_prefix_paint_bounds(child)?;
+
+        // an empty prefix cannot affect any damage and is therefore always safe to skip
+        if !prefix.has_area() {
+            return Some(true);
+        }
+
+        let prefix = prefix.translated(child_translation);
+
+        Some(match axis {
+            Axis::Horizontal => prefix.right() <= damage_bounds.x(),
+            Axis::Vertical => prefix.bottom() <= damage_bounds.y(),
+        })
+    }
+
+    fn first_ordered_child_reaching_damage(
+        &self,
+        visual: VisualNode,
+        damage_bounds: Rect,
+    ) -> Option<NodeId> {
+        let parent = visual.node();
+        let style = self.node(parent).style()?;
+        let first = self.node(parent).first_child?;
+        let last = self.node(parent).last_child?;
+        if first == last {
+            return Some(first);
+        }
+
+        debug_assert!(
+            first.index() < last.index(),
+            "ordering sibling roots must follow mount order"
+        );
+
+        let axis = flow_axis(style);
+
+        // `visual.bounds()` already contains translation from every ancestor scroll offset
+        let parent_layout_bounds = self.node(parent).layout.bounds;
+        let parent_translation = visual.bounds().origin - parent_layout_bounds.origin;
+        // children additionally receive this parent's own scroll translation
+        let child_translation = parent_translation - self.node(parent).interaction.scroll_offset;
+
+        // search the physical mount interval before the last sibling root.
+        // every point in this interval belongs to one of the non-last direct-child
+        // mount subtrees. A midpoint may land on a descendent. The helper maps it back
+        // to the appropriate direct child.
+        // the last child is excluded because its cache is deliberately exact rather
+        // than cumulative
+        let mut low = first.index();
+        let mut high = last.index();
+
+        while low < high {
+            count_metric!(self, damage_prefix_search_steps);
+
+            let mid = low + (high - low) / 2;
+            let child = self.direct_child_for_mount_index(parent, mid)?;
+            let before_damage = self.ordered_prefix_ends_before_damage(
+                child,
+                axis,
+                child_translation,
+                damage_bounds,
+            )?;
+
+            if before_damage {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+
+        // if every non-last prefix lies before damage, the last child is our
+        // conservative fallback
+        if low == last.index() {
+            return Some(last);
+        }
+
+        self.direct_child_for_mount_index(parent, low)
+    }
+
     fn paint_internal<P>(
         &self,
         root: NodeId,
@@ -235,7 +338,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         while let Some(visual) = traversal.next() {
             // pruning only matters when there is actually a descendant subtree to skip.
             // In particular, don't inflate pruning metrics for leaf nodes
-            let has_children = self.node(visual.node()).first_child.is_some();
+            let node = visual.node();
+            let first_child = self.node(node).first_child;
+            let has_children = first_child.is_some();
 
             if let Some(damage_bounds) = damage_bounds {
                 // if this sibling begins after the far edge of all damage on the parent's
@@ -272,11 +377,23 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                             traversal.skip_children();
                             count_metric!(self, damage_pruned_subtrees);
                             count_metric!(self, damage_extent_pruned_subtrees);
+                        } else {
+                            // the subtree does intersect damage, but an ordered prefix
+                            // of its direct children may still lie completely before it
+                            if let Some(first_relevant) =
+                                self.first_ordered_child_reaching_damage(visual, damage_bounds)
+                                && Some(first_relevant) != first_child
+                            {
+                                traversal.skip_children_before(first_relevant);
+                                count_metric!(self, damage_pruned_sibling_prefixes);
+                            }
                         }
                     }
                 }
             }
 
+            // pruning only changes future traversal.
+            // the currently yielded node is still painted or culled normally
             self.paint_visual_node(visual, damage, runtime, painter)?;
         }
 
@@ -1209,8 +1326,11 @@ mod tests {
 
         // rows A, B and D miss damage.
         // their text children should never be traversed.
-        assert_eq!(metrics.damage_pruned_subtrees, 3,);
-        assert_eq!(metrics.damage_extent_pruned_subtrees, 3,);
+        assert_eq!(metrics.damage_pruned_sibling_prefixes, 1,);
+        assert!(metrics.damage_prefix_search_steps > 0,);
+        assert_eq!(metrics.damage_extent_pruned_subtrees, 1,);
+        assert_eq!(metrics.damage_pruned_subtrees, 1,);
+        assert_eq!(metrics.damage_pruned_sibling_runs, 0,);
 
         // root
         // row A
@@ -1220,7 +1340,7 @@ mod tests {
         // row D
         //
         // the other three text nodes were skipped.
-        assert_eq!(metrics.visual_traversal_nodes, 6,);
+        assert_eq!(metrics.visual_traversal_nodes, 4,);
         assert_eq!(metrics.nodes_painted, 3,);
     }
 
@@ -1298,7 +1418,7 @@ mod tests {
         //
         // A  0..20
         // B 20..40   <- damage 25..35
-        // C 40..60   <- first sibling wholly after damage
+        // C 40..60   <- suffix sentinel
         // D 60..80
         // E 80..100
         // F 100..120
@@ -1312,24 +1432,24 @@ mod tests {
 
         let metrics = frame.performance_metrics();
 
-        assert_eq!(metrics.damage_extent_pruned_subtrees, 1,);
-        assert_eq!(metrics.damage_pruned_sibling_runs, 1,);
-
-        // A's child subtree and C's child subtree were explicitly pruned from
-        // yielded nodes.
-        assert_eq!(metrics.damage_pruned_subtrees, 2,);
+        // A disappears before being yielded
+        assert_eq!(metrics.damage_pruned_sibling_prefixes, 1,);
+        assert!(metrics.damage_prefix_search_steps > 0,);
+        // C has a child, so suppressing C's descendants counts as one prune subtree
+        assert_eq!(metrics.damage_pruned_subtrees, 1,);
+        // C starts after the damage and removes the whole remaining sibling suffix
+        assert_eq!(metrics.damage_pruned_sibling_runs, 1);
+        // A no longer individually pruned
+        assert_eq!(metrics.damage_extent_pruned_subtrees, 0,);
 
         // root
-        // A
         // B
         // text B
         // C
-        //
-        // Everything after C disappears.
-        assert_eq!(metrics.visual_traversal_nodes, 5,);
+        assert_eq!(metrics.visual_traversal_nodes, 4);
 
         // root + B + text B
-        assert_eq!(metrics.nodes_painted, 3,);
+        assert_eq!(metrics.nodes_painted, 3);
     }
 
     #[cfg(feature = "metrics")]
@@ -1358,6 +1478,9 @@ mod tests {
 
         frame.layout(root, Size::new(px(120), px(20)), &painter);
 
+        // child 0:  0..20   <- prefix
+        // child 1: 20..40   <- damage 25..35
+        // child 2: 40..60   <- suffix sentinel
         let damage = DamageRegion::from_rect(Rect::new(
             Point::new(px(25), px(0)),
             Size::new(px(10), px(20)),
@@ -1370,19 +1493,123 @@ mod tests {
 
         // third child begins at x=40 while damage ends at x=35, so it terminates
         // the ordered sibling run.
-        assert_eq!(metrics.damage_pruned_sibling_runs, 1,);
+        assert_eq!(metrics.damage_pruned_sibling_prefixes, 1);
+        assert!(metrics.damage_prefix_search_steps > 0);
+        assert_eq!(metrics.damage_pruned_sibling_runs, 1);
 
+        // these are leaf nodes, so neither prefix nor suffix pruning suppresses
+        // a descendant subtree.
         assert_eq!(metrics.damage_pruned_subtrees, 0,);
-
         assert_eq!(metrics.damage_extent_pruned_subtrees, 0,);
 
         // root
         // child 0
         // child 1
         // child 2
-        assert_eq!(metrics.visual_traversal_nodes, 4,);
+        assert_eq!(metrics.visual_traversal_nodes, 3);
 
         // root + child 1
-        assert_eq!(metrics.nodes_painted, 2,);
+        assert_eq!(metrics.nodes_painted, 2);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn damage_paint_binary_searches_ordered_sibling_prefix() {
+        let mut frame = FrameArena::<64, 512>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(160))
+                    .children((0..16).map(|_| div().w(px(100)).h(px(10)).child("row"))),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(160)), &painter);
+
+        let damage = DamageRegion::from_rect(Rect::new(
+            Point::new(px(0), px(85)),
+            Size::new(px(100), px(10)),
+        ));
+
+        frame.reset_performance_metrics();
+        frame.paint_with_damage(root, damage, &mut painter).unwrap();
+
+        let metrics = frame.performance_metrics();
+
+        // rows 0..7 lie wholly before damage and should be jumped over without
+        // being yielded.
+        assert_eq!(metrics.damage_pruned_sibling_prefixes, 1,);
+        assert!(metrics.damage_prefix_search_steps > 0,);
+
+        // root
+        // row 8
+        // text 8
+        // row 9
+        // text 9
+        // row 10  <- suffix sentinel
+        assert_eq!(metrics.visual_traversal_nodes, 6,);
+        // root + row/text 8 + row/text 9
+        assert_eq!(metrics.nodes_painted, 5,);
+
+        assert_eq!(metrics.damage_pruned_sibling_runs, 1,);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn ordered_prefix_search_preserves_earlier_overflowing_subtree() {
+        let mut frame = FrameArena::<32, 256>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(120))
+                    .child(
+                        div()
+                            .w(px(100))
+                            .h(px(20))
+                            .child(div().w(px(100)).h(px(100)).bg(Color::RED)),
+                    )
+                    .child(div().w(px(100)).h(px(20)))
+                    .child(div().w(px(100)).h(px(20)))
+                    .child(div().w(px(100)).h(px(20)))
+                    .child(div().w(px(100)).h(px(20))),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(100), px(120)), &painter);
+
+        let damage_rect = Rect::new(Point::new(px(0), px(80)), Size::new(px(100), px(10)));
+
+        let damage = DamageRegion::from_rect(damage_rect);
+
+        frame.reset_performance_metrics();
+        frame.paint_with_damage(root, damage, &mut painter).unwrap();
+
+        let metrics = frame.performance_metrics();
+
+        // the first sibling's own box ends at y=20, but its descendant paints through
+        // y=100. The cumulative prefix cache must therefore prevent us from jumping
+        // over it.
+        assert_eq!(metrics.damage_pruned_sibling_prefixes, 0,);
+
+        let painted_overflow = painter.commands.iter().any(|command| match command {
+            Command::Box { paint, clip, .. } => {
+                paint.background == Some(Color::RED) && *clip == Some(damage_rect)
+            }
+
+            _ => false,
+        });
+
+        assert!(
+            painted_overflow,
+            "overflowing earlier sibling must still paint into damage",
+        );
     }
 }

@@ -19,6 +19,8 @@ damage_culled_nodes,\
 damage_pruned_subtrees,\
 damage_extent_pruned_subtrees,\
 damage_pruned_sibling_runs,\
+damage_pruned_sibling_prefixes,\
+damage_prefix_search_steps,\
 damage_clip_paints,\
 draw_calls"
     );
@@ -42,7 +44,7 @@ draw_calls"
         let metrics = runtime.performance_metrics();
 
         println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             "focus_next",
             BenchScenario::NestedScrollFocus.name(),
             depth,
@@ -56,6 +58,8 @@ draw_calls"
             metrics.damage_pruned_subtrees,
             metrics.damage_extent_pruned_subtrees,
             metrics.damage_pruned_sibling_runs,
+            metrics.damage_pruned_sibling_prefixes,
+            metrics.damage_prefix_search_steps,
             metrics.damage_clip_paints,
             painter.draw_calls(),
         );
@@ -80,7 +84,7 @@ draw_calls"
         let metrics = runtime.performance_metrics();
 
         println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             "scroll_at",
             BenchScenario::ScrollList.name(),
             rows,
@@ -94,6 +98,8 @@ draw_calls"
             metrics.damage_pruned_subtrees,
             metrics.damage_extent_pruned_subtrees,
             metrics.damage_pruned_sibling_runs,
+            metrics.damage_pruned_sibling_prefixes,
+            metrics.damage_prefix_search_steps,
             metrics.damage_clip_paints,
             painter.draw_calls(),
         );

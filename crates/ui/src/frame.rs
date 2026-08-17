@@ -531,6 +531,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     pub(crate) fn finish_subtree_paint_bounds(&mut self) {
         self.subtree_paint_bounds_valid = true;
     }
+
+    pub(crate) fn ordered_prefix_paint_bounds(&self, node: NodeId) -> Option<Rect> {
+        // during layout, every non-last child of a `Div` receives the cumulative
+        // paint extent of the sibling prefix ending at that child.
+        // the last child deliberately keeps its exact subtree extent, so it is not
+        // a prefix-search entry
+        self.node(node).next_sibling?;
+        self.subtree_paint_bounds(node)
+    }
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODES, TEXT_BYTES> {
@@ -600,7 +609,13 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
         self.nodes[child_idx].parent = Some(parent);
 
         match self.nodes[parent_idx].last_child {
-            Some(last) => self.nodes[last.index()].next_sibling = Some(child),
+            Some(last) => {
+                debug_assert!(
+                    child_idx > last.index(),
+                    "frame siblings must be mounted in append order"
+                );
+                self.nodes[last.index()].next_sibling = Some(child)
+            }
             None => self.nodes[parent_idx].first_child = Some(child),
         }
 

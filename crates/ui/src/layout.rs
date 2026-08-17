@@ -337,7 +337,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         let measured = self.measure_node(node, available, text_measurer);
-        let _ = self.layout_node_with_size(node, origin, measured, text_measurer);
+        let subtree_bounds = self.layout_node_with_size(node, origin, measured, text_measurer);
+
+        // `layout_node()` is the top-level layout entry. There is no parent that will
+        // store the root's cache entry for us
+        self.set_subtree_paint_bounds(node, subtree_bounds);
 
         measured
     }
@@ -375,9 +379,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             Axis::Vertical => scroll_axes.horizontal(),
         };
 
-        // calculate this once for the whole parent.
-        // if children are clipped, every non-empty child subtree contributes at most
-        // this viewport.
+        // if children are clipped, every non-empty child subtree contributes
+        // at most this viewport to the parent's own conservative subtree extent.
         let children_clip = if self.node_clips_children(node) {
             Some(self.children_clip_layout_bounds(node))
         } else {
@@ -462,6 +465,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut grow_before = 0;
         let mut shrink_before = 0;
         let mut current = self.node(node).first_child;
+        let mut sibling_prefix_bounds = Rect::new(Point::ZERO, Size::ZERO);
 
         while let Some(child) = current {
             let next = self.node(child).next_sibling;
@@ -498,10 +502,25 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 content_cross_origin + cross_offset + cross_margin_start(margin, axis);
             let child_origin = point_from_axes(child_main_origin, child_cross_origin, axis);
 
-            // the child returns its complete conservative subtree extent as part
-            // of normal recursive layout.
+            // the child returns its exact conservative subtree extent.
+            // `layout_node_with_size()` no longer stores the child's root cache
+            // itself. We decide below whether this node needs an exact extent
+            // or a cumulative sibling prefix.
             let child_subtree =
                 self.layout_node_with_size(child, child_origin, child_size, text_measurer);
+
+            sibling_prefix_bounds = sibling_prefix_bounds.union(child_subtree);
+
+            if next.is_some() {
+                // non-last sibling: store a cumulative prefix extent. It is still
+                // conservative for this child's own subtree
+                self.set_subtree_paint_bounds(child, sibling_prefix_bounds);
+            } else {
+                // last sibling: keep the exact subtree extent. Binary search treats
+                // the last child as the fallback result rather than as a prefix
+                // predicate entry.
+                self.set_subtree_paint_bounds(child, child_subtree);
+            }
 
             if child_subtree.has_area() {
                 let contribution = children_clip.unwrap_or(child_subtree);
@@ -746,29 +765,29 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.node_mut(node).layout.bounds = Rect::new(origin, size);
         let own_bounds = self.own_paint_bounds(node);
 
-        let subtree_bounds = match self.node(node).kind {
+        match self.node(node).kind {
             NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => own_bounds,
-            NodeKind::Entity { .. } => match self.node(node).first_child {
-                Some(child) => {
-                    let child_subtree =
-                        self.layout_node_with_size(child, origin, size, text_measurer);
+            NodeKind::Entity { .. } => {
+                match self.node(node).first_child {
+                    Some(child) => {
+                        let child_subtree =
+                            self.layout_node_with_size(child, origin, size, text_measurer);
 
-                    own_bounds.union(child_subtree)
+                        // entity owns one rendered root, so there is no ordered
+                        // sibling prefix to construct here.
+                        self.set_subtree_paint_bounds(child, child_subtree);
+
+                        own_bounds.union(child_subtree)
+                    }
+                    None => own_bounds,
                 }
-                None => own_bounds,
-            },
+            }
             NodeKind::Div { .. } => {
                 let style = self.node(node).style().expect("div node must have style");
 
                 self.layout_div_children(node, style, origin, size, text_measurer, own_bounds)
             }
-        };
-
-        // this overwrites this node's measurement cache only after every measurement
-        // needed for its layout has already completed.
-        self.set_subtree_paint_bounds(node, subtree_bounds);
-
-        subtree_bounds
+        }
     }
 
     fn child_layout_available(&self, node: NodeId, viewport: Size) -> Size {
@@ -1890,5 +1909,50 @@ mod tests {
         );
 
         assert_eq!(base, px(80),);
+    }
+
+    #[test]
+    fn layout_caches_cumulative_paint_bounds_for_ordered_sibling_prefixes() {
+        let measurer = TestTextMeasurer::new(8, 10);
+
+        let mut frame = FrameArena::<32, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(30))
+                    .child(
+                        div()
+                            .w(px(100))
+                            .h(px(10))
+                            .child(div().w(px(100)).h(px(100))),
+                    )
+                    .child(div().w(px(100)).h(px(10)))
+                    .child(div().w(px(100)).h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let first = frame.node(root).first_child.unwrap();
+        let second = frame.node(first).next_sibling.unwrap();
+        let third = frame.node(second).next_sibling.unwrap();
+
+        // first child's own subtree overflows to y=100.
+        assert_eq!(
+            frame.ordered_prefix_paint_bounds(first,).unwrap().bottom(),
+            px(100),
+        );
+        // second child's own box ends at y=20, but its cumulative prefix must
+        // retain the first sibling's overflow.
+        assert_eq!(
+            frame.ordered_prefix_paint_bounds(second,).unwrap().bottom(),
+            px(100),
+        );
+        // last child is deliberately not a prefix entry.
+        assert_eq!(frame.ordered_prefix_paint_bounds(third,), None,);
+        // its normal conservative subtree cache stays exact.
+        assert_eq!(frame.subtree_paint_bounds(third,).unwrap().bottom(), px(30),);
     }
 }

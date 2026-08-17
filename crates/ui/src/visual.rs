@@ -317,6 +317,38 @@ impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES,
         self.advance_without_children(node, context);
     }
 
+    pub(crate) fn skip_children_before(&mut self, first_child: NodeId) {
+        let Some((node, context)) = self.pending_advance.take() else {
+            return;
+        };
+
+        debug_assert_eq!(
+            self.frame.node(first_child).parent,
+            Some(node),
+            "visual prefix jump target must be a direct child"
+        );
+
+        // degenerate case: there is nothing to skip. Preserve exactly the normal
+        // descent behavior
+        if self.frame.node(node).first_child == Some(first_child) {
+            self.advance(node, context);
+            return;
+        }
+
+        // this reproduces the parent-continuation part of normal `advance()`
+        if let Some(sibling) = self.frame.node(node).next_sibling {
+            self.save_branch_continuation(sibling, context);
+        }
+
+        self.record_descent();
+
+        let child_context = self.frame.child_visual_context(node, context);
+
+        // earlier children disappear from traversal. `first_child` and all following
+        // siblings retian their normal forward traversal order
+        self.current = Some((first_child, child_context));
+    }
+
     pub(crate) fn skip_children_and_remaining_siblings(&mut self) {
         let Some((node, _)) = self.pending_advance.take() else {
             return;
@@ -964,6 +996,39 @@ mod tests {
         // resume at branch's sibling.
         assert_eq!(traversal.next().unwrap().node(), after,);
         assert_eq!(traversal.next().unwrap().node(), after_text,);
+        assert!(traversal.next().is_none(),);
+    }
+
+    #[test]
+    fn visual_traversal_can_skip_an_ordered_child_prefix() {
+        let mut frame = FrameArena::<16, 64>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .child(div().child(div()).child(div()).child(div()))
+                    .child(div()),
+            )
+            .unwrap();
+
+        let branch = frame.node(root).first_child.unwrap();
+        let first = frame.node(branch).first_child.unwrap();
+        let second = frame.node(first).next_sibling.unwrap();
+        let third = frame.node(second).next_sibling.unwrap();
+        let after = frame.node(branch).next_sibling.unwrap();
+
+        let mut traversal = frame.visual_nodes(root);
+
+        assert_eq!(traversal.next().unwrap().node(), root,);
+        assert_eq!(traversal.next().unwrap().node(), branch,);
+
+        traversal.skip_children_before(second);
+
+        // first child disappears completely.
+        assert_eq!(traversal.next().unwrap().node(), second,);
+        assert_eq!(traversal.next().unwrap().node(), third,);
+        // parent's following sibling continuation must still work.
+        assert_eq!(traversal.next().unwrap().node(), after,);
         assert!(traversal.next().is_none(),);
     }
 }
