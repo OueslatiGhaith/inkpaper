@@ -17,9 +17,9 @@ use embedded_graphics::{
 };
 
 use crate::{
-    BoxPaint, CanvasDrawFn, CanvasPainter, Color, FontId, ImageFit, ImageId, ImageSource,
-    LineHeight, Painter, Pixels, Point, Rect, ResolvedTextStyle, Size, TextAlign, TextMeasurer,
-    fitted_image_bounds, px,
+    BoxPaint, CanvasDrawFn, CanvasPainter, Color, DamageRegion, FontId, ImageFit, ImageId,
+    ImageSource, LineHeight, Painter, Pixels, Point, Rect, ResolvedTextStyle, Size, TextAlign,
+    TextMeasurer, fitted_image_bounds, px,
     text_layout::{ELLIPSIS, for_each_visible_text_line},
 };
 
@@ -295,6 +295,45 @@ where
 
     fn resolve_image(&self, id: ImageId) -> Option<EmbeddedGraphicsImage<'image, D>> {
         self.images.get(id.index()).copied()
+    }
+
+    pub fn clear_damage(&mut self, damage: DamageRegion, color: Color) -> Result<(), D::Error>
+    where
+        D::Color: From<EgRgb888>,
+    {
+        if damage.is_none() {
+            return Ok(());
+        }
+
+        let color = to_rgb888(color);
+
+        // a full invalidation should use the `DrawTarget`'s native clear operation.
+        // besides being simpler, individual displays may have a considerabely more
+        // efficient implementation for this case
+        if damage.is_full() {
+            let mut target = self.target.color_converted::<EgRgb888>();
+            return target.clear(color);
+        }
+
+        // runtime damage can considerabely extend beyond the physical target.
+        // clip it here so a backend never receives out-of-bounds partial clear rects
+        let target_bounds = self.target.bounding_box();
+        let target_bounds = Rect::new(
+            Point::new(px(target_bounds.top_left.x), px(target_bounds.top_left.y)),
+            from_embedded_size(target_bounds.size),
+        );
+        let damage = damage.clipped_to(target_bounds);
+        if damage.is_none() {
+            return Ok(());
+        }
+
+        let mut target = self.target.color_converted::<EgRgb888>();
+
+        for &rect in damage.rects() {
+            target.fill_solid(&to_embedded_rect(rect), color)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -776,6 +815,7 @@ where
 #[cfg(test)]
 mod tests {
     use embedded_graphics::{
+        Pixel,
         draw_target::DrawTarget as EgDrawTarget,
         geometry::{OriginDimensions, Point as EgPoint, Size as EgSize},
         image::{GetPixel as EgGetPixel, ImageDrawable as EgImageDrawable},
@@ -1222,5 +1262,75 @@ mod tests {
         );
         assert_eq!(display.get_pixel(EgPoint::new(7, 8,)), None);
         assert_eq!(display.get_pixel(EgPoint::new(11, 8,)), None);
+    }
+
+    #[test]
+    fn embedded_graphics_backend_clears_only_partial_damage() {
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        display.set_allow_overdraw(true);
+
+        display
+            .draw_iter([
+                Pixel(EgPoint::new(2, 2), Rgb888::new(255, 0, 0)),
+                Pixel(EgPoint::new(8, 8), Rgb888::new(255, 0, 0)),
+            ])
+            .unwrap();
+
+        {
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+
+            painter
+                .clear_damage(
+                    DamageRegion::from_rect(Rect::new(
+                        Point::new(px(0), px(0)),
+                        Size::new(px(5), px(5)),
+                    )),
+                    Color::BLACK,
+                )
+                .unwrap();
+        }
+
+        // inside damage was restored to the clear color.
+        assert_eq!(
+            display.get_pixel(EgPoint::new(2, 2),),
+            Some(Rgb888::new(0, 0, 0),),
+        );
+        // pixels outside damage were untouched.
+        assert_eq!(
+            display.get_pixel(EgPoint::new(8, 8),),
+            Some(Rgb888::new(255, 0, 0),),
+        );
+    }
+
+    #[test]
+    fn embedded_graphics_backend_full_damage_clears_target() {
+        let mut display = MockDisplay::<Rgb888>::new();
+
+        display.set_allow_overdraw(true);
+
+        display
+            .draw_iter([
+                Pixel(EgPoint::new(2, 2), Rgb888::new(255, 0, 0)),
+                Pixel(EgPoint::new(8, 8), Rgb888::new(0, 255, 0)),
+            ])
+            .unwrap();
+
+        {
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+
+            painter
+                .clear_damage(DamageRegion::full(), Color::BLUE)
+                .unwrap();
+        }
+
+        assert_eq!(
+            display.get_pixel(EgPoint::new(2, 2),),
+            Some(Rgb888::new(0, 0, 255),),
+        );
+        assert_eq!(
+            display.get_pixel(EgPoint::new(8, 8),),
+            Some(Rgb888::new(0, 0, 255),),
+        );
     }
 }

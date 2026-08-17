@@ -15,7 +15,7 @@ use embedded_graphics_simulator::{
 };
 use heapless::String;
 use inkpaper_ui::{
-    Offset,
+    DamageRegion, Offset,
     backend::{EmbeddedGraphicsImage, EmbeddedGraphicsPainter},
     prelude::*,
 };
@@ -717,12 +717,13 @@ fn to_ui_point(point: EgPoint) -> Point {
 }
 
 fn update_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorDisplay<Rgb888>) {
-    match runtime.take_invalidation() {
+    let invalidation = runtime.take_render_invalidation();
+    match invalidation.kind() {
         Invalidation::None => {}
-        Invalidation::Paint => paint_ui(runtime, display),
+        Invalidation::Paint => paint_ui(runtime, display, invalidation.damage()),
         Invalidation::Layout => {
             layout_ui(runtime, display);
-            paint_ui(runtime, display);
+            paint_ui(runtime, display, invalidation.damage());
         }
         Invalidation::Rebuild => rebuild_ui(runtime, app, display),
     }
@@ -733,20 +734,26 @@ fn layout_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
     runtime.layout(DISPLAY_SIZE, &painter).unwrap();
 }
 
-fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
-    display.clear(Rgb888::BLACK).unwrap();
+fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion) {
+    if damage.is_none() {
+        return;
+    }
 
     let demo_image: EmbeddedGraphicsImage<'static, SimulatorDisplay<Rgb888>> =
         EmbeddedGraphicsImage::new(&DEMO_IMAGE);
-
     let mut painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10], [demo_image]);
-    runtime.paint(&mut painter).unwrap().unwrap();
+
+    painter.clear_damage(damage, Color::BLACK);
+    runtime
+        .paint_with_damage(damage, &mut painter)
+        .unwrap()
+        .unwrap();
 }
 
 fn rebuild_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorDisplay<Rgb888>) {
     runtime.rebuild(app).unwrap();
     layout_ui(runtime, display);
-    paint_ui(runtime, display);
+    paint_ui(runtime, display, DamageRegion::full());
 }
 
 fn handle_key_down(runtime: &mut UiRuntime, keycode: Keycode) {
