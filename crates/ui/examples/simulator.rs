@@ -743,7 +743,7 @@ fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, dam
         EmbeddedGraphicsImage::new(&DEMO_IMAGE);
     let mut painter = EmbeddedGraphicsPainter::new(display, [&FONT_6X10], [demo_image]);
 
-    painter.clear_damage(damage, Color::BLACK);
+    painter.clear_damage(damage, Color::BLACK).unwrap();
     runtime
         .paint_with_damage(damage, &mut painter)
         .unwrap()
