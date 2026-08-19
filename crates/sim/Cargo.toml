@@ -1,0 +1,10 @@
+[package]
+name = "inkpaper-simulator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embedded-graphics = { workspace = true }
+embedded-graphics-simulator = { workspace = true }
+inkpaper-app = { path = "../app" }
+inkpaper-ui = { path = "../ui", features = ["embedded-graphics"] }

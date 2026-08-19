@@ -9,12 +9,12 @@ embedded-graphics = ["dep:embedded-graphics"]
 metrics = []
 
 [dependencies]
-embedded-graphics = { version = "0.8.2", optional = true }
-heapless = "0.9.3"
+embedded-graphics = { workspace = true, optional = true }
+heapless = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.8.2"
-embedded-graphics-simulator = "0.8.0"
+embedded-graphics-simulator = { workspace = true }
 
 [[bench]]
 name = "rendering"

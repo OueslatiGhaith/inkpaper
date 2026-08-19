@@ -397,8 +397,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "inkpaper"
+name = "inkpaper-app"
 version = "0.1.0"
+dependencies = [
+ "heapless",
+ "inkpaper-ui",
+]
+
+[[package]]
+name = "inkpaper-simulator"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics",
+ "embedded-graphics-simulator",
+ "inkpaper-app",
+ "inkpaper-ui",
+]
 
 [[package]]
 name = "inkpaper-ui"

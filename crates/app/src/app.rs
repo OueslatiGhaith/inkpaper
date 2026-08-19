@@ -1,0 +1,109 @@
+use inkpaper_ui::prelude::*;
+
+use crate::{
+    AppModel,
+    components::{BottomNav, TopBar},
+    screens::{HomeScreen, PlaceholderScreen},
+    theme,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    Home,
+    Library,
+    Settings,
+}
+
+pub struct InkPaperApp {
+    route: Route,
+    model: AppModel,
+}
+
+impl InkPaperApp {
+    pub const fn new(model: AppModel) -> Self {
+        Self {
+            route: Route::Home,
+            model,
+        }
+    }
+
+    pub const fn route(&self) -> Route {
+        self.route
+    }
+
+    pub const fn model(&self) -> &AppModel {
+        &self.model
+    }
+
+    pub fn model_mut(&mut self) -> &mut AppModel {
+        &mut self.model
+    }
+
+    fn open_home(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
+        self.set_route(Route::Home, cx);
+    }
+
+    fn open_library(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
+        self.set_route(Route::Library, cx);
+    }
+
+    fn open_settings(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
+        self.set_route(Route::Settings, cx);
+    }
+
+    fn set_route(&mut self, route: Route, cx: &mut Context<Self>) {
+        if self.route == route {
+            return;
+        }
+
+        self.route = route;
+        cx.notify();
+    }
+}
+
+impl Render for InkPaperApp {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let open_home = cx.listener(Self::open_home);
+        let open_library = cx.listener(Self::open_library);
+        let open_settings = cx.listener(Self::open_settings);
+
+        let route = self.route;
+        let model = &self.model;
+
+        let screen = match route {
+            Route::Home => Either::Left(HomeScreen::new(model)),
+
+            Route::Library => Either::Right(Either::Left(PlaceholderScreen::new(
+                "Library",
+                "The library screen will live here.",
+            ))),
+
+            Route::Settings => Either::Right(Either::Right(PlaceholderScreen::new(
+                "Settings",
+                "Device and reader settings will live here.",
+            ))),
+        };
+
+        div()
+            .w_full()
+            .h_full()
+            .flex_col()
+            .bg(theme::PAPER)
+            .text_color(theme::INK)
+            .child(TopBar::new(model.battery().label()))
+            .child(
+                div()
+                    .id("screen")
+                    .w_full()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .child(screen),
+            )
+            .child(BottomNav::new(
+                route,
+                open_home,
+                open_library,
+                open_settings,
+            ))
+    }
+}
