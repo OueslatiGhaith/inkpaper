@@ -2328,4 +2328,203 @@ mod tests {
             ),],
         );
     }
+
+    struct PositionedHitTestApp {
+        clicks: Rc<Cell<u32>>,
+    }
+
+    impl PositionedHitTestApp {
+        fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {
+            self.clicks.set(self.clicks.get().saturating_add(1));
+        }
+    }
+
+    impl Render for PositionedHitTestApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().relative().w(px(100)).h(px(80)).child(
+                div().w(px(20)).h(px(20)).child(
+                    div()
+                        .id("button")
+                        .absolute()
+                        .left(px(50))
+                        .top(px(10))
+                        .w(px(20))
+                        .h(px(20))
+                        .on_activate(cx.listener(Self::clicked)),
+                ),
+            )
+        }
+    }
+
+    #[test]
+    fn absolute_child_is_hittable_outside_unclipped_parent_bounds() {
+        let clicks = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let clicks = clicks.clone();
+
+                move |_| PositionedHitTestApp { clicks }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(80)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.begin_activation_at(Point::new(px(55), px(15)),));
+        assert!(
+            runtime
+                .complete_activation_at(Point::new(px(55), px(15)),)
+                .unwrap()
+        );
+        assert_eq!(clicks.get(), 1);
+    }
+
+    struct ClippedPositionedHitTestApp {
+        clicks: Rc<Cell<u32>>,
+    }
+
+    impl ClippedPositionedHitTestApp {
+        fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {
+            self.clicks.set(self.clicks.get().saturating_add(1));
+        }
+    }
+
+    impl Render for ClippedPositionedHitTestApp {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().relative().w(px(100)).h(px(80)).child(
+                div().w(px(20)).h(px(20)).overflow_hidden().child(
+                    div()
+                        .id("button")
+                        .absolute()
+                        .left(px(50))
+                        .top(px(10))
+                        .w(px(20))
+                        .h(px(20))
+                        .on_activate(cx.listener(Self::clicked)),
+                ),
+            )
+        }
+    }
+
+    #[test]
+    fn absolute_child_outside_clipping_parent_is_not_hittable() {
+        let clicks = Rc::new(Cell::new(0));
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime
+            .create({
+                let clicks = clicks.clone();
+
+                move |_| ClippedPositionedHitTestApp { clicks }
+            })
+            .unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(80)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(!runtime.begin_activation_at(Point::new(px(55), px(15)),));
+        assert_eq!(clicks.get(), 0);
+    }
+
+    struct AbsoluteFocusScrollApp;
+
+    impl Render for AbsoluteFocusScrollApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .id("scroll")
+                .relative()
+                .w(px(100))
+                .h(px(40))
+                .overflow_y_scroll()
+                .child(
+                    div().w(px(100)).h(px(10)).child(
+                        div()
+                            .id("target")
+                            .absolute()
+                            .top(px(80))
+                            .left(px(0))
+                            .w(px(100))
+                            .h(px(20))
+                            .focusable(),
+                    ),
+                )
+        }
+    }
+
+    #[test]
+    fn focus_scrolls_nested_absolute_target_into_view() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| AbsoluteFocusScrollApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(40)), &TestTextMeasurer)
+            .unwrap();
+
+        let root = runtime.root_node().unwrap();
+        let scroll = runtime.frame().node(root).first_child.unwrap();
+        let wrapper = runtime.frame().node(scroll).first_child.unwrap();
+        let target = runtime.frame().node(wrapper).first_child.unwrap();
+
+        assert!(runtime.focus_next());
+        assert_eq!(
+            runtime.frame().node(scroll).interaction.scroll_offset,
+            Offset::new(px(0), px(60)),
+        );
+        assert_eq!(
+            runtime.frame().visual_bounds(target),
+            Rect::new(Point::new(px(0), px(20)), Size::new(px(100), px(20)),),
+        );
+    }
+
+    struct PositionedFocusDamageApp;
+
+    impl Render for PositionedFocusDamageApp {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().w(px(100)).h(px(100)).child(
+                div()
+                    .id("target")
+                    .relative()
+                    .left(px(10))
+                    .top(px(5))
+                    .w(px(20))
+                    .h(px(10))
+                    .focusable()
+                    .bg(Color::BLUE)
+                    .when_focused(|style| style.bg(Color::GREEN)),
+            )
+        }
+    }
+
+    #[test]
+    fn positioned_element_damage_uses_final_visual_bounds() {
+        let mut runtime = TestRuntime::default();
+
+        let app = runtime.create(|_| PositionedFocusDamageApp).unwrap();
+
+        runtime.rebuild(app).unwrap();
+        runtime
+            .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+            .unwrap();
+
+        assert!(runtime.focus_next());
+
+        let invalidation = runtime.take_render_invalidation();
+
+        assert_eq!(invalidation.kind(), Invalidation::Paint,);
+        assert_eq!(
+            invalidation.damage().rects(),
+            &[Rect::new(
+                Point::new(px(10), px(5)),
+                Size::new(px(20), px(10)),
+            ),],
+        );
+    }
 }

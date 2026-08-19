@@ -798,6 +798,124 @@ fn conditional_section(show_details: bool, toggle: Listener<ActivateEvent>) -> i
         )
 }
 
+fn positioning_section(demo_click: Listener<ActivateEvent>) -> impl IntoElement {
+    div()
+        .w_full()
+        .p(px(7))
+        .gap(px(6))
+        .bg(Color::rgb(37, 43, 55))
+        .border(px(1))
+        .border_color(Color::rgb(62, 72, 91))
+        .rounded(px(6))
+        .child(section_title("Positioning + overlays"))
+        .child(
+            text(
+                "Relative positioning keeps its flow slot. Absolute positioning is removed from flow and uses the nearest positioned ancestor.",
+            )
+            .wrap()
+            .text_color(Color::rgb(164, 176, 196)),
+        )
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .h(px(112))
+                .p(px(6))
+                .gap(px(4))
+                .bg(Color::rgb(25, 29, 38))
+                .border(px(1))
+                .border_color(Color::rgb(86, 100, 126))
+                .rounded(px(4))
+                // these 3 children participate in normal block flow.
+                // the middle one is visually shifted, but the third child still 
+                // occupies the slot immediately after its original unshifted flow position.
+                .child(
+                    div()
+                        .w(px(116))
+                        .h(px(22))
+                        .p(px(5))
+                        .bg(Color::rgb(58, 76, 105))
+                        .rounded(px(3))
+                        .child("normal flow"),
+                )
+                .child(
+                    div()
+                        .relative()
+                        .left(px(18))
+                        .top(px(3))
+                        .w(px(116))
+                        .h(px(22))
+                        .p(px(5))
+                        .bg(Color::rgb(61, 104, 83))
+                        .border(px(1))
+                        .border_color(Color::rgb(96, 164, 128))
+                        .rounded(px(3))
+                        .child("relative +18,+3"),
+                )
+                .child(
+                    div()
+                        .w(px(116))
+                        .h(px(22))
+                        .p(px(5))
+                        .bg(Color::rgb(94, 76, 58))
+                        .rounded(px(3))
+                        .child("next flow slot"),
+                )
+                // this is completely outside normal flow.
+                // the stage is `.relative()`, so it establishes the containing
+                // block used by this absolute child.
+                // taking it interactive also exercises positioned hit testing
+                // and keyboard focus.
+                .child(
+                    div()
+                        .id("absolute-overlay")
+                        .absolute()
+                        .top(px(6))
+                        .right(px(6))
+                        .w(px(92))
+                        .h(px(28))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(Color::rgb(123, 70, 117))
+                        .border(px(1))
+                        .border_color(Color::rgb(166, 98, 157))
+                        .rounded(px(4))
+                        .when_focused(|style| {
+                            style.border(px(2)).border_color(Color::WHITE)
+                        })
+                        .when_pressed(|style| style.bg(Color::rgb(151, 76, 101)))
+                        .on_activate(demo_click)
+                        .child("absolute"),
+                )
+                // width remains Auto. left + right therefore stretch the element 
+                // across the containing block.
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(6))
+                        .right(px(6))
+                        .bottom(px(6))
+                        .h(px(18))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(Color::rgb(56, 73, 94))
+                        .border(px(1))
+                        .border_color(Color::rgb(89, 113, 145))
+                        .rounded(px(3))
+                        .child("left + right = stretched auto width"),
+                ),
+        )
+        .child(
+            text(
+                "The shifted green row overlaps without moving the next row; the purple button and bottom bar occupy no flow space.",
+            )
+            .wrap()
+            .text_color(Color::rgb(142, 155, 176)),
+        )
+}
+
 impl Render for App {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         let demo_click = cx.listener(Self::demo_clicked);
@@ -820,6 +938,7 @@ impl Render for App {
             .child(images_section())
             .child(alignment_section())
             .child(weighted_flex_section())
+            .child(positioning_section(demo_click))
             .child(overflow_clipping_section())
             .child(nested_scroll_section(demo_click))
             .child(gallery_footer())

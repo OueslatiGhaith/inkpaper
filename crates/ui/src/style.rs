@@ -10,6 +10,13 @@ pub enum Display {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Position {
+    Static,
+    Relative,
+    Absolute,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlexDirection {
     Row,
     Column,
@@ -223,6 +230,8 @@ declare_style! {
     pub struct Style {
         layout {
             display: Display = Display::Block,
+            position: Position = Position::Static,
+
             flex_direction: FlexDirection = FlexDirection::Row,
             align_items: AlignItems = AlignItems::Start,
             justify_content: JustifyContent = JustifyContent::Start,
@@ -242,6 +251,8 @@ declare_style! {
             padding: Edges<Pixels> = Edges::all(px(0)),
             margin: Edges<Pixels> = Edges::all(px(0)),
             gap: Pixels = px(0),
+
+            inset: Edges<Option<Pixels>> = Edges::all(None),
 
             border_width: Pixels = px(0),
         }
@@ -271,6 +282,41 @@ declare_style! {
 
 pub trait Styled: Sized {
     fn style_mut(&mut self) -> &mut Style;
+
+    fn relative(mut self) -> Self {
+        self.style_mut().position = Position::Relative;
+        self
+    }
+
+    fn absolute(mut self) -> Self {
+        self.style_mut().position = Position::Absolute;
+        self
+    }
+
+    fn top(mut self, value: impl Into<Pixels>) -> Self {
+        self.style_mut().inset.top = Some(value.into());
+        self
+    }
+
+    fn right(mut self, value: impl Into<Pixels>) -> Self {
+        self.style_mut().inset.right = Some(value.into());
+        self
+    }
+
+    fn bottom(mut self, value: impl Into<Pixels>) -> Self {
+        self.style_mut().inset.bottom = Some(value.into());
+        self
+    }
+
+    fn left(mut self, value: impl Into<Pixels>) -> Self {
+        self.style_mut().inset.left = Some(value.into());
+        self
+    }
+
+    fn inset(mut self, value: impl Into<Pixels>) -> Self {
+        self.style_mut().inset = Edges::all(Some(value.into()));
+        self
+    }
 
     fn flex(mut self) -> Self {
         self.style_mut().display = Display::Flex;
@@ -370,23 +416,23 @@ pub trait Styled: Sized {
         self
     }
 
-    fn min_w(mut self, value: Pixels) -> Self {
-        self.style_mut().min_width = Some(value);
+    fn min_w(mut self, value: impl Into<Pixels>) -> Self {
+        self.style_mut().min_width = Some(value.into());
         self
     }
 
-    fn max_w(mut self, value: Pixels) -> Self {
-        self.style_mut().max_width = Some(value);
+    fn max_w(mut self, value: impl Into<Pixels>) -> Self {
+        self.style_mut().max_width = Some(value.into());
         self
     }
 
-    fn min_h(mut self, value: Pixels) -> Self {
-        self.style_mut().min_height = Some(value);
+    fn min_h(mut self, value: impl Into<Pixels>) -> Self {
+        self.style_mut().min_height = Some(value.into());
         self
     }
 
-    fn max_h(mut self, value: Pixels) -> Self {
-        self.style_mut().max_height = Some(value);
+    fn max_h(mut self, value: impl Into<Pixels>) -> Self {
+        self.style_mut().max_height = Some(value.into());
         self
     }
 
@@ -478,8 +524,8 @@ pub trait Styled: Sized {
         self
     }
 
-    fn border(mut self, width: Pixels) -> Self {
-        self.style_mut().border_width = width;
+    fn border(mut self, width: impl Into<Pixels>) -> Self {
+        self.style_mut().border_width = width.into();
         self
     }
 
@@ -488,8 +534,8 @@ pub trait Styled: Sized {
         self
     }
 
-    fn rounded(mut self, radius: Pixels) -> Self {
-        self.style_mut().border_radius = radius;
+    fn rounded(mut self, radius: impl Into<Pixels>) -> Self {
+        self.style_mut().border_radius = radius.into();
         self
     }
 

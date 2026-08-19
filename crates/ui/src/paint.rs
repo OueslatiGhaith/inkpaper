@@ -1,6 +1,6 @@
 use crate::{
     Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImageFit, ImageSource,
-    NodeId, NodeKind, Offset, Pixels, Rect, ResolvedTextStyle, TextMeasurer,
+    NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, TextMeasurer,
     callback_store::CallbackStore, count_metric, entity_store::EntityStore, flow_axis,
     visual::VisualNode,
 };
@@ -333,6 +333,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             Some(damage.partial_damage_bounds())
         };
 
+        // ordered sibling pruning assumes that source-order siblings preserve their
+        // geometric flow order.
+        // relative and absolute positioning can violate that assumption. Disable only
+        // the ordered-sibling optimizations in positioned frames. Clip and subtree
+        // extent pruning remain active.
+        // this is intentionally conservative. Positioning correctness matters more
+        // than recovering this optimization with additional metadata
+        let ordered_sibling_pruning = !self.has_non_monotonic_positioning();
+
         let mut traversal = self.visual_nodes(root);
 
         while let Some(visual) = traversal.next() {
@@ -346,7 +355,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 // if this sibling begins after the far edge of all damage on the parent's
                 // ordered flow axis, neither this node's descendants nor any following
                 // sibling can contribute.
-                if self.ordered_sibling_tail_starts_after_damage(visual, damage_bounds) {
+                if ordered_sibling_pruning
+                    && self.ordered_sibling_tail_starts_after_damage(visual, damage_bounds)
+                {
                     traversal.skip_children_and_remaining_siblings();
                     count_metric!(self, damage_pruned_sibling_runs);
 
@@ -377,7 +388,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                             traversal.skip_children();
                             count_metric!(self, damage_pruned_subtrees);
                             count_metric!(self, damage_extent_pruned_subtrees);
-                        } else {
+                        } else if ordered_sibling_pruning {
                             // the subtree does intersect damage, but an ordered prefix
                             // of its direct children may still lie completely before it
                             if let Some(first_relevant) =
@@ -477,6 +488,25 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             crate::Axis::Horizontal => bounds.x() >= damage_bounds.right(),
             crate::Axis::Vertical => bounds.y() >= damage_bounds.bottom(),
         }
+    }
+
+    fn has_non_monotonic_positioning(&self) -> bool {
+        self.nodes.iter().any(|node| {
+            let Some(style) = node.style() else {
+                return false;
+            };
+
+            match style.position {
+                Position::Static => false,
+                Position::Absolute => true,
+                Position::Relative => {
+                    style.inset.top.is_some()
+                        || style.inset.right.is_some()
+                        || style.inset.bottom.is_some()
+                        || style.inset.left.is_some()
+                }
+            }
+        })
     }
 }
 
@@ -1610,6 +1640,62 @@ mod tests {
         assert!(
             painted_overflow,
             "overflowing earlier sibling must still paint into damage",
+        );
+    }
+
+    #[test]
+    fn partial_damage_keeps_relative_sibling_shifted_back_into_damage() {
+        let mut frame = FrameArena::<32, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .flex()
+                    .w(px(300))
+                    .h(px(40))
+                    .child(div().w(px(100)).h(px(40)))
+                    .child(div().w(px(100)).h(px(40)))
+                    .child(
+                        div()
+                            .relative()
+                            .right(px(190))
+                            .w(px(100))
+                            .h(px(40))
+                            .bg(Color::BLUE),
+                    ),
+            )
+            .unwrap();
+
+        let mut painter = RecordingPainter::default();
+
+        frame.layout(root, Size::new(px(300), px(40)), &painter);
+
+        let damage = DamageRegion::from_rect(Rect::new(
+            Point::new(px(10), px(0)),
+            Size::new(px(10), px(40)),
+        ));
+
+        frame.paint_with_damage(root, damage, &mut painter).unwrap();
+
+        assert!(
+            painter.commands.iter().any(|command| {
+                matches!(
+                    command,
+                    Command::Box {
+                        bounds,
+                        paint: BoxPaint {
+                            background: Some(Color::BLUE),
+                            ..
+                        },
+                        ..
+                    } if *bounds
+                        == Rect::new(
+                            Point::new(px(10), px(0)),
+                            Size::new(px(100), px(40)),
+                        )
+                )
+            }),
+            "relative sibling shifted backward into damage must still be painted",
         );
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     AlignItems, CanvasStyle, Display, Edges, FlexBasis, FlexDirection, FrameArena, ImageSource,
-    ImageStyle, JustifyContent, Length, NodeId, NodeKind, Offset, Pixels, Point, Rect,
+    ImageStyle, JustifyContent, Length, NodeId, NodeKind, Offset, Pixels, Point, Position, Rect,
     ResolvedTextStyle, Size, Style, count_metric, px,
 };
 
@@ -70,6 +70,71 @@ fn content_available(style: Style, outer_available: Size) -> Size {
     Size::new(
         (outer_available.width - horizontal_chrome(style)).non_negative(),
         (outer_available.height - vertical_chrome(style)).non_negative(),
+    )
+}
+
+fn content_rect(style: Style, origin: Point, outer_size: Size) -> Rect {
+    let border = border_width(style);
+
+    Rect::new(
+        Point::new(
+            origin.x + border + style.padding.left.non_negative(),
+            origin.y + border + style.padding.top.non_negative(),
+        ),
+        content_available(style, outer_size),
+    )
+}
+
+fn absolute_axis_available(
+    containing_size: Pixels,
+    start: Option<Pixels>,
+    end: Option<Pixels>,
+    margin_start: Pixels,
+    margin_end: Pixels,
+) -> Pixels {
+    (containing_size
+        - start.unwrap_or(px(0))
+        - end.unwrap_or(px(0))
+        - margin_start.non_negative()
+        - margin_end.non_negative())
+    .non_negative()
+}
+
+fn absolute_axis_origin(
+    containing_start: Pixels,
+    containing_size: Pixels,
+    child_size: Pixels,
+    start: Option<Pixels>,
+    end: Option<Pixels>,
+    margin_start: Pixels,
+    margin_end: Pixels,
+) -> Pixels {
+    let margin_start = margin_start.non_negative();
+    let margin_end = margin_end.non_negative();
+
+    if let Some(start) = start {
+        containing_start + start + margin_start
+    } else if let Some(end) = end {
+        containing_start + containing_size - end - margin_end - child_size
+    } else {
+        containing_start + margin_start
+    }
+}
+
+fn relative_axis_offset(start: Option<Pixels>, end: Option<Pixels>) -> Pixels {
+    if let Some(start) = start {
+        start
+    } else if let Some(end) = end {
+        px(0) - end
+    } else {
+        px(0)
+    }
+}
+
+fn relative_offset(style: Style) -> Offset {
+    Offset::new(
+        relative_axis_offset(style.inset.left, style.inset.right),
+        relative_axis_offset(style.inset.top, style.inset.bottom),
     )
 }
 
@@ -197,16 +262,39 @@ fn size_with_main(size: Size, main: Pixels, axis: Axis) -> Size {
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
-    fn child_count(&self, parent: NodeId) -> usize {
+    fn flow_child_count(&self, parent: NodeId) -> usize {
         let mut count = 0;
         let mut current = self.node(parent).first_child;
 
         while let Some(child) = current {
-            count += 1;
+            if self.node_position(child) != Position::Absolute {
+                count += 1;
+            }
+
             current = self.node(child).next_sibling;
         }
 
         count
+    }
+
+    fn node_position(&self, node: NodeId) -> Position {
+        self.node_flex_style(node)
+            .map(|style| style.position)
+            .unwrap_or(Position::Static)
+    }
+
+    fn has_absolute_children(&self, parent: NodeId) -> bool {
+        let mut current = self.node(parent).first_child;
+
+        while let Some(child) = current {
+            if self.node_position(child) == Position::Absolute {
+                return true;
+            }
+
+            current = self.node(child).next_sibling;
+        }
+
+        false
     }
 
     fn measure_node(
@@ -277,7 +365,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         let viewport = content_available(style, outer_limit);
         let child_available = self.child_layout_available(node, viewport);
-        let child_count = self.child_count(node);
+        let child_count = self.flow_child_count(node);
         let gap = style.gap.non_negative();
 
         let total_gap = if child_count > 1 {
@@ -292,6 +380,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
+            if self.node_position(child) == Position::Absolute {
+                current = self.node(child).next_sibling;
+                continue;
+            }
+
             let margin = self.node_margin(child);
             let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
             let measured = self.measure_node(
@@ -337,7 +430,14 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         let measured = self.measure_node(node, available, text_measurer);
-        let subtree_bounds = self.layout_node_with_size(node, origin, measured, text_measurer);
+        let initial_containing_block = Rect::new(origin, available);
+        let subtree_bounds = self.layout_node_with_size(
+            node,
+            origin,
+            measured,
+            initial_containing_block,
+            text_measurer,
+        );
 
         // `layout_node()` is the top-level layout entry. There is no parent that will
         // store the root's cache entry for us
@@ -346,17 +446,18 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         measured
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_div_children(
         &mut self,
         node: NodeId,
         style: Style,
         origin: Point,
         outer_size: Size,
+        containing_block: Rect,
         text_measurer: &dyn TextMeasurer,
         mut subtree_bounds: Rect,
     ) -> Rect {
-        let child_count = self.child_count(node);
-        if child_count == 0 {
+        if self.node(node).first_child.is_none() {
             return subtree_bounds;
         }
 
@@ -387,9 +488,12 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             None
         };
 
+        let flow_child_count = self.flow_child_count(node);
+        let has_absolute_children = self.has_absolute_children(node);
         let gap = style.gap.non_negative();
-        let total_gap = if child_count > 1 {
-            let gap_count = i32::try_from(child_count - 1).unwrap_or(i32::MAX);
+
+        let total_gap = if flow_child_count > 1 {
+            let gap_count = i32::try_from(flow_child_count - 1).unwrap_or(i32::MAX);
             gap * gap_count
         } else {
             px(0)
@@ -410,6 +514,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
+            if self.node_position(child) == Position::Absolute {
+                current = self.node(child).next_sibling;
+                continue;
+            }
+
             let margin = self.node_margin(child);
             let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
             let target_main = self.flex_item_main_size(
@@ -440,8 +549,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             JustifyContent::Center => (free_main / 2, px(0), px(0)),
             JustifyContent::End => (free_main, px(0), px(0)),
             JustifyContent::Between => {
-                if child_count > 1 {
-                    let spaces = i32::try_from(child_count - 1).unwrap_or(i32::MAX);
+                if flow_child_count > 1 {
+                    let spaces = i32::try_from(flow_child_count - 1).unwrap_or(i32::MAX);
                     let between_extra = free_main / spaces;
                     let between_remainder = free_main - between_extra * spaces;
 
@@ -464,11 +573,17 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut cursor = content_main_origin + leading_main;
         let mut grow_before = 0;
         let mut shrink_before = 0;
+        let mut flow_index = 0;
         let mut current = self.node(node).first_child;
         let mut sibling_prefix_bounds = Rect::new(Point::ZERO, Size::ZERO);
 
         while let Some(child) = current {
             let next = self.node(child).next_sibling;
+            if self.node_position(child) == Position::Absolute {
+                current = next;
+                continue;
+            }
+
             let margin = self.node_margin(child);
             let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
             let target_main = self.flex_item_main_size(
@@ -506,12 +621,21 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             // `layout_node_with_size()` no longer stores the child's root cache
             // itself. We decide below whether this node needs an exact extent
             // or a cumulative sibling prefix.
-            let child_subtree =
-                self.layout_node_with_size(child, child_origin, child_size, text_measurer);
+            let child_subtree = self.layout_node_with_size(
+                child,
+                child_origin,
+                child_size,
+                containing_block,
+                text_measurer,
+            );
 
             sibling_prefix_bounds = sibling_prefix_bounds.union(child_subtree);
 
-            if next.is_some() {
+            if has_absolute_children {
+                // Once absolute siblings exist, physical sibling order no longer
+                // describes monotonic layout order
+                self.set_subtree_paint_bounds(child, child_subtree);
+            } else if next.is_some() {
                 // non-last sibling: store a cumulative prefix extent. It is still
                 // conservative for this child's own subtree
                 self.set_subtree_paint_bounds(child, sibling_prefix_bounds);
@@ -529,7 +653,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
             cursor += main_margin_start(margin, axis) + target_main + main_margin_end(margin, axis);
 
-            if next.is_some() {
+            flow_index += 1;
+            let has_more_flow_children = flow_index < flow_child_count;
+
+            if has_more_flow_children {
                 cursor += gap + between_extra;
                 if between_remainder.is_positive() {
                     cursor += px(1);
@@ -543,6 +670,124 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 .saturating_mul(base.non_negative().get() as u64);
 
             shrink_before = shrink_before.saturating_add(shrink_factor);
+            current = next;
+        }
+
+        self.layout_absolute_children(
+            node,
+            containing_block,
+            children_clip,
+            text_measurer,
+            subtree_bounds,
+        )
+    }
+
+    fn layout_absolute_child(
+        &mut self,
+        child: NodeId,
+        containing_block: Rect,
+        text_measurer: &dyn TextMeasurer,
+    ) -> Rect {
+        let style = self
+            .node_flex_style(child)
+            .expect("absolute node must resolve to a styled element");
+
+        let margin = self.node_margin(child);
+
+        let horizontal_available = absolute_axis_available(
+            containing_block.width(),
+            style.inset.left,
+            style.inset.right,
+            margin.left,
+            margin.right,
+        );
+        let vertical_available = absolute_axis_available(
+            containing_block.height(),
+            style.inset.top,
+            style.inset.bottom,
+            margin.top,
+            margin.bottom,
+        );
+
+        let available = Size::new(horizontal_available, vertical_available);
+        let measured = self.measure_node(child, available, text_measurer);
+
+        let mut child_size = measured;
+
+        if style.width == Length::Auto && style.inset.left.is_some() && style.inset.right.is_some()
+        {
+            child_size.width = resolve_dimension(
+                Length::Pixels(horizontal_available),
+                style.min_width,
+                style.max_width,
+                horizontal_available,
+                horizontal_available,
+            );
+        }
+        if style.height == Length::Auto && style.inset.top.is_some() && style.inset.bottom.is_some()
+        {
+            child_size.height = resolve_dimension(
+                Length::Pixels(vertical_available),
+                style.min_height,
+                style.max_height,
+                vertical_available,
+                vertical_available,
+            );
+        }
+
+        let child_origin = Point::new(
+            absolute_axis_origin(
+                containing_block.x(),
+                containing_block.width(),
+                child_size.width,
+                style.inset.left,
+                style.inset.right,
+                margin.left,
+                margin.right,
+            ),
+            absolute_axis_origin(
+                containing_block.y(),
+                containing_block.height(),
+                child_size.height,
+                style.inset.top,
+                style.inset.bottom,
+                margin.top,
+                margin.bottom,
+            ),
+        );
+
+        self.layout_node_with_size(
+            child,
+            child_origin,
+            child_size,
+            containing_block,
+            text_measurer,
+        )
+    }
+
+    fn layout_absolute_children(
+        &mut self,
+        parent: NodeId,
+        containing_block: Rect,
+        children_clip: Option<Rect>,
+        text_measurer: &dyn TextMeasurer,
+        mut subtree_bounds: Rect,
+    ) -> Rect {
+        let mut current = self.node(parent).first_child;
+
+        while let Some(child) = current {
+            let next = self.node(child).next_sibling;
+            if self.node_position(child) == Position::Absolute {
+                let child_subtree =
+                    self.layout_absolute_child(child, containing_block, text_measurer);
+                self.set_subtree_paint_bounds(child, child_subtree);
+
+                if child_subtree.has_area() {
+                    let contribution = children_clip.unwrap_or(child_subtree);
+                    subtree_bounds = subtree_bounds.union(contribution);
+                }
+            }
+
             current = next;
         }
 
@@ -683,6 +928,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let mut current = self.node(parent).first_child;
 
         while let Some(child) = current {
+            if self.node_position(child) == Position::Absolute {
+                current = self.node(child).next_sibling;
+                continue;
+            }
+
             count_metric!(self, flex_sibling_visits);
 
             let margin = self.node_margin(child);
@@ -759,10 +1009,24 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         node: NodeId,
         origin: Point,
         size: Size,
+        containing_block: Rect,
         text_measurer: &dyn TextMeasurer,
     ) -> Rect {
         count_metric!(self, nodes_laid_out);
-        self.node_mut(node).layout.bounds = Rect::new(origin, size);
+
+        let direct_style = match self.node(node).kind {
+            NodeKind::Div { .. } => self.node(node).style(),
+            NodeKind::Text { .. }
+            | NodeKind::Image { .. }
+            | NodeKind::Canvas { .. }
+            | NodeKind::Entity { .. } => None,
+        };
+        let positioned_origin = match direct_style {
+            Some(style) if style.position == Position::Relative => origin + relative_offset(style),
+            _ => origin,
+        };
+
+        self.node_mut(node).layout.bounds = Rect::new(positioned_origin, size);
         let own_bounds = self.own_paint_bounds(node);
 
         match self.node(node).kind {
@@ -770,14 +1034,24 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             NodeKind::Entity { .. } => {
                 match self.node(node).first_child {
                     Some(child) => {
-                        let child_subtree =
-                            self.layout_node_with_size(child, origin, size, text_measurer);
+                        let child_subtree = self.layout_node_with_size(
+                            child,
+                            origin,
+                            size,
+                            containing_block,
+                            text_measurer,
+                        );
 
-                        // entity owns one rendered root, so there is no ordered
-                        // sibling prefix to construct here.
+                        // entity nodes are layout-transparent. Usually the rendered
+                        // child's bounds are identical to the entity's provisional
+                        // bounds, but relative positioning can move the rendered root.
+                        // keep the entity's bounds synchronized with that root
+                        let child_bounds = self.node(child).layout.bounds;
+                        self.node_mut(node).layout.bounds = child_bounds;
+
                         self.set_subtree_paint_bounds(child, child_subtree);
 
-                        own_bounds.union(child_subtree)
+                        child_subtree
                     }
                     None => own_bounds,
                 }
@@ -785,7 +1059,26 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             NodeKind::Div { .. } => {
                 let style = self.node(node).style().expect("div node must have style");
 
-                self.layout_div_children(node, style, origin, size, text_measurer, own_bounds)
+                // a positioned node establishes the containing block for absolute
+                // descendants at its final, visually shifted position.
+                // relative positioning therefore moves both the node itself and the
+                // coordinate system used by absolute descendants
+                let descendant_containing_block = match style.position {
+                    Position::Static => containing_block,
+                    Position::Relative | Position::Absolute => {
+                        content_rect(style, positioned_origin, size)
+                    }
+                };
+
+                self.layout_div_children(
+                    node,
+                    style,
+                    positioned_origin,
+                    size,
+                    descendant_containing_block,
+                    text_measurer,
+                    own_bounds,
+                )
             }
         }
     }
@@ -809,30 +1102,76 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
 
     pub(crate) fn max_scroll_offset(&self, node: NodeId) -> Offset {
-        let bounds = self.node(node).layout.bounds;
+        let viewport = self.children_clip_layout_bounds(node);
         let style = self.node(node).style();
-        let mut right = bounds.right();
-        let mut bottom = bounds.bottom();
+
+        let mut right = viewport.right();
+        let mut bottom = viewport.bottom();
+        let mut has_children = false;
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
-            let child_bounds = self.node(child).layout.bounds;
-            let margin = self.node_margin(child);
+            has_children = true;
 
-            right = right.max(child_bounds.right() + margin.right.non_negative());
-            bottom = bottom.max(child_bounds.bottom() + margin.bottom.non_negative());
+            let extent = self.scroll_layout_extent(child);
+
+            right = right.max(extent.right());
+            bottom = bottom.max(extent.bottom());
             current = self.node(child).next_sibling;
         }
 
-        if let Some(style) = style {
+        // child origins already include leading padding. Trailing padding still
+        // belongs after the final content extent.
+        // don't make an otherwise empty container scroll just because it has padding.
+        if has_children && let Some(style) = style {
             right += style.padding.right.non_negative();
             bottom += style.padding.bottom.non_negative();
         }
 
         Offset::new(
-            (right - bounds.right()).non_negative(),
-            (bottom - bounds.bottom()).non_negative(),
+            (right - viewport.right()).non_negative(),
+            (bottom - viewport.bottom()).non_negative(),
         )
+    }
+
+    fn scroll_layout_extent(&self, node: NodeId) -> Rect {
+        let bounds = self.node(node).layout.bounds;
+        let margin = self.node_margin(node);
+
+        // left/top margins are already reflected in layout origin.
+        // right/bottom margins occupy trailing scrollable space
+        let mut extent = Rect::new(
+            bounds.origin,
+            Size::new(
+                bounds.width() + margin.right.non_negative(),
+                bounds.height() + margin.bottom.non_negative(),
+            ),
+        );
+
+        let children_clip = if self.node_clips_children(node) {
+            Some(self.children_clip_layout_bounds(node))
+        } else {
+            None
+        };
+
+        let mut current = self.node(node).first_child;
+
+        while let Some(child) = current {
+            let child_extent = self.scroll_layout_extent(child);
+            let contribution = match children_clip {
+                Some(clip) => child_extent.intersection(clip),
+                None => Some(child_extent),
+            };
+            if let Some(contribution) = contribution
+                && contribution.has_area()
+            {
+                extent = extent.union(contribution);
+            }
+
+            current = self.node(child).next_sibling;
+        }
+
+        extent
     }
 
     fn own_paint_bounds(&self, node: NodeId) -> Rect {
@@ -1954,5 +2293,464 @@ mod tests {
         assert_eq!(frame.ordered_prefix_paint_bounds(third,), None,);
         // its normal conservative subtree cache stays exact.
         assert_eq!(frame.subtree_paint_bounds(third,).unwrap().bottom(), px(30),);
+    }
+
+    #[test]
+    fn absolute_child_is_removed_from_block_flow() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .relative()
+                    .w(px(100))
+                    .h(px(100))
+                    .gap(px(5))
+                    .child(div().w(px(20)).h(px(10)))
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(40))
+                            .left(px(40))
+                            .w(px(30))
+                            .h(px(30)),
+                    )
+                    .child(div().w(px(20)).h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let first = frame.node(root).first_child.unwrap();
+        let absolute = frame.node(first).next_sibling.unwrap();
+        let second = frame.node(absolute).next_sibling.unwrap();
+
+        assert_bounds(frame.bounds(first), 0, 0, 20, 10);
+        assert_bounds(frame.bounds(second), 0, 15, 20, 10);
+        assert_bounds(frame.bounds(absolute), 40, 40, 30, 30);
+    }
+
+    #[test]
+    fn absolute_child_does_not_contribute_to_auto_parent_size() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .relative()
+                    .gap(px(4))
+                    .child(div().w(px(20)).h(px(10)))
+                    .child(div().absolute().w(px(90)).h(px(90)))
+                    .child(div().w(px(30)).h(px(15))),
+            )
+            .unwrap();
+
+        let size = frame.layout(root, Size::new(px(200), px(200)), &measurer);
+
+        assert_eq!(size, Size::new(px(30), px(29)),);
+    }
+
+    #[test]
+    fn absolute_child_uses_positioned_ancestor_content_box() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .relative()
+                    .w(px(100))
+                    .h(px(80))
+                    .border(px(2))
+                    .p(px(10))
+                    .child(div().absolute().top(px(3)).right(px(4)).w(px(20)).h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(80)), &measurer);
+
+        let child = frame.node(root).first_child.unwrap();
+
+        // root content box:
+        //   origin = 2 border + 10 padding = (12, 12)
+        //   width  = 100 - 4 border - 20 padding = 76
+        //   height = 80  - 4 border - 20 padding = 56
+        //
+        // right: 4 => x = 12 + 76 - 4 - 20 = 64
+        // top:   3 => y = 12 + 3 = 15
+        assert_bounds(frame.bounds(child), 64, 15, 20, 10);
+    }
+
+    #[test]
+    fn opposing_absolute_insets_stretch_auto_size() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div().relative().w(px(100)).h(px(60)).child(
+                    div()
+                        .absolute()
+                        .left(px(10))
+                        .right(px(15))
+                        .top(px(5))
+                        .bottom(px(7)),
+                ),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(60)), &measurer);
+
+        let child = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(child), 10, 5, 75, 48);
+    }
+
+    #[test]
+    fn absolute_descendant_uses_nearest_positioned_ancestor() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div().relative().w(px(100)).h(px(100)).child(
+                    div().w(px(20)).h(px(20)).child(
+                        div()
+                            .absolute()
+                            .right(px(5))
+                            .bottom(px(6))
+                            .w(px(10))
+                            .h(px(10)),
+                    ),
+                ),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let static_child = frame.node(root).first_child.unwrap();
+        let absolute = frame.node(static_child).first_child.unwrap();
+
+        assert_bounds(frame.bounds(static_child), 0, 0, 20, 20);
+        assert_bounds(frame.bounds(absolute), 85, 84, 10, 10);
+    }
+
+    #[test]
+    fn absolute_child_does_not_participate_in_flex_distribution() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .relative()
+                    .flex()
+                    .w(px(100))
+                    .h(px(30))
+                    .child(div().w(px(20)).h(px(10)))
+                    .child(div().absolute().w(px(90)).h(px(20)))
+                    .child(div().flex_1().h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(30)), &measurer);
+
+        let fixed = frame.node(root).first_child.unwrap();
+        let absolute = frame.node(fixed).next_sibling.unwrap();
+        let flexible = frame.node(absolute).next_sibling.unwrap();
+
+        assert_bounds(frame.bounds(fixed), 0, 0, 20, 10);
+        assert_bounds(frame.bounds(flexible), 20, 0, 80, 10);
+        assert_bounds(frame.bounds(absolute), 0, 0, 90, 20);
+    }
+
+    #[test]
+    fn relative_offset_preserves_normal_flow_slot() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(100))
+                    .gap(px(4))
+                    .child(div().relative().left(px(5)).top(px(7)).w(px(20)).h(px(10)))
+                    .child(div().w(px(20)).h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let first = frame.node(root).first_child.unwrap();
+        let second = frame.node(first).next_sibling.unwrap();
+
+        assert_bounds(frame.bounds(first), 5, 7, 20, 10);
+
+        // the first child still occupies its original y=0..10 flow slot.
+        // therefore the second child starts at 10 + 4, not 7 + 10 + 4.
+        assert_bounds(frame.bounds(second), 0, 14, 20, 10);
+    }
+
+    #[test]
+    fn relative_right_and_bottom_offset_in_negative_direction() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div().w(px(100)).h(px(100)).child(
+                    div()
+                        .relative()
+                        .right(px(6))
+                        .bottom(px(8))
+                        .w(px(20))
+                        .h(px(10)),
+                ),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let child = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(child), -6, -8, 20, 10);
+    }
+
+    #[test]
+    fn relative_left_and_top_take_precedence_over_opposing_insets() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div().w(px(100)).h(px(100)).child(
+                    div()
+                        .relative()
+                        .left(px(5))
+                        .right(px(40))
+                        .top(px(3))
+                        .bottom(px(30))
+                        .w(px(20))
+                        .h(px(10)),
+                ),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let child = frame.node(root).first_child.unwrap();
+
+        assert_bounds(frame.bounds(child), 5, 3, 20, 10);
+    }
+
+    #[test]
+    fn relative_offset_does_not_change_parent_intrinsic_size() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div().child(
+                    div()
+                        .relative()
+                        .left(px(100))
+                        .top(px(80))
+                        .w(px(20))
+                        .h(px(10)),
+                ),
+            )
+            .unwrap();
+
+        let size = frame.layout(root, Size::new(px(200), px(200)), &measurer);
+
+        let child = frame.node(root).first_child.unwrap();
+
+        assert_eq!(size, Size::new(px(20), px(10)),);
+
+        assert_bounds(frame.bounds(root), 0, 0, 20, 10);
+        assert_bounds(frame.bounds(child), 100, 80, 20, 10);
+    }
+
+    #[test]
+    fn absolute_descendant_uses_shifted_relative_containing_block() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div().w(px(100)).h(px(100)).child(
+                    div()
+                        .relative()
+                        .left(px(10))
+                        .top(px(5))
+                        .w(px(40))
+                        .h(px(30))
+                        .child(
+                            div()
+                                .absolute()
+                                .right(px(0))
+                                .bottom(px(0))
+                                .w(px(10))
+                                .h(px(10)),
+                        ),
+                ),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let relative = frame.node(root).first_child.unwrap();
+        let absolute = frame.node(relative).first_child.unwrap();
+
+        assert_bounds(frame.bounds(relative), 10, 5, 40, 30);
+
+        // relative content box:
+        // x = 10, width  = 40
+        // y = 5,  height = 30
+        //
+        // absolute 10x10 at right/bottom:
+        // x = 10 + 40 - 10 = 40
+        // y =  5 + 30 - 10 = 25
+        assert_bounds(frame.bounds(absolute), 40, 25, 10, 10);
+    }
+
+    #[test]
+    fn relative_positioning_can_overlap_following_flow_sibling() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .w(px(100))
+                    .h(px(100))
+                    .child(div().relative().top(px(8)).w(px(30)).h(px(10)))
+                    .child(div().w(px(30)).h(px(10))),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+        let first = frame.node(root).first_child.unwrap();
+        let second = frame.node(first).next_sibling.unwrap();
+
+        assert_bounds(frame.bounds(first), 0, 8, 30, 10);
+        assert_bounds(frame.bounds(second), 0, 10, 30, 10);
+
+        assert!(
+            frame
+                .bounds(first)
+                .intersection(frame.bounds(second))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn positioned_descendant_extends_scroll_range_through_static_wrapper() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .id("scroll")
+                    .relative()
+                    .w(px(100))
+                    .h(px(40))
+                    .overflow_y_scroll()
+                    .child(
+                        div().w(px(100)).h(px(10)).child(
+                            div()
+                                .absolute()
+                                .top(px(80))
+                                .left(px(0))
+                                .w(px(100))
+                                .h(px(20)),
+                        ),
+                    ),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(40)), &measurer);
+
+        assert_eq!(frame.max_scroll_offset(root), Offset::new(px(0), px(60)),);
+    }
+
+    #[test]
+    fn nested_scroll_content_does_not_expand_outer_scroll_range() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div()
+                    .id("outer")
+                    .relative()
+                    .w(px(100))
+                    .h(px(40))
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .id("inner")
+                            .relative()
+                            .w(px(100))
+                            .h(px(20))
+                            .overflow_y_scroll()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(100))
+                                    .left(px(0))
+                                    .w(px(100))
+                                    .h(px(20)),
+                            ),
+                    ),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(100), px(40)), &measurer);
+
+        let inner = frame.node(root).first_child.unwrap();
+
+        assert_eq!(frame.max_scroll_offset(root), Offset::ZERO,);
+        assert_eq!(frame.max_scroll_offset(inner), Offset::new(px(0), px(100)),);
+    }
+
+    #[test]
+    fn relative_position_moves_entire_descendant_subtree() {
+        let measurer = TestTextMeasurer::new(8, 10);
+        let mut frame = FrameArena::<16, 128>::default();
+
+        let root = frame
+            .mount(
+                div().w(px(120)).h(px(60)).child(
+                    div()
+                        .relative()
+                        .left(px(18))
+                        .top(px(3))
+                        .w(px(80))
+                        .h(px(30))
+                        .p(px(5))
+                        .child("label"),
+                ),
+            )
+            .unwrap();
+
+        frame.layout(root, Size::new(px(120), px(60)), &measurer);
+
+        let relative = frame.node(root).first_child.unwrap();
+        let text = frame.node(relative).first_child.unwrap();
+
+        assert_bounds(frame.bounds(relative), 18, 3, 80, 30);
+
+        // parent moved by (+18, +3), then its 5px padding applies.
+        // the text must therefore begin at:
+        // x = 18 + 5 = 23
+        // y =  3 + 5 =  8
+        assert_eq!(frame.bounds(text).x(), px(23));
+        assert_eq!(frame.bounds(text).y(), px(8));
     }
 }
