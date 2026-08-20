@@ -527,6 +527,8 @@ mod tests {
     #[test]
     fn visual_traversal_accumulates_nested_scroll_offsets() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -534,6 +536,7 @@ mod tests {
                     .w(px(100))
                     .h(px(100))
                     .child(div().w(px(80)).h(px(80)).child(div().w(px(40)).h(px(40)))),
+                cx,
             )
             .unwrap();
 
@@ -557,6 +560,8 @@ mod tests {
     #[test]
     fn visual_traversal_intersects_nested_clips() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -573,6 +578,7 @@ mod tests {
                             .overflow_hidden()
                             .child(div().w(px(100)).h(px(100))),
                     ),
+                cx,
             )
             .unwrap();
 
@@ -603,6 +609,8 @@ mod tests {
     #[test]
     fn scroll_translation_does_not_move_scroll_viewport_clip() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -612,6 +620,7 @@ mod tests {
                     .border(px(2))
                     .overflow_hidden()
                     .child(div().w(px(100)).h(px(100))),
+                cx,
             )
             .unwrap();
 
@@ -737,6 +746,8 @@ mod tests {
     #[test]
     fn painting_uses_carried_scroll_and_clip_context() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -746,6 +757,7 @@ mod tests {
                     .border(px(1))
                     .overflow_hidden()
                     .child(div().w(px(50)).h(px(60)).bg(Color::RED)),
+                cx,
             )
             .unwrap();
 
@@ -775,6 +787,8 @@ mod tests {
     #[test]
     fn explicit_size_can_overflow_parent_constraints() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -784,6 +798,7 @@ mod tests {
                     .border(px(1))
                     .overflow_hidden()
                     .child(div().w(px(50)).h(px(60))),
+                cx,
             )
             .unwrap();
 
@@ -804,6 +819,8 @@ mod tests {
     #[test]
     fn flex_shrink_can_reduce_explicitly_oversized_items() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -813,6 +830,7 @@ mod tests {
                     .h(px(40))
                     .child(div().w(px(80)).h(px(20)).flex_shrink(1))
                     .child(div().w(px(80)).h(px(20)).flex_shrink(1)),
+                cx,
             )
             .unwrap();
 
@@ -865,11 +883,16 @@ mod tests {
         const EXTRA_DEPTH: usize = 8;
 
         let mut frame = FrameArena::<128, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
-            .mount(DeepBranching {
-                depth: super::VISUAL_CONTEXT_STACK_CAPACITY + EXTRA_DEPTH,
-            })
+            .mount(
+                DeepBranching {
+                    depth: super::VISUAL_CONTEXT_STACK_CAPACITY + EXTRA_DEPTH,
+                },
+                cx,
+            )
             .unwrap();
 
         frame.layout(root, Size::new(px(100), px(1000)), &TestTextMeasurer);
@@ -890,7 +913,9 @@ mod tests {
     #[test]
     fn visual_traversal_visits_branching_tree_in_depth_first_order() {
         let mut frame = FrameArena::<16, 128>::default();
-        let mut cx = MountCx::new(&mut frame);
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
+        let mut cx = MountCx::new(&mut frame, cx);
 
         let root = div()
             .child(div().child(div()).child(div()))
@@ -922,6 +947,8 @@ mod tests {
     #[test]
     fn subtree_paint_bounds_include_unclipped_overflow() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -929,6 +956,7 @@ mod tests {
                     .w(px(20))
                     .h(px(20))
                     .child(div().w(px(40)).h(px(10)).bg(Color::RED)),
+                cx,
             )
             .unwrap();
 
@@ -943,6 +971,8 @@ mod tests {
     #[test]
     fn clipping_bounds_the_cached_subtree_extent() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -951,6 +981,7 @@ mod tests {
                     .h(px(20))
                     .overflow_hidden()
                     .child(div().w(px(80)).h(px(80)).bg(Color::RED)),
+                cx,
             )
             .unwrap();
 
@@ -965,6 +996,8 @@ mod tests {
     #[test]
     fn visual_traversal_can_skip_children_and_remaining_siblings() {
         let mut frame = FrameArena::<32, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -976,6 +1009,7 @@ mod tests {
                             .child(div().child("C")),
                     )
                     .child(div().child("after")),
+                cx,
             )
             .unwrap();
 
@@ -1002,12 +1036,15 @@ mod tests {
     #[test]
     fn visual_traversal_can_skip_an_ordered_child_prefix() {
         let mut frame = FrameArena::<16, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
                 div()
                     .child(div().child(div()).child(div()).child(div()))
                     .child(div()),
+                cx,
             )
             .unwrap();
 

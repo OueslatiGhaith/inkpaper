@@ -58,7 +58,7 @@ struct ListRow<'a> {
 }
 
 impl RenderOnce for ListRow<'_> {
-    fn render(self) -> impl IntoElement {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         div().h(px(12)).child(self.label)
     }
 }

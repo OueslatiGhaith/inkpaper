@@ -22,6 +22,7 @@ mod entity_store;
 mod event;
 mod frame;
 mod geometry;
+mod global;
 mod identity;
 mod image;
 mod input;
@@ -53,6 +54,7 @@ pub use entity::*;
 pub use event::*;
 pub use frame::*;
 pub use geometry::*;
+pub use global::*;
 pub use identity::*;
 pub use image::*;
 pub use invalidation::*;
@@ -71,10 +73,11 @@ pub use units::*;
 pub mod prelude {
     // TODO: fill predlude
     pub use crate::{
-        ActivateEvent, CanvasPainter, Color, ComponentSlot, ConditionalElementExt, Context,
-        DamageRegion, Either, EmptySlot, Entity, EventTarget, FontId, IdentifiableElementExt,
-        Image, ImageFit, ImageId, ImageSource, IntoElement, Invalidation, Listener, Offset,
-        OnEvent, ParentElement, Pixels, Point, Rect, Render, RenderOnce, Runtime, Size,
+        ActivateEvent, AppContext, CanvasPainter, Color, ComponentSlot, ConditionalElementExt,
+        Context, DamageRegion, Either, EmptySlot, Entity, EventTarget, FontId, Global,
+        GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError, IdentifiableElementExt, Image,
+        ImageFit, ImageId, ImageSource, IntoElement, Invalidation, Listener, Offset, OnEvent,
+        ParentElement, Pixels, Point, Rect, Render, RenderOnce, Runtime, Size,
         StatefulInteractiveElementExt, Style, Styled, TextAlign, TextStyled, TextWrap,
         canvas::canvas, div::div, image::image, px, text,
     };

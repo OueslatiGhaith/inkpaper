@@ -6,11 +6,13 @@ use crate::{
         CallbackAllocError, CallbackStore, register_canvas_callback, register_listener,
     },
     entity_store::{EntityStore, create_entity},
+    global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
 };
 
 pub struct Context<'a, T> {
     pub(crate) entity: Entity<T>,
     pub(crate) store: &'a dyn EntityStore,
+    pub(crate) globals: &'a dyn GlobalStore,
     pub(crate) callbacks: &'a dyn CallbackStore,
     pub(crate) notified: &'a Cell<bool>,
 }
@@ -19,19 +21,19 @@ impl<'a, T> Context<'a, T> {
     pub(crate) fn from_parts(
         entity: Entity<T>,
         store: &'a dyn EntityStore,
+        globals: &'a dyn GlobalStore,
         callbacks: &'a dyn CallbackStore,
         notified: &'a Cell<bool>,
     ) -> Self {
         Self {
             entity,
             store,
+            globals,
             callbacks,
             notified,
         }
     }
-}
 
-impl<T> Context<'_, T> {
     pub fn entity(&self) -> Entity<T> {
         self.entity
     }
@@ -52,7 +54,43 @@ impl<T> Context<'_, T> {
     where
         U: 'static,
     {
-        create_entity(self.store, self.callbacks, self.notified, build)
+        create_entity(
+            self.store,
+            self.globals,
+            self.callbacks,
+            self.notified,
+            build,
+        )
+    }
+
+    pub fn try_global<G>(&self) -> Result<GlobalRef<'a, G>, GlobalAccessError>
+    where
+        G: Global,
+    {
+        GlobalRef::acquire(self.globals)
+    }
+
+    pub fn global<G>(&self) -> GlobalRef<'a, G>
+    where
+        G: Global,
+    {
+        self.try_global::<G>()
+            .unwrap_or_else(|_| panic!("requested global is not available"))
+    }
+
+    pub fn try_global_mut<G>(&self) -> Result<GlobalMut<'a, G>, GlobalAccessError>
+    where
+        G: Global,
+    {
+        GlobalMut::acquire(self.globals, self.notified)
+    }
+
+    pub fn global_mut<G>(&self) -> GlobalMut<'a, G>
+    where
+        G: Global,
+    {
+        self.try_global_mut::<G>()
+            .unwrap_or_else(|_| panic!("requested global is not available for mutation"))
     }
 }
 
@@ -96,9 +134,35 @@ impl<T: 'static> Context<'_, T> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct AppContext<'a> {
+    globals: &'a dyn GlobalStore,
+}
+
+impl<'a> AppContext<'a> {
+    pub(crate) const fn from_globals(globals: &'a dyn GlobalStore) -> Self {
+        Self { globals }
+    }
+
+    pub fn try_global<G>(&self) -> Result<GlobalRef<'a, G>, GlobalAccessError>
+    where
+        G: Global,
+    {
+        GlobalRef::acquire(self.globals)
+    }
+
+    pub fn global<G>(&self) -> GlobalRef<'a, G>
+    where
+        G: Global,
+    {
+        self.try_global::<G>()
+            .unwrap_or_else(|_| panic!("requested global is not available"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{EntityAccessError, EntityArena, callback_store::CallbackArena};
+    use crate::{EntityAccessError, EntityArena, GlobalArena, callback_store::CallbackArena};
 
     use super::*;
 
@@ -112,10 +176,11 @@ mod tests {
     fn context_can_create_entities() {
         let arena = EntityArena::<1024, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
+        let globals = GlobalArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
+        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
 
         let counter = cx.new(|_| Counter { value: 42 }).unwrap();
 
@@ -126,10 +191,11 @@ mod tests {
     fn entity_can_update_through_context() {
         let arena = EntityArena::<1024, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
+        let globals = GlobalArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
+        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
 
         let counter = cx.new(|_| Counter { value: 1 }).unwrap();
 
@@ -156,10 +222,11 @@ mod tests {
 
         let arena = EntityArena::<1024, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
+        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
 
         let parent = cx
             .new(|cx| {
@@ -185,10 +252,11 @@ mod tests {
 
         let arena = EntityArena::<1024, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
+        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
 
         let parent = cx
             .new(|cx| {
@@ -211,10 +279,11 @@ mod tests {
     fn initializing_entity_cannot_be_read() {
         let arena = EntityArena::<1024, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &callbacks, &notified);
+        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
 
         let _ = cx
             .new(|cx| {

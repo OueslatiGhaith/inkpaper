@@ -40,7 +40,7 @@ impl Styled for Button<'_> {
 }
 
 impl RenderOnce for Button<'_> {
-    fn render(self) -> impl IntoElement {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let mut root = div();
         *root.style_mut() = self.style;
 

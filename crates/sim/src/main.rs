@@ -10,7 +10,7 @@ use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     sdl2::{Keycode, MouseButton},
 };
-use inkpaper_app::{AppModel, BookSummary, InkPaperApp};
+use inkpaper_app::{AppModel, BookSummary, InkPaperApp, theme::Theme};
 use inkpaper_ui::{backend::EmbeddedGraphicsPainter, prelude::*};
 
 const DISPLAY_WIDTH: u32 = 480;
@@ -30,6 +30,8 @@ type UiRuntime = Runtime<
     512,    // frame nodes
     8_192,  // frame text bytes
     256,    // persistent element states
+    2_048,  // global btes
+    8,      //global slots
 >;
 
 fn demo_model() -> AppModel {
@@ -126,6 +128,7 @@ fn layout_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
 
 fn main() {
     let mut runtime = UiRuntime::default();
+    runtime.set_global(Theme::EINK).unwrap();
     let model = demo_model();
     let app = runtime.create(move |_| InkPaperApp::new(model)).unwrap();
 

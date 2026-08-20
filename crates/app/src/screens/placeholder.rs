@@ -1,6 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-use crate::theme;
+use crate::theme::Theme;
 
 pub struct PlaceholderScreen {
     title: &'static str,
@@ -14,17 +14,19 @@ impl PlaceholderScreen {
 }
 
 impl RenderOnce for PlaceholderScreen {
-    fn render(self) -> impl IntoElement {
+    fn render(self, cx: &AppContext<'_>) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
+
         div()
             .w_full()
             .p(px(24))
             .gap(px(14))
-            .child(text(self.title).font(FontId::new(1)).text_color(theme::INK))
+            .child(text(self.title).font(FontId::new(1)).text_color(theme.ink))
             .child(
                 text(self.message)
                     .wrap()
                     .line_height(px(14))
-                    .text_color(theme::MUTED),
+                    .text_color(theme.muted),
             )
     }
 }

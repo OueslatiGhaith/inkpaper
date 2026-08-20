@@ -1,8 +1,22 @@
-use inkpaper_ui::Color;
+use inkpaper_ui::prelude::*;
 
-pub const PAPER: Color = Color::WHITE;
-pub const INK: Color = Color::BLACK;
+#[derive(Debug, Clone, Copy)]
+pub struct Theme {
+    pub paper: Color,
+    pub ink: Color,
+    pub surface: Color,
+    pub subtle: Color,
+    pub muted: Color,
+}
 
-pub const SURFACE: Color = Color::rgb(242, 242, 242);
-pub const SUBTLE: Color = Color::rgb(210, 210, 210);
-pub const MUTED: Color = Color::rgb(96, 96, 96);
+impl Global for Theme {}
+
+impl Theme {
+    pub const EINK: Self = Self {
+        paper: Color::WHITE,
+        ink: Color::BLACK,
+        surface: Color::rgb(242, 242, 242),
+        subtle: Color::rgb(210, 210, 210),
+        muted: Color::rgb(96, 96, 96),
+    };
+}

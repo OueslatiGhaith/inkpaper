@@ -4,7 +4,7 @@ use crate::{
     AppModel,
     components::{BottomNav, TopBar},
     screens::{HomeScreen, PlaceholderScreen},
-    theme,
+    theme::Theme,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +63,8 @@ impl InkPaperApp {
 
 impl Render for InkPaperApp {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let theme = cx.global::<Theme>();
+
         let open_home = cx.listener(Self::open_home);
         let open_library = cx.listener(Self::open_library);
         let open_settings = cx.listener(Self::open_settings);
@@ -88,8 +90,8 @@ impl Render for InkPaperApp {
             .w_full()
             .h_full()
             .flex_col()
-            .bg(theme::PAPER)
-            .text_color(theme::INK)
+            .bg(theme.paper)
+            .text_color(theme.ink)
             .child(TopBar::new(model.battery().label()))
             .child(
                 div()

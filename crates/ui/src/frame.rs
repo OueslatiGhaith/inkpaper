@@ -3,14 +3,16 @@ use core::{any::TypeId, cell::Cell};
 use heapless::Vec;
 
 use crate::{
-    CanvasDraw, CanvasStyle, Element, ElementId, EntityAccessError, EntityId, EntityRenderFn,
-    EventBinding, EventBindingId, EventCallbacks, ImageSource, ImageStyle, IntoElement, Offset,
-    Rect, ResolvedTextStyle, Size, StatefulInteractivity, Style, StylePatch, TextStyle,
+    AppContext, CanvasDraw, CanvasStyle, Element, ElementId, EntityAccessError, EntityId,
+    EntityRenderFn, EventBinding, EventBindingId, EventCallbacks, ImageSource, ImageStyle,
+    IntoElement, Offset, Rect, ResolvedTextStyle, Size, StatefulInteractivity, Style, StylePatch,
+    TextStyle,
     callback::CallbackId,
     callback_store::CallbackStore,
     count_metric,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity_store::EntityStore,
+    global::GlobalStore,
     scroll::{ScrollAxes, ScrollStateTable},
 };
 #[cfg(feature = "metrics")]
@@ -225,12 +227,12 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         Ok(id)
     }
 
-    pub fn mount<E>(&mut self, element: E) -> Result<NodeId, MountError>
+    pub fn mount<E>(&mut self, element: E, app: AppContext<'_>) -> Result<NodeId, MountError>
     where
         E: IntoElement,
     {
         let element = element.into_element();
-        let mut cx = MountCx::new(self);
+        let mut cx = MountCx::new(self, app);
 
         element.mount(&mut cx)
     }
@@ -265,6 +267,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     pub(crate) fn expand_entities(
         &mut self,
         entities: &dyn EntityStore,
+        globals: &dyn GlobalStore,
         callbacks: &dyn CallbackStore,
         notified: &Cell<bool>,
     ) -> Result<(), MountError> {
@@ -283,7 +286,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             if let Some((entity, render)) = pending {
                 count_metric!(self, entity_render_calls);
                 let entity_node = NodeId::new(index as u16);
-                let root = render(entity, entities, callbacks, notified, self)?;
+                let root = render(entity, entities, globals, callbacks, notified, self)?;
                 self.append_child(entity_node, root);
 
                 match &mut self.nodes[index].kind {
@@ -302,14 +305,16 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         &mut self,
         element: E,
         entities: &dyn EntityStore,
+        globals: &dyn GlobalStore,
         callbacks: &dyn CallbackStore,
         notified: &Cell<bool>,
     ) -> Result<NodeId, MountError>
     where
         E: IntoElement,
     {
-        let root = self.mount(element)?;
-        self.expand_entities(entities, callbacks, notified)?;
+        let app = AppContext::from_globals(globals);
+        let root = self.mount(element, app)?;
+        self.expand_entities(entities, globals, callbacks, notified)?;
 
         Ok(root)
     }
@@ -663,11 +668,16 @@ pub(crate) trait FrameStore {
 
 pub struct MountCx<'a> {
     frame: &'a mut dyn FrameStore,
+    app: AppContext<'a>,
 }
 
 impl<'a> MountCx<'a> {
-    pub(crate) fn new(frame: &'a mut dyn FrameStore) -> Self {
-        Self { frame }
+    pub(crate) fn new(frame: &'a mut dyn FrameStore, app: AppContext<'a>) -> Self {
+        Self { frame, app }
+    }
+
+    pub(crate) fn app_context(&self) -> AppContext<'a> {
+        self.app
     }
 }
 
@@ -789,11 +799,14 @@ mod tests {
         const ENTITY_SLOTS: usize,
         const CALLBACK_BYTES: usize,
         const CALLBACK_SLOTS: usize,
+        const GLOBAL_BYTES: usize,
+        const GLOBAL_SLOTS: usize,
     >(
         frame: &mut FrameArena<NODES, TEXT_BYTES>,
         states: &mut ElementStateTable<STATES>,
         root: Entity<Root>,
         entities: &EntityArena<ENTITY_BYTES, ENTITY_SLOTS>,
+        globals: &GlobalArena<GLOBAL_BYTES, GLOBAL_SLOTS>,
         callbacks: &CallbackArena<CALLBACK_BYTES, CALLBACK_SLOTS>,
         notified: &Cell<bool>,
         generation: u32,
@@ -803,10 +816,11 @@ mod tests {
     {
         frame.clear();
 
-        let root = frame.mount(root).expect("mount should succeed");
+        let app = AppContext::from_globals(globals);
+        let root = frame.mount(root, app).expect("mount should succeed");
 
         frame
-            .expand_entities(entities, callbacks, notified)
+            .expand_entities(entities, globals, callbacks, notified)
             .expect("entity expansion should succeed");
 
         frame.resolve_identities(states, generation)?;
@@ -818,7 +832,9 @@ mod tests {
     #[test]
     fn mounts_div_tree() {
         let mut frame = FrameArena::<16, 128>::default();
-        let root = frame.mount(div().child("A").child("B")).unwrap();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
+        let root = frame.mount(div().child("A").child("B"), app).unwrap();
 
         assert_eq!(frame.node_count(), 3);
 
@@ -836,7 +852,12 @@ mod tests {
     #[test]
     fn preserves_child_order() {
         let mut frame = FrameArena::<16, 128>::default();
-        let root = frame.mount(div().child("A").child("B").child("C")).unwrap();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
+
+        let root = frame
+            .mount(div().child("A").child("B").child("C"), app)
+            .unwrap();
         let a = frame.node(root).first_child.unwrap();
         let b = frame.node(a).next_sibling.unwrap();
         let c = frame.node(b).next_sibling.unwrap();
@@ -851,8 +872,11 @@ mod tests {
     #[test]
     fn mounts_nested_elements() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
+
         let root = frame
-            .mount(div().child("Top").child(div().child("Nested")))
+            .mount(div().child("Top").child(div().child("Nested")), app)
             .unwrap();
 
         assert_eq!(frame.node_count(), 4);
@@ -880,9 +904,11 @@ mod tests {
     #[test]
     fn preserves_styles_when_mounting() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
 
         let root = frame
-            .mount(div().flex().flex_col().w_full().p(px(8)))
+            .mount(div().flex().flex_col().w_full().p(px(8)), app)
             .unwrap();
 
         match frame.node(root).kind {
@@ -902,13 +928,14 @@ mod tests {
     #[test]
     fn text_is_copied_into_frame_storage() {
         let mut frame = FrameArena::<8, 128>::default();
-        let root;
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
 
-        {
+        let root = {
             let text = String::from("Hello");
-            root = frame.mount(div().child(text.as_str())).unwrap();
+            frame.mount(div().child(text.as_str()), app).unwrap()
             // `text` is dropped at the end of this block.
-        }
+        };
 
         let text_node = frame.node(root).first_child.unwrap();
 
@@ -919,7 +946,10 @@ mod tests {
     #[test]
     fn mounts_stateful_element_identity() {
         let mut frame = FrameArena::<8, 128>::default();
-        let button = frame.mount(div().id("button").child("Press")).unwrap();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
+
+        let button = frame.mount(div().id("button").child("Press"), app).unwrap();
 
         assert_eq!(
             frame.node(button).element_id,
@@ -934,6 +964,8 @@ mod tests {
     #[test]
     fn reports_node_capacity_exhaustion() {
         let mut frame = FrameArena::<2, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
 
         // required nodes:
         // 0 Div
@@ -941,7 +973,7 @@ mod tests {
         // 2 Text "B"
         // capacity is only 2.
 
-        let result = frame.mount(div().child("A").child("B"));
+        let result = frame.mount(div().child("A").child("B"), app);
 
         assert_eq!(result, Err(MountError::NodesFull));
     }
@@ -949,9 +981,11 @@ mod tests {
     #[test]
     fn reports_text_storage_exhaustion() {
         let mut frame = FrameArena::<8, 4>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
 
         // "Hello" needs 5 UTF-8 bytes, but the frame only has 4.
-        let result = frame.mount(div().child("Hello"));
+        let result = frame.mount(div().child("Hello"), app);
 
         assert_eq!(result, Err(MountError::TextStorageFull));
     }
@@ -959,7 +993,10 @@ mod tests {
     #[test]
     fn clear_resets_frame_storage() {
         let mut frame = FrameArena::<8, 128>::default();
-        frame.mount(div().child("Hello")).unwrap();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
+
+        frame.mount(div().child("Hello"), app).unwrap();
 
         assert_eq!(frame.node_count(), 2);
         assert_eq!(frame.text_bytes_used(), 5);
@@ -970,7 +1007,7 @@ mod tests {
         assert_eq!(frame.text_bytes_used(), 0);
 
         // verify it is usable again after clearing.
-        let root = frame.mount(div().child("Again")).unwrap();
+        let root = frame.mount(div().child("Again"), app).unwrap();
 
         assert_eq!(root, NodeId::new(0));
         assert_eq!(frame.node_count(), 2);
@@ -998,11 +1035,13 @@ mod tests {
     #[test]
     fn mounts_entities_as_placeholders() {
         let mut frame = FrameArena::<8, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
 
         // we don't need a real EntityArena for this test yet because mounting an
         // Entity<T> only stores its EntityId.
         let child = Entity::<Child>::from_id(EntityId::new(7, 0));
-        let root = frame.mount(div().child(child)).unwrap();
+        let root = frame.mount(div().child(child), app).unwrap();
 
         assert_eq!(frame.node_count(), 2);
 
@@ -1021,14 +1060,16 @@ mod tests {
         let entities = EntityArena::<2048, 16>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let callbacks = CallbackArena::<2048, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let notified = Cell::new(false);
 
         let child = entities.insert(Child).unwrap();
         let parent = entities.insert(Parent { child }).unwrap();
-        let root = frame.mount(parent).unwrap();
+        let root = frame.mount(parent, app).unwrap();
 
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         assert_eq!(frame.node_count(), 6);
@@ -1076,15 +1117,17 @@ mod tests {
     fn releases_entity_borrows_after_rendering() {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<2048, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
         let child = entities.insert(Child).unwrap();
         let parent = entities.insert(Parent { child }).unwrap();
 
-        frame.mount(parent).unwrap();
+        frame.mount(parent, app).unwrap();
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         // if rendering leaked the exclusive borrow, either of these would return BorrowConflict.
@@ -1106,6 +1149,8 @@ mod tests {
     fn copies_entity_text_into_frame_storage() {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<2048, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -1115,9 +1160,9 @@ mod tests {
             })
             .unwrap();
 
-        let root = frame.mount(label).unwrap();
+        let root = frame.mount(label, app).unwrap();
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         // mutate the original persistent state after the frame has already been built.
@@ -1148,15 +1193,17 @@ mod tests {
     fn rejects_duplicate_entity_mounts() {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<2048, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
         let child = entities.insert(Child).unwrap();
         let parent = entities.insert(DuplicateParent { child }).unwrap();
 
-        frame.mount(parent).unwrap();
+        frame.mount(parent, app).unwrap();
 
-        let result = frame.expand_entities(&entities, &callbacks, &notified);
+        let result = frame.expand_entities(&entities, &globals, &callbacks, &notified);
 
         assert_eq!(
             result,
@@ -1168,21 +1215,23 @@ mod tests {
     fn expanding_entities_twice_does_not_duplicate_nodes() {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<2048, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
         let child = entities.insert(Child).unwrap();
         let parent = entities.insert(Parent { child }).unwrap();
 
-        frame.mount(parent).unwrap();
+        frame.mount(parent, app).unwrap();
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         let first_count = frame.node_count();
 
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         assert_eq!(frame.node_count(), first_count);
@@ -1215,14 +1264,16 @@ mod tests {
     fn entity_render_mounts_click_listener() {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<2048, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
         let counter = entities.insert(Counter { value: 0 }).unwrap();
 
-        frame.mount(counter).unwrap();
+        frame.mount(counter, app).unwrap();
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         let button =
@@ -1235,14 +1286,16 @@ mod tests {
     fn mounted_listener_updates_owning_entity() {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<2048, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
         let counter = entities.insert(Counter { value: 0 }).unwrap();
 
-        frame.mount(counter).unwrap();
+        frame.mount(counter, app).unwrap();
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         let button =
@@ -1255,7 +1308,7 @@ mod tests {
 
         let listener = Listener::<ActivateEvent>::from_id(listener_id);
         callbacks
-            .invoke_listener(listener, &ActivateEvent, &entities, &notified)
+            .invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified)
             .unwrap();
 
         let value = entities.read(counter, |counter| counter.value);
@@ -1298,15 +1351,17 @@ mod tests {
     fn rendered_listener_can_update_another_entity() {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<2048, 16>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
         let status = entities.insert(Status { value: 0 }).unwrap();
         let controller = entities.insert(Controller { status }).unwrap();
 
-        frame.mount(controller).unwrap();
+        frame.mount(controller, app).unwrap();
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         let button = find_element(&frame, ElementId::Name("update-status")).unwrap();
@@ -1317,7 +1372,7 @@ mod tests {
             .expect("activation listener missing");
         let listener = Listener::<ActivateEvent>::from_id(listener_id);
         callbacks
-            .invoke_listener(listener, &ActivateEvent, &entities, &notified)
+            .invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified)
             .unwrap();
 
         assert_eq!(entities.read(status, |status| status.value,), Ok(10));
@@ -1328,15 +1383,17 @@ mod tests {
     fn entity_render_access_errors_become_mount_errors() {
         let entities = EntityArena::<1024, 8>::default();
         let callbacks = CallbackArena::<1024, 8>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<16, 128>::default();
         let notified = Cell::new(false);
 
         let child = entities.insert(Child).unwrap();
         let fake = Entity::<Parent>::from_id(child.entity_id());
 
-        frame.mount(fake).unwrap();
+        frame.mount(fake, app).unwrap();
 
-        let result = frame.expand_entities(&entities, &callbacks, &notified);
+        let result = frame.expand_entities(&entities, &globals, &callbacks, &notified);
 
         assert_eq!(
             result,
@@ -1348,14 +1405,16 @@ mod tests {
     fn expanded_entity_root_is_child_of_entity_node() {
         let entities = EntityArena::<1024, 8>::default();
         let callbacks = CallbackArena::<1024, 8>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let app = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<16, 128>::default();
         let notified = Cell::new(false);
 
         let child = entities.insert(Child).unwrap();
-        let entity_node = frame.mount(child).unwrap();
+        let entity_node = frame.mount(child, app).unwrap();
 
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         let rendered_root = frame.node(entity_node).first_child.unwrap();
@@ -1377,6 +1436,7 @@ mod tests {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -1387,6 +1447,7 @@ mod tests {
             &mut states,
             app,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             1,
@@ -1401,6 +1462,7 @@ mod tests {
             &mut states,
             app,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             2,
@@ -1443,6 +1505,7 @@ mod tests {
         let entities = EntityArena::<4096, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let mut frame = FrameArena::<64, 256>::default();
         let notified = Cell::new(false);
 
@@ -1458,6 +1521,7 @@ mod tests {
             &mut states,
             plain,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             1,
@@ -1480,6 +1544,7 @@ mod tests {
             &mut states,
             wrapped,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             2,
@@ -1511,6 +1576,7 @@ mod tests {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -1521,6 +1587,7 @@ mod tests {
             &mut states,
             app,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             1,
@@ -1562,14 +1629,16 @@ mod tests {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
         let app = entities.insert(DuplicateApp).unwrap();
 
-        frame.mount(app).unwrap();
+        frame.mount(app, cx).unwrap();
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         let result = frame.resolve_identities(&mut states, 1);
@@ -1597,6 +1666,7 @@ mod tests {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -1607,6 +1677,7 @@ mod tests {
             &mut states,
             app,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             1,
@@ -1652,6 +1723,7 @@ mod tests {
         let entities = EntityArena::<4096, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let mut frame = FrameArena::<64, 256>::default();
         let notified = Cell::new(false);
 
@@ -1664,6 +1736,7 @@ mod tests {
             &mut states,
             app,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             1,
@@ -1730,6 +1803,7 @@ mod tests {
         let entities = EntityArena::<4096, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let mut frame = FrameArena::<64, 256>::default();
         let notified = Cell::new(false);
 
@@ -1742,6 +1816,7 @@ mod tests {
             &mut states,
             parent_a,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             1,
@@ -1759,6 +1834,7 @@ mod tests {
             &mut states,
             parent_b,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             2,
@@ -1796,6 +1872,7 @@ mod tests {
         let entities = EntityArena::<4096, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -1807,6 +1884,7 @@ mod tests {
             &mut states,
             with_button,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             1,
@@ -1823,6 +1901,7 @@ mod tests {
             &mut states,
             without_button,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             2,
@@ -1838,6 +1917,7 @@ mod tests {
         let entities = EntityArena::<4096, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<32>::default();
+        let globals = GlobalArena::<0, 0>::default();
         let mut frame = FrameArena::<32, 256>::default();
         let notified = Cell::new(false);
 
@@ -1850,6 +1930,7 @@ mod tests {
             &mut states,
             with_button,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             1,
@@ -1865,6 +1946,7 @@ mod tests {
             &mut states,
             without_button,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             2,
@@ -1879,6 +1961,7 @@ mod tests {
             &mut states,
             with_button,
             &entities,
+            &globals,
             &callbacks,
             &notified,
             3,
@@ -1910,14 +1993,16 @@ mod tests {
         let entities = EntityArena::<2048, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();
         let mut states = ElementStateTable::<1>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
         let mut frame = FrameArena::<16, 128>::default();
         let notified = Cell::new(false);
 
         let app = entities.insert(TooManyStatesApp).unwrap();
 
-        frame.mount(app).unwrap();
+        frame.mount(app, cx).unwrap();
         frame
-            .expand_entities(&entities, &callbacks, &notified)
+            .expand_entities(&entities, &globals, &callbacks, &notified)
             .unwrap();
 
         assert_eq!(
@@ -1948,8 +2033,10 @@ mod tests {
     #[test]
     fn plain_string_mounts_without_text_style_overrides() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
-        let node = frame.mount("Hello").unwrap();
+        let node = frame.mount("Hello", cx).unwrap();
 
         assert_eq!(frame.node(node).text_style, TextStyle::default());
         assert_eq!(node_text(&frame, node), "Hello");
@@ -1958,6 +2045,8 @@ mod tests {
     #[test]
     fn explicit_text_element_preserves_text_style_overrides() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let node = frame
             .mount(
@@ -1965,6 +2054,7 @@ mod tests {
                     .font(FontId::new(2))
                     .text_color(Color::RED)
                     .line_height(px(18)),
+                cx,
             )
             .unwrap();
 
@@ -1980,6 +2070,8 @@ mod tests {
     #[test]
     fn text_style_resolves_through_nested_elements() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -1992,6 +2084,7 @@ mod tests {
                             .text_color(Color::RED)
                             .child(text("Hello").font(FontId::new(2))),
                     ),
+                cx,
             )
             .unwrap();
 
@@ -2026,8 +2119,10 @@ mod tests {
         let source = ImageSource::new(ImageId::new(1), Size::new(px(16), px(12)));
 
         let mut frame = FrameArena::<8, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
-        let root = frame.mount(div().child(image(source))).unwrap();
+        let root = frame.mount(div().child(image(source)), cx).unwrap();
 
         assert_eq!(frame.node_count(), 2);
 

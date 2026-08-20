@@ -38,7 +38,7 @@ impl<Content> RenderOnce for Card<'_, Content>
 where
     Content: IntoElement,
 {
-    fn render(self) -> impl IntoElement {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         div()
             .w_full()
             .p(px(6))
@@ -78,7 +78,7 @@ struct Badge<'a> {
 }
 
 impl RenderOnce for Badge<'_> {
-    fn render(self) -> impl IntoElement {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         div()
             .p(px(3))
             .bg(Color::rgb(50, 110, 80))
@@ -153,7 +153,7 @@ where
     Leading: IntoElement,
     Trailing: IntoElement,
 {
-    fn render(self) -> impl IntoElement {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         div()
             .w_full()
             .flex()

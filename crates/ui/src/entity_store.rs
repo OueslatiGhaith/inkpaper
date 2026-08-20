@@ -2,7 +2,7 @@ use core::{alloc::Layout, any::TypeId, cell::Cell, ptr::NonNull};
 
 use crate::{
     Context, Entity, EntityAccessError, EntityAllocError, EntityBorrowKind, EntityId,
-    callback_store::CallbackStore,
+    callback_store::CallbackStore, global::GlobalStore,
 };
 
 pub(crate) struct RawEntityReservation {
@@ -105,6 +105,7 @@ impl Drop for ReservationGuard<'_> {
 
 pub(crate) fn create_entity<T>(
     store: &dyn EntityStore,
+    globals: &dyn GlobalStore,
     callbacks: &dyn CallbackStore,
     notified: &Cell<bool>,
     build: impl FnOnce(&mut Context<'_, T>) -> T,
@@ -122,7 +123,7 @@ where
         armed: true,
     };
 
-    let mut cx = Context::from_parts(entity, store, callbacks, notified);
+    let mut cx = Context::from_parts(entity, store, globals, callbacks, notified);
 
     let value = build(&mut cx);
 

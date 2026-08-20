@@ -1,10 +1,11 @@
 use core::{any::TypeId, cell::Cell};
 
 use crate::{
-    Context, Element, Entity, EntityBorrowKind, EntityId, FrameStore, IntoElement, MountCx,
-    MountError, NodeId,
+    AppContext, Context, Element, Entity, EntityBorrowKind, EntityId, FrameStore, IntoElement,
+    MountCx, MountError, NodeId,
     callback_store::CallbackStore,
     entity_store::{EntityStore, RawEntityBorrow},
+    global::GlobalStore,
 };
 
 /// a persistent component backed by an [`Entity`]
@@ -25,7 +26,7 @@ pub trait Render: Sized + 'static {
 ///
 /// `RenderOnce` is intended for reusable composition
 pub trait RenderOnce: Sized {
-    fn render(self) -> impl IntoElement;
+    fn render(self, cx: &AppContext<'_>) -> impl IntoElement;
 }
 
 impl<T> Element for T
@@ -33,13 +34,15 @@ where
     T: RenderOnce,
 {
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
-        self.render().into_element().mount(cx)
+        let app = cx.app_context();
+        self.render(&app).into_element().mount(cx)
     }
 }
 
 pub(crate) type EntityRenderFn = fn(
     entity: EntityId,
     entities: &dyn EntityStore,
+    globals: &dyn GlobalStore,
     callbacks: &dyn CallbackStore,
     notified: &Cell<bool>,
     frame: &mut dyn FrameStore,
@@ -48,6 +51,7 @@ pub(crate) type EntityRenderFn = fn(
 pub(crate) fn render_entity<T>(
     entity_id: EntityId,
     entities: &dyn EntityStore,
+    globals: &dyn GlobalStore,
     callbacks: &dyn CallbackStore,
     notified: &Cell<bool>,
     frame: &mut dyn FrameStore,
@@ -64,10 +68,10 @@ where
 
     let state = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
     let entity = Entity::<T>::from_id(entity_id);
-    let mut cx = Context::from_parts(entity, entities, callbacks, notified);
+    let mut cx = Context::from_parts(entity, entities, globals, callbacks, notified);
     let element = state.render(&mut cx).into_element();
-    let mut mount_cx = MountCx::new(frame);
-    let root = element.mount(&mut mount_cx)?;
+    let app = AppContext::from_globals(globals);
+    let mut mount_cx = MountCx::new(frame, app);
 
-    Ok(root)
+    element.mount(&mut mount_cx)
 }

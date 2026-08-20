@@ -1,6 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-use crate::{AppModel, theme};
+use crate::{AppModel, theme::Theme};
 
 const PROGRESS_TRACK_WIDTH: i32 = 220;
 
@@ -15,7 +15,8 @@ impl<'a> HomeScreen<'a> {
 }
 
 impl RenderOnce for HomeScreen<'_> {
-    fn render(self) -> impl IntoElement {
+    fn render(self, cx: &AppContext<'_>) -> impl IntoElement {
+        let theme = cx.global::<Theme>();
         let book = self.model.current_book();
 
         let progress_width =
@@ -28,7 +29,7 @@ impl RenderOnce for HomeScreen<'_> {
             .child(
                 text("Continue reading")
                     .font(FontId::new(1))
-                    .text_color(theme::INK),
+                    .text_color(theme.ink),
             )
             .child(
                 div()
@@ -38,7 +39,7 @@ impl RenderOnce for HomeScreen<'_> {
                     .flex()
                     .items_center()
                     .border(px(2))
-                    .border_color(theme::INK)
+                    .border_color(theme.ink)
                     .rounded(px(8))
                     .child(
                         div()
@@ -47,8 +48,8 @@ impl RenderOnce for HomeScreen<'_> {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .bg(theme::INK)
-                            .text_color(theme::PAPER)
+                            .bg(theme.ink)
+                            .text_color(theme.paper)
                             .child("BOOK"),
                     )
                     .child(
@@ -61,30 +62,30 @@ impl RenderOnce for HomeScreen<'_> {
                                     .wrap()
                                     .max_lines(2)
                                     .text_ellipsis()
-                                    .text_color(theme::INK),
+                                    .text_color(theme.ink),
                             )
                             .child(
                                 text(book.author())
                                     .wrap()
                                     .max_lines(2)
-                                    .text_color(theme::MUTED),
+                                    .text_color(theme.muted),
                             )
                             .child(
                                 div()
                                     .w(px(PROGRESS_TRACK_WIDTH))
                                     .h(px(12))
                                     .border(px(1))
-                                    .border_color(theme::INK)
+                                    .border_color(theme.ink)
                                     .child(
                                         div()
                                             .w(progress_width)
                                             .h_full()
-                                            .bg(theme::INK),
+                                            .bg(theme.ink),
                                     ),
                             )
                             .child(
                                 text(book.progress().label())
-                                    .text_color(theme::MUTED),
+                                    .text_color(theme.muted),
                             ),
                     ),
             )
@@ -93,11 +94,11 @@ impl RenderOnce for HomeScreen<'_> {
                     .w_full()
                     .p(px(18))
                     .gap(px(8))
-                    .bg(theme::SURFACE)
+                    .bg(theme.surface)
                     .rounded(px(8))
                     .child(
                         text("Your reader, your library.")
-                            .text_color(theme::INK),
+                            .text_color(theme.ink),
                     )
                     .child(
                         text(
@@ -105,7 +106,7 @@ impl RenderOnce for HomeScreen<'_> {
                         )
                         .wrap()
                         .line_height(px(14))
-                        .text_color(theme::MUTED),
+                        .text_color(theme.muted),
                     ),
             )
     }

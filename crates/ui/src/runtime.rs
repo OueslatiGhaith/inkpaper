@@ -9,6 +9,7 @@ use crate::{
     callback_store::{CallbackArena, ListenerInvokeError},
     element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
+    global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
     input::ActivationState,
     px,
     scroll::ScrollStateTable,
@@ -40,8 +41,11 @@ pub struct Runtime<
     const FRAME_NODES: usize,
     const FRAME_TEXT_BYTES: usize,
     const ELEMENT_STATES: usize,
+    const GLOBAL_BYTES: usize = 0,
+    const GLOBAL_SLOTS: usize = 0,
 > {
     entities: EntityArena<ENTITY_BYTES, ENTITY_SLOTS>,
+    globals: GlobalArena<GLOBAL_BYTES, GLOBAL_SLOTS>,
     callbacks: CallbackArena<CALLBACK_BYTES, CALLBACK_SLOTS>,
     frame: FrameArena<FRAME_NODES, FRAME_TEXT_BYTES>,
     element_states: ElementStateTable<ELEMENT_STATES>,
@@ -63,11 +67,14 @@ impl<
     const FN: usize,
     const FT: usize,
     const ST: usize,
-> Default for Runtime<EB, ES, CB, CS, FN, FT, ST>
+    const GB: usize,
+    const GS: usize,
+> Default for Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS>
 {
     fn default() -> Self {
         Self {
             entities: EntityArena::default(),
+            globals: GlobalArena::default(),
             callbacks: CallbackArena::default(),
             frame: FrameArena::default(),
             element_states: ElementStateTable::default(),
@@ -86,12 +93,14 @@ impl<
 impl<
     const EB: usize,
     const ES: usize,
-    const LB: usize,
-    const LS: usize,
+    const CB: usize,
+    const CS: usize,
     const FN: usize,
     const FT: usize,
     const ST: usize,
-> Runtime<EB, ES, LB, LS, FN, FT, ST>
+    const GB: usize,
+    const GS: usize,
+> Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS>
 {
     pub fn create<T>(
         &self,
@@ -100,7 +109,13 @@ impl<
     where
         T: 'static,
     {
-        create_entity(&self.entities, &self.callbacks, &self.notified, build)
+        create_entity(
+            &self.entities,
+            &self.globals,
+            &self.callbacks,
+            &self.notified,
+            build,
+        )
     }
 
     fn next_frame_generation(&mut self) -> u32 {
@@ -171,9 +186,13 @@ impl<
     where
         T: Render,
     {
-        let root_node =
-            self.frame
-                .mount_and_expand(root, &self.entities, &self.callbacks, &self.notified)?;
+        let root_node = self.frame.mount_and_expand(
+            root,
+            &self.entities,
+            &self.globals,
+            &self.callbacks,
+            &self.notified,
+        )?;
 
         self.frame
             .resolve_identities(&mut self.element_states, generation)?;
@@ -213,8 +232,13 @@ impl<
     where
         E: 'static,
     {
-        self.callbacks
-            .invoke_listener(listener, event, &self.entities, &self.notified)
+        self.callbacks.invoke_listener(
+            listener,
+            event,
+            &self.entities,
+            &self.globals,
+            &self.notified,
+        )
     }
 
     pub fn layout(&mut self, viewport: Size, text_measurer: &dyn TextMeasurer) -> Option<Size> {
@@ -781,5 +805,68 @@ impl<
     #[cfg(feature = "metrics")]
     pub fn performance_metrics(&self) -> PerformanceMetrics {
         self.frame.performance_metrics()
+    }
+
+    pub fn set_global<G>(&mut self, value: G) -> Result<(), GlobalSetError>
+    where
+        G: Global,
+    {
+        self.globals.set(value)?;
+        self.notified.set(true);
+
+        Ok(())
+    }
+
+    pub fn has_global<G>(&self) -> bool
+    where
+        G: Global,
+    {
+        self.globals.contains::<G>()
+    }
+
+    pub fn try_global<G>(&self) -> Result<GlobalRef<'_, G>, GlobalAccessError>
+    where
+        G: Global,
+    {
+        GlobalRef::acquire(&self.globals)
+    }
+
+    pub fn global<G>(&self) -> GlobalRef<'_, G>
+    where
+        G: Global,
+    {
+        self.try_global::<G>()
+            .unwrap_or_else(|_| panic!("requested global is not available"))
+    }
+
+    pub fn try_global_mut<G>(&self) -> Result<GlobalMut<'_, G>, GlobalAccessError>
+    where
+        G: Global,
+    {
+        GlobalMut::acquire(&self.globals, &self.notified)
+    }
+
+    pub fn global_mut<G>(&self) -> GlobalMut<'_, G>
+    where
+        G: Global,
+    {
+        self.try_global_mut::<G>()
+            .unwrap_or_else(|_| panic!("requested global is not available for mutation"))
+    }
+
+    pub fn global_count(&self) -> usize {
+        self.globals.len()
+    }
+
+    pub fn global_bytes_used(&self) -> usize {
+        self.globals.used_bytes()
+    }
+
+    pub const fn global_capacity(&self) -> usize {
+        self.globals.capacity()
+    }
+
+    pub const fn global_byte_capacity(&self) -> usize {
+        self.globals.byte_capacity()
     }
 }

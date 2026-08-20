@@ -19,7 +19,7 @@ struct Badge<'a> {
 }
 
 impl RenderOnce for Badge<'_> {
-    fn render(self) -> impl IntoElement {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         div().p(px(2)).child(self.label)
     }
 }

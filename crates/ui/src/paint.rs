@@ -727,6 +727,8 @@ mod tests {
     #[test]
     fn frame_paints_backend_independent_commands_in_tree_order() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -736,6 +738,7 @@ mod tests {
                     .bg(Color::RED)
                     .child(div().w(px(20)).h(px(10)).bg(Color::BLUE))
                     .child("Hi"),
+                cx,
             )
             .unwrap();
 
@@ -784,6 +787,8 @@ mod tests {
     #[test]
     fn frame_converts_style_to_box_paint() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -794,6 +799,7 @@ mod tests {
                     .border(px(2))
                     .border_color(Color::RED)
                     .rounded(px(6)),
+                cx,
             )
             .unwrap();
 
@@ -821,6 +827,8 @@ mod tests {
     #[test]
     fn overflow_hidden_clips_descendant_painting() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -829,6 +837,7 @@ mod tests {
                     .h(px(30))
                     .overflow_hidden()
                     .child(div().w(px(100)).h(px(20)).bg(Color::RED)),
+                cx,
             )
             .unwrap();
 
@@ -857,6 +866,8 @@ mod tests {
     #[test]
     fn overflow_hidden_clips_children_inside_parent_border() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -867,6 +878,7 @@ mod tests {
                     .border_color(Color::WHITE)
                     .overflow_hidden()
                     .child(div().w(px(100)).h(px(100)).bg(Color::RED)),
+                cx,
             )
             .unwrap();
 
@@ -897,6 +909,8 @@ mod tests {
     #[test]
     fn painting_receives_resolved_text_style() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -905,6 +919,7 @@ mod tests {
                     .text_color(Color::WHITE)
                     .line_height(px(16))
                     .child(text("Hello").text_color(Color::RED)),
+                cx,
             )
             .unwrap();
 
@@ -934,9 +949,11 @@ mod tests {
         let source = ImageSource::new(ImageId::new(0), Size::new(px(20), px(12)));
 
         let mut frame = FrameArena::<8, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
-            .mount(div().w(px(80)).h(px(40)).child(image(source)))
+            .mount(div().w(px(80)).h(px(40)).child(image(source)), cx)
             .unwrap();
 
         let mut painter = RecordingPainter::default();
@@ -959,12 +976,15 @@ mod tests {
     #[test]
     fn canvas_callback_draws_in_local_coordinates() {
         let mut frame = FrameArena::<8, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
                 div()
                     .p(px(10))
                     .child(canvas(draw_test_canvas).size(Size::new(px(30), px(20)))),
+                cx,
             )
             .unwrap();
 
@@ -1095,6 +1115,8 @@ mod tests {
     #[test]
     fn partial_damage_skips_non_intersecting_nodes() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -1105,6 +1127,7 @@ mod tests {
                     .child(div().w(px(100)).h(px(20)).bg(Color::RED))
                     .child(div().w(px(100)).h(px(20)).bg(Color::BLUE))
                     .child(div().w(px(100)).h(px(20)).bg(Color::GREEN)),
+                cx,
             )
             .unwrap();
 
@@ -1148,9 +1171,11 @@ mod tests {
     #[test]
     fn disjoint_damage_rectangles_produce_disjoint_paint_clips() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
-            .mount(div().w(px(100)).h(px(40)).bg(Color::BLUE))
+            .mount(div().w(px(100)).h(px(40)).bg(Color::BLUE), cx)
             .unwrap();
 
         let mut painter = RecordingPainter::default();
@@ -1192,6 +1217,8 @@ mod tests {
     #[test]
     fn partial_damage_respects_existing_visual_clip() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -1200,6 +1227,7 @@ mod tests {
                     .h(px(20))
                     .overflow_hidden()
                     .child(div().w(px(80)).h(px(20)).bg(Color::RED)),
+                cx,
             )
             .unwrap();
 
@@ -1222,9 +1250,11 @@ mod tests {
     #[test]
     fn empty_damage_performs_no_visual_work() {
         let mut frame = FrameArena::<8, 64>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
-            .mount(div().w(px(100)).h(px(40)).bg(Color::BLUE))
+            .mount(div().w(px(100)).h(px(40)).bg(Color::BLUE), cx)
             .unwrap();
 
         let mut painter = RecordingPainter::default();
@@ -1326,6 +1356,8 @@ mod tests {
     #[test]
     fn damage_paint_prunes_off_damage_child_subtrees_by_extent() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -1337,6 +1369,7 @@ mod tests {
                     .child(div().w(px(100)).h(px(20)).bg(Color::BLUE).child("B"))
                     .child(div().w(px(100)).h(px(20)).bg(Color::GREEN).child("C"))
                     .child(div().w(px(100)).h(px(20)).bg(Color::WHITE).child("D")),
+                cx,
             )
             .unwrap();
 
@@ -1378,6 +1411,8 @@ mod tests {
     #[test]
     fn partial_paint_before_layout_does_not_use_stale_subtree_bounds() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let first_root = frame
             .mount(
@@ -1385,6 +1420,7 @@ mod tests {
                     .w(px(20))
                     .h(px(20))
                     .child(div().w(px(20)).h(px(20)).child("old")),
+                cx,
             )
             .unwrap();
 
@@ -1399,6 +1435,7 @@ mod tests {
                     .w(px(100))
                     .h(px(100))
                     .child(div().w(px(100)).h(px(100)).bg(Color::RED).child("new")),
+                cx,
             )
             .unwrap();
 
@@ -1424,6 +1461,8 @@ mod tests {
     #[test]
     fn damage_paint_prunes_ordered_vertical_sibling_tail() {
         let mut frame = FrameArena::<32, 256>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -1437,6 +1476,7 @@ mod tests {
                     .child(div().w(px(100)).h(px(20)).bg(Color::RED).child("D"))
                     .child(div().w(px(100)).h(px(20)).bg(Color::RED).child("E"))
                     .child(div().w(px(100)).h(px(20)).bg(Color::RED).child("F")),
+                cx,
             )
             .unwrap();
 
@@ -1486,6 +1526,8 @@ mod tests {
     #[test]
     fn damage_paint_prunes_ordered_horizontal_leaf_sibling_tail() {
         let mut frame = FrameArena::<16, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -1501,6 +1543,7 @@ mod tests {
                     .child(div().w(px(20)).h(px(20)).bg(Color::WHITE))
                     .child(div().w(px(20)).h(px(20)).bg(Color::RED))
                     .child(div().w(px(20)).h(px(20)).bg(Color::BLUE)),
+                cx,
             )
             .unwrap();
 
@@ -1546,6 +1589,8 @@ mod tests {
     #[test]
     fn damage_paint_binary_searches_ordered_sibling_prefix() {
         let mut frame = FrameArena::<64, 512>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -1553,6 +1598,7 @@ mod tests {
                     .w(px(100))
                     .h(px(160))
                     .children((0..16).map(|_| div().w(px(100)).h(px(10)).child("row"))),
+                cx,
             )
             .unwrap();
 
@@ -1592,6 +1638,8 @@ mod tests {
     #[test]
     fn ordered_prefix_search_preserves_earlier_overflowing_subtree() {
         let mut frame = FrameArena::<32, 256>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -1608,6 +1656,7 @@ mod tests {
                     .child(div().w(px(100)).h(px(20)))
                     .child(div().w(px(100)).h(px(20)))
                     .child(div().w(px(100)).h(px(20))),
+                cx,
             )
             .unwrap();
 
@@ -1646,6 +1695,8 @@ mod tests {
     #[test]
     fn partial_damage_keeps_relative_sibling_shifted_back_into_damage() {
         let mut frame = FrameArena::<32, 128>::default();
+        let globals = GlobalArena::<0, 0>::default();
+        let cx = AppContext::from_globals(&globals);
 
         let root = frame
             .mount(
@@ -1663,6 +1714,7 @@ mod tests {
                             .h(px(40))
                             .bg(Color::BLUE),
                     ),
+                cx,
             )
             .unwrap();
 

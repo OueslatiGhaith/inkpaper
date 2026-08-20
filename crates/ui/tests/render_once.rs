@@ -24,7 +24,7 @@ struct Badge<'a> {
 }
 
 impl RenderOnce for Badge<'_> {
-    fn render(self) -> impl IntoElement {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         div()
             .p(px(4))
             .bg(self.color)
@@ -39,7 +39,7 @@ struct Card<'a> {
 }
 
 impl RenderOnce for Card<'_> {
-    fn render(self) -> impl IntoElement {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         div()
             .p(px(4))
             .gap(px(4))
