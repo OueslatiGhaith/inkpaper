@@ -422,7 +422,7 @@ impl Uc8179 {
     {
         let row_bytes = self.config.width as usize / 8;
 
-        bus.begin_stream(command.byte()).await.map_err(Error::Bus)?;
+        self.command(bus, command).await?;
 
         let mut result = Ok(());
 
@@ -458,7 +458,7 @@ impl Uc8179 {
             }
         }
 
-        let end_result = bus.end_stream().map_err(Error::Bus);
+        let end_result = bus.end_data_stream().map_err(Error::Bus);
 
         match (result, end_result) {
             (Err(error), _) => Err(error),
@@ -477,7 +477,7 @@ impl Uc8179 {
     {
         let row_bytes = self.config.width as usize / 8;
 
-        bus.begin_stream(command.byte()).await.map_err(Error::Bus)?;
+        self.command(bus, command).await?;
 
         let mut result = Ok(());
 
@@ -488,7 +488,7 @@ impl Uc8179 {
             }
         }
 
-        let end_result = bus.end_stream().map_err(Error::Bus);
+        let end_result = bus.end_data_stream().map_err(Error::Bus);
 
         match (result, end_result) {
             (Err(error), _) => Err(error),

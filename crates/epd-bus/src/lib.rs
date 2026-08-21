@@ -32,17 +32,13 @@ pub trait EpdInterface {
     async fn command(&mut self, command: u8) -> Result<(), Self::Error>;
     async fn data(&mut self, data: &[u8]) -> Result<(), Self::Error>;
     async fn command_data(&mut self, command: u8, data: &[u8]) -> Result<(), Self::Error>;
-    /// begin a command + streamed-data transaction.
-    ///
-    /// CS remains asserted until `end_stream()`.
-    async fn begin_stream(&mut self, command: u8) -> Result<(), Self::Error>;
-    /// write another chunk of data while the stream remains selected.
-    async fn stream_data(&mut self, data: &[u8]) -> Result<(), Self::Error>;
-    /// finish a command/data stream and deassert CS.
-    fn end_stream(&mut self) -> Result<(), Self::Error>;
+
     async fn reset<D>(&mut self, delay: &mut D) -> Result<(), Self::Error>
     where
         D: DelayNs;
+
+    fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error>;
+
     async fn wait_busy<D>(
         &mut self,
         polarity: BusyPolarity,
@@ -50,7 +46,17 @@ pub trait EpdInterface {
     ) -> Result<(), Self::Error>
     where
         D: DelayNs;
-    fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error>;
+
+    /// begin a command + streamed-data transaction.
+    ///
+    /// CS remains asserted until `end_stream()`.
+    async fn begin_data_stream(&mut self) -> Result<(), Self::Error>;
+
+    /// write another chunk of data while the stream remains selected.
+    async fn stream_data(&mut self, data: &[u8]) -> Result<(), Self::Error>;
+
+    /// finish a command/data stream and deassert CS.
+    fn end_data_stream(&mut self) -> Result<(), Self::Error>;
 }
 
 pub struct SpiEpdBus<SPI, CS, DC, RESET, BUSY> {
@@ -154,12 +160,6 @@ where
     }
 
     async fn command_data(&mut self, command: u8, data: &[u8]) -> Result<(), Self::Error> {
-        self.begin_stream(command).await?;
-        self.stream_data(data).await?;
-        self.end_stream()
-    }
-
-    async fn begin_stream(&mut self, command: u8) -> Result<(), Self::Error> {
         self.ensure_no_stream()?;
 
         self.cs.set_low().map_err(Error::ChipSelect)?;
@@ -170,36 +170,17 @@ where
             return Err(Error::Spi(error));
         }
 
-        if let Err(error) = self.dc.set_high() {
-            let _ = self.cs.set_high();
-            return Err(Error::DataCommand(error));
+        if !data.is_empty() {
+            if let Err(error) = self.dc.set_high() {
+                let _ = self.cs.set_high();
+                return Err(Error::DataCommand(error));
+            }
+
+            if let Err(error) = self.spi.write(data).await {
+                let _ = self.cs.set_high();
+                return Err(Error::Spi(error));
+            }
         }
-
-        self.stream_open = true;
-
-        Ok(())
-    }
-
-    async fn stream_data(&mut self, data: &[u8]) -> Result<(), Self::Error> {
-        if !self.stream_open {
-            return Err(Error::Protocol(ProtocolError::StreamNotOpen));
-        }
-
-        if let Err(error) = self.spi.write(data).await {
-            self.stream_open = false;
-            let _ = self.cs.set_high();
-            return Err(Error::Spi(error));
-        }
-
-        Ok(())
-    }
-
-    fn end_stream(&mut self) -> Result<(), Self::Error> {
-        if !self.stream_open {
-            return Err(Error::Protocol(ProtocolError::StreamNotOpen));
-        }
-
-        self.stream_open = false;
 
         self.cs.set_high().map_err(Error::ChipSelect)
     }
@@ -222,6 +203,14 @@ where
         Ok(())
     }
 
+    fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error> {
+        match polarity {
+            BusyPolarity::ActiveHigh => self.busy.is_high(),
+            BusyPolarity::ActiveLow => self.busy.is_low(),
+        }
+        .map_err(Error::Busy)
+    }
+
     async fn wait_busy<D>(
         &mut self,
         polarity: BusyPolarity,
@@ -237,11 +226,38 @@ where
         Ok(())
     }
 
-    fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error> {
-        match polarity {
-            BusyPolarity::ActiveHigh => self.busy.is_high(),
-            BusyPolarity::ActiveLow => self.busy.is_low(),
+    async fn begin_data_stream(&mut self) -> Result<(), Self::Error> {
+        self.ensure_no_stream()?;
+
+        self.dc.set_high().map_err(Error::DataCommand)?;
+        self.cs.set_low().map_err(Error::ChipSelect)?;
+
+        self.stream_open = true;
+
+        Ok(())
+    }
+
+    async fn stream_data(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+        if !self.stream_open {
+            return Err(Error::Protocol(ProtocolError::StreamNotOpen));
         }
-        .map_err(Error::Busy)
+
+        if let Err(error) = self.spi.write(data).await {
+            self.stream_open = false;
+            let _ = self.cs.set_high();
+
+            return Err(Error::Spi(error));
+        }
+
+        Ok(())
+    }
+
+    fn end_data_stream(&mut self) -> Result<(), Self::Error> {
+        if !self.stream_open {
+            return Err(Error::Protocol(ProtocolError::StreamNotOpen));
+        }
+
+        self.stream_open = false;
+        self.cs.set_high().map_err(Error::ChipSelect)
     }
 }
