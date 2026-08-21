@@ -876,6 +876,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "uc8179"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+ "epd-bus",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
