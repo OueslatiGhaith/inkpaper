@@ -1,3 +1,5 @@
+#![no_std]
+
 use embedded_hal_async::{delay::DelayNs, i2c::I2c};
 
 use crate::{

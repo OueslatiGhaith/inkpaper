@@ -1,3 +1,5 @@
+#![no_std]
+
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::{BusyPolarity, EpdInterface};
 
@@ -116,7 +118,7 @@ impl Config {
     }
 }
 
-const GDEQ0426T82: Config = Config::new(
+pub const GDEQ0426T82: Config = Config::new(
     800,
     480,
     BoosterSoftStart::new([0xae, 0xc7, 0xc3, 0xc0, 0x80]),

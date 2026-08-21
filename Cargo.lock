@@ -1005,6 +1005,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "xteink-display-probe"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
