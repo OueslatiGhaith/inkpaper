@@ -1,8 +1,8 @@
 [package]
-name = "cw2017"
+name = "ssd1677"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bitfield-struct = "0.13.0"
 embedded-hal-async = { workspace = true }
+epd-bus = { path = "../epd-bus" }

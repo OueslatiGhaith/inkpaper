@@ -324,6 +324,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "epd-bus"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -814,6 +822,14 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "ssd1677"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+ "epd-bus",
+]
 
 [[package]]
 name = "stable_deref_trait"
