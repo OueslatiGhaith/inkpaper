@@ -1,0 +1,8 @@
+[package]
+name = "uc8279-x4"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embedded-hal-async = { workspace = true }
+epd-bus = { path = "../epd-bus" }
