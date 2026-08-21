@@ -423,6 +423,7 @@ impl Uc8179 {
         let row_bytes = self.config.width as usize / 8;
 
         self.command(bus, command).await?;
+        bus.begin_data_stream().await.map_err(Error::Bus)?;
 
         let mut result = Ok(());
 
@@ -478,6 +479,7 @@ impl Uc8179 {
         let row_bytes = self.config.width as usize / 8;
 
         self.command(bus, command).await?;
+        bus.begin_data_stream().await.map_err(Error::Bus)?;
 
         let mut result = Ok(());
 
@@ -587,9 +589,8 @@ impl Uc8179 {
     where
         B: EpdInterface,
     {
-        bus.command_data(command.byte(), data)
-            .await
-            .map_err(Error::Bus)
+        self.command(bus, command).await?;
+        bus.data(data).await.map_err(Error::Bus)
     }
 
     fn validate_geometry<E>(&self) -> Result<(), Error<E>> {

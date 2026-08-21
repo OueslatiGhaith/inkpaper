@@ -525,11 +525,8 @@ impl Ssd1677 {
     where
         B: EpdInterface,
     {
-        // SSD1677 permits command and payload as separate CS-framed transfers.
-        // using command_data also works and gives us one uniform transport API.
-        bus.command_data(command.byte(), data)
-            .await
-            .map_err(Error::Bus)
+        self.command(bus, command).await?;
+        bus.data(data).await.map_err(Error::Bus)
     }
 
     const fn refresh_profile(&self, mode: RefreshMode) -> RefreshProfile {
