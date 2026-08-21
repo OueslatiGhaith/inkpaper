@@ -9,6 +9,12 @@ pub enum BusyPolarity {
     ActiveLow,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolError {
+    StreamAlreadyOpen,
+    StreamNotOpen,
+}
+
 #[derive(Debug)]
 pub enum Error<Spi, Cs, Dc, Reset, Busy> {
     Spi(Spi),
@@ -16,6 +22,7 @@ pub enum Error<Spi, Cs, Dc, Reset, Busy> {
     DataCommand(Dc),
     Reset(Reset),
     Busy(Busy),
+    Protocol(ProtocolError),
 }
 
 #[allow(async_fn_in_trait)]
@@ -25,6 +32,14 @@ pub trait EpdInterface {
     async fn command(&mut self, command: u8) -> Result<(), Self::Error>;
     async fn data(&mut self, data: &[u8]) -> Result<(), Self::Error>;
     async fn command_data(&mut self, command: u8, data: &[u8]) -> Result<(), Self::Error>;
+    /// begin a command + streamed-data transaction.
+    ///
+    /// CS remains asserted until `end_stream()`.
+    async fn begin_stream(&mut self, command: u8) -> Result<(), Self::Error>;
+    /// write another chunk of data while the stream remains selected.
+    async fn stream_data(&mut self, data: &[u8]) -> Result<(), Self::Error>;
+    /// finish a command/data stream and deassert CS.
+    fn end_stream(&mut self) -> Result<(), Self::Error>;
     async fn reset<D>(&mut self, delay: &mut D) -> Result<(), Self::Error>
     where
         D: DelayNs;
@@ -44,6 +59,7 @@ pub struct SpiEpdBus<SPI, CS, DC, RESET, BUSY> {
     dc: DC,
     reset: RESET,
     busy: BUSY,
+    stream_open: bool,
 }
 
 impl<SPI, CS, DC, RESET, BUSY> SpiEpdBus<SPI, CS, DC, RESET, BUSY>
@@ -71,6 +87,7 @@ where
             dc,
             reset,
             busy,
+            stream_open: false,
         })
     }
 
@@ -78,17 +95,28 @@ where
         (self.spi, self.cs, self.dc, self.reset, self.busy)
     }
 
-    async fn finish_transaction(
+    fn ensure_no_stream(
+        &self,
+    ) -> Result<(), Error<SPI::Error, CS::Error, DC::Error, RESET::Error, BUSY::Error>> {
+        if self.stream_open {
+            return Err(Error::Protocol(ProtocolError::StreamAlreadyOpen));
+        }
+
+        Ok(())
+    }
+
+    fn finish_transaction(
         &mut self,
         spi_result: Result<(), SPI::Error>,
     ) -> Result<(), Error<SPI::Error, CS::Error, DC::Error, RESET::Error, BUSY::Error>> {
-        let deselect = self.cs.set_high().map_err(Error::ChipSelect);
+        let cs_result = self.cs.set_high().map_err(Error::ChipSelect);
+
         match spi_result {
             Err(error) => {
-                let _ = deselect;
+                let _ = cs_result;
                 Err(Error::Spi(error))
             }
-            Ok(()) => deselect,
+            Ok(()) => cs_result,
         }
     }
 }
@@ -104,22 +132,36 @@ where
     type Error = Error<SPI::Error, CS::Error, DC::Error, RESET::Error, BUSY::Error>;
 
     async fn command(&mut self, command: u8) -> Result<(), Self::Error> {
+        self.ensure_no_stream()?;
+
         self.dc.set_low().map_err(Error::DataCommand)?;
         self.cs.set_low().map_err(Error::ChipSelect)?;
+
         let result = self.spi.write(&[command]).await;
 
-        self.finish_transaction(result).await
+        self.finish_transaction(result)
     }
 
     async fn data(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+        self.ensure_no_stream()?;
+
         self.dc.set_high().map_err(Error::DataCommand)?;
         self.cs.set_low().map_err(Error::ChipSelect)?;
+
         let result = self.spi.write(data).await;
 
-        self.finish_transaction(result).await
+        self.finish_transaction(result)
     }
 
     async fn command_data(&mut self, command: u8, data: &[u8]) -> Result<(), Self::Error> {
+        self.begin_stream(command).await?;
+        self.stream_data(data).await?;
+        self.end_stream()
+    }
+
+    async fn begin_stream(&mut self, command: u8) -> Result<(), Self::Error> {
+        self.ensure_no_stream()?;
+
         self.cs.set_low().map_err(Error::ChipSelect)?;
         self.dc.set_low().map_err(Error::DataCommand)?;
 
@@ -128,17 +170,36 @@ where
             return Err(Error::Spi(error));
         }
 
-        if !data.is_empty() {
-            if let Err(error) = self.dc.set_high() {
-                let _ = self.cs.set_high();
-                return Err(Error::DataCommand(error));
-            }
-
-            if let Err(error) = self.spi.write(data).await {
-                let _ = self.cs.set_high();
-                return Err(Error::Spi(error));
-            }
+        if let Err(error) = self.dc.set_high() {
+            let _ = self.cs.set_high();
+            return Err(Error::DataCommand(error));
         }
+
+        self.stream_open = true;
+
+        Ok(())
+    }
+
+    async fn stream_data(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+        if !self.stream_open {
+            return Err(Error::Protocol(ProtocolError::StreamNotOpen));
+        }
+
+        if let Err(error) = self.spi.write(data).await {
+            self.stream_open = false;
+            let _ = self.cs.set_high();
+            return Err(Error::Spi(error));
+        }
+
+        Ok(())
+    }
+
+    fn end_stream(&mut self) -> Result<(), Self::Error> {
+        if !self.stream_open {
+            return Err(Error::Protocol(ProtocolError::StreamNotOpen));
+        }
+
+        self.stream_open = false;
 
         self.cs.set_high().map_err(Error::ChipSelect)
     }
@@ -147,6 +208,8 @@ where
     where
         D: DelayNs,
     {
+        self.ensure_no_stream()?;
+
         self.reset.set_high().map_err(Error::Reset)?;
         delay.delay_ms(10).await;
 
