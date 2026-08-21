@@ -12,6 +12,10 @@ impl Version {
     pub const fn raw(self) -> u8 {
         self.0
     }
+
+    pub(crate) const fn is_running(self) -> bool {
+        self.0 & 0xfd == 0x0d
+    }
 }
 
 /// battery state of charge

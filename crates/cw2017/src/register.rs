@@ -20,6 +20,10 @@ impl Register {
     pub(crate) const fn address(self) -> u8 {
         self as u8
     }
+
+    pub(crate) const fn offset(self, offset: u8) -> u8 {
+        self.address() + offset
+    }
 }
 
 /// raw 16-bit contents of `VCELL_H/VCELL_L`
@@ -47,6 +51,20 @@ pub(crate) struct ConfigRegister {
     pub restart: u8,
     #[bits(2)]
     pub sleep: u8,
+}
+
+impl ConfigRegister {
+    pub(crate) const fn sleep_command() -> Self {
+        Self::new().with_restart(0b11).with_sleep(0b11)
+    }
+
+    pub(crate) const fn reset_command() -> Self {
+        Self::new().with_restart(0b11).with_sleep(0)
+    }
+
+    pub(crate) const fn normal_command() -> Self {
+        Self::new()
+    }
 }
 
 /// `SOC_ALERT` register, 0x0b
