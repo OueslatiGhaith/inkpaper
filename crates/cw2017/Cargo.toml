@@ -1,0 +1,8 @@
+[package]
+name = "cw2017"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bitfield-struct = "0.13.0"
+embedded-hal-async = "1.0.0"
