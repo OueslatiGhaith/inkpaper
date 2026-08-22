@@ -1,0 +1,18 @@
+{
+  "folders": [{ "path": "./firmware" }],
+  "settings": {
+    "rust-analyzer.linkedProjects": ["../Cargo.toml"],
+    "rust-analyzer.cargo.target": "xtensa-esp32s3-none-elf",
+    "rust-analyzer.cargo.extraEnv": {
+      "RUSTUP_TOOLCHAIN": "stable",
+      // TODO: should replace this with something not so specific to me
+      "RUSTC": "/Users/ghaif/.rustup/toolchains/inkpaper-esp/bin/rustc",
+      "RUSTC_BOOTSTRAP": "1",
+    },
+    "rust-analyzer.cargo.targetDir": "../target/rust-analyzer-x4-pro",
+    "rust-analyzer.cargo.allTargets": false,
+    "rust-analyzer.check.allTargets": false,
+    "rust-analyzer.check.command": "check",
+    "rust-analyzer.check.workspace": false,
+  },
+}
