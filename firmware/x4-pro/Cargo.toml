@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+cw2017 = { path = "../../crates/cw2017" }
 embedded-graphics = { workspace = true }
 embedded-hal-async = { workspace = true }
 epd-bus = { path = "../../crates/epd-bus" }
@@ -17,7 +18,9 @@ uc8279-x4 = { path = "../../crates/uc8279-x4" }
 xteink-display-probe = { path = "../../crates/xteink-display-probe" }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
+embassy-embedded-hal = "0.6.0"
 embassy-executor = "0.10.0"
+embassy-futures = "0.1.2"
 embassy-sync = "0.8.0"
 embassy-time = "0.5.1"
 esp-backtrace = { version = "0.19.0", features = ["esp32s3", "panic-handler", "println"] }

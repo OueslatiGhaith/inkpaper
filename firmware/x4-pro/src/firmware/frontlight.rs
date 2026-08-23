@@ -55,7 +55,7 @@ pub async fn frontlight_off_and_wait() {
 }
 
 #[embassy_executor::task]
-pub async fn frontligh_task(
+pub async fn frontlight_task(
     ledc_peripheral: LEDC<'static>,
     gpio8: GPIO8<'static>,
     gpio9: GPIO9<'static>,

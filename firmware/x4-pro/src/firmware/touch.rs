@@ -1,9 +1,6 @@
 use embassy_time::{Duration, Timer};
 use embedded_hal_async::{delay::DelayNs, i2c::I2c};
-use esp_hal::{
-    Async,
-    gpio::{Flex, InputConfig, Level, Output, OutputConfig, OutputPin, Pin, Pull},
-};
+use esp_hal::gpio::{Flex, InputConfig, Level, Output, OutputConfig, OutputPin, Pin, Pull};
 use esp_println::println;
 use gt911::{
     ALTERNATE_ADDRESS, Gt911, PRIMARY_ADDRESS, PointLayout, ProductInfo, TouchFrame, TouchPoint,
@@ -11,6 +8,7 @@ use gt911::{
 
 use crate::firmware::{
     framebuffer::{LOGICAL_HEIGHT, LOGICAL_WIDTH},
+    i2c_bus::SharedI2cDevice,
     input::{INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
 };
 
@@ -106,10 +104,8 @@ where
     }
 }
 
-pub type TouchI2c = esp_hal::i2c::master::I2c<'static, Async>;
-
 #[embassy_executor::task]
-pub async fn touch_task(mut touch: TouchController<'static, TouchI2c>) {
+pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
     let mut active_touch = None;
     let mut home_pressed = false;
     let mut consecutive_errors = 0u16;

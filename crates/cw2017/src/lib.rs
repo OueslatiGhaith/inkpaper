@@ -8,9 +8,9 @@ use crate::{
     register::{ConfigRegister, Register, SocAlertRegister, SocRegister, VcellRegister},
 };
 
-mod measurement;
-mod profile;
-mod register;
+pub mod measurement;
+pub mod profile;
+pub mod register;
 
 /// `CW2017` default 7-bit I2C address
 pub const ADDRESS: u8 = 0x63;

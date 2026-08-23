@@ -1,4 +1,5 @@
 use embassy_executor::Spawner;
+use embassy_futures::select::{Either, select};
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
@@ -21,10 +22,11 @@ use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
 
 use crate::firmware::{
+    battery::{BATTERY_UPDATES, BatteryReading, battery_task},
     buttons::{Buttons, button_task},
     display::X4Panel,
     framebuffer::FRAMEBUFFER_LEN,
-    frontlight::{frontligh_task, frontlight_off_and_wait},
+    frontlight::{frontlight_off_and_wait, frontlight_task},
     input::{Button, ButtonEdge, ButtonEvent, INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
     power::PowerRails,
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
@@ -34,10 +36,12 @@ use crate::firmware::{
     touch::{TouchController, touch_task},
 };
 
+mod battery;
 mod buttons;
 mod display;
 mod framebuffer;
 mod frontlight;
+mod i2c_bus;
 mod input;
 mod power;
 mod power_button;
@@ -70,7 +74,7 @@ async fn main(spawner: Spawner) -> ! {
 
     esp_rtos::start(timer_group.timer0, software_interrupt.software_interrupt0);
 
-    spawner.spawn(frontligh_task(peripherals.LEDC, peripherals.GPIO8, peripherals.GPIO9).unwrap());
+    spawner.spawn(frontlight_task(peripherals.LEDC, peripherals.GPIO8, peripherals.GPIO9).unwrap());
 
     {
         let buttons = Buttons::new(
@@ -176,13 +180,6 @@ async fn main(spawner: Spawner) -> ! {
     ))
     .await;
 
-    // touch power-up.
-    // GPIO2 is active-low. Give the GT911 rail time to settle before
-    // performing its address-select reset sequence.
-    println!("powering GT911...");
-    rails.enable_touch();
-    Timer::after(Duration::from_millis(50)).await;
-
     let i2c = I2c::new(
         peripherals.I2C0,
         I2cConfig::default().with_frequency(Rate::from_khz(400)),
@@ -191,8 +188,20 @@ async fn main(spawner: Spawner) -> ! {
     .with_sda(peripherals.GPIO39)
     .with_scl(peripherals.GPIO38)
     .into_async();
+    let shared_i2c = i2c_bus::init(i2c);
 
-    let mut touch = TouchController::new(i2c, peripherals.GPIO4, peripherals.GPIO10);
+    // touch power-up.
+    // GPIO2 is active-low. Give the GT911 rail time to settle before
+    // performing its address-select reset sequence.
+    println!("powering GT911...");
+    rails.enable_touch();
+    Timer::after(Duration::from_millis(50)).await;
+
+    let mut touch = TouchController::new(
+        i2c_bus::device(shared_i2c),
+        peripherals.GPIO4,
+        peripherals.GPIO10,
+    );
 
     match touch.initialize(&mut delay).await {
         Ok(info) => {
@@ -214,17 +223,29 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
 
-    loop {
-        // sleep completely until physical input arrives
-        let event = INPUT_EVENTS.receive().await;
-        let mut action = handle_input_event(runtime, app, event);
+    spawner.spawn(battery_task(i2c_bus::device(shared_i2c)).unwrap());
+    println!("shared I2C services started");
 
-        // combine events accumulated while the e-ink panel was busy.
-        while action == InputAction::Continue {
-            let Ok(event) = INPUT_EVENTS.try_receive() else {
-                break;
-            };
-            action = handle_input_event(runtime, app, event);
+    loop {
+        let mut action = InputAction::Continue;
+
+        // main sleeps until either:
+        // - physical user input arrives
+        // - the battery service has a new reading
+        // `BATTERY_UPDATES` is a signal, so dropping its pending wait when input
+        // wins this select is safe and doesn't lose a stored reading
+        match select(INPUT_EVENTS.receive(), BATTERY_UPDATES.wait()).await {
+            Either::First(event) => {
+                action = handle_input_event(runtime, app, event);
+                // combine events accumulated while the e-ink panel was busy.
+                while action == InputAction::Continue {
+                    let Ok(event) = INPUT_EVENTS.try_receive() else {
+                        break;
+                    };
+                    action = handle_input_event(runtime, app, event);
+                }
+            }
+            Either::Second(reading) => apply_battery_reading(runtime, app, reading),
         }
 
         if action == InputAction::Sleep {
@@ -363,4 +384,28 @@ fn handle_touch_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: 
 
 fn to_ui_point(position: TouchPosition) -> Point {
     Point::new(px(position.x() as i32), px(position.y() as i32))
+}
+
+fn apply_battery_reading(
+    runtime: &mut UiRuntime,
+    app: Entity<InkPaperApp>,
+    reading: BatteryReading,
+) {
+    println!(
+        "battery update: {}%, {} mV",
+        reading.percent(),
+        reading.millivolts(),
+    );
+
+    runtime
+        .update(app, |app, cx| {
+            let old_percent = app.model().battery().value();
+            if old_percent == reading.percent() {
+                return;
+            }
+
+            app.model_mut().set_battery_percent(reading.percent());
+            cx.notify();
+        })
+        .unwrap();
 }

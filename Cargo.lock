@@ -1331,7 +1331,10 @@ dependencies = [
 name = "inkpaper-x4-pro"
 version = "0.1.0"
 dependencies = [
+ "cw2017",
+ "embassy-embedded-hal",
  "embassy-executor",
+ "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-graphics",
