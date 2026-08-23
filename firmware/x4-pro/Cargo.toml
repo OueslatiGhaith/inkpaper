@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 embedded-graphics = { workspace = true }
+embedded-hal-async = { workspace = true }
 epd-bus = { path = "../../crates/epd-bus" }
 inkpaper-app = { version = "0.1.0", path = "../../crates/app" }
 inkpaper-ui = { version = "0.1.0", path = "../../crates/ui" }
