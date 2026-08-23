@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 embedded-graphics = { workspace = true }
 epd-bus = { path = "../../crates/epd-bus" }
+inkpaper-app = { version = "0.1.0", path = "../../crates/app" }
+inkpaper-ui = { version = "0.1.0", path = "../../crates/ui" }
 ssd1677 = { path = "../../crates/ssd1677" }
 uc8179 = { path = "../../crates/uc8179" }
 uc8279-x4 = { path = "../../crates/uc8279-x4" }

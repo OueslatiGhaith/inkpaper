@@ -1,5 +1,9 @@
 use embassy_executor::Spawner;
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
+use embedded_graphics::mono_font::{
+    MonoFont,
+    ascii::{FONT_6X10, FONT_10X20},
+};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
 use esp_hal::{
@@ -14,6 +18,8 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use esp_println::println;
+use inkpaper_app::{AppModel, BookSummary, InkPaperApp, theme::Theme};
+use inkpaper_ui::{backend::EmbeddedGraphicsPainter, prelude::*};
 use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Ssd1677};
 use static_cell::StaticCell;
 use uc8179::{RefreshMode as Uc8179RefreshMode, Uc8179, X4_PRO_800X480 as UC8179_X4_PRO};
@@ -24,7 +30,6 @@ use crate::firmware::{
     framebuffer::{FRAMEBUFFER_LEN, Framebuffer, Orientation},
     power::PowerRails,
     probe::ProbePins,
-    test_pattern::draw,
 };
 
 mod framebuffer;
@@ -34,7 +39,27 @@ mod test_pattern;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
+const DISPLAY_WIDTH: i32 = 480;
+const DISPLAY_HEIGHT: i32 = 800;
+
+const DISPLAY_SIZE: Size = Size::new(px(DISPLAY_WIDTH), px(DISPLAY_HEIGHT));
+
+const FONTS: [&MonoFont; 2] = [&FONT_6X10, &FONT_10X20];
+
+type UiRuntime = Runtime<
+    4_096, // entity bytes
+    8,     // entity slots
+    2_048, // callback bytes
+    16,    // callback slots
+    96,    // frame nodes
+    2_048, // frame text bytes
+    32,    // persistent element states
+    256,   // global bytes
+    4,     // global slots
+>;
+
 static FRAMEBUFFER: StaticCell<[u8; FRAMEBUFFER_LEN]> = StaticCell::new();
+static UI_RUNTIME: StaticCell<UiRuntime> = StaticCell::new();
 
 #[esp_rtos::main]
 async fn main(_spawner: Spawner) -> ! {
@@ -82,6 +107,7 @@ async fn main(_spawner: Spawner) -> ! {
         stay_alive().await;
     }
 
+    // the probe has finished using the display pins
     let (sclk, mosi, cs, dc, reset) = probe_io.into_parts();
     let spi = Spi::new(
         peripherals.SPI2,
@@ -101,10 +127,16 @@ async fn main(_spawner: Spawner) -> ! {
     println!("expected: 1 block TL, 2 bars TR, 3 bars BL, 4 squares BR");
 
     let frame = FRAMEBUFFER.init_with(|| [0xff; FRAMEBUFFER_LEN]);
-    {
-        let mut display = Framebuffer::new(&mut *frame, Orientation::Portrait);
-        draw(&mut display);
-    }
+    let runtime = UI_RUNTIME.init_with(UiRuntime::default);
+
+    runtime.set_global(Theme::EINK).unwrap();
+    let model = demo_model();
+    let app = runtime.create(move |_| InkPaperApp::new(model)).unwrap();
+
+    println!("building InkPaper application...");
+    render_ui(runtime, app, frame);
+    println!("InkPaper UI rendered to framebuffer");
+    println!("painting 480x800 portrait UI...");
 
     match detection.controller {
         Controller::Ssd1677 => {
@@ -146,6 +178,30 @@ async fn main(_spawner: Spawner) -> ! {
     println!("bring-up successful");
 
     stay_alive().await
+}
+
+fn demo_model() -> AppModel {
+    let book = BookSummary::try_new("The Left Hand of Darkness", "Ursula K. Le Guin", 68)
+        .expect("demo book metadata must fit");
+
+    AppModel::new(73, book)
+}
+
+fn render_ui(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, frame: &mut [u8; FRAMEBUFFER_LEN]) {
+    let mut display = Framebuffer::new(frame, Orientation::Portrait);
+    let mut painter = EmbeddedGraphicsPainter::new(&mut display, FONTS, []);
+
+    runtime.rebuild(app).unwrap();
+    runtime.layout(DISPLAY_SIZE, &painter).unwrap();
+
+    let damage = DamageRegion::full();
+
+    painter.clear_damage(damage, Color::WHITE).unwrap();
+
+    runtime
+        .paint_with_damage(damage, &mut painter)
+        .unwrap()
+        .unwrap();
 }
 
 async fn stay_alive() -> ! {

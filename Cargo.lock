@@ -1327,6 +1327,8 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp32s3",
+ "inkpaper-app",
+ "inkpaper-ui",
  "ssd1677",
  "static_cell",
  "uc8179",
