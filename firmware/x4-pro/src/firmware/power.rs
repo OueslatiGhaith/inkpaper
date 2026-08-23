@@ -3,7 +3,7 @@ use esp_hal::gpio::{Level, Output, OutputConfig, OutputPin};
 pub struct PowerRails<'d> {
     _peripheral: Output<'d>,
     touch: Output<'d>,
-    _sd: Output<'d>,
+    sd: Output<'d>,
 }
 
 impl<'d> PowerRails<'d> {
@@ -17,7 +17,7 @@ impl<'d> PowerRails<'d> {
         Self {
             _peripheral: Output::new(peripheral, Level::High, config),
             touch: Output::new(touch, Level::High, config),
-            _sd: Output::new(sd, Level::High, config),
+            sd: Output::new(sd, Level::High, config),
         }
     }
 
@@ -27,5 +27,11 @@ impl<'d> PowerRails<'d> {
 
     pub fn disable_touch(&mut self) {
         self.touch.set_high();
+    }
+
+    pub fn prepare_for_deep_sleep(&mut self) {
+        // both switched peripherals are active-low, so HIGH is off
+        self.touch.set_high();
+        self.sd.set_high();
     }
 }

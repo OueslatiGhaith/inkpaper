@@ -62,6 +62,22 @@ impl X4Panel {
             Self::Uc8279(panel) => present_uc8279(panel, bus, delay, frame, update).await,
         }
     }
+
+    pub async fn deep_sleep<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        match self {
+            Self::Ssd1677(panel) => panel.deep_sleep(bus, delay).await.map_err(Error::Ssd1677),
+            X4Panel::Uc8179(panel) => panel.deep_sleep(bus, delay).await.map_err(Error::Uc8179),
+            X4Panel::Uc8279(panel) => panel.deep_sleep(bus, delay).await.map_err(Error::Uc8279),
+        }
+    }
 }
 
 async fn present_ssd1677<B, D>(

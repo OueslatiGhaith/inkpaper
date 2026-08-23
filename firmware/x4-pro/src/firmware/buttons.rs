@@ -66,19 +66,17 @@ impl<'d> DebouncedButton<'d> {
 pub struct Buttons<'d> {
     left: DebouncedButton<'d>,
     right: DebouncedButton<'d>,
-    power: DebouncedButton<'d>,
 }
 
 impl<'d> Buttons<'d> {
-    pub fn new(left: Input<'d>, right: Input<'d>, power: Input<'d>) -> Self {
+    pub fn new(left: Input<'d>, right: Input<'d>) -> Self {
         Self {
             left: DebouncedButton::new(left),
             right: DebouncedButton::new(right),
-            power: DebouncedButton::new(power),
         }
     }
 
-    fn sample(&mut self) -> [Option<ButtonEvent>; 3] {
+    fn sample(&mut self) -> [Option<ButtonEvent>; 2] {
         [
             self.left
                 .sample()
@@ -86,9 +84,6 @@ impl<'d> Buttons<'d> {
             self.right
                 .sample()
                 .map(|edge| ButtonEvent::new(Button::Right, edge)),
-            self.power
-                .sample()
-                .map(|edge| ButtonEvent::new(Button::Power, edge)),
         ]
     }
 }

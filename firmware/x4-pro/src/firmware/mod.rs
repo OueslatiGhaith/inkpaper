@@ -26,6 +26,7 @@ use crate::firmware::{
     framebuffer::FRAMEBUFFER_LEN,
     input::{Button, ButtonEdge, ButtonEvent, INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
     power::PowerRails,
+    power_button::{ENTER_DEEP_SLEEP, power_button_task},
     presenter::{Presenter, UiRuntime},
     probe::ProbePins,
     touch::{TouchController, touch_task},
@@ -36,6 +37,7 @@ mod display;
 mod framebuffer;
 mod input;
 mod power;
+mod power_button;
 mod presenter;
 mod probe;
 mod touch;
@@ -44,6 +46,12 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 static FRAMEBUFFER: StaticCell<[u8; FRAMEBUFFER_LEN]> = StaticCell::new();
 static UI_RUNTIME: StaticCell<UiRuntime> = StaticCell::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputAction {
+    Continue,
+    Sleep,
+}
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
@@ -68,12 +76,9 @@ async fn main(spawner: Spawner) -> ! {
                 peripherals.GPIO7,
                 InputConfig::default().with_pull(Pull::Up),
             ),
-            Input::new(
-                peripherals.GPIO3,
-                InputConfig::default().with_pull(Pull::Up),
-            ),
         );
         spawner.spawn(button_task(buttons).unwrap());
+        spawner.spawn(power_button_task(peripherals.GPIO3, peripherals.LPWR).unwrap());
     }
 
     let mut delay = AsyncDelay;
@@ -195,11 +200,32 @@ async fn main(spawner: Spawner) -> ! {
     loop {
         // sleep completely until physical input arrives
         let event = INPUT_EVENTS.receive().await;
-        handle_input_event(runtime, app, event);
+        let mut action = handle_input_event(runtime, app, event);
 
         // combine events accumulated while the e-ink panel was busy.
-        while let Ok(event) = INPUT_EVENTS.try_receive() {
-            handle_input_event(runtime, app, event);
+        while action == InputAction::Continue {
+            let Ok(event) = INPUT_EVENTS.try_receive() else {
+                break;
+            };
+            action = handle_input_event(runtime, app, event);
+        }
+
+        if action == InputAction::Sleep {
+            println!("preparing display for deep sleep...");
+
+            // ORDER MATTERS:
+            // the panel receives DSLP while its control lines and rails are still alive
+            panel.deep_sleep(&mut bus, &mut delay).await.unwrap();
+            println!("display asleep");
+            // only after the panel is asleep do we switch peripheral rails off
+            rails.prepare_for_deep_sleep();
+            println!("peripheral rails prepared");
+            // tell the GPIO3 owner it may wait for button release and transfer the pin
+            // to EXT0
+            ENTER_DEEP_SLEEP.signal(());
+            // `power_button_tasl()` owns the final SoC sleep transition.
+            // once it calls `rtc.sleep_deep()`, this entire firmware instance disappears
+            stay_alive().await;
         }
 
         let Some(update) = presenter.render_pending(runtime, app, frame) else {
@@ -236,31 +262,42 @@ async fn stay_alive() -> ! {
     }
 }
 
-fn handle_input_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: InputEvent) {
+fn handle_input_event(
+    runtime: &mut UiRuntime,
+    app: Entity<InkPaperApp>,
+    event: InputEvent,
+) -> InputAction {
     match event {
         InputEvent::Button(event) => handle_button_event(runtime, event),
-        InputEvent::Touch(event) => handle_touch_event(runtime, app, event),
+        InputEvent::Touch(event) => {
+            handle_touch_event(runtime, app, event);
+            InputAction::Continue
+        }
     }
 }
 
-fn handle_button_event(runtime: &mut UiRuntime, event: ButtonEvent) {
+fn handle_button_event(runtime: &mut UiRuntime, event: ButtonEvent) -> InputAction {
     match (event.button(), event.edge()) {
         (Button::Left, ButtonEdge::Pressed) => {
             println!("button: left");
             runtime.focus_previous();
+            InputAction::Continue
         }
         (Button::Right, ButtonEdge::Pressed) => {
             println!("button: right");
             runtime.focus_next();
+            InputAction::Continue
         }
         (Button::Power, ButtonEdge::Pressed) => {
             // this will become suspend/awake once the power lifecycle is implemented
             println!("button: power");
+            InputAction::Sleep
         }
         (_, ButtonEdge::Released) => {
             // releases are intentionally retained by the hardware abstraction event
             // though focus navigation doesn't need them yet.
             // they will matter for long press and power handling
+            InputAction::Continue
         }
     }
 }
