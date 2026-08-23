@@ -40,18 +40,18 @@ impl InkPaperApp {
     }
 
     fn open_home(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
-        self.set_route(Route::Home, cx);
+        self.navigate(Route::Home, cx);
     }
 
     fn open_library(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
-        self.set_route(Route::Library, cx);
+        self.navigate(Route::Library, cx);
     }
 
     fn open_settings(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
-        self.set_route(Route::Settings, cx);
+        self.navigate(Route::Settings, cx);
     }
 
-    fn set_route(&mut self, route: Route, cx: &mut Context<Self>) {
+    pub fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         if self.route == route {
             return;
         }

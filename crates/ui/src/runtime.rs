@@ -3,9 +3,9 @@ use core::{any::TypeId, cell::Cell};
 #[cfg(feature = "metrics")]
 use crate::PerformanceMetrics;
 use crate::{
-    ActivateEvent, Context, DamageRegion, Entity, EntityAllocError, EntityArena, EventTarget,
-    FrameArena, Invalidation, Listener, MountError, NodeId, Offset, Painter, Point, Render,
-    RenderInvalidation, Size, TextMeasurer,
+    ActivateEvent, Context, DamageRegion, Entity, EntityAccessError, EntityAllocError, EntityArena,
+    EventTarget, FrameArena, Invalidation, Listener, MountError, NodeId, Offset, Painter, Point,
+    Render, RenderInvalidation, Size, TextMeasurer,
     callback_store::{CallbackArena, ListenerInvokeError},
     element_state::{ElementStateId, ElementStateTable, IdentityError},
     entity_store::create_entity,
@@ -116,6 +116,25 @@ impl<
             &self.notified,
             build,
         )
+    }
+
+    pub fn update<T, R>(
+        &self,
+        entity: Entity<T>,
+        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+    ) -> Result<R, EntityAccessError>
+    where
+        T: 'static,
+    {
+        let cx = Context::from_parts(
+            entity,
+            &self.entities,
+            &self.globals,
+            &self.callbacks,
+            &self.notified,
+        );
+
+        entity.update(&cx, update)
     }
 
     fn next_frame_generation(&mut self) -> u32 {

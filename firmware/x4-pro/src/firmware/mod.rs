@@ -5,6 +5,7 @@ use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Pull},
+    i2c::master::{Config as I2cConfig, I2c},
     interrupt::software::SoftwareInterruptControl,
     spi::{
         Mode,
@@ -14,25 +15,30 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use esp_println::println;
-use inkpaper_app::{AppModel, BookSummary, InkPaperApp, theme::Theme};
+use inkpaper_app::{AppModel, BookSummary, InkPaperApp, Route, theme::Theme};
+use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
 
 use crate::firmware::{
-    buttons::{BUTTON_EVENTS, Button, ButtonEdge, ButtonEvent, Buttons, button_task},
+    buttons::{Buttons, button_task},
     display::X4Panel,
     framebuffer::FRAMEBUFFER_LEN,
+    input::{Button, ButtonEdge, ButtonEvent, INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
     power::PowerRails,
     presenter::{Presenter, UiRuntime},
     probe::ProbePins,
+    touch::{TouchController, touch_task},
 };
 
 mod buttons;
 mod display;
 mod framebuffer;
+mod input;
 mod power;
 mod presenter;
 mod probe;
+mod touch;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -45,7 +51,7 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
 
     // establish the board's safe rail state before doing anything else
-    let _rails = PowerRails::new(peripherals.GPIO1, peripherals.GPIO2, peripherals.GPIO5);
+    let mut rails = PowerRails::new(peripherals.GPIO1, peripherals.GPIO2, peripherals.GPIO5);
 
     let timer_group = TimerGroup::new(peripherals.TIMG0);
     let software_interrupt = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
@@ -148,15 +154,52 @@ async fn main(spawner: Spawner) -> ! {
         .unwrap();
     println!("initial display complete");
 
+    // touch power-up.
+    // GPIO2 is active-low. Give the GT911 rail time to settle before
+    // performing its address-select reset sequence.
+    println!("powering GT911...");
+    rails.enable_touch();
+    Timer::after(Duration::from_millis(50)).await;
+
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(400)),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO39)
+    .with_scl(peripherals.GPIO38)
+    .into_async();
+
+    let mut touch = TouchController::new(i2c, peripherals.GPIO4, peripherals.GPIO10);
+
+    match touch.initialize(&mut delay).await {
+        Ok(info) => {
+            println!("GT911 initialized at 0x{:02x}", touch.address());
+            println!("GT911 product: {:02x?}", info.product_id());
+            println!("GT911 fw: 0x{:04x}", info.firmware_version());
+            println!(
+                "GT911 resolution: {}x{}",
+                info.x_resolution(),
+                info.y_resolution(),
+            );
+            println!("GT911 vendor: 0x{:02x}", info.vendor_id());
+
+            spawner.spawn(touch_task(touch).unwrap());
+        }
+        Err(error) => {
+            println!("GT911 initialization failed: {error:?}");
+            rails.disable_touch();
+        }
+    }
+
     loop {
         // sleep completely until physical input arrives
-        let event = BUTTON_EVENTS.receive().await;
-        handle_button_event(runtime, event);
+        let event = INPUT_EVENTS.receive().await;
+        handle_input_event(runtime, app, event);
 
-        // if the user pressed buttons while the previous e-ink refresh was running,
-        // coalesce all queued input before painting
-        while let Ok(event) = BUTTON_EVENTS.try_receive() {
-            handle_button_event(runtime, event);
+        // combine events accumulated while the e-ink panel was busy.
+        while let Ok(event) = INPUT_EVENTS.try_receive() {
+            handle_input_event(runtime, app, event);
         }
 
         let Some(update) = presenter.render_pending(runtime, app, frame) else {
@@ -193,6 +236,13 @@ async fn stay_alive() -> ! {
     }
 }
 
+fn handle_input_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: InputEvent) {
+    match event {
+        InputEvent::Button(event) => handle_button_event(runtime, event),
+        InputEvent::Touch(event) => handle_touch_event(runtime, app, event),
+    }
+}
+
 fn handle_button_event(runtime: &mut UiRuntime, event: ButtonEvent) {
     match (event.button(), event.edge()) {
         (Button::Left, ButtonEdge::Pressed) => {
@@ -213,4 +263,31 @@ fn handle_button_event(runtime: &mut UiRuntime, event: ButtonEvent) {
             // they will matter for long press and power handling
         }
     }
+}
+
+fn handle_touch_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: TouchEvent) {
+    match event {
+        TouchEvent::Down(position) => {
+            println!("touch down: {},{}", position.x(), position.y(),);
+            runtime.begin_activation_at(to_ui_point(position));
+        }
+        TouchEvent::Up(position) => {
+            println!("touch up: {},{}", position.x(), position.y(),);
+            runtime
+                .complete_activation_at(to_ui_point(position))
+                .unwrap();
+        }
+        TouchEvent::HomeTap => {
+            println!("home tap");
+            runtime
+                .update(app, |app, cx| {
+                    app.navigate(Route::Home, cx);
+                })
+                .unwrap();
+        }
+    }
+}
+
+fn to_ui_point(position: TouchPosition) -> Point {
+    Point::new(px(position.x() as i32), px(position.y() as i32))
 }

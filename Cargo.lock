@@ -1190,6 +1190,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt911"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1329,6 +1336,7 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "esp32s3",
+ "gt911",
  "inkpaper-app",
  "inkpaper-ui",
  "ssd1677",

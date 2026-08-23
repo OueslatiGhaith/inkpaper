@@ -1,50 +1,13 @@
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_time::{Duration, Timer};
 use esp_hal::gpio::Input;
+
+use crate::firmware::input::{Button, ButtonEdge, ButtonEvent, INPUT_EVENTS, InputEvent};
 
 const SCAN_INTERVAL_MS: u64 = 10;
 
 /// a changed electrical level must be observed for 3 consecutive scans before it
 /// becomes a logical button edge
 const DEBOUNCE_SAMPLES: u8 = 3;
-
-const EVENT_QUEUE_CAPACITY: usize = 8;
-
-pub static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, ButtonEvent, EVENT_QUEUE_CAPACITY> =
-    Channel::new();
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Button {
-    Left,
-    Right,
-    Power,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ButtonEdge {
-    Pressed,
-    Released,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ButtonEvent {
-    button: Button,
-    edge: ButtonEdge,
-}
-
-impl ButtonEvent {
-    pub const fn new(button: Button, edge: ButtonEdge) -> Self {
-        Self { button, edge }
-    }
-
-    pub const fn button(self) -> Button {
-        self.button
-    }
-
-    pub const fn edge(self) -> ButtonEdge {
-        self.edge
-    }
-}
 
 struct DebouncedButton<'d> {
     input: Input<'d>,
@@ -138,7 +101,7 @@ pub async fn button_task(mut buttons: Buttons<'static>) {
             // don't silently discard physical input
             // if the display task falls behind, backpressure here is preferrable
             // to losing the button edge
-            BUTTON_EVENTS.send(event).await;
+            INPUT_EVENTS.send(InputEvent::Button(event)).await;
         }
 
         Timer::after(Duration::from_millis(SCAN_INTERVAL_MS)).await;
