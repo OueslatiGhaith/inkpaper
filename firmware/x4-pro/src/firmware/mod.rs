@@ -21,7 +21,7 @@ use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC
 use xteink_display_probe::{Controller, Verdict, detect_x4_controller};
 
 use crate::firmware::{
-    framebuffer::{FRAMEBUFFER_LEN, Framebuffer, Rotation},
+    framebuffer::{FRAMEBUFFER_LEN, Framebuffer, Orientation},
     power::PowerRails,
     probe::ProbePins,
     test_pattern::draw,
@@ -102,7 +102,7 @@ async fn main(_spawner: Spawner) -> ! {
 
     let frame = FRAMEBUFFER.init_with(|| [0xff; FRAMEBUFFER_LEN]);
     {
-        let mut display = Framebuffer::new(&mut *frame, Rotation::CounterClockwise);
+        let mut display = Framebuffer::new(&mut *frame, Orientation::Portrait);
         draw(&mut display);
     }
 
