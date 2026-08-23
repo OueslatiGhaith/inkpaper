@@ -24,6 +24,7 @@ use crate::firmware::{
     buttons::{Buttons, button_task},
     display::X4Panel,
     framebuffer::FRAMEBUFFER_LEN,
+    frontlight::{frontligh_task, frontlight_off_and_wait},
     input::{Button, ButtonEdge, ButtonEvent, INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
     power::PowerRails,
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
@@ -36,6 +37,7 @@ use crate::firmware::{
 mod buttons;
 mod display;
 mod framebuffer;
+mod frontlight;
 mod input;
 mod power;
 mod power_button;
@@ -67,6 +69,8 @@ async fn main(spawner: Spawner) -> ! {
     let software_interrupt = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
 
     esp_rtos::start(timer_group.timer0, software_interrupt.software_interrupt0);
+
+    spawner.spawn(frontligh_task(peripherals.LEDC, peripherals.GPIO8, peripherals.GPIO9).unwrap());
 
     {
         let buttons = Buttons::new(
@@ -166,6 +170,8 @@ async fn main(spawner: Spawner) -> ! {
         .unwrap();
     println!("initial display complete");
 
+    frontlight::run_bringup_test().await;
+
     // touch power-up.
     // GPIO2 is active-low. Give the GT911 rail time to settle before
     // performing its address-select reset sequence.
@@ -218,6 +224,9 @@ async fn main(spawner: Spawner) -> ! {
         }
 
         if action == InputAction::Sleep {
+            println!("turning frontlight off...");
+            frontlight_off_and_wait().await;
+
             println!("preparing display for deep sleep...");
 
             // ORDER MATTERS:

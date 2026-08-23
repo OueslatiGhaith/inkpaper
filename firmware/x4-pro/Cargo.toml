@@ -7,6 +7,7 @@ edition = "2024"
 embedded-graphics = { workspace = true }
 embedded-hal-async = { workspace = true }
 epd-bus = { path = "../../crates/epd-bus" }
+frontlight = { path = "../../crates/frontlight" }
 gt911 = { path = "../../crates/gt911" }
 inkpaper-app = { path = "../../crates/app" }
 inkpaper-ui = { path = "../../crates/ui" }
