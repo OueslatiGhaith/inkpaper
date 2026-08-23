@@ -36,28 +36,27 @@ impl Percent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Setting {
     brightness: Percent,
-
-    /// 0%   = channel A only
-    /// 100% = channel B only
-    mix: Percent,
+    /// 0%   = fully cool
+    /// 100% = fully warm
+    warmth: Percent,
 }
 
 impl Setting {
     pub const OFF: Self = Self {
         brightness: Percent::ZERO,
-        mix: Percent::ZERO,
+        warmth: Percent::ZERO,
     };
 
-    pub const fn new(brightness: Percent, mix: Percent) -> Self {
-        Self { brightness, mix }
+    pub const fn new(brightness: Percent, warmth: Percent) -> Self {
+        Self { brightness, warmth }
     }
 
     pub const fn brightness(self) -> Percent {
         self.brightness
     }
 
-    pub const fn mix(self) -> Percent {
-        self.mix
+    pub const fn warmth(self) -> Percent {
+        self.warmth
     }
 }
 
@@ -72,47 +71,47 @@ pub enum InitError {
     ZeroFullScale,
     DutyRange {
         requested: u16,
-        channel_a_max: u16,
-        channel_b_max: u16,
+        cool_max: u16,
+        warm_max: u16,
     },
 }
 
 #[derive(Debug)]
 pub enum Error<A, B> {
-    ChannelA(A),
-    ChannelB(B),
+    Cool(A),
+    Warm(B),
 }
 
-pub struct DualPwmFrontlight<A, B> {
-    channel_a: A,
-    channel_b: B,
+pub struct DualPwmFrontlight<COOL, WARM> {
+    cool: COOL,
+    warm: WARM,
     full_scale: u16,
     setting: Setting,
 }
 
-impl<A, B> DualPwmFrontlight<A, B>
+impl<COOL, WARM> DualPwmFrontlight<COOL, WARM>
 where
-    A: SetDutyCycle,
-    B: SetDutyCycle,
+    COOL: SetDutyCycle,
+    WARM: SetDutyCycle,
 {
-    pub fn new(channel_a: A, channel_b: B, full_scale: u16) -> Result<Self, InitError> {
+    pub fn new(cool: COOL, warm: WARM, full_scale: u16) -> Result<Self, InitError> {
         if full_scale == 0 {
             return Err(InitError::ZeroFullScale);
         }
 
-        let channel_a_max = channel_a.max_duty_cycle();
-        let channel_b_max = channel_b.max_duty_cycle();
-        if full_scale > channel_a_max || full_scale > channel_b_max {
+        let cool_max = cool.max_duty_cycle();
+        let warm_max = warm.max_duty_cycle();
+        if full_scale > cool_max || full_scale > warm_max {
             return Err(InitError::DutyRange {
                 requested: full_scale,
-                channel_a_max,
-                channel_b_max,
+                cool_max,
+                warm_max,
             });
         }
 
         Ok(Self {
-            channel_a,
-            channel_b,
+            cool,
+            warm,
             full_scale,
             setting: Setting::OFF,
         })
@@ -126,35 +125,31 @@ where
         self.full_scale
     }
 
-    pub fn set(&mut self, setting: Setting) -> Result<(), Error<A::Error, B::Error>> {
+    pub fn set(&mut self, setting: Setting) -> Result<(), Error<COOL::Error, WARM::Error>> {
         let total = perceptual_duty(setting.brightness, self.full_scale);
 
         // split AFTER mapping brightness to the PWM domain
         // doing the split in integer percentage space first makes very low brightness
         // settings collapse to zero on both channels
-        let channel_b = (total as u32 * setting.mix.get() as u32 + 50) / 100;
-        let channel_b = channel_b as u16;
-        let channel_a = total - channel_b;
+        let warm_duty = (total as u32 * setting.warmth.get() as u32 + 50) / 100;
+        let warm_duty = warm_duty as u16;
+        let cool_duty = total - warm_duty;
 
-        self.channel_a
-            .set_duty_cycle(channel_a)
-            .map_err(Error::ChannelA)?;
-        self.channel_b
-            .set_duty_cycle(channel_b)
-            .map_err(Error::ChannelB)?;
+        self.cool.set_duty_cycle(cool_duty).map_err(Error::Cool)?;
+        self.warm.set_duty_cycle(warm_duty).map_err(Error::Warm)?;
 
         self.setting = setting;
 
         Ok(())
     }
 
-    pub fn off(&mut self) -> Result<(), Error<A::Error, B::Error>> {
-        let setting = Setting::new(Percent::ZERO, self.setting.mix);
+    pub fn off(&mut self) -> Result<(), Error<COOL::Error, WARM::Error>> {
+        let setting = Setting::new(Percent::ZERO, self.setting.warmth);
         self.set(setting)
     }
 
-    pub fn release(self) -> (A, B) {
-        (self.channel_a, self.channel_b)
+    pub fn release(self) -> (COOL, WARM) {
+        (self.cool, self.warm)
     }
 }
 

@@ -170,7 +170,11 @@ async fn main(spawner: Spawner) -> ! {
         .unwrap();
     println!("initial display complete");
 
-    frontlight::run_bringup_test().await;
+    frontlight::set(::frontlight::Setting::new(
+        ::frontlight::Percent::new(25).unwrap(),
+        ::frontlight::Percent::new(50).unwrap(),
+    ))
+    .await;
 
     // touch power-up.
     // GPIO2 is active-low. Give the GT911 rail time to settle before

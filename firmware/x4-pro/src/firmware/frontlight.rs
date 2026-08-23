@@ -1,7 +1,6 @@
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
 };
-use embassy_time::{Duration, Timer};
 use esp_hal::{
     gpio::DriveMode,
     ledc::{
@@ -16,7 +15,7 @@ use esp_hal::{
     time::Rate,
 };
 use esp_println::println;
-use frontlight::{DualPwmFrontlight, Percent, Setting};
+use frontlight::{DualPwmFrontlight, Setting};
 
 const PWM_FREQUENCY_KHZ: u32 = 10;
 
@@ -73,28 +72,29 @@ pub async fn frontligh_task(
         })
         .unwrap();
 
-    let mut channel_a = ledc.channel::<LowSpeed>(ChannelNumber::Channel0, gpio8);
-    channel_a
-        .configure(ChannelConfig {
-            timer: &timer,
-            duty_pct: 0,
-            drive_mode: DriveMode::PushPull,
-        })
-        .unwrap();
+    // confirmed on physical hardware
+    // - GPIO8 = cool LEDs
+    // - GPIO9 = warm LEDs
+    let mut cool = ledc.channel::<LowSpeed>(ChannelNumber::Channel0, gpio8);
+    cool.configure(ChannelConfig {
+        timer: &timer,
+        duty_pct: 0,
+        drive_mode: DriveMode::PushPull,
+    })
+    .unwrap();
 
-    let mut channel_b = ledc.channel::<LowSpeed>(ChannelNumber::Channel1, gpio9);
-    channel_b
-        .configure(ChannelConfig {
-            timer: &timer,
-            duty_pct: 0,
-            drive_mode: DriveMode::PushPull,
-        })
-        .unwrap();
+    let mut warm = ledc.channel::<LowSpeed>(ChannelNumber::Channel1, gpio9);
+    warm.configure(ChannelConfig {
+        timer: &timer,
+        duty_pct: 0,
+        drive_mode: DriveMode::PushPull,
+    })
+    .unwrap();
 
-    let mut frontlight = DualPwmFrontlight::new(channel_a, channel_b, PWM_FULL_SCALE).unwrap();
+    let mut frontlight = DualPwmFrontlight::new(cool, warm, PWM_FULL_SCALE).unwrap();
     frontlight.off().unwrap();
 
-    println!("frontlight ready: GPIO8=A GPIO9=B, 10 kHz / 10-bit");
+    println!("frontlight ready: GPIO8=cool GPIO9=warm, 10 kHz / 10-bit");
     READY.signal(());
 
     loop {
@@ -115,27 +115,4 @@ pub async fn frontligh_task(
             }
         }
     }
-}
-
-pub async fn run_bringup_test() {
-    wait_ready().await;
-
-    let brightness = Percent::new(30).unwrap();
-
-    println!("frontlight test: GPIO8 / channel A");
-    set(Setting::new(brightness, Percent::ZERO)).await;
-    Timer::after(Duration::from_secs(2)).await;
-
-    println!("frontlight test: GPIO9 / channel B");
-    set(Setting::new(brightness, Percent::FULL)).await;
-    Timer::after(Duration::from_secs(2)).await;
-
-    println!("frontlight test: 50/50 mix");
-    set(Setting::new(brightness, Percent::new(50).unwrap())).await;
-    Timer::after(Duration::from_secs(2)).await;
-
-    println!("frontlight test: off");
-    frontlight_off_and_wait().await;
-
-    println!("frontlight bring-up complete");
 }
