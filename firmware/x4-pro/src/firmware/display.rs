@@ -45,7 +45,7 @@ impl X4Panel {
         }
     }
 
-    pub async fn presetn<B, D>(
+    pub async fn present<B, D>(
         &mut self,
         bus: &mut B,
         delay: &mut D,

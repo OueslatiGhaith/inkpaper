@@ -16,6 +16,7 @@ xteink-display-probe = { path = "../../crates/xteink-display-probe" }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
 embassy-executor = "0.10.0"
+embassy-sync = "0.8.0"
 embassy-time = "0.5.1"
 esp-backtrace = { version = "0.19.0", features = ["esp32s3", "panic-handler", "println"] }
 esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32s3"] }

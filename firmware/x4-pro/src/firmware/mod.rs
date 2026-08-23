@@ -4,7 +4,7 @@ use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
-    gpio::{Input, InputConfig},
+    gpio::{Input, InputConfig, Pull},
     interrupt::software::SoftwareInterruptControl,
     spi::{
         Mode,
@@ -19,6 +19,7 @@ use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
 
 use crate::firmware::{
+    buttons::{BUTTON_EVENTS, Button, ButtonEdge, ButtonEvent, Buttons, button_task},
     display::X4Panel,
     framebuffer::FRAMEBUFFER_LEN,
     power::PowerRails,
@@ -26,6 +27,7 @@ use crate::firmware::{
     probe::ProbePins,
 };
 
+mod buttons;
 mod display;
 mod framebuffer;
 mod power;
@@ -38,7 +40,7 @@ static FRAMEBUFFER: StaticCell<[u8; FRAMEBUFFER_LEN]> = StaticCell::new();
 static UI_RUNTIME: StaticCell<UiRuntime> = StaticCell::new();
 
 #[esp_rtos::main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
@@ -49,6 +51,24 @@ async fn main(_spawner: Spawner) -> ! {
     let software_interrupt = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
 
     esp_rtos::start(timer_group.timer0, software_interrupt.software_interrupt0);
+
+    {
+        let buttons = Buttons::new(
+            Input::new(
+                peripherals.GPIO0,
+                InputConfig::default().with_pull(Pull::Up),
+            ),
+            Input::new(
+                peripherals.GPIO7,
+                InputConfig::default().with_pull(Pull::Up),
+            ),
+            Input::new(
+                peripherals.GPIO3,
+                InputConfig::default().with_pull(Pull::Up),
+            ),
+        );
+        spawner.spawn(button_task(buttons).unwrap());
+    }
 
     let mut delay = AsyncDelay;
 
@@ -123,30 +143,40 @@ async fn main(_spawner: Spawner) -> ! {
 
     println!("presenting initial frame...");
     panel
-        .presetn(&mut bus, &mut delay, frame, update)
+        .present(&mut bus, &mut delay, frame, update)
         .await
         .unwrap();
     println!("initial display complete");
 
     loop {
-        if let Some(update) = presenter.render_pending(runtime, app, frame) {
-            let damage = update.physical_damage();
-            println!(
-                "UI update: {:?}, physical x={} y={} w={} h={}",
-                update.refresh(),
-                damage.x,
-                damage.y,
-                damage.width,
-                damage.height,
-            );
+        // sleep completely until physical input arrives
+        let event = BUTTON_EVENTS.receive().await;
+        handle_button_event(runtime, event);
 
-            panel
-                .presetn(&mut bus, &mut delay, frame, update)
-                .await
-                .unwrap();
+        // if the user pressed buttons while the previous e-ink refresh was running,
+        // coalesce all queued input before painting
+        while let Ok(event) = BUTTON_EVENTS.try_receive() {
+            handle_button_event(runtime, event);
         }
 
-        Timer::after(Duration::from_millis(20)).await;
+        let Some(update) = presenter.render_pending(runtime, app, frame) else {
+            continue;
+        };
+
+        let damage = update.physical_damage();
+        println!(
+            "UI update: {:?}, physical x={} y={} w={} h={}",
+            update.refresh(),
+            damage.x,
+            damage.y,
+            damage.width,
+            damage.height,
+        );
+
+        panel
+            .present(&mut bus, &mut delay, frame, update)
+            .await
+            .unwrap();
     }
 }
 
@@ -160,5 +190,27 @@ fn demo_model() -> AppModel {
 async fn stay_alive() -> ! {
     loop {
         Timer::after(Duration::from_secs(60)).await;
+    }
+}
+
+fn handle_button_event(runtime: &mut UiRuntime, event: ButtonEvent) {
+    match (event.button(), event.edge()) {
+        (Button::Left, ButtonEdge::Pressed) => {
+            println!("button: left");
+            runtime.focus_previous();
+        }
+        (Button::Right, ButtonEdge::Pressed) => {
+            println!("button: right");
+            runtime.focus_next();
+        }
+        (Button::Power, ButtonEdge::Pressed) => {
+            // this will become suspend/awake once the power lifecycle is implemented
+            println!("button: power");
+        }
+        (_, ButtonEdge::Released) => {
+            // releases are intentionally retained by the hardware abstraction event
+            // though focus navigation doesn't need them yet.
+            // they will matter for long press and power handling
+        }
     }
 }
