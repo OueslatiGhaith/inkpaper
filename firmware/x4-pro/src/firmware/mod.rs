@@ -29,6 +29,7 @@ use crate::firmware::{
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
     presenter::{Presenter, UiRuntime},
     probe::ProbePins,
+    sleep_pins::{hold_for_deep_sleep, release_display_reset_hold},
     touch::{TouchController, touch_task},
 };
 
@@ -40,6 +41,7 @@ mod power;
 mod power_button;
 mod presenter;
 mod probe;
+mod sleep_pins;
 mod touch;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -95,6 +97,11 @@ async fn main(spawner: Spawner) -> ! {
         peripherals.GPIO18,
         peripherals.GPIO14,
     );
+
+    // if this boot followed deep sleep, GPIO14 is still held HIGH
+    // ProbePins has now configured the new active GPIO state to output HIGH, so it is
+    // safe to release that previous RTC hold
+    release_display_reset_hold();
 
     let detection = detect_x4_controller(&mut probe_io, &mut delay)
         .await
@@ -214,17 +221,33 @@ async fn main(spawner: Spawner) -> ! {
             println!("preparing display for deep sleep...");
 
             // ORDER MATTERS:
-            // the panel receives DSLP while its control lines and rails are still alive
+            // step 1:
+            // tell the actual display controller to enter its own low-power state
+            // while SPI, RESET, adn the board rails are all still operational
             panel.deep_sleep(&mut bus, &mut delay).await.unwrap();
-            println!("display asleep");
-            // only after the panel is asleep do we switch peripheral rails off
-            rails.prepare_for_deep_sleep();
-            println!("peripheral rails prepared");
-            // tell the GPIO3 owner it may wait for button release and transfer the pin
-            // to EXT0
+            println!("display controller asleep");
+
+            // step2:
+            // the X4 PRO keeps the panel rail powered in deep sleep. Force RESET high
+            // before latching the pin so a sleeping UC controller can't drift back into
+            // an active state
+            bus.reset_high().unwrap();
+
+            // step3:
+            // latch GPIO1, GPIO2, GPIO5, and GPIO14 while they are actively driven
+            // to those known states.
+            // the RTC pad-hold bits survive the ESP32-S3 deep-sleep interval and remain
+            // set until the next boot deliberately releases them
+            hold_for_deep_sleep();
+
+            // step5:
+            // the power task owns GPIO3 and LPWR. It waits for the current button press
+            // to be released, arms EXT0 LOW, then performs the final SoC deep-sleep
+            // transition
             ENTER_DEEP_SLEEP.signal(());
-            // `power_button_tasl()` owns the final SoC sleep transition.
-            // once it calls `rtc.sleep_deep()`, this entire firmware instance disappears
+
+            // `power_button_task()` will take the MCU into deep sleep.
+            // nothing in this task should touch the hardware again
             stay_alive().await;
         }
 

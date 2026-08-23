@@ -125,6 +125,13 @@ where
             Ok(()) => cs_result,
         }
     }
+
+    pub fn reset_high(
+        &mut self,
+    ) -> Result<(), Error<SPI::Error, CS::Error, DC::Error, RESET::Error, BUSY::Error>> {
+        self.ensure_no_stream()?;
+        self.reset.set_high().map_err(Error::Reset)
+    }
 }
 
 impl<SPI, CS, DC, RESET, BUSY> EpdInterface for SpiEpdBus<SPI, CS, DC, RESET, BUSY>

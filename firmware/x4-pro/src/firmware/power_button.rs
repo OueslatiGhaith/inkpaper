@@ -51,7 +51,7 @@ pub async fn power_button_task(mut pin: GPIO3<'static>, lpwr: LPWR<'static>) {
 
     loop {
         input.wait_for_high().await;
-        Timer::after(Duration::from_micros(DEBOUNCE_MS)).await;
+        Timer::after(Duration::from_millis(DEBOUNCE_MS)).await;
 
         if input.is_high() {
             break;

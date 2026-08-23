@@ -1,7 +1,9 @@
 use esp_hal::gpio::{Level, Output, OutputConfig, OutputPin};
 
+use crate::firmware::sleep_pins;
+
 pub struct PowerRails<'d> {
-    _peripheral: Output<'d>,
+    peripheral: Output<'d>,
     touch: Output<'d>,
     sd: Output<'d>,
 }
@@ -12,12 +14,20 @@ impl<'d> PowerRails<'d> {
         touch: impl OutputPin + 'd,
         sd: impl OutputPin + 'd,
     ) -> Self {
-        let config = OutputConfig::default();
+        // configure the awake states while any RTC pad holds left by the previous
+        // deep-sleep cycle are still active.
+        // once all 3 output configurations are ready we can release the holds without
+        // allowing the pins to pass through their reset state
+        let peripheral = Output::new(peripheral, Level::High, OutputConfig::default());
+        let touch = Output::new(touch, Level::High, OutputConfig::default());
+        let sd = Output::new(sd, Level::High, OutputConfig::default());
+
+        sleep_pins::release_power_holds();
 
         Self {
-            _peripheral: Output::new(peripheral, Level::High, config),
-            touch: Output::new(touch, Level::High, config),
-            sd: Output::new(sd, Level::High, config),
+            peripheral,
+            touch,
+            sd,
         }
     }
 
@@ -30,7 +40,11 @@ impl<'d> PowerRails<'d> {
     }
 
     pub fn prepare_for_deep_sleep(&mut self) {
-        // both switched peripherals are active-low, so HIGH is off
+        // explicitly establish every state that will subsequently be latched
+        // - GPIO1 HIGH: master peripheral rail stays asserted
+        // - GPIO2 HIGH: GT911 off
+        // - GPIO5 HIGH: sd off
+        self.peripheral.set_high();
         self.touch.set_high();
         self.sd.set_high();
     }
