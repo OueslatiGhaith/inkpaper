@@ -1,64 +1,77 @@
-pub const WIDTH: usize = 800;
-pub const HEIGHT: usize = 480;
+use embedded_graphics::{
+    Drawable,
+    draw_target::DrawTarget,
+    geometry::{Point, Size},
+    mono_font::{MonoTextStyle, ascii::FONT_10X20},
+    pixelcolor::BinaryColor,
+    primitives::{Primitive, PrimitiveStyle, Rectangle},
+    text::{Baseline, Text},
+};
 
-pub const STRIDE: usize = WIDTH / 8;
+pub fn draw<D>(target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = BinaryColor>,
+{
+    target.clear(BinaryColor::Off)?;
 
-pub const FRAMEBUFFER_LEN: usize = STRIDE * HEIGHT;
+    let black = PrimitiveStyle::with_fill(BinaryColor::On);
+    let border = PrimitiveStyle::with_stroke(BinaryColor::On, 4);
 
-pub fn draw(frame: &mut [u8; FRAMEBUFFER_LEN]) {
-    // 1 = white, 0 = black.
-    frame.fill(0xff);
+    Rectangle::new(Point::new(0, 0), Size::new(480, 800))
+        .into_styled(border)
+        .draw(target)?;
 
-    // outer border.
-    fill_rect(frame, 0, 0, WIDTH, 8);
-    fill_rect(frame, 0, HEIGHT - 8, WIDTH, 8);
-    fill_rect(frame, 0, 0, 8, HEIGHT);
-    fill_rect(frame, WIDTH - 8, 0, 8, HEIGHT);
+    // top-left: one square.
+    Rectangle::new(Point::new(24, 48), Size::new(64, 64))
+        .into_styled(black)
+        .draw(target)?;
 
-    // TOP LEFT: one large block.
-    fill_rect(frame, 32, 32, 80, 80);
+    // top-right: two vertical bars.
+    Rectangle::new(Point::new(388, 48), Size::new(16, 64))
+        .into_styled(black)
+        .draw(target)?;
 
-    // TOP RIGHT: two vertical bars.
-    fill_rect(frame, WIDTH - 128, 32, 24, 80);
-    fill_rect(frame, WIDTH - 80, 32, 24, 80);
+    Rectangle::new(Point::new(424, 48), Size::new(16, 64))
+        .into_styled(black)
+        .draw(target)?;
 
-    // BOTTOM LEFT: three horizontal bars.
+    // bottom-left: three horizontal bars.
     for index in 0..3 {
-        fill_rect(frame, 32, HEIGHT - 128 + index * 32, 80, 16);
+        Rectangle::new(Point::new(24, 672 + index * 28), Size::new(64, 12))
+            .into_styled(black)
+            .draw(target)?;
     }
 
-    // BOTTOM RIGHT: four squares.
+    // bottom-right: four squares.
     for row in 0..2 {
         for column in 0..2 {
-            fill_rect(
-                frame,
-                WIDTH - 128 + column * 48,
-                HEIGHT - 128 + row * 48,
-                32,
-                32,
-            );
+            Rectangle::new(
+                Point::new(380 + column * 40, 672 + row * 40),
+                Size::new(24, 24),
+            )
+            .into_styled(black)
+            .draw(target)?;
         }
     }
 
-    // Center cross.
-    fill_rect(frame, WIDTH / 2 - 60, HEIGHT / 2 - 4, 120, 8);
-    fill_rect(frame, WIDTH / 2 - 4, HEIGHT / 2 - 60, 8, 120);
-}
+    // center cross.
+    Rectangle::new(Point::new(180, 396), Size::new(120, 8))
+        .into_styled(black)
+        .draw(target)?;
 
-fn fill_rect(frame: &mut [u8; FRAMEBUFFER_LEN], x: usize, y: usize, width: usize, height: usize) {
-    let right = (x + width).min(WIDTH);
-    let bottom = (y + height).min(HEIGHT);
+    Rectangle::new(Point::new(236, 340), Size::new(8, 120))
+        .into_styled(black)
+        .draw(target)?;
 
-    for py in y..bottom {
-        for px in x..right {
-            set_black(frame, px, py);
-        }
-    }
-}
+    let text_style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
 
-fn set_black(frame: &mut [u8; FRAMEBUFFER_LEN], x: usize, y: usize) {
-    let index = y * STRIDE + x / 8;
-    let mask = 0x80 >> (x % 8);
+    Text::with_baseline("TOP", Point::new(225, 16), text_style, Baseline::Top).draw(target)?;
 
-    frame[index] &= !mask;
+    Text::with_baseline("BOTTOM", Point::new(210, 764), text_style, Baseline::Top).draw(target)?;
+
+    Text::with_baseline("L", Point::new(20, 390), text_style, Baseline::Top).draw(target)?;
+
+    Text::with_baseline("R", Point::new(450, 390), text_style, Baseline::Top).draw(target)?;
+
+    Ok(())
 }

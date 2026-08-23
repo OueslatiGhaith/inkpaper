@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+embedded-graphics = { workspace = true }
 epd-bus = { path = "../../crates/epd-bus" }
 ssd1677 = { path = "../../crates/ssd1677" }
 uc8179 = { path = "../../crates/uc8179" }

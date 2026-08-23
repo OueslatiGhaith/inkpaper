@@ -1319,6 +1319,7 @@ version = "0.1.0"
 dependencies = [
  "embassy-executor",
  "embassy-time",
+ "embedded-graphics",
  "epd-bus",
  "esp-backtrace",
  "esp-bootloader-esp-idf",

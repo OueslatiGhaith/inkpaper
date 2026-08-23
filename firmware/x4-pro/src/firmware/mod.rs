@@ -21,11 +21,13 @@ use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC
 use xteink_display_probe::{Controller, Verdict, detect_x4_controller};
 
 use crate::firmware::{
+    framebuffer::{FRAMEBUFFER_LEN, Framebuffer, Rotation},
     power::PowerRails,
     probe::ProbePins,
-    test_pattern::{FRAMEBUFFER_LEN, draw},
+    test_pattern::draw,
 };
 
+mod framebuffer;
 mod power;
 mod probe;
 mod test_pattern;
@@ -95,11 +97,14 @@ async fn main(_spawner: Spawner) -> ! {
     let busy = Input::new(peripherals.GPIO6, InputConfig::default());
     let mut bus = SpiEpdBus::new(spi, cs, dc, reset, busy).unwrap();
 
-    let frame = FRAMEBUFFER.init_with(|| [0xff; FRAMEBUFFER_LEN]);
-
     println!("painting 800x480 diagnostic pattern...");
     println!("expected: 1 block TL, 2 bars TR, 3 bars BL, 4 squares BR");
-    draw(frame);
+
+    let frame = FRAMEBUFFER.init_with(|| [0xff; FRAMEBUFFER_LEN]);
+    {
+        let mut display = Framebuffer::new(&mut *frame, Rotation::CounterClockwise);
+        draw(&mut display);
+    }
 
     match detection.controller {
         Controller::Ssd1677 => {
