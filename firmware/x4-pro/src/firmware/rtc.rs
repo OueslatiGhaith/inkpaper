@@ -1,4 +1,4 @@
-use bm8563::{Bm8563, DateTime, Reading};
+use bm8563::{Bm8563, DateTime};
 use embassy_futures::select::{Either, select};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,

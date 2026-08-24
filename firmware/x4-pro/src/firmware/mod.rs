@@ -7,7 +7,6 @@ use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Pull},
     i2c::master::{Config as I2cConfig, I2c},
-    interrupt::software::SoftwareInterruptControl,
     spi::{
         Mode,
         master::{Config as SpiConfig, Spi},
@@ -72,9 +71,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut rails = PowerRails::new(peripherals.GPIO1, peripherals.GPIO2, peripherals.GPIO5);
 
     let timer_group = TimerGroup::new(peripherals.TIMG0);
-    let software_interrupt = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
-
-    esp_rtos::start(timer_group.timer0, software_interrupt.software_interrupt0);
+    esp_rtos::start(timer_group.timer0, peripherals.FROM_CPU_INTR0);
 
     spawner.spawn(frontlight_task(peripherals.LEDC, peripherals.GPIO8, peripherals.GPIO9).unwrap());
 

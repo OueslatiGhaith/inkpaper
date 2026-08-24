@@ -1,12 +1,9 @@
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
 use esp_hal::{
-    gpio::{Input, InputConfig, Pull, RtcPinWithResistors},
+    gpio::{Event, Input, InputConfig, Pull, WakeupConfig},
     peripherals::{GPIO3, LPWR},
-    rtc_cntl::{
-        Rtc,
-        sleep::{Ext0WakeupSource, WakeupLevel},
-    },
+    rtc_cntl::sleep::{LowPower, RtcSleepConfig},
 };
 use esp_println::println;
 
@@ -58,20 +55,18 @@ pub async fn power_button_task(mut pin: GPIO3<'static>, lpwr: LPWR<'static>) {
         }
     }
 
-    // EXT0 needs ownership of the RTC-capable GPIO, so release the normal digital
-    // input dirver first
-    drop(input);
+    // GPIO3 needs a low-power wake path because deep sleep powers down the normal
+    // high-performance GPIO peripheral.
+    input
+        .apply_wakeup_config(&WakeupConfig::default().with_low_power_path(true))
+        .unwrap();
+    input.listen(Event::LowLevel);
 
-    // GPIO3 has no guaranteed external pull-up, so configure the RTC-domain pull
-    // explicitly before switching it to RTC wake
-    pin.rtcio_pullup(true);
-    pin.rtcio_pulldown(false);
-
-    let wake = Ext0WakeupSource::new(pin, WakeupLevel::Low);
-    let mut rtc = Rtc::new(lpwr);
+    let mut low_power = LowPower::new(lpwr);
     println!("entering deep sleep");
 
-    // does not return. A LOW transition on GPIO3 resets/wakes the S3, starting
-    // firmware again from `main()`
-    rtc.sleep_deep(&[&wake]);
+    // does not return
+    // pressing POWER pulls GPIO3 LOW. The deep-sleep wake resets the S3 and firmware
+    // starts again from `main()`
+    low_power.sleep_deep(RtcSleepConfig::deep());
 }
