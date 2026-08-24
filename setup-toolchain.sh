@@ -2,7 +2,7 @@
 set -euo pipefail
 
 TOOLCHAIN="inkpaper-esp"
-VERSION="1.95.0.0"
+VERSION="1.97.0.0"
 
 if ! command -v espup >/dev/null 2>&1; then
     echo "espup is not installed."

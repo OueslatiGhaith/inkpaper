@@ -4,13 +4,8 @@
     "rust-analyzer.linkedProjects": ["../Cargo.toml"],
     "rust-analyzer.cargo.target": "xtensa-esp32s3-none-elf",
     "rust-analyzer.cargo.extraEnv": {
-      "RUSTUP_TOOLCHAIN": "stable",
-      // TODO: should replace this with something not so specific to me
-      "RUSTC": "/Users/ghaif/.rustup/toolchains/inkpaper-esp/bin/rustc",
-      "RUSTC_BOOTSTRAP": "1",
+      "RUSTUP_TOOLCHAIN": "inkpaper-esp",
     },
-    // Proc macros use rustc's unstable ABI, so this must match the ESP rustc above.
-    "rust-analyzer.procMacro.server": "/Users/ghaif/.rustup/toolchains/inkpaper-esp/libexec/rust-analyzer-proc-macro-srv",
     "rust-analyzer.cargo.targetDir": "../target/rust-analyzer-x4-pro",
     "rust-analyzer.cargo.allTargets": false,
     "rust-analyzer.check.allTargets": false,
