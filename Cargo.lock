@@ -115,6 +115,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bm8563"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1331,6 +1338,7 @@ dependencies = [
 name = "inkpaper-x4-pro"
 version = "0.1.0"
 dependencies = [
+ "bm8563",
  "cw2017",
  "embassy-embedded-hal",
  "embassy-executor",

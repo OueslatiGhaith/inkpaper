@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bm8563 = { path = "../../crates/bm8563" }
 cw2017 = { path = "../../crates/cw2017" }
 embedded-graphics = { workspace = true }
 embedded-hal-async = { workspace = true }

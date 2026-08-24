@@ -32,6 +32,7 @@ use crate::firmware::{
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
     presenter::{Presenter, UiRuntime},
     probe::ProbePins,
+    rtc::rtc_task,
     sleep_pins::{hold_for_deep_sleep, release_display_reset_hold},
     touch::{TouchController, touch_task},
 };
@@ -47,6 +48,7 @@ mod power;
 mod power_button;
 mod presenter;
 mod probe;
+mod rtc;
 mod sleep_pins;
 mod touch;
 
@@ -224,6 +226,7 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     spawner.spawn(battery_task(i2c_bus::device(shared_i2c)).unwrap());
+    spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
     println!("shared I2C services started");
 
     loop {
