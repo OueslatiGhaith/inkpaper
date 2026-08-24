@@ -43,7 +43,9 @@ impl DateTime {
         if month < 1 || month > 12 {
             return Err(DateTimeError::Month { value: month });
         }
-        if day < 1 || day > 31 {
+
+        let max_day = days_in_month(year, month);
+        if day < 1 || day > max_day {
             return Err(DateTimeError::Day { value: day });
         }
         if weekday > 6 {
@@ -96,6 +98,53 @@ impl DateTime {
 
     pub const fn second(self) -> u8 {
         self.second
+    }
+
+    pub fn seconds_since_2000(self) -> u64 {
+        self.days_since_2000() as u64 * 86_400
+            + self.hour as u64 * 3_600
+            + self.minute as u64 * 60
+            + self.second as u64
+    }
+
+    /// returns the forward elapsed time from `self` to `later`
+    ///
+    /// `None` means either `later` is before `self`, or its weekday is inconsistent
+    /// with the date progression
+    ///
+    /// This is useful when verifying an RTC immediately after setting it: the clock
+    /// may legitimately have advanced by 1 or 2 seconds while the I2C write/read-back
+    /// was occuring
+    pub fn elapsed_seconds_to(self, later: Self) -> Option<u64> {
+        let start_day = self.days_since_2000();
+        let later_day = later.days_since_2000();
+        let day_delta = later_day.checked_sub(start_day)?;
+        let expected_weekday = (self.weekday as u32 + day_delta) % 7;
+
+        if later.weekday != expected_weekday as u8 {
+            return None;
+        }
+
+        later
+            .seconds_since_2000()
+            .checked_sub(self.seconds_since_2000())
+    }
+
+    fn days_since_2000(self) -> u32 {
+        let mut days = 0u32;
+        let mut year = 2000u16;
+        while year < self.year {
+            days += if is_leap_year(year) { 366 } else { 365 };
+            year += 1;
+        }
+
+        let mut month = 1u8;
+        while month < self.month {
+            days += days_in_month(self.year, month) as u32;
+            month += 1;
+        }
+
+        days + self.day as u32 - 1
     }
 }
 
@@ -242,4 +291,102 @@ fn decode_bcd(register: u8, value: u8) -> Result<u8, DecodeError> {
 
 const fn encode_bcd(value: u8) -> u8 {
     (value / 10) << 4 | (value % 10)
+}
+
+const fn is_leap_year(year: u16) -> bool {
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
+}
+
+const fn days_in_month(year: u16, month: u8) -> u8 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        // callers validate the month before reaching this helper.
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn datetime(
+        year: u16,
+        month: u8,
+        day: u8,
+        weekday: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+    ) -> DateTime {
+        DateTime::new(year, month, day, weekday, hour, minute, second).unwrap()
+    }
+
+    #[test]
+    fn rejects_impossible_calendar_dates() {
+        assert_eq!(
+            DateTime::new(2026, 2, 29, 0, 0, 0, 0,),
+            Err(DateTimeError::Day { value: 29 },),
+        );
+
+        assert_eq!(
+            DateTime::new(2026, 4, 31, 0, 0, 0, 0,),
+            Err(DateTimeError::Day { value: 31 },),
+        );
+    }
+
+    #[test]
+    fn accepts_leap_day() {
+        assert!(DateTime::new(2028, 2, 29, 2, 12, 0, 0,).is_ok(),);
+    }
+
+    #[test]
+    fn elapsed_seconds_handles_same_minute() {
+        let start = datetime(2026, 8, 24, 1, 12, 30, 40);
+        let later = datetime(2026, 8, 24, 1, 12, 30, 42);
+
+        assert_eq!(start.elapsed_seconds_to(later,), Some(2),);
+    }
+
+    #[test]
+    fn elapsed_seconds_handles_minute_rollover() {
+        let start = datetime(2026, 8, 24, 1, 12, 59, 59);
+        let later = datetime(2026, 8, 24, 1, 13, 0, 0);
+
+        assert_eq!(start.elapsed_seconds_to(later,), Some(1),);
+    }
+
+    #[test]
+    fn elapsed_seconds_handles_midnight_rollover() {
+        let start = datetime(2026, 8, 24, 1, 23, 59, 59);
+        let later = datetime(2026, 8, 25, 2, 0, 0, 0);
+
+        assert_eq!(start.elapsed_seconds_to(later,), Some(1),);
+    }
+
+    #[test]
+    fn elapsed_seconds_handles_month_rollover() {
+        let start = datetime(2026, 8, 31, 1, 23, 59, 59);
+        let later = datetime(2026, 9, 1, 2, 0, 0, 0);
+
+        assert_eq!(start.elapsed_seconds_to(later,), Some(1),);
+    }
+
+    #[test]
+    fn elapsed_seconds_rejects_backward_time() {
+        let start = datetime(2026, 8, 24, 1, 12, 30, 10);
+        let earlier = datetime(2026, 8, 24, 1, 12, 30, 9);
+
+        assert_eq!(start.elapsed_seconds_to(earlier,), None,);
+    }
+
+    #[test]
+    fn elapsed_seconds_rejects_inconsistent_weekday() {
+        let start = datetime(2026, 8, 24, 1, 23, 59, 59);
+        let later = datetime(2026, 8, 25, 4, 0, 0, 0);
+
+        assert_eq!(start.elapsed_seconds_to(later,), None,);
+    }
 }
