@@ -2,6 +2,8 @@ use core::fmt::Write;
 
 use heapless::String;
 
+use crate::clock::{Clock, UtcOffset};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelError {
     TextTooLong,
@@ -78,6 +80,7 @@ impl BookSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppModel {
     battery: Percent,
+    clock: Clock,
     current_book: BookSummary,
 }
 
@@ -85,12 +88,21 @@ impl AppModel {
     pub fn new(battery_percent: u8, current_book: BookSummary) -> Self {
         Self {
             battery: Percent::new(battery_percent),
+            clock: Clock::new(UtcOffset::UTC),
             current_book,
         }
     }
 
     pub const fn battery(&self) -> &Percent {
         &self.battery
+    }
+
+    pub const fn clock(&self) -> &Clock {
+        &self.clock
+    }
+
+    pub fn clock_mut(&mut self) -> &mut Clock {
+        &mut self.clock
     }
 
     pub const fn current_book(&self) -> &BookSummary {

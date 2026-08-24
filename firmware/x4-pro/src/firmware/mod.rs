@@ -1,5 +1,5 @@
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{Either3, select3};
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
@@ -16,7 +16,7 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use esp_println::println;
-use inkpaper_app::{AppModel, BookSummary, InkPaperApp, Route, theme::Theme};
+use inkpaper_app::{AppModel, BookSummary, InkPaperApp, Route, clock::ClockError, theme::Theme};
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
@@ -32,7 +32,7 @@ use crate::firmware::{
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
     presenter::{Presenter, UiRuntime},
     probe::ProbePins,
-    rtc::rtc_task,
+    rtc::{RTC_UPDATES, RtcState, rtc_task},
     sleep_pins::{hold_for_deep_sleep, release_display_reset_hold},
     touch::{TouchController, touch_task},
 };
@@ -237,8 +237,14 @@ async fn main(spawner: Spawner) -> ! {
         // - the battery service has a new reading
         // `BATTERY_UPDATES` is a signal, so dropping its pending wait when input
         // wins this select is safe and doesn't lose a stored reading
-        match select(INPUT_EVENTS.receive(), BATTERY_UPDATES.wait()).await {
-            Either::First(event) => {
+        match select3(
+            INPUT_EVENTS.receive(),
+            BATTERY_UPDATES.wait(),
+            RTC_UPDATES.wait(),
+        )
+        .await
+        {
+            Either3::First(event) => {
                 action = handle_input_event(runtime, app, event);
                 // combine events accumulated while the e-ink panel was busy.
                 while action == InputAction::Continue {
@@ -248,7 +254,8 @@ async fn main(spawner: Spawner) -> ! {
                     action = handle_input_event(runtime, app, event);
                 }
             }
-            Either::Second(reading) => apply_battery_reading(runtime, app, reading),
+            Either3::Second(reading) => apply_battery_reading(runtime, app, reading),
+            Either3::Third(state) => apply_rtc_state(runtime, app, state),
         }
 
         if action == InputAction::Sleep {
@@ -411,4 +418,46 @@ fn apply_battery_reading(
             cx.notify();
         })
         .unwrap();
+}
+
+fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: RtcState) {
+    let result: Result<(), ClockError> = runtime
+        .update(app, |app, cx| {
+            let was_available = app.model().clock().is_available();
+
+            match state {
+                RtcState::Invalid => {
+                    let changed = app.model_mut().clock_mut().invalidate();
+                    // invalidation: a clock that was visible is worth 1 refresh:
+                    // continuing to show a time we now know is untrustworthy is worse
+                    // than the refresh
+                    if changed && was_available {
+                        cx.notify();
+                    }
+
+                    Ok(())
+                }
+                RtcState::Valid(datetime) => {
+                    app.model_mut()
+                        .clock_mut()
+                        .set_utc_time(datetime.hour(), datetime.minute())?;
+
+                    // first valid RTC value after boot gets one refresh so
+                    // "--:--" disappears
+                    // subsequent minute ticks update only RAM. They will become visible
+                    // during the next ordinary UI refresh instead of forcing an e-ink
+                    // update every minute
+                    if !was_available {
+                        cx.notify();
+                    }
+
+                    Ok(())
+                }
+            }
+        })
+        .unwrap();
+
+    if let Err(error) = result {
+        println!("invalid RTC time received: {error:?}");
+    }
 }

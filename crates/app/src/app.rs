@@ -92,7 +92,7 @@ impl Render for InkPaperApp {
             .flex_col()
             .bg(theme.paper)
             .text_color(theme.ink)
-            .child(TopBar::new(model.battery().label()))
+            .child(TopBar::new(model.clock().label(), model.battery().label()))
             .child(
                 div()
                     .id("screen")
