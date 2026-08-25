@@ -7,6 +7,7 @@ use support::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum ScrollDepth {
     Top,
     Quarter,

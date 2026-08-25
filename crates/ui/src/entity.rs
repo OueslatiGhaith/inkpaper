@@ -6,6 +6,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EntityId {
     slot: u16,
     generation: u16,
@@ -25,6 +26,7 @@ impl EntityId {
     }
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Entity<T> {
     id: EntityId,
     _marker: PhantomData<fn() -> T>,

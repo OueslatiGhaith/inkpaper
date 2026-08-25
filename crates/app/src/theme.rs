@@ -1,6 +1,7 @@
 use inkpaper_ui::prelude::*;
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Theme {
     pub paper: Color,
     pub ink: Color,

@@ -5,10 +5,12 @@ edition = "2024"
 
 [features]
 default = ["embedded-graphics"]
-embedded-graphics = ["dep:embedded-graphics"]
+defmt = ["dep:defmt", "heapless/defmt"]
+embedded-graphics = ["dep:embedded-graphics", "embedded-graphics/defmt"]
 metrics = []
 
 [dependencies]
+defmt = { workspace = true, optional = true }
 embedded-graphics = { workspace = true, optional = true }
 heapless = { workspace = true }
 

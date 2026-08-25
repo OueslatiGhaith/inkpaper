@@ -1,3 +1,4 @@
+use defmt::Format;
 use embedded_graphics::mono_font::{
     MonoFont,
     ascii::{FONT_6X10, FONT_10X20},
@@ -28,7 +29,7 @@ pub type UiRuntime = Runtime<
     4,     // global slots
 >;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Format, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshRequest {
     Full,
     Fast,

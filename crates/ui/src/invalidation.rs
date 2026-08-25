@@ -4,6 +4,7 @@ const DAMAGE_RECT_CAPACITY: usize = 4;
 const EMPTY_DAMAGE_RECT: Rect = Rect::new(Point::ZERO, Size::ZERO);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DamageRegion {
     rects: [Rect; DAMAGE_RECT_CAPACITY],
     len: u8,
@@ -200,6 +201,7 @@ fn damage_rects_touch_or_overlap(first: Rect, second: Rect) -> bool {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Invalidation {
     #[default]
     None,

@@ -3,6 +3,11 @@ name = "inkpaper-app"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+defmt = ["dep:defmt", "inkpaper-ui/defmt", "heapless/defmt"]
+
 [dependencies]
+defmt = { workspace = true, optional = true }
 heapless = { workspace = true }
 inkpaper-ui = { path = "../ui" }

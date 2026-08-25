@@ -1,6 +1,7 @@
 use bitfield_struct::bitfield;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub(crate) enum Register {
     Version = 0x00,

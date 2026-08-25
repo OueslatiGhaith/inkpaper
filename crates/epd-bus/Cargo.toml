@@ -3,6 +3,11 @@ name = "epd-bus"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+defmt = ["dep:defmt", "embedded-hal/defmt-03", "embedded-hal-async/defmt-03"]
+
 [dependencies]
+defmt = { workspace = true, optional = true }
 embedded-hal = { workspace = true }
 embedded-hal-async = { workspace = true }

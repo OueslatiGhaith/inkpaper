@@ -1,12 +1,14 @@
 [target.xtensa-esp32s3-none-elf]
-runner = "espflash flash --monitor --chip esp32s3"
+runner = "probe-rs run --chip=esp32s3 --preverify --always-print-stacktrace --no-location"
 
 rustflags = [
-    "-C",
-    "link-arg=-nostartfiles",
-    "-C",
-    "link-arg=-Wl,-Tlinkall.x",
+    "-C", "link-arg=-nostartfiles",
+    "-C", "link-arg=-Wl,-Tlinkall.x",
+    "-C", "link-arg=-Tdefmt.x"
 ]
+
+[env]
+DEFMT_LOG = "info"
 
 [unstable]
 build-std = ["core", "alloc"]

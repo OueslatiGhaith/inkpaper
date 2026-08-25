@@ -1,6 +1,7 @@
 use core::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Pixels(i32);
 
 pub const fn px(value: i32) -> Pixels {
@@ -129,6 +130,7 @@ impl Div<i32> for Pixels {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Length {
     Auto,
     Pixels(Pixels),

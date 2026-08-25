@@ -4,18 +4,21 @@ use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::{delay::DelayNs, spi::SpiBus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BusyPolarity {
     ActiveHigh,
     ActiveLow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ProtocolError {
     StreamAlreadyOpen,
     StreamNotOpen,
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<Spi, Cs, Dc, Reset, Busy> {
     Spi(Spi),
     ChipSelect(Cs),

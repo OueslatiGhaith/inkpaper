@@ -9,10 +9,7 @@ use core::{
 
 use heapless::Vec;
 
-use crate::{
-    EntityAccessError, EntityAllocError, EntityBorrowKind, EntityId, align_up,
-    entity_store::{EntityStore, RawEntityBorrow},
-};
+use crate::align_up;
 
 /// marker trait for application-wide immutable values
 ///
@@ -23,12 +20,14 @@ use crate::{
 pub trait Global: 'static {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GlobalAccessError {
     NotFound,
     BorrowConflict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GlobalSetError {
     SlotsFull,
     StorageFull,

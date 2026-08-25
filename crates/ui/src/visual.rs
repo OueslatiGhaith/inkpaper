@@ -1,8 +1,6 @@
 use heapless::Vec;
 
-use crate::{
-    DamageRegion, FrameArena, NodeId, NodeKind, Offset, Point, Rect, Size, count_metric, px,
-};
+use crate::{DamageRegion, FrameArena, NodeId, Offset, Point, Rect, count_metric, px};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClipRegion {

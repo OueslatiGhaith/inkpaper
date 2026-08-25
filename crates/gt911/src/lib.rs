@@ -20,6 +20,7 @@ const POINT_BYTES: usize = 8;
 const POINT_BUFFER_LEN: usize = MAX_TOUCHES * POINT_BYTES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PointLayout {
     /// X-lo, X-hi, Y-lo, Y-hi, ...
     ///
@@ -41,6 +42,7 @@ impl PointLayout {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ProductInfo {
     product_id: [u8; 4],
     firmware_version: u16,
@@ -86,6 +88,7 @@ impl ProductInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TouchPoint {
     x: u16,
     y: u16,
@@ -117,6 +120,7 @@ impl TouchPoint {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TouchFrame {
     points: [TouchPoint; MAX_TOUCHES],
     count: u8,
@@ -142,6 +146,7 @@ impl TouchFrame {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<E> {
     I2c(E),
     TooManyTouches { count: u8 },

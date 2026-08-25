@@ -4,12 +4,14 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Display {
     Block,
     Flex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Position {
     Static,
     Relative,
@@ -17,12 +19,14 @@ pub enum Position {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FlexDirection {
     Row,
     Column,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AlignItems {
     Start,
     Center,
@@ -30,6 +34,7 @@ pub enum AlignItems {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum JustifyContent {
     Start,
     Center,
@@ -38,12 +43,14 @@ pub enum JustifyContent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FlexBasis {
     Auto,
     Pixels(Pixels),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Edges<T> {
     pub top: T,
     pub right: T,
@@ -96,6 +103,7 @@ macro_rules! declare_style {
         }
 
         #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         pub struct TextStyle {
             $( $( pub(crate) $text_name: Option< $text_ty >, )* )*
         }
@@ -145,6 +153,7 @@ macro_rules! declare_style {
         }
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         pub struct ResolvedTextStyle {
             $( $( pub(crate) $text_name: $text_ty, )* )*
         }
@@ -227,6 +236,7 @@ macro_rules! declare_style {
 
 declare_style! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Style {
         layout {
             display: Display = Display::Block,

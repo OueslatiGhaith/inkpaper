@@ -8,6 +8,7 @@ embedded-graphics = "0.8.2"
 embedded-graphics-simulator = "0.8.0"
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
+defmt = "1.1.1"
 heapless = "0.9.3"
 # TODO: update when released on crates.io
 esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", rev = "160b107" }
@@ -19,6 +20,6 @@ esp-rtos = { git = "https://github.com/esp-rs/esp-hal", rev = "160b107" }
 
 [profile.firmware]
 inherits = "release"
-debug = true
+debug = 2
 lto = "fat"
 codegen-units = 1

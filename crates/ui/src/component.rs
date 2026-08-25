@@ -4,6 +4,7 @@
 /// A component can therefore use it as a type-safe marker and only implement
 /// [`RenderOnce`](crate::RenderOnce) once all required slots contain renderable content
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EmptySlot;
 
 /// type-state storage for content owned by a reusable component.
@@ -22,6 +23,7 @@ pub struct EmptySlot;
 /// to make typed component builders easier to express
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ComponentSlot<T = EmptySlot> {
     value: T,
 }

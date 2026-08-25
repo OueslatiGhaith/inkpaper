@@ -1,7 +1,7 @@
+use defmt::warn;
 use embassy_time::{Duration, Timer};
 use embedded_hal_async::{delay::DelayNs, i2c::I2c};
 use esp_hal::gpio::{Flex, InputConfig, Level, Output, OutputConfig, OutputPin, Pin, Pull};
-use esp_println::println;
 use gt911::{
     ALTERNATE_ADDRESS, Gt911, PRIMARY_ADDRESS, PointLayout, ProductInfo, TouchFrame, TouchPoint,
 };
@@ -153,7 +153,7 @@ pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
             Err(error) => {
                 consecutive_errors = consecutive_errors.saturating_add(1);
                 if consecutive_errors == 1 || consecutive_errors.is_multiple_of(100) {
-                    println!("GT911 poll error ({}): {:?}", consecutive_errors, error,);
+                    warn!("GT911 poll error ({}): {:?}", consecutive_errors, error,);
                 }
             }
         }

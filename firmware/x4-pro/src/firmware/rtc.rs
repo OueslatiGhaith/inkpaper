@@ -1,10 +1,10 @@
 use bm8563::{Bm8563, DateTime};
+use defmt::{debug, info, warn};
 use embassy_futures::select::{Either, select};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
 };
 use embassy_time::{Duration, Timer};
-use esp_println::println;
 
 use crate::firmware::i2c_bus::SharedI2cDevice;
 
@@ -71,7 +71,7 @@ pub async fn rtc_task(i2c: SharedI2cDevice) {
     // poll immediately on startup
     let mut next_poll = Duration::from_millis(1);
 
-    println!("BM8563 service started at 0x51");
+    info!("BM8563 service started at 0x51");
 
     loop {
         match select(RTC_COMMANDS.receive(), Timer::after(next_poll)).await {
@@ -104,7 +104,7 @@ pub async fn rtc_task(i2c: SharedI2cDevice) {
 }
 
 async fn synchronize(rtc: &mut Bm8563<SharedI2cDevice>, requested: DateTime) -> RtcSyncResult {
-    println!(
+    info!(
         "BM8563 sync requested: {:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
         requested.year(),
         requested.month(),
@@ -115,20 +115,20 @@ async fn synchronize(rtc: &mut Bm8563<SharedI2cDevice>, requested: DateTime) -> 
     );
 
     if let Err(error) = rtc.set_datetime(requested).await {
-        println!("BM8563 sync write failed: {error:?}");
+        warn!("BM8563 sync write failed: {:?}", error);
         return RtcSyncResult::Failed(RtcSyncFailure::Write);
     }
 
     let reading = match rtc.read().await {
         Ok(reading) => reading,
         Err(error) => {
-            println!("BM8563 sync read-back failed: {error:?}");
+            warn!("BM8563 sync read-back failed: {:?}", error);
             return RtcSyncResult::Failed(RtcSyncFailure::ReadBack);
         }
     };
 
     if reading.voltage_low() {
-        println!("BM8563 sync read-back still has voltage-low flag set");
+        warn!("BM8563 sync read-back still has voltage-low flag set");
         return RtcSyncResult::Failed(RtcSyncFailure::VoltageLow);
     }
 
@@ -138,18 +138,14 @@ async fn synchronize(rtc: &mut Bm8563<SharedI2cDevice>, requested: DateTime) -> 
         .is_some_and(|elapsed| elapsed <= READBACK_TOLERANCE_SECS);
 
     if !verified {
-        println!("BM8563 sync verification failed");
-        println!(
-            "  requested: {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        defmt::warn!(
+            "RTC sync verification failed requested={}-{}-{}T{}:{}:{} actual={}-{}-{}T{}:{}:{}",
             requested.year(),
             requested.month(),
             requested.day(),
             requested.hour(),
             requested.minute(),
             requested.second(),
-        );
-        println!(
-            "  actual:    {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
             actual.year(),
             actual.month(),
             actual.day(),
@@ -161,7 +157,7 @@ async fn synchronize(rtc: &mut Bm8563<SharedI2cDevice>, requested: DateTime) -> 
         return RtcSyncResult::Failed(RtcSyncFailure::Verification { requested, actual });
     }
 
-    println!(
+    info!(
         "BM8563 synchronized: {:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
         actual.year(),
         actual.month(),
@@ -182,14 +178,14 @@ async fn poll_rtc(
     let reading = match rtc.read().await {
         Ok(reading) => reading,
         Err(error) => {
-            println!("BM8563 read failed: {error:?}");
+            warn!("BM8563 read failed: {:?}", error);
             return Duration::from_secs(ERROR_RETRY_SECS);
         }
     };
 
     if reading.voltage_low() {
         if !*invalid_reported {
-            println!("BM8563 clock invalid: voltage-low flag is set");
+            warn!("BM8563 clock invalid: voltage-low flag is set");
             RTC_UPDATES.signal(RtcState::Invalid);
             *invalid_reported = true;
             *last_minute = None;
@@ -204,7 +200,7 @@ async fn poll_rtc(
     let current_minute = minute_key(datetime);
 
     if *last_minute != Some(current_minute) {
-        println!(
+        debug!(
             "rtc: {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
             datetime.year(),
             datetime.month(),

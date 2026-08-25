@@ -1,7 +1,7 @@
 use cw2017::{Cw2017, profile::BatteryProfile};
+use defmt::{Format, debug, info, warn};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Delay, Duration, Timer};
-use esp_println::println;
 
 use crate::firmware::i2c_bus::SharedI2cDevice;
 
@@ -37,7 +37,7 @@ const X4_PRO_BATTERY_PROFILE: BatteryProfile = BatteryProfile::new([
     0x00, 0x00, 0x00, 0x23,
 ]);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Format, Clone, Copy, PartialEq, Eq)]
 pub struct BatteryReading {
     percent: u8,
     millivolts: u16,
@@ -71,9 +71,9 @@ pub async fn battery_task(i2c: SharedI2cDevice) {
         // initialization is intentionally retrieved instead of permanently accepting
         // one transient shared bus failure
         match gauge.initialize(&mut delay, &X4_PRO_BATTERY_PROFILE).await {
-            Ok(stats) => println!("CW2017 initialized: {stats:?}"),
+            Ok(stats) => info!("CW2017 initialized: {}", stats),
             Err(error) => {
-                println!("CW2017 initialization failed: {error:?}");
+                warn!("CW2017 initialization failed: {:?}", error);
                 Timer::after(Duration::from_secs(RETRY_INTERVAL_SECS)).await;
                 continue;
             }
@@ -86,7 +86,7 @@ pub async fn battery_task(i2c: SharedI2cDevice) {
             let charge = match gauge.state_of_charge().await {
                 Ok(charge) if charge.is_valid() => charge,
                 Ok(charge) => {
-                    println!(
+                    warn!(
                         "CW2017 invalid SoC: {}.{:03}%",
                         charge.whole_percent(),
                         charge.fraction_256ths() as u32 * 1000 / 256,
@@ -94,7 +94,7 @@ pub async fn battery_task(i2c: SharedI2cDevice) {
                     break;
                 }
                 Err(error) => {
-                    println!("CW2017 SoC read failed: {error:?}");
+                    warn!("CW2017 SoC read failed: {:?}", error);
                     break;
                 }
             };
@@ -102,13 +102,13 @@ pub async fn battery_task(i2c: SharedI2cDevice) {
             let voltage = match gauge.voltage().await {
                 Ok(voltage) => voltage,
                 Err(error) => {
-                    println!("CW2017 voltage read failed: {error:?}");
+                    warn!("CW2017 voltage read failed: {:?}", error);
                     break;
                 }
             };
 
             let reading = BatteryReading::new(charge.whole_percent(), voltage.millivolts());
-            println!(
+            debug!(
                 "battery: {}%, {} mV",
                 reading.percent(),
                 reading.millivolts(),

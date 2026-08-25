@@ -6,6 +6,7 @@ const MINUTES_PER_DAY: i16 = 24 * 60;
 const MAX_OFFSET_MINUTES: i16 = 14 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ClockError {
     Hour { value: u8 },
     Minute { value: u8 },
@@ -13,6 +14,7 @@ pub enum ClockError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TimeOfDay {
     hour: u8,
     minute: u8,
@@ -40,6 +42,7 @@ impl TimeOfDay {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct UtcOffset {
     minutes: i16,
 }
@@ -61,6 +64,7 @@ impl UtcOffset {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Clock {
     utc: Option<TimeOfDay>,
     offset: UtcOffset,

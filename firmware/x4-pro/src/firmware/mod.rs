@@ -1,3 +1,4 @@
+use defmt::{debug, error, info, warn};
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either3, select3};
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
@@ -7,7 +8,6 @@ use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Pull},
     i2c::master::{Config as I2cConfig, I2c},
-    sdmmc::{Config as SdHostConfig, SdHostController, SlotConfig},
     spi::{
         Mode,
         master::{Config as SpiConfig, Spi},
@@ -15,7 +15,6 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use esp_println::println;
 use inkpaper_app::{AppModel, BookSummary, InkPaperApp, Route, clock::ClockError, theme::Theme};
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
@@ -66,6 +65,9 @@ enum InputAction {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
+    rtt_target::rtt_init_defmt!();
+    info!("InkPaper X4 Pro boot");
+
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
@@ -95,9 +97,6 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut delay = AsyncDelay;
 
-    println!();
-    println!("InkPaper X4 Pro");
-    println!("----------------");
     spawner.spawn(
         storage::storage_task(
             peripherals.SDHOST,
@@ -110,13 +109,13 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     let storage_ready = storage::wait_ready().await;
-    println!("storage ready: {storage_ready}");
+    info!("storage ready: {}", storage_ready);
     if storage_ready {
         let listed = storage::list_root_and_wait().await;
-        println!("storage root listing: {listed}");
+        debug!("storage root listing: {}", listed);
     }
 
-    println!("probing display controller...");
+    info!("probing display controller...");
 
     let mut probe_io = ProbePins::new(
         peripherals.GPIO12,
@@ -135,17 +134,22 @@ async fn main(spawner: Spawner) -> ! {
         .await
         .unwrap();
 
-    println!("controller: {:?}", detection.controller);
-    println!("verdict: {:?}", detection.verdict);
-    println!("VER: {:02x?}", detection.diagnostics.version.bytes());
-    println!("FLG: 0x{:02x}", detection.diagnostics.flags.raw());
-    println!("MTP read: {}", detection.diagnostics.mtp.is_some());
+    info!(
+        "display probe controller={} verdict={}",
+        detection.controller, detection.verdict,
+    );
+    debug!(
+        "display probe version={} flags={:#04x} mtp_read={}",
+        detection.diagnostics.version.bytes(),
+        detection.diagnostics.flags.raw(),
+        detection.diagnostics.mtp.is_some(),
+    );
 
     // an inconclusive result means something on the desplay bus responded, but not
     // consistently enough to identify it safely. Do not send an SSD1677 initialization
     // sequence to potential UC silicon
     if detection.verdict == Verdict::Inconclusive {
-        println!("display probe inconclusive, refusing to drive panel");
+        error!("display probe inconclusive, refusing to drive panel");
         stay_alive().await;
     }
 
@@ -167,9 +171,9 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut panel = X4Panel::new(detection.controller);
 
-    println!("initializing display...");
+    info!("initializing display...");
     panel.initialize(&mut bus, &mut delay).await.unwrap();
-    println!("display initialized");
+    info!("display initialized");
 
     let frame = FRAMEBUFFER.init_with(|| [0xff; FRAMEBUFFER_LEN]);
     let runtime = UI_RUNTIME.init_with(UiRuntime::default);
@@ -179,20 +183,23 @@ async fn main(spawner: Spawner) -> ! {
     let app = runtime.create(move |_| InkPaperApp::new(model)).unwrap();
     let mut presenter = Presenter::default();
 
-    println!("building initial InkPaper frame...");
+    debug!("building UI frame...");
     let update = presenter.render_initial(runtime, app, frame);
     let damage = update.physical_damage();
-    println!(
-        "physical damage: x={} y={} w={} h={}",
-        damage.x, damage.y, damage.width, damage.height,
+    defmt::debug!(
+        "initial damage x={} y={} width={} height={}",
+        damage.x,
+        damage.y,
+        damage.width,
+        damage.height,
     );
 
-    println!("presenting initial frame...");
+    info!("presenting initial frame...");
     panel
         .present(&mut bus, &mut delay, frame, update)
         .await
         .unwrap();
-    println!("initial display complete");
+    info!("initial display complete");
 
     frontlight::set(::frontlight::Setting::new(
         ::frontlight::Percent::new(25).unwrap(),
@@ -213,7 +220,7 @@ async fn main(spawner: Spawner) -> ! {
     // touch power-up.
     // GPIO2 is active-low. Give the GT911 rail time to settle before
     // performing its address-select reset sequence.
-    println!("powering GT911...");
+    debug!("powering GT911...");
     rails.enable_touch();
     Timer::after(Duration::from_millis(50)).await;
 
@@ -225,27 +232,27 @@ async fn main(spawner: Spawner) -> ! {
 
     match touch.initialize(&mut delay).await {
         Ok(info) => {
-            println!("GT911 initialized at 0x{:02x}", touch.address());
-            println!("GT911 product: {:02x?}", info.product_id());
-            println!("GT911 fw: 0x{:04x}", info.firmware_version());
-            println!(
-                "GT911 resolution: {}x{}",
+            info!(
+                "GT911 initialized address={:#04x} firmware={:#06x} resolution={}x{} vendor={:#04x}",
+                touch.address(),
+                info.firmware_version(),
                 info.x_resolution(),
                 info.y_resolution(),
+                info.vendor_id(),
             );
-            println!("GT911 vendor: 0x{:02x}", info.vendor_id());
+            debug!("GT911 product={}", info.product_id());
 
             spawner.spawn(touch_task(touch).unwrap());
         }
         Err(error) => {
-            println!("GT911 initialization failed: {error:?}");
+            warn!("GT911 initialization failed error={:?}", error);
             rails.disable_touch();
         }
     }
 
     spawner.spawn(battery_task(i2c_bus::device(shared_i2c)).unwrap());
     spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
-    println!("shared I2C services started");
+    info!("shared I2C services started");
 
     loop {
         let mut action = InputAction::Continue;
@@ -277,21 +284,21 @@ async fn main(spawner: Spawner) -> ! {
         }
 
         if action == InputAction::Sleep {
-            println!("turning frontlight off...");
+            info!("suspend: turning frontlight off");
             frontlight_off_and_wait().await;
 
-            println!("shutting down storage ..");
+            info!("suspend: shutting down storage");
             storage::shutdown_and_wait().await;
-            println!("storage shutdown complete");
+            info!("suspend: storage shutdown complete");
 
-            println!("preparing display for deep sleep...");
+            info!("suspend: putting display controller to sleep");
 
             // ORDER MATTERS:
             // step 1:
             // tell the actual display controller to enter its own low-power state
             // while SPI, RESET, adn the board rails are all still operational
             panel.deep_sleep(&mut bus, &mut delay).await.unwrap();
-            println!("display controller asleep");
+            info!("suspend: display controller asleep");
 
             // step2:
             // the X4 PRO keeps the panel rail powered in deep sleep. Force RESET high
@@ -306,6 +313,7 @@ async fn main(spawner: Spawner) -> ! {
             // set until the next boot deliberately releases them
             rails.prepare_for_deep_sleep();
             hold_for_deep_sleep();
+            info!("suspend: board pins latched for deep sleep");
 
             // step5:
             // the power task owns GPIO3 and LPWR. It waits for the current button press
@@ -323,8 +331,8 @@ async fn main(spawner: Spawner) -> ! {
         };
 
         let damage = update.physical_damage();
-        println!(
-            "UI update: {:?}, physical x={} y={} w={} h={}",
+        debug!(
+            "UI update refresh={:?} x={} y={} width={} height={}",
             update.refresh(),
             damage.x,
             damage.y,
@@ -369,18 +377,18 @@ fn handle_input_event(
 fn handle_button_event(runtime: &mut UiRuntime, event: ButtonEvent) -> InputAction {
     match (event.button(), event.edge()) {
         (Button::Left, ButtonEdge::Pressed) => {
-            println!("button: left");
+            debug!("input button=left edge=pressed");
             runtime.focus_previous();
             InputAction::Continue
         }
         (Button::Right, ButtonEdge::Pressed) => {
-            println!("button: right");
+            debug!("input button=right edge=pressed");
             runtime.focus_next();
             InputAction::Continue
         }
         (Button::Power, ButtonEdge::Pressed) => {
             // this will become suspend/awake once the power lifecycle is implemented
-            println!("button: power");
+            info!("input button=power edge=pressed");
             InputAction::Sleep
         }
         (_, ButtonEdge::Released) => {
@@ -395,17 +403,17 @@ fn handle_button_event(runtime: &mut UiRuntime, event: ButtonEvent) -> InputActi
 fn handle_touch_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: TouchEvent) {
     match event {
         TouchEvent::Down(position) => {
-            println!("touch down: {},{}", position.x(), position.y(),);
+            debug!("input touch=down x={} y={}", position.x(), position.y(),);
             runtime.begin_activation_at(to_ui_point(position));
         }
         TouchEvent::Up(position) => {
-            println!("touch up: {},{}", position.x(), position.y(),);
+            debug!("input touch=up x={} y={}", position.x(), position.y(),);
             runtime
                 .complete_activation_at(to_ui_point(position))
                 .unwrap();
         }
         TouchEvent::HomeTap => {
-            println!("home tap");
+            debug!("input touch=home");
             runtime
                 .update(app, |app, cx| {
                     app.navigate(Route::Home, cx);
@@ -424,8 +432,8 @@ fn apply_battery_reading(
     app: Entity<InkPaperApp>,
     reading: BatteryReading,
 ) {
-    println!(
-        "battery update: {}%, {} mV",
+    debug!(
+        "battery update percent={} millivolts={}",
         reading.percent(),
         reading.millivolts(),
     );
@@ -481,6 +489,6 @@ fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: Rtc
         .unwrap();
 
     if let Err(error) = result {
-        println!("invalid RTC time received: {error:?}");
+        warn!("invalid RTC time received error={:?}", error);
     }
 }

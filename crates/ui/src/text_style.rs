@@ -1,6 +1,7 @@
 use crate::{Color, Pixels, Styled, TextStyle};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FontId(u16);
 
 impl FontId {
@@ -16,6 +17,7 @@ impl FontId {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TextAlign {
     #[default]
     Start,
@@ -24,6 +26,7 @@ pub enum TextAlign {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TextWrap {
     #[default]
     NoWrap,
@@ -31,6 +34,7 @@ pub enum TextWrap {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum LineHeight {
     #[default]
     Normal,
@@ -38,6 +42,7 @@ pub enum LineHeight {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TextMaxLines {
     #[default]
     Unlimited,
@@ -57,6 +62,7 @@ impl TextMaxLines {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TextOverflow {
     #[default]
     Clip,

@@ -1,6 +1,7 @@
 pub const BATTERY_PROFILE_LEN: usize = 80;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BatteryProfile {
     bytes: [u8; BATTERY_PROFILE_LEN],
 }
@@ -16,6 +17,7 @@ impl BatteryProfile {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InitializationStats {
     AlreadyLoaded,
     Updated,

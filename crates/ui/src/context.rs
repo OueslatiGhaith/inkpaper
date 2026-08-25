@@ -135,6 +135,7 @@ impl<T: 'static> Context<'_, T> {
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AppContext<'a> {
     globals: &'a dyn GlobalStore,
 }

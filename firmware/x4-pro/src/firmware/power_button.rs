@@ -1,3 +1,4 @@
+use defmt::{debug, info};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
 use esp_hal::{
@@ -5,7 +6,6 @@ use esp_hal::{
     peripherals::{GPIO3, LPWR},
     rtc_cntl::sleep::{LowPower, RtcSleepConfig},
 };
-use esp_println::println;
 
 use crate::firmware::input::{Button, ButtonEdge, ButtonEvent, INPUT_EVENTS, InputEvent};
 
@@ -44,7 +44,7 @@ pub async fn power_button_task(mut pin: GPIO3<'static>, lpwr: LPWR<'static>) {
     // - peripheral rails off
     // it signals us only when we're allowed to ender SoC deep sleep
     ENTER_DEEP_SLEEP.wait().await;
-    println!("waiting for power button release...");
+    debug!("waiting for power button release...");
 
     loop {
         input.wait_for_high().await;
@@ -63,7 +63,7 @@ pub async fn power_button_task(mut pin: GPIO3<'static>, lpwr: LPWR<'static>) {
     input.listen(Event::LowLevel);
 
     let mut low_power = LowPower::new(lpwr);
-    println!("entering deep sleep");
+    info!("entering deep sleep");
 
     // does not return
     // pressing POWER pulls GPIO3 LOW. The deep-sleep wake resets the S3 and firmware

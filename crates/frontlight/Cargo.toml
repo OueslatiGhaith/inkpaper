@@ -3,5 +3,10 @@ name = "frontlight"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+defmt = ["dep:defmt", "embedded-hal/defmt-03"]
+
 [dependencies]
+defmt = { workspace = true, optional = true }
 embedded-hal = { workspace = true }

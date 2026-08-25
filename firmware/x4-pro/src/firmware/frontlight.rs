@@ -1,3 +1,4 @@
+use defmt::{info, warn};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
 };
@@ -14,7 +15,6 @@ use esp_hal::{
     peripherals::{GPIO8, GPIO9, LEDC},
     time::Rate,
 };
-use esp_println::println;
 use frontlight::{DualPwmFrontlight, Setting};
 
 const PWM_FREQUENCY_KHZ: u32 = 10;
@@ -94,19 +94,22 @@ pub async fn frontlight_task(
     let mut frontlight = DualPwmFrontlight::new(cool, warm, PWM_FULL_SCALE).unwrap();
     frontlight.off().unwrap();
 
-    println!("frontlight ready: GPIO8=cool GPIO9=warm, 10 kHz / 10-bit");
+    info!(
+        "frontlight ready cool_gpio=8 warm_gpio=9 frequency_khz={} resolution_bits=10",
+        PWM_FREQUENCY_KHZ
+    );
     READY.signal(());
 
     loop {
         match COMMANDS.receive().await {
             Command::Set(setting) => {
                 if let Err(error) = frontlight.set(setting) {
-                    println!("frontlight set failed: {error:?}");
+                    warn!("frontlight set failed: {:?}", error);
                 }
             }
             Command::Off => {
                 if let Err(error) = frontlight.off() {
-                    println!("frontlight off failed: {error:?}");
+                    warn!("frontlight off failed: {:?}", error);
                 }
 
                 // signal even after an unexpected PWM error. The power path must never

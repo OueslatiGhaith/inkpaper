@@ -16,6 +16,7 @@ const DISPLAY_UPDATE_BYPASS_RED: u8 = 0x40;
 const AUTO_WRITE_PATTERN: u8 = 0xf7;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct UpdateSequence(u8);
 
 impl UpdateSequence {
@@ -33,6 +34,7 @@ impl UpdateSequence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BoosterSoftStart([u8; 5]);
 
 impl BoosterSoftStart {
@@ -46,6 +48,7 @@ impl BoosterSoftStart {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RefreshProfile {
     sequence: UpdateSequence,
     border_waveform: u8,
@@ -67,6 +70,7 @@ impl RefreshProfile {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     width: u16,
     height: u16,
@@ -130,6 +134,7 @@ pub const GDEQ0426T82: Config = Config::new(
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RefreshMode {
     Full,
     Clean,
@@ -137,6 +142,7 @@ pub enum RefreshMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Region {
     x: u16,
     y: u16,
@@ -176,6 +182,7 @@ impl Region {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<E> {
     Bus(E),
     InvalidGeometry,

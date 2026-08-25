@@ -3,5 +3,10 @@ name = "gt911"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+defmt = ["dep:defmt", "embedded-hal-async/defmt-03"]
+
 [dependencies]
+defmt = { workspace = true, optional = true }
 embedded-hal-async = { workspace = true }

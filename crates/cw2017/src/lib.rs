@@ -22,6 +22,7 @@ const READY_POLL_ATTEMPTS: usize = 50;
 
 /// errors returned by the `CW2017` driver
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<E> {
     I2c(E),
     ProfileVerificationFailed,

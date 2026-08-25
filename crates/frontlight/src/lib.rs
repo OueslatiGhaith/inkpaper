@@ -3,6 +3,7 @@
 use embedded_hal::pwm::SetDutyCycle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PercentError {
     value: u8,
 }
@@ -14,6 +15,7 @@ impl PercentError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Percent(u8);
 
 impl Percent {
@@ -34,6 +36,7 @@ impl Percent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Setting {
     brightness: Percent,
     /// 0%   = fully cool
@@ -67,6 +70,7 @@ impl Default for Setting {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InitError {
     ZeroFullScale,
     DutyRange {
@@ -77,6 +81,7 @@ pub enum InitError {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<A, B> {
     Cool(A),
     Warm(B),

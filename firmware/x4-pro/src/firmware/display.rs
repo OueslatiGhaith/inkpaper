@@ -1,3 +1,4 @@
+use defmt::Format;
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::EpdInterface;
 use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Region as SsdRegion, Ssd1677};
@@ -7,7 +8,7 @@ use xteink_display_probe::Controller;
 
 use crate::firmware::presenter::{FrameUpdate, RefreshRequest};
 
-#[derive(Debug)]
+#[derive(Debug, Format)]
 pub enum Error<E> {
     Ssd1677(ssd1677::Error<E>),
     Uc8179(uc8179::Error<E>),

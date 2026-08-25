@@ -2,6 +2,7 @@ use crate::register::{SocRegister, VcellRegister};
 
 /// `CW2017` silicon version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Version(u8);
 
 impl Version {
@@ -20,6 +21,7 @@ impl Version {
 
 /// battery state of charge
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StateOfCharge {
     whole_percent: u8,
     fraction_256ths: u8,
@@ -59,6 +61,7 @@ impl StateOfCharge {
 
 /// battery terminal voltage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Voltage {
     counts: u16,
 }
@@ -90,6 +93,7 @@ impl Voltage {
 
 /// battery temperature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Temperature {
     half_degrees_celsius: i16,
 }

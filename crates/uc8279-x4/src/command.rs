@@ -1,5 +1,6 @@
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum Command {
     PanelSetting = 0x00,
 

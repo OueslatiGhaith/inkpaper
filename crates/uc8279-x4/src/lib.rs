@@ -15,6 +15,7 @@ const BUSY_SETTLE_MS: u32 = 1;
 const STREAM_BUFFER_LEN: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PanelSettings {
     external_lut: [u8; 2],
     otp_lut: [u8; 2],
@@ -30,6 +31,7 @@ impl PanelSettings {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RefreshTemperature {
     full: u8,
     fast: u8,
@@ -42,6 +44,7 @@ impl RefreshTemperature {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VcomDataInterval {
     full: u8,
     fast: u8,
@@ -54,6 +57,7 @@ impl VcomDataInterval {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     width: u16,
     visible_height: u16,
@@ -143,6 +147,7 @@ pub const X4_PRO_800X480: Config = Config::new(
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RefreshMode {
     /// factory OTP GC/full refresh.
     Full,
@@ -156,6 +161,7 @@ pub enum RefreshMode {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<E> {
     Bus(E),
     InvalidGeometry,

@@ -3,6 +3,7 @@ use core::ops::{Add, AddAssign, Sub, SubAssign};
 use crate::Pixels;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Point {
     pub x: Pixels,
     pub y: Pixels,
@@ -58,6 +59,7 @@ impl SubAssign<Offset> for Point {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Size {
     pub width: Pixels,
     pub height: Pixels,
@@ -75,6 +77,7 @@ impl Size {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Rect {
     pub origin: Point,
     pub size: Size,
@@ -175,6 +178,7 @@ impl Rect {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Offset {
     pub x: Pixels,
     pub y: Pixels,

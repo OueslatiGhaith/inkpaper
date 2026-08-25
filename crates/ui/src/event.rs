@@ -7,6 +7,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ActivateEvent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

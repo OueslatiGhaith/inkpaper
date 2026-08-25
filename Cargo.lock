@@ -160,6 +160,7 @@ dependencies = [
 name = "bm8563"
 version = "0.1.0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-hal-async",
 ]
 
@@ -405,6 +406,7 @@ name = "cw2017"
 version = "0.1.0"
 dependencies = [
  "bitfield-struct",
+ "defmt 1.1.1",
  "embedded-hal-async",
 ]
 
@@ -513,6 +515,15 @@ dependencies = [
 
 [[package]]
 name = "defmt"
+version = "0.3.100"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0963443817029b2024136fc4dd07a5107eb8f977eaf18fcd1fdeb11306b64ad"
+dependencies = [
+ "defmt 1.1.1",
+]
+
+[[package]]
+name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2953bfe4f93bbd20cc71198842756f77d161884c99ebbabc41d80231ded88d1"
@@ -594,6 +605,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0641612053b2f34fc250bb63f6630ae75de46e02ade7f457268447081d709ce"
 dependencies = [
+ "defmt 1.1.1",
  "embassy-futures",
  "embassy-hal-internal",
  "embassy-sync 0.8.0",
@@ -613,6 +625,7 @@ checksum = "5d0d3b15c9d7dc4fec1d8cb77112472fb008b3b28c51ad23838d83587a6d2f1e"
 dependencies = [
  "cordyceps",
  "critical-section",
+ "defmt 1.1.1",
  "document-features",
  "embassy-executor-macros",
  "embassy-executor-timer-queue",
@@ -641,6 +654,9 @@ name = "embassy-futures"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc2d050bdc5c21e0862a89256ed8029ae6c290a93aecefc73084b3002cdebb01"
+dependencies = [
+ "defmt 1.1.1",
+]
 
 [[package]]
 name = "embassy-hal-internal"
@@ -687,6 +703,7 @@ checksum = "7bbd85cf5a5ae56bdf26f618364af642d1d0a4e245cdd75cd9aabda382f65a81"
 dependencies = [
  "cfg-if",
  "critical-section",
+ "defmt 1.1.1",
  "embedded-io-async 0.7.0",
  "futures-core",
  "futures-sink",
@@ -701,6 +718,7 @@ checksum = "592b0c143ec626e821d4d90da51a2bd91d559d6c442b7c74a47d368c9e23d97a"
 dependencies = [
  "cfg-if",
  "critical-section",
+ "defmt 1.1.1",
  "document-features",
  "embassy-time-driver",
  "embedded-hal 0.2.7",
@@ -768,6 +786,7 @@ checksum = "4e8da660bb0c829b34a56a965490597f82a55e767b91f9543be80ce8ccb416fe"
 dependencies = [
  "az",
  "byteorder",
+ "defmt 0.3.100",
  "embedded-graphics-core",
  "float-cmp",
  "micromath",
@@ -781,6 +800,7 @@ checksum = "95743bef3ff70fcba3930246c4e6872882bbea0dcc6da2ca860112e0cd4bd09f"
 dependencies = [
  "az",
  "byteorder",
+ "defmt 0.3.100",
 ]
 
 [[package]]
@@ -811,6 +831,9 @@ name = "embedded-hal"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
+dependencies = [
+ "defmt 0.3.100",
+]
 
 [[package]]
 name = "embedded-hal-async"
@@ -818,6 +841,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c4c685bbef7fe13c3c6dd4da26841ed3980ef33e841cddfa15ce8a8fb3f1884"
 dependencies = [
+ "defmt 0.3.100",
  "embedded-hal 1.0.0",
 ]
 
@@ -826,12 +850,18 @@ name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+dependencies = [
+ "defmt 0.3.100",
+]
 
 [[package]]
 name = "embedded-io"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
+dependencies = [
+ "defmt 1.1.1",
+]
 
 [[package]]
 name = "embedded-io-async"
@@ -839,6 +869,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ff09972d4073aa8c299395be75161d582e7629cd663171d62af73c8d50dba3f"
 dependencies = [
+ "defmt 0.3.100",
  "embedded-io 0.6.1",
 ]
 
@@ -848,6 +879,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2564b9f813c544241430e147d8bc454815ef9ac998878d30cc3055449f7fd4c0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-io 0.7.1",
 ]
 
@@ -872,6 +904,7 @@ version = "1.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccc5801fd11762e24d1e420d01d2ac518f2a2ca4329d4fbb6639f2412b6204e0"
 dependencies = [
+ "defmt 1.1.1",
  "enumset_derive",
 ]
 
@@ -891,6 +924,7 @@ dependencies = [
 name = "epd-bus"
 version = "0.1.0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
 ]
@@ -921,6 +955,7 @@ name = "esp-backtrace"
 version = "0.19.0"
 source = "git+https://github.com/esp-rs/esp-hal?rev=160b107#160b10794227eb84805b8676fe188c1110801e9d"
 dependencies = [
+ "defmt 1.1.1",
  "document-features",
  "esp-config",
  "esp-metadata-generated",
@@ -936,6 +971,7 @@ name = "esp-bootloader-esp-idf"
 version = "0.5.0"
 source = "git+https://github.com/esp-rs/esp-hal?rev=160b107#160b10794227eb84805b8676fe188c1110801e9d"
 dependencies = [
+ "defmt 1.1.1",
  "document-features",
  "esp-config",
  "esp-hal-procmacros",
@@ -967,6 +1003,7 @@ dependencies = [
  "bitfield",
  "bytemuck",
  "critical-section",
+ "defmt 1.1.1",
  "delegate",
  "digest 0.10.7",
  "digest 0.11.3",
@@ -1047,7 +1084,6 @@ dependencies = [
  "esp-metadata-generated",
  "esp-sync",
  "log",
- "portable-atomic",
 ]
 
 [[package]]
@@ -1055,6 +1091,7 @@ name = "esp-riscv-rt"
 version = "0.15.0"
 source = "git+https://github.com/esp-rs/esp-hal?rev=160b107#160b10794227eb84805b8676fe188c1110801e9d"
 dependencies = [
+ "defmt 1.1.1",
  "document-features",
  "riscv",
  "riscv-rt",
@@ -1075,6 +1112,7 @@ name = "esp-rtos"
 version = "0.3.0"
 source = "git+https://github.com/esp-rs/esp-hal?rev=160b107#160b10794227eb84805b8676fe188c1110801e9d"
 dependencies = [
+ "defmt 1.1.1",
  "document-features",
  "embassy-executor",
  "embassy-sync 0.8.0",
@@ -1111,6 +1149,7 @@ name = "esp-sync"
 version = "0.3.0"
 source = "git+https://github.com/esp-rs/esp-hal?rev=160b107#160b10794227eb84805b8676fe188c1110801e9d"
 dependencies = [
+ "defmt 1.1.1",
  "document-features",
  "embassy-sync 0.6.2",
  "embassy-sync 0.7.2",
@@ -1126,6 +1165,7 @@ version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2f9714c79477940e5c7848b3832af89cd3bcd79abf4067e6938ae90de187a45"
 dependencies = [
+ "defmt 1.1.1",
  "vcell",
 ]
 
@@ -1135,6 +1175,7 @@ version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "496afd4a776ec7c96c90fb665894895a1a9f8a7fd5a9d75779fa09d63f9d40a1"
 dependencies = [
+ "defmt 1.1.1",
  "vcell",
 ]
 
@@ -1144,6 +1185,7 @@ version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ffb892f670ff857033c1624f99ecba1a3f3cafa05c45d734bc129388276715cf"
 dependencies = [
+ "defmt 1.1.1",
  "vcell",
 ]
 
@@ -1153,6 +1195,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97afa80d8110c7234f840252baa8ee8de28f78e8dc233d2d430c0ccfbe59a2b5"
 dependencies = [
+ "defmt 1.1.1",
  "vcell",
 ]
 
@@ -1162,6 +1205,7 @@ version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a207a5d6886ca89b4f220606dcf3779ca869803df192508314939186ae8de1ee"
 dependencies = [
+ "defmt 1.1.1",
  "vcell",
 ]
 
@@ -1171,6 +1215,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8690ba8b6292db301db513bb9b24263499c9a1ecd22b263dd4210ef12d47fe1"
 dependencies = [
+ "defmt 1.1.1",
  "vcell",
 ]
 
@@ -1180,6 +1225,7 @@ version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "083a75597f85acaabc0b05998f22455d78c33c4d23ff5f12df2b9590e46f571b"
 dependencies = [
+ "defmt 1.1.1",
  "vcell",
 ]
 
@@ -1199,6 +1245,7 @@ version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbeb62af2f2ca94a85be9ab22f8ad97c23ba79b9b3d3e4e20f3e0957bc5f2b2d"
 dependencies = [
+ "defmt 1.1.1",
  "vcell",
 ]
 
@@ -1208,6 +1255,7 @@ version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab08eb1f516ba72b7eb272cdd88cd74899552292a294b831b2143a3e60f1666a"
 dependencies = [
+ "defmt 1.1.1",
  "vcell",
 ]
 
@@ -1265,6 +1313,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 name = "frontlight"
 version = "0.1.0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-hal 1.0.0",
 ]
 
@@ -1274,6 +1323,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e88e2d6927cbdbbbdc85fc550cee539e63ae0f76445f13094833f63bb65b62f5"
 dependencies = [
+ "defmt 1.1.1",
  "gcd",
 ]
 
@@ -1342,6 +1392,7 @@ dependencies = [
 name = "gt911"
 version = "0.1.0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-hal-async",
 ]
 
@@ -1366,6 +1417,7 @@ checksum = "d8ae9e0e215766441538874f21f12340b6ae3edfb0f4f59b72794131d91bf01b"
 dependencies = [
  "bitflags 2.13.1",
  "bytemuck",
+ "defmt 1.1.1",
  "hadris-common",
  "hadris-fixed",
  "hadris-io",
@@ -1450,6 +1502,7 @@ version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
 dependencies = [
+ "defmt 1.1.1",
  "hash32",
  "stable_deref_trait",
 ]
@@ -1517,6 +1570,7 @@ dependencies = [
 name = "inkpaper-app"
 version = "0.1.0"
 dependencies = [
+ "defmt 1.1.1",
  "heapless 0.9.3",
  "inkpaper-ui",
 ]
@@ -1536,6 +1590,7 @@ name = "inkpaper-ui"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "defmt 1.1.1",
  "embedded-graphics",
  "embedded-graphics-simulator",
  "heapless 0.9.3",
@@ -1549,6 +1604,7 @@ dependencies = [
  "block-device-driver",
  "bm8563",
  "cw2017",
+ "defmt 1.1.1",
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-futures",
@@ -1560,14 +1616,15 @@ dependencies = [
  "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",
- "esp-println",
  "esp-rtos",
  "frontlight",
  "gt911",
  "hadris-fat",
  "hadris-io",
+ "heapless 0.9.3",
  "inkpaper-app",
  "inkpaper-ui",
+ "rtt-target",
  "sdio",
  "ssd1677",
  "static_cell",
@@ -1610,7 +1667,7 @@ version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "668b7183bd07af9a4885f5c35b0cc5c83c4607a913c16b7e17291832910d2dcc"
 dependencies = [
- "defmt",
+ "defmt 1.1.1",
  "jiff-core",
  "jiff-static",
  "log",
@@ -1625,7 +1682,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7feca88439efe53da3754500c1851dedf3cb36c524dd5cf8225cc0794de95d09"
 dependencies = [
- "defmt",
+ "defmt 1.1.1",
 ]
 
 [[package]]
@@ -2055,6 +2112,7 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d07b9f3a0eff773fc4df11f44ada4fa302e529bff4b7fe7e6a4b98a65ce9174"
 dependencies = [
+ "defmt 1.1.1",
  "riscv",
  "riscv-pac",
  "riscv-rt-macros",
@@ -2088,6 +2146,18 @@ dependencies = [
  "const-default",
  "libc",
  "rustversion",
+]
+
+[[package]]
+name = "rtt-target"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7afed1f4302eeba88c601636cf2c554c45e1cbb464bab44c6012bab0e71473c"
+dependencies = [
+ "critical-section",
+ "defmt 0.3.100",
+ "portable-atomic",
+ "ufmt-write",
 ]
 
 [[package]]
@@ -2131,6 +2201,7 @@ checksum = "6f7328e9dbad1337ef2d94a8404428a42d77a9916cda7c2e51287a1998da9afb"
 dependencies = [
  "aligned",
  "block-device-driver",
+ "defmt 1.1.1",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
 ]
@@ -2303,6 +2374,7 @@ dependencies = [
 name = "ssd1677"
 version = "0.1.0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-hal-async",
  "epd-bus",
 ]
@@ -2526,6 +2598,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 name = "uc8179"
 version = "0.1.0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-hal-async",
  "epd-bus",
 ]
@@ -2534,6 +2607,7 @@ dependencies = [
 name = "uc8279-x4"
 version = "0.1.0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-hal-async",
  "epd-bus",
 ]
@@ -2719,6 +2793,7 @@ dependencies = [
 name = "xteink-display-probe"
 version = "0.1.0"
 dependencies = [
+ "defmt 1.1.1",
  "embedded-hal-async",
 ]
 
@@ -2735,6 +2810,7 @@ name = "xtensa-lx-rt"
 version = "0.23.0"
 source = "git+https://github.com/esp-rs/esp-hal?rev=160b107#160b10794227eb84805b8676fe188c1110801e9d"
 dependencies = [
+ "defmt 1.1.1",
  "document-features",
  "xtensa-lx",
  "xtensa-lx-rt-proc-macros",

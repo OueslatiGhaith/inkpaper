@@ -3,6 +3,10 @@ name = "inkpaper-simulator"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+defmt = ["inkpaper-app/defmt", "inkpaper-ui/defmt"]
+
 [dependencies]
 embedded-graphics = { workspace = true }
 embedded-graphics-simulator = { workspace = true }

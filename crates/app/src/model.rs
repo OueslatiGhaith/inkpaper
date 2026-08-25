@@ -5,11 +5,13 @@ use heapless::String;
 use crate::clock::{Clock, UtcOffset};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ModelError {
     TextTooLong,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Percent {
     value: u8,
     label: String<4>,
@@ -39,6 +41,7 @@ impl Percent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BookSummary {
     title: String<96>,
     author: String<64>,
@@ -78,6 +81,7 @@ impl BookSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AppModel {
     battery: Percent,
     clock: Clock,

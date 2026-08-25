@@ -15,6 +15,7 @@ const EXTRA_RESET_SETTLE_MS: u32 = 50;
 const STREAM_BUFFER_LEN: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PanelSettings {
     init: [u8; 2],
     otp: [u8; 2],
@@ -27,6 +28,7 @@ impl PanelSettings {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BoosterSoftStart {
     bytes: [u8; 4],
 }
@@ -38,6 +40,7 @@ impl BoosterSoftStart {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RefreshTemperature {
     full: u8,
     fast: u8,
@@ -50,6 +53,7 @@ impl RefreshTemperature {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct VcomDataInterval {
     active: [u8; 2],
     idle: [u8; 2],
@@ -62,6 +66,7 @@ impl VcomDataInterval {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     width: u16,
     visible_height: u16,
@@ -146,6 +151,7 @@ pub const X4_PRO_800X480: Config = Config::new(
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RefreshMode {
     Full,
     /// strong charge-scrubbing refresh.
@@ -155,6 +161,7 @@ pub enum RefreshMode {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<E> {
     Bus(E),
     InvalidGeometry,

@@ -17,6 +17,7 @@ const MONTH_MASK: u8 = 0x1f;
 const CENTURY_MASK: u8 = 0x80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DateTime {
     year: u16,
     month: u8,
@@ -149,6 +150,7 @@ impl DateTime {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Reading {
     datetime: DateTime,
     voltage_low: bool,
@@ -170,6 +172,7 @@ impl Reading {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DateTimeError {
     Year { value: u16 },
     Month { value: u8 },
@@ -181,12 +184,14 @@ pub enum DateTimeError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DecodeError {
     InvalidBcd { register: u8, value: u8 },
     InvalidDateTime(DateTimeError),
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<E> {
     I2c(E),
     Decode(DecodeError),

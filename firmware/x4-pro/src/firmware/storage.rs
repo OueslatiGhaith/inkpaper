@@ -1,5 +1,7 @@
 use aligned::{A4, Aligned};
 use block_device_driver::BlockDevice as RawBlockDevice;
+use core::fmt::Write as _;
+use defmt::{Debug2Format, debug, error, info, warn};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
 };
@@ -8,7 +10,6 @@ use esp_hal::{
     peripherals::{GPIO40, GPIO41, GPIO42, SDHOST},
     sdmmc::{Config, SdHostController, SlotConfig},
 };
-use esp_println::{print, println};
 use hadris_fat::r#async::{DirectoryEntry, FatVolume, FileEntry};
 use hadris_io::{
     Error as HadrisError, ErrorKind as HadrisErrorKind, Result as HadrisResult, SeekFrom,
@@ -27,6 +28,8 @@ const MBR_PARTITION_TABLE_OFFSET: usize = 446;
 const MBR_PARTITION_ENTRY_SIZE: usize = 16;
 const MBR_PARTITION_COUNT: usize = 4;
 const COMMAND_CAPACITY: usize = 4;
+
+const LOGGED_FILE_NAME_BYTES: usize = 256;
 
 static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = Channel::new();
 static READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
@@ -117,7 +120,11 @@ where
             .read(physical_lba, core::slice::from_mut(&mut self.sector))
             .await
         {
-            println!("SD read failed at LBA {physical_lba}: {error:?}");
+            warn!(
+                "SD read failed at LBA {}: {}",
+                physical_lba,
+                Debug2Format(&error)
+            );
             return Err(HadrisError::new(
                 HadrisErrorKind::Other,
                 "SD block read failed",
@@ -199,18 +206,13 @@ pub async fn storage_task(
     data0: GPIO40<'static>,
     mut sd_power: SdPower<'static>,
 ) {
-    println!();
-    println!("starting storage...");
-    println!("SDMMC slot 1, native 1-bit");
-    println!("  CLK  = GPIO41");
-    println!("  CMD  = GPIO42");
-    println!("  DAT0 = GPIO40");
-    println!("  EN   = GPIO5 active-low");
+    info!("storage service starting");
+    debug!("SDMMC configuration slot=1 clk_gpio=41 cmd_gpio=42 data0_gpio=40 enable_gpio=5",);
 
     let controller = match SdHostController::new(sdhost, Config::default()) {
         Ok(controller) => controller,
         Err(error) => {
-            println!("SDHOST initialization failed: {error:?}");
+            error!("SDHOST initialization failed: {:?}", error);
             serve_unavailable(&mut sd_power).await;
             return;
         }
@@ -223,7 +225,7 @@ pub async fn storage_task(
             .with_data0(data0)
             .into_async(),
         Err(error) => {
-            println!("SD slot initialization failed: {error:?}");
+            error!("SD slot initialization failed: {:?}", error);
             serve_unavailable(&mut sd_power).await;
             return;
         }
@@ -237,8 +239,7 @@ where
     B: MmcBus,
 {
     for attempt in 1..=MOUNT_ATTEMPTS {
-        println!();
-        println!("SD mount attempt {attempt}/{MOUNT_ATTEMPTS}");
+        info!("SD mount attempt {}/{}", attempt, MOUNT_ATTEMPTS);
 
         power_cycle_sd(sd_power).await;
 
@@ -248,11 +249,11 @@ where
         let mut card: BlockDevice<Card, _, _, SECTOR_SIZE> =
             match BlockDevice::new(&mut *bus, Delay, TARGET_FREQUENCY_HZ).await {
                 Ok(card) => {
-                    println!("SD card initialized at {} Hz", card.freq());
+                    info!("SD card initialized at {} Hz", card.freq());
                     card
                 }
                 Err(error) => {
-                    println!("SD card initialization failed: {error:?}");
+                    warn!("SD card initialization failed: {:?}", error);
                     continue;
                 }
             };
@@ -260,41 +261,43 @@ where
         let mut sector_zero = [Aligned::<A4, _>([0u8; SECTOR_SIZE])];
 
         if let Err(error) = card.read(0, &mut sector_zero).await {
-            println!("SD sector 0 read failed: {error:?}");
+            warn!("SD sector 0 read failed: {:?}", error);
             continue;
         }
 
-        println!("SD sector 0 read succeeded");
+        debug!("SD sector 0 read succeeded");
 
         match card.size().await {
-            Ok(size) => println!("SD capacity: {size} bytes / {} MiB", size / 1024 / 1024),
-            Err(error) => println!("could not read SD capacity: {error:?}"),
+            Ok(size) => info!("SD capacity: {} bytes / {} MiB", size, size / 1024 / 1024),
+            Err(error) => warn!("could not read SD capacity: {:?}", error),
         }
 
         let Some(partition) = find_fat_partition(&sector_zero[0]) else {
-            println!("no supported FAT partition found");
+            warn!("no supported FAT partition found");
             continue;
         };
 
-        println!("FAT partition {}:", partition.index);
-        println!("  type: 0x{:02x}", partition.partition_type);
-        println!("  first LBA: {}", partition.first_lba);
-        println!("  sectors: {}", partition.sectors);
+        info!(
+            "FAT partition index={} type={:#04x} first_lba={} sectors={}",
+            partition.index, partition.partition_type, partition.first_lba, partition.sectors,
+        );
 
         let partition_device = SdPartition::new(&mut card, partition.first_lba, partition.sectors);
         let filesystem = match FatVolume::open(partition_device).await {
             Ok(filesystem) => filesystem,
             Err(error) => {
-                println!("FAT mount failed: {error:?}");
+                warn!("FAT mount failed: {:?}", error);
                 continue;
             }
         };
 
         let volume = filesystem.volume_info();
-        println!("FAT filesystem mounted");
-        println!("  OEM: {}", volume.oem_name());
-        println!("  volume label: {}", volume.volume_label());
-        println!("  filesystem field: {}", volume.fs_type_str());
+        info!(
+            "FAT filesystem mounted oem={} label={} type={}",
+            volume.oem_name(),
+            volume.volume_label(),
+            volume.fs_type_str(),
+        );
 
         // from this point until shutdown, GPIO5 remains LOW and this task owns the complete
         // SD -> block device -> partition -> FAT stack
@@ -308,7 +311,7 @@ where
         drop(filesystem);
         drop(card);
         sd_power.disable();
-        println!("storage shut down; SD power off");
+        info!("storage shut down; SD power off");
 
         SHUTDOWN_DONE.signal(());
 
@@ -332,7 +335,7 @@ where
                 ROOT_LIST_DONE.signal(success);
             }
             Command::Shutdown => {
-                println!("storage shutdown requested");
+                debug!("storage shutdown requested");
                 return;
             }
         }
@@ -341,7 +344,7 @@ where
 
 async fn serve_unavailable(sd_power: &mut SdPower<'_>) {
     sd_power.disable();
-    println!("storage unavailable");
+    error!("storage unavailable");
 
     READY.signal(false);
 
@@ -365,8 +368,7 @@ async fn list_root<D>(filesystem: &FatVolume<D>) -> bool
 where
     D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
 {
-    println!();
-    println!("root directory:");
+    debug!("listing filesystem root");
 
     let root = filesystem.root_dir();
     let mut entries = root.entries();
@@ -380,51 +382,56 @@ where
         let entry = match result {
             Ok(DirectoryEntry::Entry(entry)) => entry,
             Err(error) => {
-                println!("root directory read failed: {error:?}");
+                warn!("root directory read failed: {:?}", error);
                 return false;
             }
         };
 
-        print_directory_entry(&entry);
+        let name = logged_entry_name(&entry);
+
+        if entry.is_directory() {
+            debug!("root entry kind=directory name={}", name.as_str(),);
+        } else {
+            debug!(
+                "root entry kind=file name={} bytes={}",
+                name.as_str(),
+                entry.len() as u64,
+            );
+        }
 
         count += 1;
     }
 
-    println!();
-    println!("root entries: {count}");
+    info!("root directory listed entries={}", count,);
 
     true
 }
 
-fn print_directory_entry(entry: &FileEntry) {
-    if entry.is_directory() {
-        print!("  [dir ] ");
-    } else {
-        print!("  [file] ");
-    }
+fn logged_entry_name(entry: &FileEntry) -> heapless::String<LOGGED_FILE_NAME_BYTES> {
+    let mut output = heapless::String::new();
 
-    print_entry_name(entry);
-
-    if entry.is_file() {
-        println!("  {} bytes", entry.len());
-    } else {
-        println!();
-    }
-}
-
-fn print_entry_name(entry: &FileEntry) {
     if let Some(name) = entry.long_name() {
         for character in name.chars() {
-            print!("{character}");
+            let required = character.len_utf8();
+            if output.len() + required > LOGGED_FILE_NAME_BYTES - 3 {
+                let _ = output.push_str("...");
+                break;
+            }
+
+            let _ = output.push(character);
         }
 
-        return;
+        return output;
     }
 
-    match entry.short_name().try_as_str() {
-        Ok(name) => print!("{name}"),
-        Err(_) => print!("<OEM name {:02x?}>", entry.short_name().raw_bytes(),),
+    if let Ok(name) = entry.short_name().try_as_str() {
+        let _ = output.push_str(name);
+        return output;
     }
+
+    let _ = write!(output, "<OEM {:02x?}>", entry.short_name().raw_bytes(),);
+
+    output
 }
 
 fn find_fat_partition(sector: &[u8; SECTOR_SIZE]) -> Option<Partition> {

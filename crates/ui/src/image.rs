@@ -1,6 +1,7 @@
 use crate::{Element, MountCx, MountError, NodeId, Pixels, Point, Rect, Size, px};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ImageId(u16);
 
 impl ImageId {
@@ -14,6 +15,7 @@ impl ImageId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ImageSource {
     id: ImageId,
     size: Size,
@@ -34,6 +36,7 @@ impl ImageSource {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ImageFit {
     #[default]
     None,
@@ -43,6 +46,7 @@ pub enum ImageFit {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct ImageStyle {
     pub(crate) width: Option<Pixels>,
     pub(crate) height: Option<Pixels>,
@@ -50,6 +54,7 @@ pub(crate) struct ImageStyle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Image {
     source: ImageSource,
     style: ImageStyle,

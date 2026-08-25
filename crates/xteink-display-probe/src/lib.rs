@@ -15,6 +15,7 @@ const RESET_SETTLE_MS: u32 = 30;
 const BETWEEN_PASSES_MS: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Controller {
     Ssd1677,
     Uc8179,
@@ -22,6 +23,7 @@ pub enum Controller {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Verdict {
     /// neither probe pass found a UC81xx response.
     ///
@@ -37,6 +39,7 @@ pub enum Verdict {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Version {
     bytes: [u8; 5],
 }
@@ -68,6 +71,7 @@ impl Version {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Flags(u8);
 
 impl Flags {
@@ -85,6 +89,7 @@ impl Flags {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ProbeDiagnostics {
     pub version: Version,
     pub flags: Flags,
@@ -92,6 +97,7 @@ pub struct ProbeDiagnostics {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ProbeResult {
     pub controller: Controller,
     pub verdict: Verdict,
@@ -99,6 +105,7 @@ pub struct ProbeResult {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<E> {
     Io(E),
 }
@@ -143,6 +150,7 @@ pub trait ProbeIo {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct ProbePass {
     version: Version,
     flags: Flags,
