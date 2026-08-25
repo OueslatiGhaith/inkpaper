@@ -1,5 +1,13 @@
 [target.xtensa-esp32s3-none-elf]
-runner = "probe-rs run --chip=esp32s3 --preverify --always-print-stacktrace --no-location"
+runner = [
+    "probe-rs",
+    "run",
+    "--chip=esp32s3",
+    "--preverify",
+    "--always-print-stacktrace",
+    "--log-format",
+    "{t:dimmed} {L:severity:bold} {s:werror}\n\t{fff:dimmed}:{l:dimmed}",
+]
 
 rustflags = [
     "-C", "link-arg=-nostartfiles",
