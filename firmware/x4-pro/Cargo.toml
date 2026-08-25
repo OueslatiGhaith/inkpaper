@@ -12,6 +12,8 @@ embedded-hal-async = { workspace = true }
 epd-bus = { path = "../../crates/epd-bus" }
 frontlight = { path = "../../crates/frontlight" }
 gt911 = { path = "../../crates/gt911" }
+hadris-fat = { version = "2.2.0", default-features = false, features = ["async", "lfn", "read"] }
+hadris-io = { version = "2.2.0", default-features = false, features = ["async"] }
 inkpaper-app = { path = "../../crates/app" }
 inkpaper-ui = { path = "../../crates/ui" }
 ssd1677 = { path = "../../crates/ssd1677" }

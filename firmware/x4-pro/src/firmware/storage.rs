@@ -1,8 +1,13 @@
 use aligned::{A4, Aligned};
-use block_device_driver::BlockDevice as _;
+use block_device_driver::BlockDevice as RawBlockDevice;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_async::delay::DelayNs;
-use esp_println::println;
+use esp_println::{print, println};
+use hadris_fat::r#async::{DirectoryEntry, FatVolume, FileEntry};
+use hadris_io::{
+    Error as HadrisError, ErrorKind as HadrisErrorKind, Result as HadrisResult, SeekFrom,
+    r#async::{Read as HadrisRead, Seek as HadrisSeek},
+};
 use sdio::{BlockDevice, MmcBus, sd::Card};
 
 use crate::firmware::power::PowerRails;
@@ -62,12 +67,161 @@ struct FatInfo {
     root_cluster: Option<u32>,
 }
 
+struct SdPartition<'a, D> {
+    device: &'a mut D,
+    first_lba: u32,
+    sector_count: u32,
+    position: u64,
+    // hadris is byte oriented while SD card is sector oriented.
+    // keep one sector cached. This is particularly useful for FAT directory entries:
+    // hadris reads 32-byte entries individually, so without this cache, we'd perform
+    // the same physical 512-byte read repeatedly
+    cached_sector: Option<u32>,
+    sector: Aligned<A4, [u8; SECTOR_SIZE]>,
+}
+
+impl<'a, D> SdPartition<'a, D>
+where
+    D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
+{
+    fn new(device: &'a mut D, first_lba: u32, sector_count: u32) -> Self {
+        Self {
+            device,
+            first_lba,
+            sector_count,
+            position: 0,
+            cached_sector: None,
+            sector: Aligned([0; SECTOR_SIZE]),
+        }
+    }
+
+    fn len_bytes(&self) -> u64 {
+        self.sector_count as u64 * SECTOR_SIZE as u64
+    }
+
+    async fn load_sector(&mut self, relative_sector: u32) -> HadrisResult<()> {
+        if relative_sector >= self.sector_count {
+            return Err(HadrisError::Context {
+                kind: HadrisErrorKind::UnexpectedEof,
+                message: Some("sector outside SD partition"),
+            });
+        }
+
+        if self.cached_sector == Some(relative_sector) {
+            return Ok(());
+        }
+
+        let physical_lba =
+            self.first_lba
+                .checked_add(relative_sector)
+                .ok_or_else(|| HadrisError::Context {
+                    kind: HadrisErrorKind::InvalidInput,
+                    message: Some("SD LBA overflow"),
+                })?;
+
+        if let Err(error) = self
+            .device
+            .read(physical_lba, core::slice::from_mut(&mut self.sector))
+            .await
+        {
+            println!("SD read failed at LBA {physical_lba}: {error:?}");
+            return Err(HadrisError::Context {
+                kind: HadrisErrorKind::Other,
+                message: Some("SD block read failed"),
+            });
+        }
+
+        self.cached_sector = Some(relative_sector);
+
+        Ok(())
+    }
+}
+
+impl<D> HadrisRead for SdPartition<'_, D>
+where
+    D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
+{
+    type Error = HadrisErrorKind;
+
+    async fn read(&mut self, buf: &mut [u8]) -> HadrisResult<usize, Self::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        let remaining = self.len_bytes().saturating_sub(self.position);
+        if remaining == 0 {
+            return Ok(0);
+        }
+
+        let bytes_to_read = core::cmp::min(buf.len() as u64, remaining) as usize;
+        let mut copied = 0;
+
+        while copied < bytes_to_read {
+            let relative_sector =
+                u32::try_from(self.position / SECTOR_SIZE as u64).map_err(|_| {
+                    HadrisError::Context {
+                        kind: HadrisErrorKind::InvalidInput,
+                        message: Some("SD sector index overflow"),
+                    }
+                })?;
+
+            let offset = (self.position % SECTOR_SIZE as u64) as usize;
+
+            self.load_sector(relative_sector).await?;
+
+            let available = SECTOR_SIZE - offset;
+            let wanted = bytes_to_read - copied;
+            let count = core::cmp::min(available, wanted);
+
+            buf[copied..copied + count].copy_from_slice(&self.sector[offset..offset + count]);
+            copied += count;
+            self.position += count as u64;
+        }
+
+        Ok(copied)
+    }
+}
+
+impl<D> HadrisSeek for SdPartition<'_, D>
+where
+    D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
+{
+    type Error = HadrisErrorKind;
+
+    async fn seek(&mut self, position: SeekFrom) -> HadrisResult<u64, Self::Error> {
+        let new_position = match position {
+            SeekFrom::Start(offset) => offset,
+            SeekFrom::End(offset) => add_signed_offset(self.len_bytes(), offset)?,
+            SeekFrom::Current(offset) => add_signed_offset(self.position, offset)?,
+        };
+
+        self.position = new_position;
+
+        Ok(self.position)
+    }
+}
+
+fn add_signed_offset(base: u64, offset: i64) -> HadrisResult<u64> {
+    if offset >= 0 {
+        base.checked_add(offset as u64)
+            .ok_or_else(|| HadrisError::Context {
+                kind: HadrisErrorKind::InvalidInput,
+                message: Some("seek overflow"),
+            })
+    } else {
+        base.checked_sub(offset.unsigned_abs())
+            .ok_or_else(|| HadrisError::Context {
+                kind: HadrisErrorKind::InvalidInput,
+                message: Some("seek before start"),
+            })
+    }
+}
+
 pub async fn probe_sd_card<B>(bus: &mut B, rails: &mut PowerRails<'_>) -> bool
 where
     B: MmcBus,
 {
     println!();
-    println!("probing SD card...");
     println!("SDMMC slot 1, native 1-bit");
     println!("  CLK  = GPIO41");
     println!("  CMD  = GPIO42");
@@ -109,9 +263,20 @@ where
             Err(error) => println!("could not read SD capacity: {error:?}"),
         }
 
-        inspect_disk_layout(&mut card, &sector_0[0]).await;
-
+        let partition = inspect_disk_layout(&mut card, &sector_0[0]).await;
         print_sector_zero(&sector_0[0]);
+
+        let filesystem_ready = match partition {
+            Some(partition) => probe_fat_partiton(&mut card, partition).await,
+            None => {
+                println!();
+                println!("no mountable MBR partition found");
+
+                false
+            }
+        };
+
+        println!("FAT probe: {filesystem_ready}");
 
         rails.disable_sd();
         println!("SDMMC hardware probe passed");
@@ -155,7 +320,8 @@ fn print_sector_zero(sector: &[u8; SECTOR_SIZE]) {
 async fn inspect_disk_layout<B, D>(
     card: &mut BlockDevice<Card, &mut B, D, SECTOR_SIZE>,
     sector_0: &[u8; SECTOR_SIZE],
-) where
+) -> Option<Partition>
+where
     B: MmcBus,
     D: DelayNs,
 {
@@ -169,13 +335,13 @@ async fn inspect_disk_layout<B, D>(
     if looks_like_volume_boot_sector(sector_0) {
         println!("  no partition offset: filesystem starts at LBA 0");
         inspect_volume_boot_sector(0, sector_0);
-        return;
+        return None;
     }
 
     if !has_boot_signature(sector_0) {
         println!("  LBA 0 has no 55 aa signature");
         println!("  partition layout could not be identified");
-        return;
+        return None;
     }
 
     let mbr = inspect_mbr(sector_0);
@@ -183,7 +349,7 @@ async fn inspect_disk_layout<B, D>(
         println!();
         println!("protective GPT MBR detected");
         println!("GPT partition parsing is not implemented in this probe");
-        return;
+        return None;
     }
 
     let Some(partition) = mbr.first_data_partition else {
@@ -193,7 +359,7 @@ async fn inspect_disk_layout<B, D>(
             println!("MBR contains no directly inspectable primary data partition");
         }
 
-        return;
+        return None;
     };
 
     println!();
@@ -208,8 +374,12 @@ async fn inspect_disk_layout<B, D>(
         Ok(()) => {
             println!("partition boot sector read succeeded");
             inspect_volume_boot_sector(partition.first_lba, &boot_sector[0]);
+            Some(partition)
         }
-        Err(error) => println!("partition boot sector read failed: {error:?}"),
+        Err(error) => {
+            println!("partition boot sector read failed: {error:?}");
+            None
+        }
     }
 }
 
@@ -440,6 +610,91 @@ fn parse_fat_info(sector: &[u8; SECTOR_SIZE]) -> Option<FatInfo> {
         cluster_count,
         root_cluster,
     })
+}
+
+async fn probe_fat_partiton<D>(device: &mut D, partition: Partition) -> bool
+where
+    D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
+{
+    println!();
+    println!("mounting FAT filesystem...");
+    println!("  partition: {}", partition.index);
+    println!("  first LBA: {}", partition.first_lba);
+    println!("  sectors: {}", partition.sectors);
+
+    let partition = SdPartition::new(device, partition.first_lba, partition.sectors);
+    let filesystem = match FatVolume::open(partition).await {
+        Ok(filesystem) => filesystem,
+        Err(error) => {
+            println!("FAT mount failed: {error:?}");
+            return false;
+        }
+    };
+
+    println!("FAT filesystem mounted");
+
+    let volume = filesystem.volume_info();
+
+    println!("  OEM: {}", volume.oem_name());
+    println!("  volume label: {}", volume.volume_label());
+    println!("  filesystem field: {}", volume.fs_type_str());
+    println!();
+    println!("root directory:");
+
+    let root = filesystem.root_dir();
+    let mut entries = root.entries();
+    let mut entry_count = 0;
+
+    loop {
+        let Some(result) = entries.next_entry().await else {
+            break;
+        };
+
+        let entry = match result {
+            Ok(DirectoryEntry::Entry(entry)) => entry,
+            Err(error) => {
+                println!("root directory read failed: {error:?}");
+                return false;
+            }
+        };
+
+        print_directory_entry(&entry);
+        entry_count += 1;
+    }
+
+    println!();
+    println!("root entries: {entry_count}");
+    println!("FAT filesystem probe passed");
+
+    true
+}
+
+fn print_directory_entry(entry: &FileEntry) {
+    if entry.is_directory() {
+        print!("  [dir ] ");
+    } else {
+        print!("  [file] ");
+    }
+
+    print_entry_name(entry);
+
+    if entry.is_file() {
+        println!("  {} bytes", entry.len());
+    } else {
+        println!();
+    }
+}
+
+fn print_entry_name(entry: &FileEntry) {
+    if let Some(name) = entry.long_name() {
+        for character in name.chars() {
+            print!("{character}");
+        }
+
+        return;
+    }
+
+    print!("{}", entry.short_name().as_str(),);
 }
 
 fn looks_like_volume_boot_sector(sector: &[u8; SECTOR_SIZE]) -> bool {
