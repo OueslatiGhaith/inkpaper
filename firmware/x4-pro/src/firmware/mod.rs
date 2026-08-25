@@ -34,7 +34,6 @@ use crate::firmware::{
     probe::ProbePins,
     rtc::{RTC_UPDATES, RtcState, rtc_task},
     sleep_pins::{hold_for_deep_sleep, release_display_reset_hold},
-    storage::probe_sd_card,
     touch::{TouchController, touch_task},
 };
 
@@ -71,7 +70,8 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
 
     // establish the board's safe rail state before doing anything else
-    let mut rails = PowerRails::new(peripherals.GPIO1, peripherals.GPIO2, peripherals.GPIO5);
+    let (mut rails, sd_power) =
+        PowerRails::new(peripherals.GPIO1, peripherals.GPIO2, peripherals.GPIO5);
 
     let timer_group = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timer_group.timer0, peripherals.FROM_CPU_INTR0);
@@ -98,19 +98,23 @@ async fn main(spawner: Spawner) -> ! {
     println!();
     println!("InkPaper X4 Pro");
     println!("----------------");
-    println!("probing SD card...");
+    spawner.spawn(
+        storage::storage_task(
+            peripherals.SDHOST,
+            peripherals.GPIO41,
+            peripherals.GPIO42,
+            peripherals.GPIO40,
+            sd_power,
+        )
+        .unwrap(),
+    );
 
-    let sd_controller = SdHostController::new(peripherals.SDHOST, SdHostConfig::default()).unwrap();
-    let mut sd_slot = sd_controller
-        .slot::<1>(SlotConfig::default())
-        .unwrap()
-        .with_clk(peripherals.GPIO41)
-        .with_cmd(peripherals.GPIO42)
-        .with_data0(peripherals.GPIO40)
-        .into_async();
-
-    let sd_available = probe_sd_card(&mut sd_slot, &mut rails).await;
-    println!("SDMMC probe: {sd_available}");
+    let storage_ready = storage::wait_ready().await;
+    println!("storage ready: {storage_ready}");
+    if storage_ready {
+        let listed = storage::list_root_and_wait().await;
+        println!("storage root listing: {listed}");
+    }
 
     println!("probing display controller...");
 
@@ -275,6 +279,10 @@ async fn main(spawner: Spawner) -> ! {
         if action == InputAction::Sleep {
             println!("turning frontlight off...");
             frontlight_off_and_wait().await;
+
+            println!("shutting down storage ..");
+            storage::shutdown_and_wait().await;
+            println!("storage shutdown complete");
 
             println!("preparing display for deep sleep...");
 
