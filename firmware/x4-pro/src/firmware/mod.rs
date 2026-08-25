@@ -7,6 +7,7 @@ use esp_hal::{
     clock::CpuClock,
     gpio::{Input, InputConfig, Pull},
     i2c::master::{Config as I2cConfig, I2c},
+    sdmmc::{Config as SdHostConfig, SdHostController, SlotConfig},
     spi::{
         Mode,
         master::{Config as SpiConfig, Spi},
@@ -33,6 +34,7 @@ use crate::firmware::{
     probe::ProbePins,
     rtc::{RTC_UPDATES, RtcState, rtc_task},
     sleep_pins::{hold_for_deep_sleep, release_display_reset_hold},
+    storage::probe_sd_card,
     touch::{TouchController, touch_task},
 };
 
@@ -49,6 +51,7 @@ mod presenter;
 mod probe;
 mod rtc;
 mod sleep_pins;
+mod storage;
 mod touch;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -95,6 +98,20 @@ async fn main(spawner: Spawner) -> ! {
     println!();
     println!("InkPaper X4 Pro");
     println!("----------------");
+    println!("probing SD card...");
+
+    let sd_controller = SdHostController::new(peripherals.SDHOST, SdHostConfig::default()).unwrap();
+    let mut sd_slot = sd_controller
+        .slot::<1>(SlotConfig::default())
+        .unwrap()
+        .with_clk(peripherals.GPIO41)
+        .with_cmd(peripherals.GPIO42)
+        .with_data0(peripherals.GPIO40)
+        .into_async();
+
+    let sd_available = probe_sd_card(&mut sd_slot, &mut rails).await;
+    println!("SDMMC probe: {sd_available}");
+
     println!("probing display controller...");
 
     let mut probe_io = ProbePins::new(
@@ -279,6 +296,7 @@ async fn main(spawner: Spawner) -> ! {
             // to those known states.
             // the RTC pad-hold bits survive the ESP32-S3 deep-sleep interval and remain
             // set until the next boot deliberately releases them
+            rails.prepare_for_deep_sleep();
             hold_for_deep_sleep();
 
             // step5:

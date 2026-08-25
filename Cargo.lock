@@ -1468,6 +1468,8 @@ dependencies = [
 name = "inkpaper-x4-pro"
 version = "0.1.0"
 dependencies = [
+ "aligned",
+ "block-device-driver",
  "bm8563",
  "cw2017",
  "embassy-embedded-hal",
@@ -1487,6 +1489,7 @@ dependencies = [
  "gt911",
  "inkpaper-app",
  "inkpaper-ui",
+ "sdio",
  "ssd1677",
  "static_cell",
  "uc8179",

@@ -39,6 +39,14 @@ impl<'d> PowerRails<'d> {
         self.touch.set_high();
     }
 
+    pub fn enable_sd(&mut self) {
+        self.sd.set_low();
+    }
+
+    pub fn disable_sd(&mut self) {
+        self.sd.set_high();
+    }
+
     pub fn prepare_for_deep_sleep(&mut self) {
         // explicitly establish every state that will subsequently be latched
         // - GPIO1 HIGH: master peripheral rail stays asserted
