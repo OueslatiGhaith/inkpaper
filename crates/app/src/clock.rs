@@ -162,4 +162,10 @@ impl Clock {
 
         true
     }
+
+    pub fn set_utc(&mut self, time: TimeOfDay) -> bool {
+        self.utc = Some(time);
+
+        self.rebuild_label()
+    }
 }

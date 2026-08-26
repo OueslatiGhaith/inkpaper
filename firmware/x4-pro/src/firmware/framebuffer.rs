@@ -171,11 +171,11 @@ impl<'a> Framebuffer<'a> {
             return;
         }
 
-        assert!(
+        defmt::assert!(
             region.x as usize + region.width as usize <= PHYSICAL_WIDTH,
             "physical region exceeds framebuffer width"
         );
-        assert!(
+        defmt::assert!(
             region.y as usize + region.height as usize <= PHYSICAL_HEIGHT,
             "physical region exceeds framebuffer height"
         );

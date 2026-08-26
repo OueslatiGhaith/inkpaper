@@ -15,7 +15,10 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use inkpaper_app::{AppModel, BookSummary, InkPaperApp, Route, clock::ClockError, theme::Theme};
+use inkpaper_app::{
+    AppEvent, AppModel, BookSummary, ClockState as AppClockState, InkPaperApp, PlatformAction,
+    clock::TimeOfDay, theme::Theme,
+};
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
@@ -26,7 +29,7 @@ use crate::firmware::{
     display::X4Panel,
     framebuffer::FRAMEBUFFER_LEN,
     frontlight::{frontlight_off_and_wait, frontlight_task},
-    input::{Button, ButtonEdge, ButtonEvent, INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
+    input::{INPUT_EVENTS, InputEvent},
     power::PowerRails,
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
     presenter::{Presenter, UiRuntime},
@@ -365,66 +368,12 @@ fn handle_input_event(
     app: Entity<InkPaperApp>,
     event: InputEvent,
 ) -> InputAction {
-    match event {
-        InputEvent::Button(event) => handle_button_event(runtime, event),
-        InputEvent::Touch(event) => {
-            handle_touch_event(runtime, app, event);
-            InputAction::Continue
-        }
-    }
-}
+    let action = InkPaperApp::handle_event(runtime, app, AppEvent::Input(event.into_app()));
 
-fn handle_button_event(runtime: &mut UiRuntime, event: ButtonEvent) -> InputAction {
-    match (event.button(), event.edge()) {
-        (Button::Left, ButtonEdge::Pressed) => {
-            debug!("input button=left edge=pressed");
-            runtime.focus_previous();
-            InputAction::Continue
-        }
-        (Button::Right, ButtonEdge::Pressed) => {
-            debug!("input button=right edge=pressed");
-            runtime.focus_next();
-            InputAction::Continue
-        }
-        (Button::Power, ButtonEdge::Pressed) => {
-            // this will become suspend/awake once the power lifecycle is implemented
-            info!("input button=power edge=pressed");
-            InputAction::Sleep
-        }
-        (_, ButtonEdge::Released) => {
-            // releases are intentionally retained by the hardware abstraction event
-            // though focus navigation doesn't need them yet.
-            // they will matter for long press and power handling
-            InputAction::Continue
-        }
+    match action {
+        PlatformAction::None => InputAction::Continue,
+        PlatformAction::Suspend => InputAction::Sleep,
     }
-}
-
-fn handle_touch_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: TouchEvent) {
-    match event {
-        TouchEvent::Down(position) => {
-            debug!("input touch=down x={} y={}", position.x(), position.y(),);
-            runtime.begin_activation_at(to_ui_point(position));
-        }
-        TouchEvent::Up(position) => {
-            debug!("input touch=up x={} y={}", position.x(), position.y(),);
-            runtime
-                .complete_activation_at(to_ui_point(position))
-                .unwrap();
-        }
-        TouchEvent::HomeTap => {
-            debug!("input touch=home");
-            runtime
-                .update(app, |app, cx| {
-                    app.navigate(Route::Home, cx);
-                })
-                .unwrap();
-        }
-    }
-}
-
-fn to_ui_point(position: TouchPosition) -> Point {
-    Point::new(px(position.x() as i32), px(position.y() as i32))
 }
 
 fn apply_battery_reading(
@@ -438,57 +387,24 @@ fn apply_battery_reading(
         reading.millivolts(),
     );
 
-    runtime
-        .update(app, |app, cx| {
-            let old_percent = app.model().battery().value();
-            if old_percent == reading.percent() {
-                return;
-            }
+    let action =
+        InkPaperApp::handle_event(runtime, app, AppEvent::BatteryPercent(reading.percent()));
 
-            app.model_mut().set_battery_percent(reading.percent());
-            cx.notify();
-        })
-        .unwrap();
+    defmt::debug_assert_eq!(action, PlatformAction::None,);
 }
 
 fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: RtcState) {
-    let result: Result<(), ClockError> = runtime
-        .update(app, |app, cx| {
-            let was_available = app.model().clock().is_available();
+    let state = match state {
+        RtcState::Invalid => AppClockState::Unavailable,
+        RtcState::Valid(datetime) => {
+            let time = TimeOfDay::new(datetime.hour(), datetime.minute())
+                .expect("BM8563 DateTime guarantees a valid hour and minute");
 
-            match state {
-                RtcState::Invalid => {
-                    let changed = app.model_mut().clock_mut().invalidate();
-                    // invalidation: a clock that was visible is worth 1 refresh:
-                    // continuing to show a time we now know is untrustworthy is worse
-                    // than the refresh
-                    if changed && was_available {
-                        cx.notify();
-                    }
+            AppClockState::Utc(time)
+        }
+    };
 
-                    Ok(())
-                }
-                RtcState::Valid(datetime) => {
-                    app.model_mut()
-                        .clock_mut()
-                        .set_utc_time(datetime.hour(), datetime.minute())?;
+    let action = InkPaperApp::handle_event(runtime, app, AppEvent::Clock(state));
 
-                    // first valid RTC value after boot gets one refresh so
-                    // "--:--" disappears
-                    // subsequent minute ticks update only RAM. They will become visible
-                    // during the next ordinary UI refresh instead of forcing an e-ink
-                    // update every minute
-                    if !was_available {
-                        cx.notify();
-                    }
-
-                    Ok(())
-                }
-            }
-        })
-        .unwrap();
-
-    if let Err(error) = result {
-        warn!("invalid RTC time received error={:?}", error);
-    }
+    defmt::debug_assert_eq!(action, PlatformAction::None,);
 }
