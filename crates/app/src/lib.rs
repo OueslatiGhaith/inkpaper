@@ -6,6 +6,7 @@ pub mod components;
 pub mod event;
 pub mod model;
 pub mod screens;
+pub mod storage;
 pub mod theme;
 
 pub use app::{InkPaperApp, Route};
@@ -15,4 +16,7 @@ pub use event::{
     TouchEvent, TouchPosition,
 };
 
-pub use model::{AppModel, BookSummary, ModelError, Percent};
+pub use model::{
+    AppModel, BOOK_PATH_BYTES, BookSummary, LIBRARY_PAGE_CAPACITY, LibraryEntry, LibraryPage,
+    ModelError, Percent,
+};

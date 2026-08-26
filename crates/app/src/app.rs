@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 use crate::{
     AppModel,
     components::{BottomNav, TopBar},
-    screens::{HomeScreen, PlaceholderScreen},
+    screens::{HomeScreen, LibraryScreen, PlaceholderScreen},
     theme::Theme,
 };
 
@@ -75,12 +75,7 @@ impl Render for InkPaperApp {
 
         let screen = match route {
             Route::Home => Either::Left(HomeScreen::new(model)),
-
-            Route::Library => Either::Right(Either::Left(PlaceholderScreen::new(
-                "Library",
-                "The library screen will live here.",
-            ))),
-
+            Route::Library => Either::Right(Either::Left(LibraryScreen::new(model.library()))),
             Route::Settings => Either::Right(Either::Right(PlaceholderScreen::new(
                 "Settings",
                 "Device and reader settings will live here.",

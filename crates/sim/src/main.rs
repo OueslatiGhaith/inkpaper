@@ -40,10 +40,46 @@ type UiRuntime = Runtime<
 >;
 
 fn demo_model() -> AppModel {
-    let book = BookSummary::try_new("The Left Hand of Darkness", "Ursula K. Le Guin", 68)
+    let current_book = BookSummary::try_new("The Left Hand of Darkness", "Ursula K. Le Guin", 68)
         .expect("demo book metadata must fit");
 
-    AppModel::new(73, book)
+    let mut model = AppModel::new(73, current_book.clone());
+
+    let books = [
+        ("/Books/The Left Hand of Darkness.epub", current_book),
+        (
+            "/Books/Dune.epub",
+            BookSummary::try_new("Dune", "Frank Herbert", 21).unwrap(),
+        ),
+        (
+            "/Books/The Dispossessed.epub",
+            BookSummary::try_new("The Dispossessed", "Ursula K. Le Guin", 0).unwrap(),
+        ),
+        (
+            "/Books/Foundation.epub",
+            BookSummary::try_new("Foundation", "Isaac Asimov", 84).unwrap(),
+        ),
+        (
+            "/Books/Neuromancer.epub",
+            BookSummary::try_new("Neuromancer", "William Gibson", 12).unwrap(),
+        ),
+        (
+            "/Books/Blindsight.epub",
+            BookSummary::try_new("Blindsight", "Peter Watts", 0).unwrap(),
+        ),
+    ];
+
+    for (path, summary) in books {
+        model
+            .library_mut()
+            .try_push(
+                inkpaper_app::LibraryEntry::try_new(path, summary)
+                    .expect("demo book path must fit"),
+            )
+            .expect("demo library must fit one page");
+    }
+
+    model
 }
 
 fn to_touch_position(point: EgPoint) -> AppTouchPosition {
