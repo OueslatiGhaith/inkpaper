@@ -10,7 +10,12 @@ use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     sdl2::{Keycode, MouseButton},
 };
-use inkpaper_app::{AppModel, BookSummary, InkPaperApp, theme::Theme};
+use inkpaper_app::{
+    AppEvent, AppModel, BookSummary, Button as AppButton, ButtonEdge as AppButtonEdge,
+    ButtonEvent as AppButtonEvent, InkPaperApp, InputEvent as AppInputEvent, PlatformAction,
+    ScrollEvent as AppScrollEvent, TouchEvent as AppTouchEvent, TouchPosition as AppTouchPosition,
+    theme::Theme,
+};
 use inkpaper_ui::{backend::EmbeddedGraphicsPainter, prelude::*};
 
 const DISPLAY_WIDTH: u32 = 480;
@@ -41,8 +46,37 @@ fn demo_model() -> AppModel {
     AppModel::new(73, book)
 }
 
-fn to_ui_point(point: EgPoint) -> Point {
-    Point::new(px(point.x), px(point.y))
+fn to_touch_position(point: EgPoint) -> AppTouchPosition {
+    let x = point.x.clamp(0, DISPLAY_WIDTH as i32 - 1);
+    let y = point.y.clamp(0, DISPLAY_HEIGHT as i32 - 1);
+
+    AppTouchPosition::new(x as u16, y as u16)
+}
+
+fn button_event(button: AppButton, edge: AppButtonEdge) -> AppEvent {
+    AppEvent::Input(AppInputEvent::Button(AppButtonEvent::new(button, edge)))
+}
+
+fn key_event(keycode: Keycode, edge: AppButtonEdge) -> Option<AppEvent> {
+    let button = match keycode {
+        Keycode::Down | Keycode::Right | Keycode::Tab => AppButton::Next,
+        Keycode::Up | Keycode::Left => AppButton::Previous,
+        Keycode::Return | Keycode::Space => AppButton::Activate,
+        // P represents the physical power button in the simulator.
+        // The application decides that pressing it requests suspend.
+        Keycode::P => AppButton::Power,
+        _ => return None,
+    };
+
+    Some(button_event(button, edge))
+}
+
+fn handle_app_event(
+    runtime: &mut UiRuntime,
+    app: Entity<InkPaperApp>,
+    event: AppEvent,
+) -> PlatformAction {
+    InkPaperApp::handle_event(runtime, app, event)
 }
 
 fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion) {
@@ -92,34 +126,6 @@ fn update_ui(
     }
 }
 
-fn handle_key_down(runtime: &mut UiRuntime, keycode: Keycode) {
-    match keycode {
-        Keycode::Down | Keycode::Right | Keycode::Tab => {
-            runtime.focus_next();
-        }
-        Keycode::Up | Keycode::Left => {
-            runtime.focus_previous();
-        }
-        Keycode::Return | Keycode::Space => {
-            runtime.begin_focused_activation();
-        }
-        Keycode::C => {
-            runtime.cancel_activation();
-            runtime.clear_focus();
-        }
-        _ => {}
-    }
-}
-
-fn handle_key_up(runtime: &mut UiRuntime, keycode: Keycode) {
-    match keycode {
-        Keycode::Return | Keycode::Space => {
-            runtime.complete_focused_activation().unwrap();
-        }
-        _ => {}
-    }
-}
-
 fn layout_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
     let painter = EmbeddedGraphicsPainter::new(display, FONTS, []);
 
@@ -139,47 +145,77 @@ fn main() {
     let output_settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("InkPaper X4 Pro", &output_settings);
 
-    let mut mouse_position = Point::ZERO;
+    let mut mouse_position = AppTouchPosition::new(0, 0);
 
     'running: loop {
         window.update(&display);
 
         for event in window.events() {
-            match event {
+            let action = match event {
                 SimulatorEvent::Quit => break 'running,
-                SimulatorEvent::MouseMove { point } => mouse_position = to_ui_point(point),
+                SimulatorEvent::MouseMove { point } => {
+                    mouse_position = to_touch_position(point);
+                    PlatformAction::None
+                }
                 SimulatorEvent::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     point,
                 } => {
-                    mouse_position = to_ui_point(point);
-                    runtime.begin_activation_at(mouse_position);
+                    mouse_position = to_touch_position(point);
+                    handle_app_event(
+                        &mut runtime,
+                        app,
+                        AppEvent::Input(AppInputEvent::Touch(AppTouchEvent::Down(mouse_position))),
+                    )
                 }
                 SimulatorEvent::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     point,
                 } => {
-                    mouse_position = to_ui_point(point);
-                    runtime.complete_activation_at(mouse_position).unwrap();
+                    mouse_position = to_touch_position(point);
+                    handle_app_event(
+                        &mut runtime,
+                        app,
+                        AppEvent::Input(AppInputEvent::Touch(AppTouchEvent::Up(mouse_position))),
+                    )
                 }
                 SimulatorEvent::MouseWheel { scroll_delta, .. } => {
                     const SCROLL_STEP: i32 = 18;
-
-                    runtime.scroll_at(
-                        mouse_position,
-                        Offset::new(
-                            px(-scroll_delta.x.saturating_mul(SCROLL_STEP)),
-                            px(-scroll_delta.y.saturating_mul(SCROLL_STEP)),
-                        ),
-                    );
+                    let delta_x = -scroll_delta.x.saturating_mul(SCROLL_STEP);
+                    let delta_y = -scroll_delta.y.saturating_mul(SCROLL_STEP);
+                    handle_app_event(
+                        &mut runtime,
+                        app,
+                        AppEvent::Input(AppInputEvent::Scroll(AppScrollEvent::new(
+                            mouse_position,
+                            delta_x,
+                            delta_y,
+                        ))),
+                    )
                 }
                 SimulatorEvent::KeyDown {
                     keycode,
                     repeat: false,
                     ..
-                } => handle_key_down(&mut runtime, keycode),
-                SimulatorEvent::KeyUp { keycode, .. } => handle_key_up(&mut runtime, keycode),
-                _ => {}
+                } => match key_event(keycode, AppButtonEdge::Pressed) {
+                    Some(event) => handle_app_event(&mut runtime, app, event),
+                    None => PlatformAction::None,
+                },
+                SimulatorEvent::KeyUp { keycode, .. } => {
+                    match key_event(keycode, AppButtonEdge::Released) {
+                        Some(event) => handle_app_event(&mut runtime, app, event),
+                        None => PlatformAction::None,
+                    }
+                }
+                _ => PlatformAction::None,
+            };
+
+            match action {
+                PlatformAction::None => {}
+                PlatformAction::Suspend => {
+                    // the real X4 platform performs its complete deep-sleep sequence.
+                    break 'running;
+                }
             }
         }
 

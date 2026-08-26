@@ -1,4 +1,4 @@
-use inkpaper_ui::{Entity, Point, Runtime, px};
+use inkpaper_ui::{Entity, Offset, Point, Runtime, px};
 
 use crate::{InkPaperApp, Route, clock::TimeOfDay};
 
@@ -70,9 +70,40 @@ pub enum TouchEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ScrollEvent {
+    position: TouchPosition,
+    delta_x: i32,
+    delta_y: i32,
+}
+
+impl ScrollEvent {
+    pub const fn new(position: TouchPosition, delta_x: i32, delta_y: i32) -> Self {
+        Self {
+            position,
+            delta_x,
+            delta_y,
+        }
+    }
+
+    pub const fn position(self) -> TouchPosition {
+        self.position
+    }
+
+    pub const fn delta_x(self) -> i32 {
+        self.delta_x
+    }
+
+    pub const fn delta_y(self) -> i32 {
+        self.delta_y
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum InputEvent {
     Button(ButtonEvent),
     Touch(TouchEvent),
+    Scroll(ScrollEvent),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +180,12 @@ impl InkPaperApp {
                                 app.navigate(Route::Home, cx);
                             })
                             .expect("InkPaper application entity must remain alive");
+                    }
+                    InputEvent::Scroll(event) => {
+                        runtime.scroll_at(
+                            to_ui_point(event.position()),
+                            Offset::new(px(event.delta_x()), px(event.delta_y())),
+                        );
                     }
                 }
 

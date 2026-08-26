@@ -11,8 +11,8 @@ pub mod theme;
 pub use app::{InkPaperApp, Route};
 
 pub use event::{
-    AppEvent, Button, ButtonEdge, ButtonEvent, ClockState, InputEvent, PlatformAction, TouchEvent,
-    TouchPosition,
+    AppEvent, Button, ButtonEdge, ButtonEvent, ClockState, InputEvent, PlatformAction, ScrollEvent,
+    TouchEvent, TouchPosition,
 };
 
 pub use model::{AppModel, BookSummary, ModelError, Percent};
