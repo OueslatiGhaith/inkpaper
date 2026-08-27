@@ -1,20 +1,4 @@
-use crate::{Color, Pixels, Styled, TextStyle};
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct FontId(u16);
-
-impl FontId {
-    pub const DEFAULT: Self = Self(0);
-
-    pub const fn new(value: u16) -> Self {
-        Self(value)
-    }
-
-    pub(crate) const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
+use crate::{Color, FontId, Pixels, Styled, TextStyle};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

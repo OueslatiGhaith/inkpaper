@@ -1,6 +1,6 @@
 use crate::{
-    Color, Invalidation, Length, LineHeight, Pixels, TextAlign, TextMaxLines, TextOverflow,
-    TextWrap, px, text_style::FontId,
+    Color, FontId, Invalidation, Length, LineHeight, Pixels, TextAlign, TextMaxLines, TextOverflow,
+    TextWrap, px,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
