@@ -1,10 +1,10 @@
 use defmt::Format;
-use embedded_graphics::mono_font::{
-    MonoFont,
-    ascii::{FONT_6X10, FONT_10X20},
-};
+use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_10X20};
 use inkpaper_app::InkPaperApp;
-use inkpaper_ui::{RenderInvalidation, backend::EmbeddedGraphicsPainter, prelude::*};
+use inkpaper_ui::{
+    backend::{EmbeddedGraphicsPainter, MonoFontFace},
+    prelude::*,
+};
 
 use crate::firmware::framebuffer::{
     FRAMEBUFFER_LEN, Framebuffer, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation, PHYSICAL_HEIGHT,
@@ -12,10 +12,14 @@ use crate::firmware::framebuffer::{
 };
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
-
 const DISPLAY_BOUNDS: Rect = Rect::new(Point::ZERO, DISPLAY_SIZE);
 
-const FONTS: [&MonoFont; 2] = [&FONT_6X10, &FONT_10X20];
+static BODY_FONT: MonoFontFace = MonoFontFace::new(&FONT_6X10);
+static HEADING_FONT: MonoFontFace = MonoFontFace::new(&FONT_10X20);
+pub const UI_GLYPH_CACHE_BYTES: usize = 8 * 1024;
+const UI_GLYPH_CACHE_SLOTS: usize = 64;
+
+type UiFontResources<'storage> = FontResources<'static, 'storage, 2, UI_GLYPH_CACHE_SLOTS>;
 
 pub type UiRuntime = Runtime<
     4_096, // entity bytes
@@ -65,10 +69,24 @@ impl FrameUpdate {
     }
 }
 
-#[derive(Default)]
-pub struct Presenter;
+pub struct Presenter<'storage> {
+    fonts: UiFontResources<'storage>,
+}
 
-impl Presenter {
+impl<'storage> Presenter<'storage> {
+    pub fn new(glyph_storage: &'storage mut [u8]) -> Self {
+        let mut fonts = FontResources::new(glyph_storage);
+        let body = fonts.register(&BODY_FONT).expect("body font slot must fit");
+        let heading = fonts
+            .register(&HEADING_FONT)
+            .expect("heading font slot must fit");
+
+        defmt::assert_eq!(body, FontId::DEFAULT,);
+        defmt::assert_eq!(heading, FontId::new(1,),);
+
+        Self { fonts }
+    }
+
     pub fn render_initial(
         &mut self,
         runtime: &mut UiRuntime,
@@ -77,8 +95,9 @@ impl Presenter {
     ) -> FrameUpdate {
         let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
 
-        let physical_damage = render_invalidation(runtime, app, frame, invalidation)
-            .expect("a full initial render must produce physical damage");
+        let physical_damage =
+            render_invalidation(runtime, app, frame, &mut self.fonts, invalidation)
+                .expect("a full initial render must produce physical damage");
 
         FrameUpdate::new(RefreshRequest::Full, physical_damage)
     }
@@ -94,7 +113,8 @@ impl Presenter {
             return None;
         }
 
-        let physical_damage = render_invalidation(runtime, app, frame, invalidation)?;
+        let physical_damage =
+            render_invalidation(runtime, app, frame, &mut self.fonts, invalidation)?;
 
         Some(FrameUpdate::new(RefreshRequest::Fast, physical_damage))
     }
@@ -104,6 +124,7 @@ fn render_invalidation(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
     frame: &mut [u8; FRAMEBUFFER_LEN],
+    fonts: &mut UiFontResources<'_>,
     invalidation: RenderInvalidation,
 ) -> Option<Region> {
     if invalidation.is_none() {
@@ -117,7 +138,7 @@ fn render_invalidation(
 
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
     {
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, FONTS, []);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display, fonts, []);
         match invalidation.kind() {
             Invalidation::None => return None,
             Invalidation::Paint => {}

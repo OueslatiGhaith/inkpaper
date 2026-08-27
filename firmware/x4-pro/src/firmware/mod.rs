@@ -32,7 +32,7 @@ use crate::firmware::{
     input::{INPUT_EVENTS, InputEvent},
     power::PowerRails,
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
-    presenter::{Presenter, UiRuntime},
+    presenter::{Presenter, UI_GLYPH_CACHE_BYTES, UiRuntime},
     probe::ProbePins,
     rtc::{RTC_UPDATES, RtcState, rtc_task},
     sleep_pins::{hold_for_deep_sleep, release_display_reset_hold},
@@ -58,6 +58,7 @@ mod touch;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 static FRAMEBUFFER: StaticCell<[u8; FRAMEBUFFER_LEN]> = StaticCell::new();
+static UI_GLYPH_STORAGE: StaticCell<[u8; UI_GLYPH_CACHE_BYTES]> = StaticCell::new();
 static UI_RUNTIME: StaticCell<UiRuntime> = StaticCell::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,7 +185,8 @@ async fn main(spawner: Spawner) -> ! {
 
     let model = demo_model();
     let app = runtime.create(move |_| InkPaperApp::new(model)).unwrap();
-    let mut presenter = Presenter::default();
+    let glyph_storage = UI_GLYPH_STORAGE.init_with(|| [0; UI_GLYPH_CACHE_BYTES]);
+    let mut presenter = Presenter::new(glyph_storage);
 
     debug!("building UI frame...");
     let update = presenter.render_initial(runtime, app, frame);

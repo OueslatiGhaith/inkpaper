@@ -4,11 +4,8 @@ use embedded_graphics::{
     draw_target::DrawTarget,
     geometry::OriginDimensions,
     image::{GetPixel, ImageDrawable},
-    mono_font::{
-        MonoFont,
-        ascii::{FONT_6X10, FONT_10X20},
-    },
-    pixelcolor::{Rgb888, RgbColor},
+    mono_font::ascii::{FONT_6X10, FONT_10X20},
+    pixelcolor::Rgb888,
     prelude::{Pixel as EgPixel, Point as EgPoint, Size as EgSize},
     primitives::Rectangle,
 };
@@ -19,7 +16,7 @@ use embedded_graphics_simulator::{
 use heapless::String;
 use inkpaper_ui::{
     DamageRegion, Offset,
-    backend::{EmbeddedGraphicsImage, EmbeddedGraphicsPainter},
+    backend::{EmbeddedGraphicsImage, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
 
@@ -38,7 +35,9 @@ type UiRuntime = Runtime<
     128,    // persistent element states
 >;
 
-const FONTS: [&MonoFont; 2] = [&FONT_6X10, &FONT_10X20];
+static BODY_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
+static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_10X20);
+type UiFonts<'storage> = FontResources<'static, 'storage, 2, 128>;
 
 const DEMO_IMAGE_WIDTH: u32 = 48;
 const DEMO_IMAGE_HEIGHT: u32 = 24;
@@ -949,32 +948,46 @@ fn to_ui_point(point: EgPoint) -> Point {
     Point::new(px(point.x), px(point.y))
 }
 
-fn update_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorDisplay<Rgb888>) {
+fn update_ui(
+    runtime: &mut UiRuntime,
+    app: Entity<App>,
+    fonts: &mut UiFonts<'_>,
+    display: &mut SimulatorDisplay<Rgb888>,
+) {
     let invalidation = runtime.take_render_invalidation();
     match invalidation.kind() {
         Invalidation::None => {}
-        Invalidation::Paint => paint_ui(runtime, display, invalidation.damage()),
+        Invalidation::Paint => paint_ui(runtime, fonts, display, invalidation.damage()),
         Invalidation::Layout => {
-            layout_ui(runtime, display);
-            paint_ui(runtime, display, invalidation.damage());
+            layout_ui(runtime, fonts, display);
+            paint_ui(runtime, fonts, display, invalidation.damage());
         }
-        Invalidation::Rebuild => rebuild_ui(runtime, app, display),
+        Invalidation::Rebuild => rebuild_ui(runtime, app, fonts, display),
     }
 }
 
-fn layout_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
-    let painter = EmbeddedGraphicsPainter::new(display, FONTS, []);
+fn layout_ui(
+    runtime: &mut UiRuntime,
+    fonts: &mut UiFonts<'_>,
+    display: &mut SimulatorDisplay<Rgb888>,
+) {
+    let painter = EmbeddedGraphicsPainter::new(display, fonts, []);
     runtime.layout(DISPLAY_SIZE, &painter).unwrap();
 }
 
-fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion) {
+fn paint_ui(
+    runtime: &mut UiRuntime,
+    fonts: &mut UiFonts<'_>,
+    display: &mut SimulatorDisplay<Rgb888>,
+    damage: DamageRegion,
+) {
     if damage.is_none() {
         return;
     }
 
     let demo_image: EmbeddedGraphicsImage<'static, SimulatorDisplay<Rgb888>> =
         EmbeddedGraphicsImage::new(&DEMO_IMAGE);
-    let mut painter = EmbeddedGraphicsPainter::new(display, FONTS, [demo_image]);
+    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, [demo_image]);
 
     painter.clear_damage(damage, Color::BLACK).unwrap();
     runtime
@@ -983,10 +996,15 @@ fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, dam
         .unwrap();
 }
 
-fn rebuild_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorDisplay<Rgb888>) {
+fn rebuild_ui(
+    runtime: &mut UiRuntime,
+    app: Entity<App>,
+    fonts: &mut UiFonts<'_>,
+    display: &mut SimulatorDisplay<Rgb888>,
+) {
     runtime.rebuild(app).unwrap();
-    layout_ui(runtime, display);
-    paint_ui(runtime, display, DamageRegion::full());
+    layout_ui(runtime, fonts, display);
+    paint_ui(runtime, fonts, display, DamageRegion::full());
 }
 
 fn handle_key_down(runtime: &mut UiRuntime, keycode: Keycode) {
@@ -1017,13 +1035,25 @@ fn handle_key_up(runtime: &mut UiRuntime, keycode: Keycode) {
     }
 }
 
+fn make_fonts(glyph_storage: &mut [u8]) -> UiFonts<'_> {
+    let mut fonts = FontResources::new(glyph_storage);
+
+    assert_eq!(fonts.register(&BODY_FONT,).unwrap(), FontId::DEFAULT);
+    assert_eq!(fonts.register(&HEADING_FONT).unwrap(), FontId::new(1));
+
+    fonts
+}
+
 fn main() {
     let mut runtime = UiRuntime::default();
 
     let app = runtime.create(App::new).unwrap();
+    let mut glyph_storage = [0u8; 16 * 1024];
+    let mut fonts = make_fonts(&mut glyph_storage);
+
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, app, &mut display);
+    rebuild_ui(&mut runtime, app, &mut fonts, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
     let mut window = Window::new(
@@ -1074,6 +1104,6 @@ fn main() {
             }
         }
 
-        update_ui(&mut runtime, app, &mut display);
+        update_ui(&mut runtime, app, &mut fonts, &mut display);
     }
 }

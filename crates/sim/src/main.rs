@@ -1,9 +1,6 @@
 use embedded_graphics::{
     geometry::{Point as EgPoint, Size as EgSize},
-    mono_font::{
-        MonoFont,
-        ascii::{FONT_6X10, FONT_10X20},
-    },
+    mono_font::ascii::{FONT_6X10, FONT_10X20},
     pixelcolor::Rgb888,
 };
 use embedded_graphics_simulator::{
@@ -16,16 +13,20 @@ use inkpaper_app::{
     ScrollEvent as AppScrollEvent, TouchEvent as AppTouchEvent, TouchPosition as AppTouchPosition,
     theme::Theme,
 };
-use inkpaper_ui::{backend::EmbeddedGraphicsPainter, prelude::*};
+use inkpaper_ui::{
+    backend::{EmbeddedGraphicsPainter, MonoFontFace},
+    prelude::*,
+};
 
 const DISPLAY_WIDTH: u32 = 480;
 const DISPLAY_HEIGHT: u32 = 800;
 
 const DISPLAY_SIZE_EG: EgSize = EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-
 const DISPLAY_SIZE: Size = Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32));
 
-const FONTS: [&MonoFont; 2] = [&FONT_6X10, &FONT_10X20];
+static BODY_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
+static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_10X20);
+type UiFonts<'storage> = FontResources<'static, 'storage, 2, 128>;
 
 type UiRuntime = Runtime<
     16_384, // entity bytes
@@ -82,6 +83,15 @@ fn demo_model() -> AppModel {
     model
 }
 
+fn make_fonts(glyph_storage: &mut [u8]) -> UiFonts<'_> {
+    let mut fonts = FontResources::new(glyph_storage);
+
+    assert_eq!(fonts.register(&BODY_FONT,).unwrap(), FontId::DEFAULT);
+    assert_eq!(fonts.register(&HEADING_FONT).unwrap(), FontId::new(1));
+
+    fonts
+}
+
 fn to_touch_position(point: EgPoint) -> AppTouchPosition {
     let x = point.x.clamp(0, DISPLAY_WIDTH as i32 - 1);
     let y = point.y.clamp(0, DISPLAY_HEIGHT as i32 - 1);
@@ -115,12 +125,17 @@ fn handle_app_event(
     InkPaperApp::handle_event(runtime, app, event)
 }
 
-fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion) {
+fn paint_ui(
+    runtime: &mut UiRuntime,
+    display: &mut SimulatorDisplay<Rgb888>,
+    fonts: &mut UiFonts<'_>,
+    damage: DamageRegion,
+) {
     if damage.is_none() {
         return;
     }
 
-    let mut painter = EmbeddedGraphicsPainter::new(display, FONTS, []);
+    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, []);
 
     painter.clear_damage(damage, Color::WHITE).unwrap();
 
@@ -133,16 +148,18 @@ fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, dam
 fn rebuild_ui(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
+    fonts: &mut UiFonts<'_>,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
     runtime.rebuild(app).unwrap();
-    layout_ui(runtime, display);
-    paint_ui(runtime, display, DamageRegion::full());
+    layout_ui(runtime, fonts, display);
+    paint_ui(runtime, display, fonts, DamageRegion::full());
 }
 
 fn update_ui(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
+    fonts: &mut UiFonts<'_>,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
     let invalidation = runtime.take_render_invalidation();
@@ -150,20 +167,24 @@ fn update_ui(
     match invalidation.kind() {
         Invalidation::None => {}
         Invalidation::Paint => {
-            paint_ui(runtime, display, invalidation.damage());
+            paint_ui(runtime, display, fonts, invalidation.damage());
         }
         Invalidation::Layout => {
-            layout_ui(runtime, display);
-            paint_ui(runtime, display, invalidation.damage());
+            layout_ui(runtime, fonts, display);
+            paint_ui(runtime, display, fonts, invalidation.damage());
         }
         Invalidation::Rebuild => {
-            rebuild_ui(runtime, app, display);
+            rebuild_ui(runtime, app, fonts, display);
         }
     }
 }
 
-fn layout_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
-    let painter = EmbeddedGraphicsPainter::new(display, FONTS, []);
+fn layout_ui(
+    runtime: &mut UiRuntime,
+    fonts: &mut UiFonts<'_>,
+    display: &mut SimulatorDisplay<Rgb888>,
+) {
+    let painter = EmbeddedGraphicsPainter::new(display, fonts, []);
 
     runtime.layout(DISPLAY_SIZE, &painter).unwrap();
 }
@@ -173,10 +194,12 @@ fn main() {
     runtime.set_global(Theme::EINK).unwrap();
     let model = demo_model();
     let app = runtime.create(move |_| InkPaperApp::new(model)).unwrap();
+    let mut glyph_storage = [0u8; 16 * 1024];
+    let mut fonts = make_fonts(&mut glyph_storage);
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, app, &mut display);
+    rebuild_ui(&mut runtime, app, &mut fonts, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("InkPaper X4 Pro", &output_settings);
@@ -255,6 +278,6 @@ fn main() {
             }
         }
 
-        update_ui(&mut runtime, app, &mut display);
+        update_ui(&mut runtime, app, &mut fonts, &mut display);
     }
 }

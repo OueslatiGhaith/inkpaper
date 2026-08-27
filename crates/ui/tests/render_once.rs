@@ -3,7 +3,10 @@ use embedded_graphics::{
 };
 use embedded_graphics_simulator::SimulatorDisplay;
 use heapless::String;
-use inkpaper_ui::{backend::EmbeddedGraphicsPainter, prelude::*};
+use inkpaper_ui::{
+    backend::{EmbeddedGraphicsPainter, MonoFontFace},
+    prelude::*,
+};
 
 const DISPLAY_WIDTH: u32 = 128;
 const DISPLAY_HEIGHT: u32 = 64;
@@ -90,6 +93,17 @@ fn render_once_component_can_be_used_as_a_child() {
     assert!(runtime.frame_text_bytes_used() > 0);
 }
 
+static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
+
+fn test_font_resources(storage: &mut [u8]) -> FontResources<'static, '_, 1, 64> {
+    let mut resources = FontResources::new(storage);
+
+    let id = resources.register(&TEST_FONT_FACE).unwrap();
+    assert_eq!(id, FontId::DEFAULT,);
+
+    resources
+}
+
 #[test]
 fn render_once_component_can_borrow_from_persistent_component() {
     let mut runtime = TestRuntime::default();
@@ -100,7 +114,9 @@ fn render_once_component_can_borrow_from_persistent_component() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 
-    let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+    let mut glyph_storage = [0; 4096];
+    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
     let size = runtime.layout(
         Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32)),
@@ -127,7 +143,9 @@ fn render_once_components_can_nest_other_render_once_components() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 
-    let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+    let mut glyph_storage = [0; 4096];
+    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
     runtime
         .layout(

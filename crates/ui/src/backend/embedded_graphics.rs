@@ -5,7 +5,6 @@ use embedded_graphics::{
     draw_target::DrawTargetExt,
     geometry::{Point as EgPoint, Size as EgSize},
     image::{GetPixel as EgGetPixel, Image as EgImage, ImageDrawable as EgImageDrawable},
-    mono_font::{MonoFont as EgMonoFont, MonoTextStyle as EgMonoTextStyle},
     pixelcolor::Rgb888 as EgRgb888,
     prelude::DrawTarget as EgDrawTarget,
     primitives::{
@@ -13,15 +12,22 @@ use embedded_graphics::{
         PrimitiveStyleBuilder as EgPrimitiveStyleBuilder, Rectangle as EgRectangle,
         RoundedRectangle as EgRoundedRectangle, StrokeAlignment as EgStrokeAlignment,
     },
-    text::{Baseline as EgBaseline, Text as EgText},
 };
 
 use crate::{
-    BoxPaint, CanvasDrawFn, CanvasPainter, Color, DamageRegion, FontId, ImageFit, ImageId,
-    ImageSource, LineHeight, Painter, Pixels, Point, Rect, ResolvedTextStyle, Size, TextAlign,
-    TextMeasurer, fitted_image_bounds, px,
+    BoxPaint, CanvasPainter, Color, DamageRegion, FontFace, FontId, FontResources, GlyphBitmap,
+    GlyphCacheError, GlyphId, ImageFit, ImageId, ImageSource, LineHeight, Painter, Pixels, Point,
+    Rect, ResolvedTextStyle, Size, TextAlign, TextMeasurer, fitted_image_bounds, px,
     text_layout::{ELLIPSIS, for_each_visible_text_line},
 };
+
+const NATIVE_FONT_SIZE: u16 = 0;
+
+#[derive(Debug)]
+pub enum EmbeddedGraphicsError<E> {
+    Target(E),
+    Font(GlyphCacheError),
+}
 
 pub struct EmbeddedGraphicsImage<'image, D>
 where
@@ -250,34 +256,60 @@ where
 
 pub struct EmbeddedGraphicsPainter<
     'target,
+    'resources,
     'font,
+    'storage,
     'image,
     D,
     const FONTS: usize,
+    const GLYPH_SLOTS: usize,
     const IMAGES: usize,
 > where
     D: EgDrawTarget,
 {
     target: &'target mut D,
-    fonts: [&'font EgMonoFont<'font>; FONTS],
+    font_resources: &'resources mut FontResources<'font, 'storage, FONTS, GLYPH_SLOTS>,
     images: [EmbeddedGraphicsImage<'image, D>; IMAGES],
 }
 
-impl<'target, 'font, 'image, D, const FONTS: usize, const IMAGES: usize>
-    EmbeddedGraphicsPainter<'target, 'font, 'image, D, FONTS, IMAGES>
+impl<
+    'target,
+    'resources,
+    'font,
+    'storage,
+    'image,
+    D,
+    const FONTS: usize,
+    const GLYPH_SLOTS: usize,
+    const IMAGES: usize,
+>
+    EmbeddedGraphicsPainter<
+        'target,
+        'resources,
+        'font,
+        'storage,
+        'image,
+        D,
+        FONTS,
+        GLYPH_SLOTS,
+        IMAGES,
+    >
 where
     D: EgDrawTarget,
 {
     pub fn new(
         target: &'target mut D,
-        fonts: [&'font EgMonoFont<'font>; FONTS],
+        font_resources: &'resources mut FontResources<'font, 'storage, FONTS, GLYPH_SLOTS>,
         images: [EmbeddedGraphicsImage<'image, D>; IMAGES],
     ) -> Self {
-        assert!(FONTS > 0, "at least one font must be registered");
+        assert!(
+            !font_resources.is_empty(),
+            "at least one font must be registered",
+        );
 
         Self {
             target,
-            fonts,
+            font_resources,
             images,
         }
     }
@@ -286,11 +318,10 @@ where
         self.target
     }
 
-    fn resolve_font(&self, font: FontId) -> &'font EgMonoFont<'font> {
-        self.fonts
-            .get(font.index())
-            .copied()
-            .unwrap_or(self.fonts[0])
+    fn resolve_font(&self, font: FontId) -> (FontId, &'font dyn FontFace) {
+        self.font_resources
+            .resolve(font)
+            .expect("EmbeddedGraphicsPainter requires a default font")
     }
 
     fn resolve_image(&self, id: ImageId) -> Option<EmbeddedGraphicsImage<'image, D>> {
@@ -337,8 +368,8 @@ where
     }
 }
 
-impl<D, const FONTS: usize, const IMAGES: usize> TextMeasurer
-    for EmbeddedGraphicsPainter<'_, '_, '_, D, FONTS, IMAGES>
+impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const IMAGES: usize> TextMeasurer
+    for EmbeddedGraphicsPainter<'_, '_, '_, '_, '_, D, FONTS, GLYPH_SLOTS, IMAGES>
 where
     D: EgDrawTarget,
 {
@@ -347,12 +378,12 @@ where
             return Size::ZERO;
         }
 
-        let font = self.resolve_font(style.font);
-        let glyph_height = font_character_height(font);
+        let (_, font) = self.resolve_font(style.font);
+        let glyph_height = font.metrics(NATIVE_FONT_SIZE).line_height();
         let line_advance = text_line_advance(font, style);
 
-        let mut longest_line = Pixels::ZERO;
-        let mut line_count: i32 = 0;
+        let mut longest_line = px(0);
+        let mut line_count = 0i32;
 
         for_each_visible_text_line(
             text,
@@ -360,8 +391,8 @@ where
             max_size.width,
             style.max_lines,
             style.overflow,
-            |line| measure_mono_line(font, line),
-            |line| measure_mono_line_with_ellipsis(font, line),
+            |line| measure_font_line(font, line),
+            |line| measure_font_line_with_ellipsis(font, line),
             |line| {
                 longest_line = longest_line.max(line.width);
                 line_count = line_count.saturating_add(1);
@@ -383,13 +414,13 @@ where
     }
 }
 
-impl<D, const FONTS: usize, const IMAGES: usize> Painter
-    for EmbeddedGraphicsPainter<'_, '_, '_, D, FONTS, IMAGES>
+impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const IMAGES: usize> Painter
+    for EmbeddedGraphicsPainter<'_, '_, '_, '_, '_, D, FONTS, GLYPH_SLOTS, IMAGES>
 where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,
 {
-    type Error = D::Error;
+    type Error = EmbeddedGraphicsError<D::Error>;
 
     fn draw_box(
         &mut self,
@@ -399,13 +430,15 @@ where
     ) -> Result<(), Self::Error> {
         let mut target = self.target.color_converted::<EgRgb888>();
 
-        if let Some(clip) = clip {
+        let result = if let Some(clip) = clip {
             let clip = to_embedded_rect(clip);
             let mut clipped = target.clipped(&clip);
             draw_box_to(&mut clipped, bounds, paint)
         } else {
             draw_box_to(&mut target, bounds, paint)
-        }
+        };
+
+        result.map_err(EmbeddedGraphicsError::Target)
     }
 
     fn draw_text(
@@ -427,12 +460,22 @@ where
             return Ok(());
         };
 
-        let font = self.resolve_font(style.font);
-        let mut target = self.target.color_converted();
+        let (font_id, font) = self.resolve_font(style.font);
+        let font_resources = &mut *self.font_resources;
+        let target = &mut *self.target;
+        let mut target = target.color_converted::<EgRgb888>();
         let clip = to_embedded_rect(text_clip);
         let mut clipped = target.clipped(&clip);
 
-        draw_text_to(&mut clipped, text, bounds, font, style)
+        draw_text_to(
+            &mut clipped,
+            text,
+            bounds,
+            font_resources,
+            font_id,
+            font,
+            style,
+        )
     }
 
     fn draw_image(
@@ -465,7 +508,9 @@ where
             return Ok(());
         };
 
-        image.draw(self.target, bounds, fit, Some(image_clip))
+        image
+            .draw(self.target, bounds, fit, Some(image_clip))
+            .map_err(EmbeddedGraphicsError::Target)
     }
 
     fn draw_canvas(
@@ -494,7 +539,9 @@ where
 
         draw(local_bounds, &mut canvas_painter);
 
-        canvas_painter.finish()
+        canvas_painter
+            .finish()
+            .map_err(EmbeddedGraphicsError::Target)
     }
 }
 
@@ -562,13 +609,15 @@ where
     Ok(())
 }
 
-fn draw_text_to<D>(
+fn draw_text_to<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
     target: &mut D,
     text: &str,
     bounds: Rect,
-    font: &EgMonoFont<'_>,
+    font_resources: &mut FontResources<'_, '_, FONTS, GLYPH_SLOTS>,
+    font_id: FontId,
+    font: &dyn FontFace,
     style: ResolvedTextStyle,
-) -> Result<(), D::Error>
+) -> Result<(), EmbeddedGraphicsError<D::Error>>
 where
     D: EgDrawTarget<Color = EgRgb888>,
 {
@@ -577,6 +626,7 @@ where
     }
 
     let line_advance = text_line_advance(font, style);
+    let baseline_offset = font.metrics(NATIVE_FONT_SIZE).ascent;
     let color = to_rgb888(style.color);
 
     let mut y = bounds.origin.y;
@@ -588,48 +638,47 @@ where
         bounds.width(),
         style.max_lines,
         style.overflow,
-        |line| measure_mono_line(font, line),
-        |line| measure_mono_line_with_ellipsis(font, line),
+        |line| measure_font_line(font, line),
+        |line| measure_font_line_with_ellipsis(font, line),
         |line| {
             if error.is_some() {
                 return;
             }
 
-            let x = aligned_line_x(bounds, line.width, style.align);
+            let mut pen_x = aligned_line_x(bounds, line.width, style.align);
+            let baseline = y + baseline_offset;
+            let mut previous = None;
 
-            if !line.text.is_empty() {
-                let text_style = EgMonoTextStyle::new(font, color);
-
-                if let Err(draw_error) = EgText::with_baseline(
-                    line.text,
-                    EgPoint::new(x.get(), y.get()),
-                    text_style,
-                    EgBaseline::Top,
-                )
-                .draw(target)
-                .map(|_| ())
-                {
-                    error = Some(draw_error);
-                    return;
-                }
+            if let Err(draw_error) = draw_font_run(
+                target,
+                font_resources,
+                font_id,
+                font,
+                line.text,
+                baseline,
+                color,
+                &mut pen_x,
+                &mut previous,
+            ) {
+                error = Some(draw_error);
+                return;
             }
 
-            if line.ellipsis {
-                let ellipsis_x = x + mono_text_advance(font, line.text);
-                let text_style = EgMonoTextStyle::new(font, color);
-
-                if let Err(draw_error) = EgText::with_baseline(
+            if line.ellipsis
+                && let Err(draw_error) = draw_font_run(
+                    target,
+                    font_resources,
+                    font_id,
+                    font,
                     ELLIPSIS,
-                    EgPoint::new(ellipsis_x.get(), y.get()),
-                    text_style,
-                    EgBaseline::Top,
+                    baseline,
+                    color,
+                    &mut pen_x,
+                    &mut previous,
                 )
-                .draw(target)
-                .map(|_| ())
-                {
-                    error = Some(draw_error);
-                    return;
-                }
+            {
+                error = Some(draw_error);
+                return;
             }
 
             y += line_advance;
@@ -642,66 +691,145 @@ where
     }
 }
 
-fn font_character_width(font: &EgMonoFont<'_>) -> Pixels {
-    px(i32::try_from(font.character_size.width).unwrap_or(i32::MAX))
+#[allow(clippy::too_many_arguments)]
+fn draw_font_run<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
+    target: &mut D,
+    font_resources: &mut FontResources<'_, '_, FONTS, GLYPH_SLOTS>,
+    font_id: FontId,
+    font: &dyn FontFace,
+    text: &str,
+    baseline: Pixels,
+    color: EgRgb888,
+    pen_x: &mut Pixels,
+    previous: &mut Option<GlyphId>,
+) -> Result<(), EmbeddedGraphicsError<D::Error>>
+where
+    D: EgDrawTarget<Color = EgRgb888>,
+{
+    for character in text.chars() {
+        let Some(glyph) = font.glyph_id(character) else {
+            *previous = None;
+
+            continue;
+        };
+
+        if let Some(previous_glyph) = *previous {
+            *pen_x += font.kerning(previous_glyph, glyph, NATIVE_FONT_SIZE);
+        }
+
+        let bitmap = font_resources
+            .glyph_bitmap(font_id, glyph, NATIVE_FONT_SIZE)
+            .map_err(EmbeddedGraphicsError::Font)?;
+
+        let metrics = bitmap.metrics();
+
+        let origin = Point::new(*pen_x + metrics.bearing_x, baseline + metrics.bearing_y);
+
+        draw_coverage_bitmap(target, &bitmap, origin, color)?;
+
+        *pen_x += metrics.advance;
+
+        *previous = Some(glyph);
+    }
+
+    Ok(())
 }
 
-fn font_character_height(font: &EgMonoFont<'_>) -> Pixels {
-    px(i32::try_from(font.character_size.height).unwrap_or(i32::MAX))
+fn draw_coverage_bitmap<D>(
+    target: &mut D,
+    bitmap: &GlyphBitmap<'_>,
+    origin: Point,
+    color: EgRgb888,
+) -> Result<(), EmbeddedGraphicsError<D::Error>>
+where
+    D: EgDrawTarget<Color = EgRgb888>,
+{
+    let width = usize::from(bitmap.width());
+    let height = usize::from(bitmap.height());
+
+    if width == 0 || height == 0 {
+        return Ok(());
+    }
+
+    let coverage = bitmap.coverage();
+    debug_assert_eq!(coverage.len(), width.saturating_mul(height,),);
+
+    // the MonoFont adapter only emits 0 or 255.
+    let pixels = coverage
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(index, coverage)| {
+            if coverage == 0 {
+                return None;
+            }
+
+            let x = index % width;
+            let x = i32::try_from(x).ok()?;
+            let y = index / width;
+            let y = i32::try_from(y).ok()?;
+
+            Some(EgPixel(
+                EgPoint::new(
+                    origin.x.get().saturating_add(x),
+                    origin.y.get().saturating_add(y),
+                ),
+                color,
+            ))
+        });
+
+    target
+        .draw_iter(pixels)
+        .map_err(EmbeddedGraphicsError::Target)
 }
 
-fn font_character_spacing(font: &EgMonoFont<'_>) -> Pixels {
-    px(i32::try_from(font.character_spacing).unwrap_or(i32::MAX))
+fn measure_font_line(font: &dyn FontFace, text: &str) -> Pixels {
+    measure_font_characters(font, text.chars())
 }
 
-fn text_line_advance(font: &EgMonoFont<'_>, style: ResolvedTextStyle) -> Pixels {
+fn measure_font_line_with_ellipsis(font: &dyn FontFace, text: &str) -> Pixels {
+    measure_font_characters(font, text.chars().chain(ELLIPSIS.chars()))
+}
+
+fn measure_font_characters<I>(font: &dyn FontFace, characters: I) -> Pixels
+where
+    I: IntoIterator<Item = char>,
+{
+    let mut width = Pixels::ZERO;
+    let mut previous = None;
+
+    for character in characters {
+        let Some(glyph) = font.glyph_id(character) else {
+            previous = None;
+            continue;
+        };
+
+        let Some(metrics) = font.glyph_metrics(glyph, NATIVE_FONT_SIZE) else {
+            previous = None;
+            continue;
+        };
+
+        if let Some(previous_glyph) = previous {
+            width += font.kerning(previous_glyph, glyph, NATIVE_FONT_SIZE);
+        }
+
+        width += metrics.advance;
+        previous = Some(glyph);
+    }
+
+    width
+}
+
+fn text_line_advance(font: &dyn FontFace, style: ResolvedTextStyle) -> Pixels {
     match style.line_height {
-        LineHeight::Normal => font_character_height(font),
+        LineHeight::Normal => font.metrics(NATIVE_FONT_SIZE).line_height().non_negative(),
         LineHeight::Pixels(height) => height.non_negative(),
     }
 }
 
-fn mono_character_count(text: &str) -> i32 {
-    i32::try_from(text.chars().count()).unwrap_or(i32::MAX)
-}
-
-fn measure_mono_characters(font: &EgMonoFont<'_>, characters: i32) -> Pixels {
-    if characters <= 0 {
-        return px(0);
-    }
-
-    let character_width = font_character_width(font);
-    let spacing = font_character_spacing(font);
-
-    character_width
-        .saturating_add(spacing)
-        .saturating_mul(characters)
-        .saturating_sub(spacing)
-}
-
-fn measure_mono_line(font: &EgMonoFont<'_>, text: &str) -> Pixels {
-    measure_mono_characters(font, mono_character_count(text))
-}
-
-fn measure_mono_line_with_ellipsis(font: &EgMonoFont<'_>, text: &str) -> Pixels {
-    let characters = mono_character_count(text).saturating_add(mono_character_count(ELLIPSIS));
-
-    measure_mono_characters(font, characters)
-}
-
-fn mono_text_advance(font: &EgMonoFont<'_>, text: &str) -> Pixels {
-    let characters = mono_character_count(text);
-    if characters <= 0 {
-        return px(0);
-    }
-
-    font_character_width(font)
-        .saturating_add(font_character_spacing(font))
-        .saturating_mul(characters)
-}
-
 fn aligned_line_x(bounds: Rect, line_width: Pixels, align: TextAlign) -> Pixels {
     let remaining = (bounds.width() - line_width).non_negative();
+
     match align {
         TextAlign::Start => bounds.origin.x,
         TextAlign::Center => bounds.origin.x + remaining / 2,
@@ -827,18 +955,31 @@ mod tests {
 
     use crate::{
         backend::{
-            EmbeddedGraphicsPainter,
+            EmbeddedGraphicsPainter, MonoFontFace,
             embedded_graphics::{EmbeddedGraphicsImage, aligned_line_x},
         },
         *,
     };
+
+    static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
+
+    fn test_font_resources(storage: &mut [u8]) -> FontResources<'static, '_, 1, 64> {
+        let mut resources = FontResources::new(storage);
+
+        let id = resources.register(&TEST_FONT_FACE).unwrap();
+        assert_eq!(id, FontId::DEFAULT,);
+
+        resources
+    }
 
     #[test]
     fn embedded_graphics_backend_rasterizes_box() {
         let mut display = MockDisplay::<Rgb888>::new();
 
         {
-            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
             painter
                 .draw_box(
@@ -870,7 +1011,9 @@ mod tests {
     fn text_measurement_wraps_at_word_boundaries() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
         let size = painter.measure_text(
             "hello world",
@@ -888,7 +1031,9 @@ mod tests {
     fn custom_line_height_affects_multiline_measurement() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
         let size = painter.measure_text(
             "first\nsecond",
@@ -915,7 +1060,9 @@ mod tests {
     fn max_lines_limits_measured_height() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
         let size = painter.measure_text(
             "hello world again",
@@ -934,7 +1081,9 @@ mod tests {
     fn ellipsis_respects_available_width() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
         let size = painter.measure_text(
             "abcdefghij",
@@ -952,7 +1101,9 @@ mod tests {
     fn wrapped_text_can_be_clamped_with_ellipsis() {
         let mut display = MockDisplay::<Rgb888>::new();
 
-        let painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
         let size = painter.measure_text(
             "hello world again",
@@ -1027,8 +1178,9 @@ mod tests {
         let mut display = MockDisplay::<Rgb888>::new();
 
         {
-            let mut painter =
-                EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], [registered]);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, [registered]);
 
             painter
                 .draw_image(
@@ -1063,8 +1215,9 @@ mod tests {
         let mut display = MockDisplay::<Rgb888>::new();
 
         {
-            let mut painter =
-                EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], [registered]);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, [registered]);
 
             painter
                 .draw_image(
@@ -1101,8 +1254,9 @@ mod tests {
         let mut display = MockDisplay::<Rgb888>::new();
 
         {
-            let mut painter =
-                EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], [registered]);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, [registered]);
 
             painter
                 .draw_image(
@@ -1139,8 +1293,9 @@ mod tests {
         let mut display = MockDisplay::<Rgb888>::new();
 
         {
-            let mut painter =
-                EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], [registered]);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, [registered]);
 
             painter
                 .draw_image(
@@ -1182,7 +1337,9 @@ mod tests {
         display.set_allow_overdraw(true);
 
         {
-            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
             painter
                 .draw_canvas(
@@ -1213,7 +1370,9 @@ mod tests {
         let mut display = MockDisplay::<Rgb888>::new();
 
         {
-            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
             painter
                 .draw_canvas(
@@ -1241,7 +1400,9 @@ mod tests {
         let mut display = MockDisplay::<Rgb888>::new();
 
         {
-            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
             painter
                 .draw_canvas(
@@ -1278,7 +1439,9 @@ mod tests {
             .unwrap();
 
         {
-            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
             painter
                 .clear_damage(
@@ -1317,7 +1480,9 @@ mod tests {
             .unwrap();
 
         {
-            let mut painter = EmbeddedGraphicsPainter::new(&mut display, [&FONT_6X10], []);
+            let mut glyph_storage = [0; 4096];
+            let mut fonts = test_font_resources(&mut glyph_storage);
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
 
             painter
                 .clear_damage(DamageRegion::full(), Color::BLUE)
@@ -1332,5 +1497,33 @@ mod tests {
             display.get_pixel(EgPoint::new(8, 8),),
             Some(Rgb888::new(0, 0, 255),),
         );
+    }
+
+    #[test]
+    fn embedded_graphics_backend_draws_text_through_font_resources() {
+        let mut display = MockDisplay::<Rgb888>::new();
+        let mut glyph_storage = [0u8; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+
+        {
+            let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+
+            painter
+                .draw_text(
+                    "A",
+                    Rect::new(Point::ZERO, Size::new(px(20), px(20))),
+                    ResolvedTextStyle::default(),
+                    None,
+                )
+                .unwrap();
+        }
+
+        assert!(fonts.glyph_cache_used_bytes() > 0,);
+
+        let has_black_pixel = (0..10).any(|y| {
+            (0..6).any(|x| display.get_pixel(EgPoint::new(x, y)) == Some(Rgb888::new(0, 0, 0)))
+        });
+
+        assert!(has_black_pixel,);
     }
 }
