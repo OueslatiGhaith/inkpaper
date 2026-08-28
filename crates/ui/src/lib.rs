@@ -70,6 +70,8 @@ pub use runtime::*;
 pub use stateful::*;
 pub use style::*;
 pub use text_style::*;
+#[cfg(feature = "ttf")]
+pub use ttf::*;
 pub use units::*;
 
 pub mod prelude {

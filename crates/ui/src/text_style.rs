@@ -1,4 +1,4 @@
-use crate::{Color, FontId, Pixels, Styled, TextStyle};
+use crate::{Color, FontId, Pixels, Styled, TextStyle, px};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -64,6 +64,11 @@ pub trait TextStyled: Sized {
 
     fn font(mut self, font: FontId) -> Self {
         self.text_style_mut().font = Some(font);
+        self
+    }
+
+    fn font_size(mut self, size: impl Into<Pixels>) -> Self {
+        self.text_style_mut().font_size = Some(size.into().max(px(1)));
         self
     }
 

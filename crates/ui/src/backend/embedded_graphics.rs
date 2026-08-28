@@ -21,8 +21,6 @@ use crate::{
     text_layout::{ELLIPSIS, for_each_visible_text_line},
 };
 
-const NATIVE_FONT_SIZE: u16 = 0;
-
 #[derive(Debug)]
 pub enum EmbeddedGraphicsError<E> {
     Target(E),
@@ -378,11 +376,11 @@ where
             return Size::ZERO;
         }
 
-        let (_, font) = self.resolve_font(style.font);
-        let glyph_height = font.metrics(NATIVE_FONT_SIZE).line_height();
-        let line_advance = text_line_advance(font, style);
-
-        let mut longest_line = px(0);
+        let (_font_id, font) = self.resolve_font(style.font);
+        let size_px = font_size_px(style);
+        let glyph_height = font.metrics(size_px).line_height();
+        let line_advance = text_line_advance(font, size_px, style);
+        let mut longest_line = Pixels::ZERO;
         let mut line_count = 0i32;
 
         for_each_visible_text_line(
@@ -391,8 +389,8 @@ where
             max_size.width,
             style.max_lines,
             style.overflow,
-            |line| measure_font_line(font, line),
-            |line| measure_font_line_with_ellipsis(font, line),
+            |line| measure_font_line(font, size_px, line),
+            |line| measure_font_line_with_ellipsis(font, size_px, line),
             |line| {
                 longest_line = longest_line.max(line.width);
                 line_count = line_count.saturating_add(1);
@@ -625,8 +623,9 @@ where
         return Ok(());
     }
 
-    let line_advance = text_line_advance(font, style);
-    let baseline_offset = font.metrics(NATIVE_FONT_SIZE).ascent;
+    let size_px = font_size_px(style);
+    let line_advance = text_line_advance(font, size_px, style);
+    let baseline_offset = font.metrics(size_px).ascent;
     let color = to_rgb888(style.color);
 
     let mut y = bounds.origin.y;
@@ -638,8 +637,8 @@ where
         bounds.width(),
         style.max_lines,
         style.overflow,
-        |line| measure_font_line(font, line),
-        |line| measure_font_line_with_ellipsis(font, line),
+        |line| measure_font_line(font, size_px, line),
+        |line| measure_font_line_with_ellipsis(font, size_px, line),
         |line| {
             if error.is_some() {
                 return;
@@ -654,6 +653,7 @@ where
                 font_resources,
                 font_id,
                 font,
+                size_px,
                 line.text,
                 baseline,
                 color,
@@ -670,6 +670,7 @@ where
                     font_resources,
                     font_id,
                     font,
+                    size_px,
                     ELLIPSIS,
                     baseline,
                     color,
@@ -697,6 +698,7 @@ fn draw_font_run<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
     font_resources: &mut FontResources<'_, '_, FONTS, GLYPH_SLOTS>,
     font_id: FontId,
     font: &dyn FontFace,
+    size_px: u16,
     text: &str,
     baseline: Pixels,
     color: EgRgb888,
@@ -714,11 +716,11 @@ where
         };
 
         if let Some(previous_glyph) = *previous {
-            *pen_x += font.kerning(previous_glyph, glyph, NATIVE_FONT_SIZE);
+            *pen_x += font.kerning(previous_glyph, glyph, size_px);
         }
 
         let bitmap = font_resources
-            .glyph_bitmap(font_id, glyph, NATIVE_FONT_SIZE)
+            .glyph_bitmap(font_id, glyph, size_px)
             .map_err(EmbeddedGraphicsError::Font)?;
 
         let metrics = bitmap.metrics();
@@ -783,15 +785,15 @@ where
         .map_err(EmbeddedGraphicsError::Target)
 }
 
-fn measure_font_line(font: &dyn FontFace, text: &str) -> Pixels {
-    measure_font_characters(font, text.chars())
+fn measure_font_line(font: &dyn FontFace, size_px: u16, text: &str) -> Pixels {
+    measure_font_characters(font, size_px, text.chars())
 }
 
-fn measure_font_line_with_ellipsis(font: &dyn FontFace, text: &str) -> Pixels {
-    measure_font_characters(font, text.chars().chain(ELLIPSIS.chars()))
+fn measure_font_line_with_ellipsis(font: &dyn FontFace, size_px: u16, text: &str) -> Pixels {
+    measure_font_characters(font, size_px, text.chars().chain(ELLIPSIS.chars()))
 }
 
-fn measure_font_characters<I>(font: &dyn FontFace, characters: I) -> Pixels
+fn measure_font_characters<I>(font: &dyn FontFace, size_px: u16, characters: I) -> Pixels
 where
     I: IntoIterator<Item = char>,
 {
@@ -804,25 +806,25 @@ where
             continue;
         };
 
-        let Some(metrics) = font.glyph_metrics(glyph, NATIVE_FONT_SIZE) else {
+        let Some(advance) = font.glyph_advance(glyph, size_px) else {
             previous = None;
             continue;
         };
 
         if let Some(previous_glyph) = previous {
-            width += font.kerning(previous_glyph, glyph, NATIVE_FONT_SIZE);
+            width += font.kerning(previous_glyph, glyph, size_px);
         }
 
-        width += metrics.advance;
+        width += advance;
         previous = Some(glyph);
     }
 
     width
 }
 
-fn text_line_advance(font: &dyn FontFace, style: ResolvedTextStyle) -> Pixels {
+fn text_line_advance(font: &dyn FontFace, size_px: u16, style: ResolvedTextStyle) -> Pixels {
     match style.line_height {
-        LineHeight::Normal => font.metrics(NATIVE_FONT_SIZE).line_height().non_negative(),
+        LineHeight::Normal => font.metrics(size_px).line_height().non_negative(),
         LineHeight::Pixels(height) => height.non_negative(),
     }
 }
@@ -835,6 +837,11 @@ fn aligned_line_x(bounds: Rect, line_width: Pixels, align: TextAlign) -> Pixels 
         TextAlign::Center => bounds.origin.x + remaining / 2,
         TextAlign::End => bounds.origin.x + remaining,
     }
+}
+
+fn font_size_px(style: ResolvedTextStyle) -> u16 {
+    let size = style.font_size.max(px(1)).get();
+    u16::try_from(size).unwrap_or(u16::MAX)
 }
 
 unsafe fn draw_erased_image<T, D>(

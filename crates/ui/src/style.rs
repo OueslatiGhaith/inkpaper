@@ -277,6 +277,7 @@ declare_style! {
         @text {
             layout {
                 font: FontId = FontId::DEFAULT,
+                font_size: Pixels = px(16),
                 line_height: LineHeight = LineHeight::Normal,
                 wrap: TextWrap = TextWrap::NoWrap,
                 max_lines: TextMaxLines = TextMaxLines::Unlimited,

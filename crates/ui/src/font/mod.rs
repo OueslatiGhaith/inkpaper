@@ -1,5 +1,8 @@
 use crate::{Pixels, px};
 
+#[cfg(feature = "ttf")]
+pub mod ttf;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FontId(u16);
@@ -112,9 +115,11 @@ impl GlyphMetrics {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FontRasterError {
+    InvalidFont,
     InvalidGlyph,
     InvalidSize,
     BufferTooSmall,
+    OutlineTooComplex,
     Unsupported,
 }
 
@@ -122,6 +127,17 @@ pub trait FontFace {
     /// resolve one unicode scalar value to a font-local glyph.
     fn glyph_id(&self, character: char) -> Option<GlyphId>;
     fn metrics(&self, size_px: u16) -> FontMetrics;
+
+    /// return only the horizontal advance
+    ///
+    /// the default is convenient for bitmap fonts. Scalable fonts should override this
+    /// because advnace lookup is substaintially cheaper than calculating the glyph's
+    /// raster bounds
+    fn glyph_advance(&self, glyph: GlyphId, size_px: u16) -> Option<Pixels> {
+        self.glyph_metrics(glyph, size_px)
+            .map(|metrics| metrics.advance)
+    }
+
     fn glyph_metrics(&self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics>;
 
     fn kerning(&self, _left: GlyphId, _right: GlyphId, _size_px: u16) -> Pixels {
