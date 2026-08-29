@@ -38,4 +38,4 @@ esp-hal = { workspace = true, features = ["esp32s3", "unstable", "defmt"] }
 esp-rtos = { workspace = true, features = ["esp32s3", "embassy", "defmt"] }
 rtt-target = { version = "0.6.2", features = ["defmt"] }
 sdio = { version = "0.5.1", features = ["defmt"] }
-static_cell = "2.1.1"
+static_cell = { workspace = true }

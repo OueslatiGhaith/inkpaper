@@ -1,3 +1,5 @@
+use std::{fs::File, io::Read, path::Path};
+
 use embedded_graphics::{
     geometry::{Point as EgPoint, Size as EgSize},
     mono_font::ascii::{FONT_6X10, FONT_10X20},
@@ -14,15 +16,22 @@ use inkpaper_app::{
     theme::Theme,
 };
 use inkpaper_ui::{
+    FontData, FontFace, TtfFont,
     backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
+use static_cell::StaticCell;
 
 const DISPLAY_WIDTH: u32 = 480;
 const DISPLAY_HEIGHT: u32 = 800;
 
 const DISPLAY_SIZE_EG: EgSize = EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT);
 const DISPLAY_SIZE: Size = Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32));
+
+const RUNTIME_FONT_STORAGE_BYTES: usize = 5 * 1024 * 1024;
+
+static RUNTIME_FONT_BYTES: StaticCell<Box<[u8; RUNTIME_FONT_STORAGE_BYTES]>> = StaticCell::new();
+static RUNTIME_FONT: StaticCell<TtfFont> = StaticCell::new();
 
 static BODY_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_10X20);
@@ -83,13 +92,78 @@ fn demo_model() -> AppModel {
     model
 }
 
-fn make_fonts(glyph_storage: &mut [u8]) -> UiFonts<'_> {
+fn make_fonts<'a>(
+    glyph_storage: &'a mut [u8],
+    runtime_font: Option<&'static dyn FontFace>,
+) -> UiFonts<'a> {
     let mut fonts = FontResources::new(glyph_storage);
 
-    assert_eq!(fonts.register(&BODY_FONT,).unwrap(), FontId::DEFAULT);
+    if let Some(runtime_font) = runtime_font {
+        let id = fonts
+            .register(runtime_font)
+            .expect("runtime font slot must fit");
+
+        assert_eq!(id, FontId::DEFAULT,);
+
+        // register only one copy.
+        // existing app code that asks for FontId(1) will use the registry's default
+        // font fallback. That avoids caching the same scalable face twice under
+        // different FontIds
+        return fonts;
+    }
+
+    assert_eq!(fonts.register(&BODY_FONT).unwrap(), FontId::DEFAULT);
     assert_eq!(fonts.register(&HEADING_FONT).unwrap(), FontId::new(1));
 
     fonts
+}
+
+fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
+    let mut args = std::env::args_os();
+    let _ = args.next();
+    let path = args.next()?;
+
+    assert!(
+        args.next().is_none(),
+        "usage: inkpaper-simulator [font.ttf]"
+    );
+
+    let path = Path::new(&path);
+    let data = load_font_data(path);
+    let font = TtfFont::parse(data, 0).unwrap_or_else(|error| {
+        panic!(
+            "{} is not supported TTF/OTF face: {error:?}",
+            path.display()
+        )
+    });
+
+    let font = RUNTIME_FONT.init(font);
+
+    eprintln!("runtime font: {} ({} bytes)", path.display(), data.len());
+
+    Some(font)
+}
+
+fn load_font_data(path: &Path) -> FontData<'static> {
+    let mut file = File::open(path)
+        .unwrap_or_else(|error| panic!("failed to open font {}: {error}", path.display()));
+    let metadata = file
+        .metadata()
+        .unwrap_or_else(|error| panic!("failed to stat font {}: {error}", path.display()));
+    let file_len = usize::try_from(metadata.len()).expect("font file must fit usize");
+
+    assert!(file_len > 0, "font {} is empty", path.display());
+    assert!(
+        file_len <= RUNTIME_FONT_STORAGE_BYTES,
+        "font {} is {file_len} bytes, but simulator storage is limited to {RUNTIME_FONT_STORAGE_BYTES} bytes",
+        path.display()
+    );
+
+    let storage = RUNTIME_FONT_BYTES.init_with(|| Box::new([0; RUNTIME_FONT_STORAGE_BYTES]));
+    file.read_exact(&mut storage[..file_len])
+        .unwrap_or_else(|error| panic!("failed to read font {}: {error}", path.display()));
+
+    FontData::new(&storage[..file_len])
 }
 
 fn to_touch_position(point: EgPoint) -> AppTouchPosition {
@@ -207,8 +281,11 @@ fn main() {
     runtime.set_global(Theme::EINK).unwrap();
     let model = demo_model();
     let app = runtime.create(move |_| InkPaperApp::new(model)).unwrap();
+
+    let runtime_font = runtime_font_from_args();
+    let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
     let mut glyph_storage = [0u8; 16 * 1024];
-    let mut fonts = make_fonts(&mut glyph_storage);
+    let mut fonts = make_fonts(&mut glyph_storage, runtime_font);
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
@@ -293,4 +370,10 @@ fn main() {
 
         update_ui(&mut runtime, app, &mut fonts, &mut display);
     }
+
+    eprintln!(
+        "glyph cache at exit: {} / {} bytes",
+        fonts.glyph_cache_used_bytes(),
+        fonts.glyph_cache_capacity_bytes(),
+    );
 }

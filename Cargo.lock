@@ -1592,6 +1592,7 @@ dependencies = [
  "embedded-graphics-simulator",
  "inkpaper-app",
  "inkpaper-ui",
+ "static_cell",
 ]
 
 [[package]]

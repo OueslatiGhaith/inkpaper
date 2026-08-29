@@ -11,4 +11,5 @@ defmt = ["inkpaper-app/defmt", "inkpaper-ui/defmt"]
 embedded-graphics = { workspace = true }
 embedded-graphics-simulator = { workspace = true }
 inkpaper-app = { path = "../app" }
-inkpaper-ui = { path = "../ui", features = ["embedded-graphics"] }
+inkpaper-ui = { path = "../ui", features = ["embedded-graphics", "ttf"] }
+static_cell = { workspace = true }
