@@ -18,8 +18,8 @@ use crate::firmware::framebuffer::{
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
 const DISPLAY_BOUNDS: Rect = Rect::new(Point::ZERO, DISPLAY_SIZE);
 
-static BODY_FONT: MonoFontFace = MonoFontFace::new(&FONT_6X10);
-static HEADING_FONT: MonoFontFace = MonoFontFace::new(&FONT_10X20);
+static BODY_FONT: MonoFontFace = MonoFontFace::ascii(&FONT_6X10);
+static HEADING_FONT: MonoFontFace = MonoFontFace::ascii(&FONT_10X20);
 pub const UI_GLYPH_CACHE_BYTES: usize = 8 * 1024;
 const UI_GLYPH_CACHE_SLOTS: usize = 64;
 

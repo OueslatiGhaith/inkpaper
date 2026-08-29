@@ -15,9 +15,10 @@ use embedded_graphics::{
 };
 
 use crate::{
-    BoxPaint, CanvasPainter, Color, DamageRegion, FontFace, FontId, FontResources, GlyphBitmap,
-    GlyphCacheError, GlyphId, ImageFit, ImageId, ImageSource, LineHeight, Painter, Pixels, Point,
-    Rect, ResolvedTextStyle, Size, TextAlign, TextMeasurer, fitted_image_bounds, px,
+    BoxPaint, CanvasPainter, Color, DamageRegion, FontFace, FontId, FontRegistry, FontResources,
+    GlyphBitmap, GlyphCacheError, ImageFit, ImageId, ImageSource, LineHeight, Painter, Pixels,
+    Point, Rect, ResolvedTextStyle, ShapeState, SimpleShaper, Size, TextAlign, TextMeasurer,
+    fitted_image_bounds, px,
     text_layout::{ELLIPSIS, for_each_visible_text_line},
 };
 
@@ -413,7 +414,8 @@ where
             return Size::ZERO;
         }
 
-        let (_font_id, font) = self.resolve_font(style.font);
+        let (font_id, font) = self.resolve_font(style.font);
+        let registry = self.font_resources.registry();
         let size_px = font_size_px(style);
         let glyph_height = font.metrics(size_px).line_height();
         let line_advance = text_line_advance(font, size_px, style);
@@ -426,8 +428,8 @@ where
             max_size.width,
             style.max_lines,
             style.overflow,
-            |line| measure_font_line(font, size_px, line),
-            |line| measure_font_line_with_ellipsis(font, size_px, line),
+            |line| measure_shaped_line(&registry, font_id, size_px, line),
+            |line| measure_shaped_line_with_ellipsis(&registry, font_id, size_px, line),
             |line| {
                 longest_line = longest_line.max(line.width);
                 line_count = line_count.saturating_add(1);
@@ -495,12 +497,17 @@ where
         };
 
         let (font_id, font) = self.resolve_font(style.font);
+        // snapshot only the borrowed font references.
+        // the shaper reas this while the visitor is free to mutate the glyph bitmap
+        // cache in FontResources
+        let registry = self.font_resources.registry();
 
         draw_text_to(
             self.target,
             text,
             bounds,
             text_clip,
+            &registry,
             self.font_resources,
             font_id,
             font,
@@ -646,6 +653,7 @@ fn draw_text_to<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
     text: &str,
     bounds: Rect,
     clip: Rect,
+    registry: &FontRegistry<'_, FONTS>,
     font_resources: &mut FontResources<'_, '_, FONTS, GLYPH_SLOTS>,
     font_id: FontId,
     font: &dyn FontFace,
@@ -674,8 +682,8 @@ where
         bounds.width(),
         style.max_lines,
         style.overflow,
-        |line| measure_font_line(font, size_px, line),
-        |line| measure_font_line_with_ellipsis(font, size_px, line),
+        |line| measure_shaped_line(registry, font_id, size_px, line),
+        |line| measure_shaped_line_with_ellipsis(registry, font_id, size_px, line),
         |line| {
             if error.is_some() {
                 return;
@@ -683,21 +691,21 @@ where
 
             let mut pen_x = aligned_line_x(bounds, line.width, style.align);
             let baseline = y + baseline_offset;
-            let mut previous = None;
+            let mut shape_state = ShapeState::new();
 
             if let Err(draw_error) = draw_font_run(
                 target,
+                registry,
                 font_resources,
                 font_id,
-                font,
                 size_px,
                 line.text,
                 baseline,
                 color,
                 clip,
                 coverage_mode,
+                &mut shape_state,
                 &mut pen_x,
-                &mut previous,
             ) {
                 error = Some(draw_error);
                 return;
@@ -706,17 +714,17 @@ where
             if line.ellipsis
                 && let Err(draw_error) = draw_font_run(
                     target,
+                    registry,
                     font_resources,
                     font_id,
-                    font,
                     size_px,
                     ELLIPSIS,
                     baseline,
                     color,
                     clip,
                     coverage_mode,
+                    &mut shape_state,
                     &mut pen_x,
-                    &mut previous,
                 )
             {
                 error = Some(draw_error);
@@ -736,43 +744,47 @@ where
 #[allow(clippy::too_many_arguments)]
 fn draw_font_run<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
     target: &mut D,
+    registry: &FontRegistry<'_, FONTS>,
     font_resources: &mut FontResources<'_, '_, FONTS, GLYPH_SLOTS>,
-    font_id: FontId,
-    font: &dyn FontFace,
+    preferred_font: FontId,
     size_px: u16,
     text: &str,
     baseline: Pixels,
     color: EgRgb888,
     clip: Rect,
     coverage_mode: CoverageMode<D>,
+    shape_state: &mut ShapeState,
     pen_x: &mut Pixels,
-    previous: &mut Option<GlyphId>,
 ) -> Result<(), EmbeddedGraphicsError<D::Error>>
 where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,
 {
-    for character in text.chars() {
-        let Some(glyph) = font.glyph_id(character) else {
-            *previous = None;
-            continue;
-        };
+    SimpleShaper::new().try_shape_piece_with(
+        registry,
+        preferred_font,
+        size_px,
+        text,
+        shape_state,
+        |shaped| {
+            let bitmap = font_resources
+                .glyph_bitmap(shaped.font(), shaped.glyph(), size_px)
+                .map_err(EmbeddedGraphicsError::Font)?;
 
-        if let Some(previous_glyph) = *previous {
-            *pen_x += font.kerning(previous_glyph, glyph, size_px);
-        }
+            let metrics = bitmap.metrics();
+            let offset = shaped.offset();
+            let origin = Point::new(
+                *pen_x + offset.x + metrics.bearing_x,
+                baseline + offset.y + metrics.bearing_y,
+            );
 
-        let bitmap = font_resources
-            .glyph_bitmap(font_id, glyph, size_px)
-            .map_err(EmbeddedGraphicsError::Font)?;
-        let metrics = bitmap.metrics();
-        let origin = Point::new(*pen_x + metrics.bearing_x, baseline + metrics.bearing_y);
+            draw_coverage_bitmap(target, &bitmap, origin, color, clip, coverage_mode)?;
 
-        draw_coverage_bitmap(target, &bitmap, origin, color, clip, coverage_mode)?;
+            *pen_x += shaped.advance();
 
-        *pen_x += metrics.advance;
-        *previous = Some(glyph);
-    }
+            Ok(())
+        },
+    )?;
 
     Ok(())
 }
@@ -898,41 +910,29 @@ where
     }
 }
 
-fn measure_font_line(font: &dyn FontFace, size_px: u16, text: &str) -> Pixels {
-    measure_font_characters(font, size_px, text.chars())
+fn measure_shaped_line<const FONTS: usize>(
+    registry: &FontRegistry<'_, FONTS>,
+    font: FontId,
+    size_px: u16,
+    text: &str,
+) -> Pixels {
+    SimpleShaper::new()
+        .measure(registry, font, size_px, text)
+        .advance()
 }
 
-fn measure_font_line_with_ellipsis(font: &dyn FontFace, size_px: u16, text: &str) -> Pixels {
-    measure_font_characters(font, size_px, text.chars().chain(ELLIPSIS.chars()))
-}
+fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
+    registry: &FontRegistry<'_, FONTS>,
+    font: FontId,
+    size_px: u16,
+    text: &str,
+) -> Pixels {
+    let shaper = SimpleShaper::new();
+    let mut state = ShapeState::new();
+    let text = shaper.shape_piece_with(registry, font, size_px, text, &mut state, |_| {});
+    let ellipsis = shaper.shape_piece_with(registry, font, size_px, ELLIPSIS, &mut state, |_| {});
 
-fn measure_font_characters<I>(font: &dyn FontFace, size_px: u16, characters: I) -> Pixels
-where
-    I: IntoIterator<Item = char>,
-{
-    let mut width = Pixels::ZERO;
-    let mut previous = None;
-
-    for character in characters {
-        let Some(glyph) = font.glyph_id(character) else {
-            previous = None;
-            continue;
-        };
-
-        let Some(advance) = font.glyph_advance(glyph, size_px) else {
-            previous = None;
-            continue;
-        };
-
-        if let Some(previous_glyph) = previous {
-            width += font.kerning(previous_glyph, glyph, size_px);
-        }
-
-        width += advance;
-        previous = Some(glyph);
-    }
-
-    width
+    text.advance() + ellipsis.advance()
 }
 
 fn text_line_advance(font: &dyn FontFace, size_px: u16, style: ResolvedTextStyle) -> Pixels {

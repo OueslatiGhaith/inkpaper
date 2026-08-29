@@ -12,14 +12,39 @@ use embedded_graphics::{
 
 use crate::{FontFace, FontMetrics, FontRasterError, GlyphId, GlyphMetrics, Pixels, px};
 
+type CharacterSupport = fn(char) -> bool;
+
+fn all_characters(_: char) -> bool {
+    true
+}
+
+fn printable_ascii(character: char) -> bool {
+    (' '..='~').contains(&character)
+}
+
 #[derive(Clone, Copy)]
 pub struct MonoFontFace<'font> {
     font: &'font EgMonoFont<'font>,
+    supports: CharacterSupport,
 }
 
 impl<'font> MonoFontFace<'font> {
     pub const fn new(font: &'font EgMonoFont<'font>) -> Self {
-        Self { font }
+        Self {
+            font,
+            supports: all_characters,
+        }
+    }
+
+    pub const fn with_character_support(
+        font: &'font EgMonoFont<'font>,
+        supports: CharacterSupport,
+    ) -> Self {
+        Self { font, supports }
+    }
+
+    pub const fn ascii(font: &'font EgMonoFont<'font>) -> Self {
+        Self::with_character_support(font, printable_ascii)
     }
 
     pub const fn font(self) -> &'font EgMonoFont<'font> {
@@ -58,6 +83,10 @@ impl<'font> MonoFontFace<'font> {
 
 impl FontFace for MonoFontFace<'_> {
     fn glyph_id(&self, character: char) -> Option<GlyphId> {
+        if !(self.supports)(character) {
+            return None;
+        }
+
         let index = self.font.glyph_mapping.index(character);
         let index = u16::try_from(index).ok()?;
         let glyph = GlyphId::new(index);
@@ -227,5 +256,13 @@ mod tests {
 
         assert!(coverage[..required].iter().any(|value| { *value == 255 },),);
         assert!(coverage[..required].iter().any(|value| { *value == 0 },),);
+    }
+
+    #[test]
+    fn ascii_face_reports_non_ascii_as_missing() {
+        let font = MonoFontFace::ascii(&FONT_6X10);
+
+        assert!(font.glyph_id('A',).is_some(),);
+        assert!(font.glyph_id('ب',).is_none(),);
     }
 }

@@ -162,12 +162,38 @@ pub trait FontFace {
     ) -> Result<(), FontRasterError>;
 }
 
+#[derive(Clone, Copy)]
+pub struct ResolvedGlyph<'font> {
+    font: FontId,
+    face: &'font dyn FontFace,
+    glyph: GlyphId,
+}
+
+impl<'font> ResolvedGlyph<'font> {
+    pub const fn new(font: FontId, face: &'font dyn FontFace, glyph: GlyphId) -> Self {
+        Self { font, face, glyph }
+    }
+
+    pub const fn font(self) -> FontId {
+        self.font
+    }
+
+    pub const fn face(self) -> &'font dyn FontFace {
+        self.face
+    }
+
+    pub const fn glyph(self) -> GlyphId {
+        self.glyph
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FontRegistryError {
     Full,
 }
 
+#[derive(Clone, Copy)]
 pub struct FontRegistry<'font, const FONTS: usize> {
     fonts: [Option<&'font dyn FontFace>; FONTS],
     len: usize,
@@ -235,6 +261,66 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
     pub fn resolve(&self, id: FontId) -> Option<&'font dyn FontFace> {
         self.resolve_with_id(id).map(|(_, font)| font)
+    }
+
+    fn glyph_in_font(&self, font: FontId, character: char) -> Option<ResolvedGlyph<'font>> {
+        let face = self.get(font)?;
+        let glyph = face.glyph_id(character)?;
+
+        Some(ResolvedGlyph::new(font, face, glyph))
+    }
+
+    fn resolve_character_exact(
+        &self,
+        preferred: FontId,
+        character: char,
+    ) -> Option<ResolvedGlyph<'font>> {
+        let preferred = self.resolve_id(preferred)?;
+        if let Some(glyph) = self.glyph_in_font(preferred, character) {
+            return Some(glyph);
+        }
+
+        // registration order is the initial fallback order
+        // this is deliberately simple. We don't need font-family weight-aware fallback
+        // until the app actually requires it
+        for index in 0..self.len {
+            let index = u16::try_from(index).ok()?;
+            let font = FontId::new(index);
+            if font == preferred {
+                continue;
+            }
+            if let Some(glyph) = self.glyph_in_font(font, character) {
+                return Some(glyph);
+            }
+        }
+
+        None
+    }
+
+    pub fn resolve_glyph(
+        &self,
+        preferred: FontId,
+        character: char,
+    ) -> Option<ResolvedGlyph<'font>> {
+        if let Some(glyph) = self.resolve_character_exact(preferred, character) {
+            return Some(glyph);
+        }
+
+        // prefer the Unicode replacement character if any reigstered face contains it
+        if character != '\u{FFFD}'
+            && let Some(glyph) = self.resolve_character_exact(preferred, '\u{FFFD}')
+        {
+            return Some(glyph);
+        }
+
+        // small bitmap fonts commonly contain '?' but not U+FFFD
+        if character != '?'
+            && let Some(glyph) = self.resolve_character_exact(preferred, '?')
+        {
+            return Some(glyph);
+        }
+
+        None
     }
 }
 
@@ -437,6 +523,10 @@ impl<'font, 'storage, const FONTS: usize, const GLYPH_SLOTS: usize>
         }
     }
 
+    pub fn registry(&self) -> FontRegistry<'font, FONTS> {
+        self.registry
+    }
+
     pub const fn len(&self) -> usize {
         self.registry.len()
     }
@@ -478,6 +568,14 @@ impl<'font, 'storage, const FONTS: usize, const GLYPH_SLOTS: usize>
 
     pub const fn glyph_cache_used_bytes(&self) -> usize {
         self.cache.used_bytes()
+    }
+
+    pub fn resolve_glyph(
+        &self,
+        preferred: FontId,
+        character: char,
+    ) -> Option<ResolvedGlyph<'font>> {
+        self.registry.resolve_glyph(preferred, character)
     }
 }
 

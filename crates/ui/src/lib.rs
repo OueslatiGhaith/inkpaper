@@ -39,6 +39,7 @@ mod scroll;
 mod stateful;
 mod style;
 mod text_layout;
+mod text_shaping;
 mod text_style;
 mod units;
 mod visual;
@@ -69,6 +70,7 @@ pub use render::*;
 pub use runtime::*;
 pub use stateful::*;
 pub use style::*;
+pub use text_shaping::*;
 pub use text_style::*;
 #[cfg(feature = "ttf")]
 pub use ttf::*;

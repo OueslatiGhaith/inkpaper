@@ -33,8 +33,8 @@ const RUNTIME_FONT_STORAGE_BYTES: usize = 5 * 1024 * 1024;
 static RUNTIME_FONT_BYTES: StaticCell<Box<[u8; RUNTIME_FONT_STORAGE_BYTES]>> = StaticCell::new();
 static RUNTIME_FONT: StaticCell<TtfFont> = StaticCell::new();
 
-static BODY_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
-static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_10X20);
+static BODY_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_6X10);
+static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_10X20);
 type UiFonts<'storage> = FontResources<'static, 'storage, 2, 128>;
 
 type UiRuntime = Runtime<
