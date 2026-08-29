@@ -14,7 +14,7 @@ use inkpaper_app::{
     theme::Theme,
 };
 use inkpaper_ui::{
-    backend::{EmbeddedGraphicsPainter, MonoFontFace},
+    backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
 
@@ -125,6 +125,18 @@ fn handle_app_event(
     InkPaperApp::handle_event(runtime, app, event)
 }
 
+fn read_simulator_pixel(display: &SimulatorDisplay<Rgb888>, point: EgPoint) -> Option<Rgb888> {
+    if point.x < 0
+        || point.y < 0
+        || point.x >= DISPLAY_WIDTH as i32
+        || point.y >= DISPLAY_HEIGHT as i32
+    {
+        return None;
+    }
+
+    Some(display.get_pixel(point))
+}
+
 fn paint_ui(
     runtime: &mut UiRuntime,
     display: &mut SimulatorDisplay<Rgb888>,
@@ -135,7 +147,8 @@ fn paint_ui(
         return;
     }
 
-    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, []);
+    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, [])
+        .with_coverage_mode(CoverageMode::alpha_blend(read_simulator_pixel));
 
     painter.clear_damage(damage, Color::WHITE).unwrap();
 

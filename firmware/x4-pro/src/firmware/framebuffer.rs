@@ -159,7 +159,7 @@ impl<'a> Framebuffer<'a> {
         let index = physical_y as usize * PHYSICAL_STRIDE + physical_x as usize / 8;
         let mask = 0x80u8 >> (physical_x as usize % 8);
 
-        if is_black(color) {
+        if dithered_black(color, x, y) {
             self.buffer[index] &= !mask;
         } else {
             self.buffer[index] |= mask;
@@ -213,6 +213,21 @@ impl<'a> Framebuffer<'a> {
             apply_mask(&mut self.buffer[row_start + last_byte], last_mask, black);
         }
     }
+
+    pub fn get_pixel(&self, point: Point) -> Option<Rgb888> {
+        if !contains_logical_pixel(point) {
+            return None;
+        }
+
+        let x = point.x as u16;
+        let y = point.y as u16;
+        let (physical_x, physical_y) = self.orientation.map_point(x, y);
+        let index = physical_y as usize * PHYSICAL_STRIDE + physical_x as usize / 8;
+        let mask = 0x80u8 >> (physical_x as usize % 8);
+        let white = self.buffer[index] & mask != 0;
+
+        Some(if white { Rgb888::WHITE } else { Rgb888::BLACK })
+    }
 }
 
 impl OriginDimensions for Framebuffer<'_> {
@@ -245,27 +260,63 @@ impl DrawTarget for Framebuffer<'_> {
             return Ok(());
         };
 
-        let physical = self.orientation.map_region(logical);
-        self.fill_physical_region(physical, is_black(color));
+        if let Some(black) = exact_binary_color(color) {
+            let physical = self.orientation.map_region(logical);
+            self.fill_physical_region(physical, black);
+            return Ok(());
+        }
+
+        let end_x = logical.x.saturating_add(logical.width);
+        let end_y = logical.y.saturating_add(logical.height);
+
+        for y in logical.y..end_y {
+            for x in logical.x..end_x {
+                self.set_pixel(x, y, color);
+            }
+        }
 
         Ok(())
     }
 
     fn clear(&mut self, color: Self::Color) -> Result<(), Self::Error> {
-        self.buffer.fill(if is_black(color) { 0x00 } else { 0xff });
+        if let Some(black) = exact_binary_color(color) {
+            self.buffer.fill(if black { 0x00 } else { 0xff });
+            return Ok(());
+        }
+
+        for y in 0..LOGICAL_HEIGHT as u16 {
+            for x in 0..LOGICAL_WIDTH as u16 {
+                self.set_pixel(x, y, color);
+            }
+        }
 
         Ok(())
     }
 }
 
-fn is_black(color: Rgb888) -> bool {
-    // integer approximation of Rec. 601 luminance:
-    //   0.299 R + 0.587 G + 0.114 B
-    // the weights sum to 256, so no division is required when
-    // comparing against the midpoint.
-    let luminance = 77 * color.r() as u16 + 150 * color.g() as u16 + 29 * color.b() as u16;
+const BAYER_4X4: [u8; 16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
-    luminance < 128 * 256
+fn exact_binary_color(color: Rgb888) -> Option<bool> {
+    match color {
+        Rgb888::BLACK => Some(true),
+        Rgb888::WHITE => Some(false),
+        _ => None,
+    }
+}
+
+fn dithered_black(color: Rgb888, x: u16, y: u16) -> bool {
+    // rec. 601 integer luminance.
+    // range: 0 .. 255 * 256
+    let luminance =
+        77u32 * u32::from(color.r()) + 150u32 * u32::from(color.g()) + 29u32 * u32::from(color.b());
+    let matrix_x = usize::from(x & 3);
+    let matrix_y = usize::from(y & 3);
+    let rank = u32::from(BAYER_4X4[matrix_y * 4 + matrix_x]);
+    // rank centers: 8, 24, 40, ... 248
+    // expressed in the same 8.8-ish luminance scale as above.
+    let threshold = (rank * 16 + 8) * 256;
+
+    luminance < threshold
 }
 
 fn apply_mask(byte: &mut u8, mask: u8, black: bool) {

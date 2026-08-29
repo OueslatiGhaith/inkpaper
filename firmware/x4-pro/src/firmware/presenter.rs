@@ -1,8 +1,12 @@
 use defmt::Format;
-use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_10X20};
+use embedded_graphics::{
+    geometry::Point as EgPoint,
+    mono_font::ascii::{FONT_6X10, FONT_10X20},
+    pixelcolor::Rgb888,
+};
 use inkpaper_app::InkPaperApp;
 use inkpaper_ui::{
-    backend::{EmbeddedGraphicsPainter, MonoFontFace},
+    backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
 
@@ -138,7 +142,11 @@ fn render_invalidation(
 
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
     {
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, fonts, []);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display, fonts, []).with_coverage_mode(
+            CoverageMode::AlphaBlend {
+                read_pixel: read_framebuffer_pixel,
+            },
+        );
         match invalidation.kind() {
             Invalidation::None => return None,
             Invalidation::Paint => {}
@@ -210,4 +218,8 @@ fn ui_rect_to_region(rect: Rect) -> Option<Region> {
         u16::try_from(width).ok()?,
         u16::try_from(height).ok()?,
     ))
+}
+
+fn read_framebuffer_pixel(framebuffer: &Framebuffer<'_>, point: EgPoint) -> Option<Rgb888> {
+    framebuffer.get_pixel(point)
 }

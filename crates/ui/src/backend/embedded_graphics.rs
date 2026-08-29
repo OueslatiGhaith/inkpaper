@@ -5,7 +5,7 @@ use embedded_graphics::{
     draw_target::DrawTargetExt,
     geometry::{Point as EgPoint, Size as EgSize},
     image::{GetPixel as EgGetPixel, Image as EgImage, ImageDrawable as EgImageDrawable},
-    pixelcolor::Rgb888 as EgRgb888,
+    pixelcolor::{Rgb888 as EgRgb888, RgbColor},
     prelude::DrawTarget as EgDrawTarget,
     primitives::{
         Circle as EgCircle, Line as EgLine, Primitive, PrimitiveStyle as EgPrimitiveStyle,
@@ -25,6 +25,36 @@ use crate::{
 pub enum EmbeddedGraphicsError<E> {
     Target(E),
     Font(GlyphCacheError),
+}
+
+#[derive(Debug)]
+pub enum CoverageMode<D> {
+    BinaryThreshold,
+    OrderedDither4x4,
+    AlphaBlend {
+        read_pixel: fn(&D, EgPoint) -> Option<EgRgb888>,
+    },
+}
+
+impl<D> Copy for CoverageMode<D> {}
+impl<D> Clone for CoverageMode<D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<D> CoverageMode<D> {
+    pub const fn binary_threshold() -> Self {
+        Self::BinaryThreshold
+    }
+
+    pub const fn ordered_dither_4x4() -> Self {
+        Self::OrderedDither4x4
+    }
+
+    pub const fn alpha_blend(read_pixel: fn(&D, EgPoint) -> Option<EgRgb888>) -> Self {
+        Self::AlphaBlend { read_pixel }
+    }
 }
 
 pub struct EmbeddedGraphicsImage<'image, D>
@@ -268,6 +298,7 @@ pub struct EmbeddedGraphicsPainter<
     target: &'target mut D,
     font_resources: &'resources mut FontResources<'font, 'storage, FONTS, GLYPH_SLOTS>,
     images: [EmbeddedGraphicsImage<'image, D>; IMAGES],
+    coverage_mode: CoverageMode<D>,
 }
 
 impl<
@@ -309,7 +340,13 @@ where
             target,
             font_resources,
             images,
+            coverage_mode: CoverageMode::BinaryThreshold,
         }
+    }
+
+    pub fn with_coverage_mode(mut self, coverage_mode: CoverageMode<D>) -> Self {
+        self.coverage_mode = coverage_mode;
+        self
     }
 
     pub fn target_mut(&mut self) -> &mut D {
@@ -452,27 +489,23 @@ where
 
         let Some(text_clip) = (match clip {
             Some(clip) => clip.intersection(bounds),
-
             None => Some(bounds),
         }) else {
             return Ok(());
         };
 
         let (font_id, font) = self.resolve_font(style.font);
-        let font_resources = &mut *self.font_resources;
-        let target = &mut *self.target;
-        let mut target = target.color_converted::<EgRgb888>();
-        let clip = to_embedded_rect(text_clip);
-        let mut clipped = target.clipped(&clip);
 
         draw_text_to(
-            &mut clipped,
+            self.target,
             text,
             bounds,
-            font_resources,
+            text_clip,
+            self.font_resources,
             font_id,
             font,
             style,
+            self.coverage_mode,
         )
     }
 
@@ -607,17 +640,21 @@ where
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_text_to<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
     target: &mut D,
     text: &str,
     bounds: Rect,
+    clip: Rect,
     font_resources: &mut FontResources<'_, '_, FONTS, GLYPH_SLOTS>,
     font_id: FontId,
     font: &dyn FontFace,
     style: ResolvedTextStyle,
+    coverage_mode: CoverageMode<D>,
 ) -> Result<(), EmbeddedGraphicsError<D::Error>>
 where
-    D: EgDrawTarget<Color = EgRgb888>,
+    D: EgDrawTarget,
+    D::Color: From<EgRgb888>,
 {
     if text.is_empty() {
         return Ok(());
@@ -657,6 +694,8 @@ where
                 line.text,
                 baseline,
                 color,
+                clip,
+                coverage_mode,
                 &mut pen_x,
                 &mut previous,
             ) {
@@ -674,6 +713,8 @@ where
                     ELLIPSIS,
                     baseline,
                     color,
+                    clip,
+                    coverage_mode,
                     &mut pen_x,
                     &mut previous,
                 )
@@ -702,16 +743,18 @@ fn draw_font_run<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
     text: &str,
     baseline: Pixels,
     color: EgRgb888,
+    clip: Rect,
+    coverage_mode: CoverageMode<D>,
     pen_x: &mut Pixels,
     previous: &mut Option<GlyphId>,
 ) -> Result<(), EmbeddedGraphicsError<D::Error>>
 where
-    D: EgDrawTarget<Color = EgRgb888>,
+    D: EgDrawTarget,
+    D::Color: From<EgRgb888>,
 {
     for character in text.chars() {
         let Some(glyph) = font.glyph_id(character) else {
             *previous = None;
-
             continue;
         };
 
@@ -722,15 +765,12 @@ where
         let bitmap = font_resources
             .glyph_bitmap(font_id, glyph, size_px)
             .map_err(EmbeddedGraphicsError::Font)?;
-
         let metrics = bitmap.metrics();
-
         let origin = Point::new(*pen_x + metrics.bearing_x, baseline + metrics.bearing_y);
 
-        draw_coverage_bitmap(target, &bitmap, origin, color)?;
+        draw_coverage_bitmap(target, &bitmap, origin, color, clip, coverage_mode)?;
 
         *pen_x += metrics.advance;
-
         *previous = Some(glyph);
     }
 
@@ -742,9 +782,12 @@ fn draw_coverage_bitmap<D>(
     bitmap: &GlyphBitmap<'_>,
     origin: Point,
     color: EgRgb888,
+    clip: Rect,
+    coverage_mode: CoverageMode<D>,
 ) -> Result<(), EmbeddedGraphicsError<D::Error>>
 where
-    D: EgDrawTarget<Color = EgRgb888>,
+    D: EgDrawTarget,
+    D::Color: From<EgRgb888>,
 {
     let width = usize::from(bitmap.width());
     let height = usize::from(bitmap.height());
@@ -756,33 +799,103 @@ where
     let coverage = bitmap.coverage();
     debug_assert_eq!(coverage.len(), width.saturating_mul(height,),);
 
-    // the MonoFont adapter only emits 0 or 255.
-    let pixels = coverage
-        .iter()
-        .copied()
-        .enumerate()
-        .filter_map(|(index, coverage)| {
-            if coverage == 0 {
-                return None;
+    match coverage_mode {
+        CoverageMode::BinaryThreshold => {
+            let pixels = coverage
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(index, coverage)| {
+                    if coverage < 128 {
+                        return None;
+                    }
+
+                    let point = coverage_point(origin, width, index)?;
+                    if !point_in_rect(point, clip) {
+                        return None;
+                    }
+
+                    Some(EgPixel(point, D::Color::from(color)))
+                });
+
+            target
+                .draw_iter(pixels)
+                .map_err(EmbeddedGraphicsError::Target)
+        }
+        CoverageMode::OrderedDither4x4 => {
+            let pixels = coverage
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(index, coverage)| {
+                    let point = coverage_point(origin, width, index)?;
+                    if !point_in_rect(point, clip) {
+                        return None;
+                    }
+
+                    if !ordered_dither_accepts(coverage, point) {
+                        return None;
+                    }
+
+                    Some(EgPixel(point, D::Color::from(color)))
+                });
+
+            target
+                .draw_iter(pixels)
+                .map_err(EmbeddedGraphicsError::Target)
+        }
+        CoverageMode::AlphaBlend { read_pixel } => {
+            // fully covered pixels need no destination readback. Keep those together in
+            // one DrawTarget call. Only edge pixels require the slower read/blend/write path
+            let solid_pixels =
+                coverage
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .filter_map(|(index, coverage)| {
+                        if coverage != 255 {
+                            return None;
+                        }
+
+                        let point = coverage_point(origin, width, index)?;
+                        if !point_in_rect(point, clip) {
+                            return None;
+                        }
+
+                        Some(EgPixel(point, D::Color::from(color)))
+                    });
+
+            target
+                .draw_iter(solid_pixels)
+                .map_err(EmbeddedGraphicsError::Target)?;
+
+            for (index, coverage) in coverage.iter().copied().enumerate() {
+                if coverage == 0 || coverage == 255 {
+                    continue;
+                }
+
+                let Some(point) = coverage_point(origin, width, index) else {
+                    continue;
+                };
+
+                if !point_in_rect(point, clip) {
+                    continue;
+                }
+
+                let Some(background) = read_pixel(&*target, point) else {
+                    continue;
+                };
+
+                let blended = alpha_blend_rgb888(color, background, coverage);
+
+                target
+                    .draw_iter(core::iter::once(EgPixel(point, D::Color::from(blended))))
+                    .map_err(EmbeddedGraphicsError::Target)?;
             }
 
-            let x = index % width;
-            let x = i32::try_from(x).ok()?;
-            let y = index / width;
-            let y = i32::try_from(y).ok()?;
-
-            Some(EgPixel(
-                EgPoint::new(
-                    origin.x.get().saturating_add(x),
-                    origin.y.get().saturating_add(y),
-                ),
-                color,
-            ))
-        });
-
-    target
-        .draw_iter(pixels)
-        .map_err(EmbeddedGraphicsError::Target)
+            Ok(())
+        }
+    }
 }
 
 fn measure_font_line(font: &dyn FontFace, size_px: u16, text: &str) -> Pixels {
@@ -945,6 +1058,68 @@ where
     let mut target = target.color_converted::<<T as EgImageDrawable>::Color>();
 
     target.draw_iter(pixels)
+}
+
+fn coverage_point(origin: Point, width: usize, index: usize) -> Option<EgPoint> {
+    if width == 0 {
+        return None;
+    }
+
+    let x = index % width;
+    let x = i32::try_from(x).ok()?;
+    let y = index / width;
+    let y = i32::try_from(y).ok()?;
+
+    Some(EgPoint::new(
+        origin.x.get().saturating_add(x),
+        origin.y.get().saturating_add(y),
+    ))
+}
+
+fn point_in_rect(point: EgPoint, rect: Rect) -> bool {
+    point.x >= rect.x().get()
+        && point.y >= rect.y().get()
+        && point.x < rect.right().get()
+        && point.y < rect.bottom().get()
+}
+
+fn alpha_blend_rgb888(foreground: EgRgb888, background: EgRgb888, coverage: u8) -> EgRgb888 {
+    EgRgb888::new(
+        alpha_blend_channel(foreground.r(), background.r(), coverage),
+        alpha_blend_channel(foreground.g(), background.g(), coverage),
+        alpha_blend_channel(foreground.b(), background.b(), coverage),
+    )
+}
+
+fn alpha_blend_channel(foreground: u8, background: u8, coverage: u8) -> u8 {
+    let alpha = u32::from(coverage);
+    let inverse = 255u32.saturating_sub(alpha);
+    let value = u32::from(foreground)
+        .saturating_mul(alpha)
+        .saturating_add(u32::from(background).saturating_mul(inverse))
+        .saturating_add(127)
+        / 255;
+
+    u8::try_from(value).unwrap_or(u8::MAX)
+}
+
+const BAYER_4X4: [u8; 16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+
+fn ordered_dither_accepts(coverage: u8, point: EgPoint) -> bool {
+    if coverage == 0 {
+        return false;
+    }
+
+    if coverage == 255 {
+        return true;
+    }
+
+    let x = point.x.rem_euclid(4) as usize;
+    let y = point.y.rem_euclid(4) as usize;
+    let rank = BAYER_4X4[y * 4 + x];
+    let threshold = rank.saturating_mul(16).saturating_add(8);
+
+    coverage > threshold
 }
 
 #[cfg(test)]
@@ -1532,5 +1707,51 @@ mod tests {
         });
 
         assert!(has_black_pixel,);
+    }
+
+    #[test]
+    fn alpha_blending_preserves_coverage_endpoints() {
+        let black = Rgb888::new(0, 0, 0);
+        let white = Rgb888::new(255, 255, 255);
+
+        assert_eq!(super::alpha_blend_rgb888(black, white, 0,), white,);
+        assert_eq!(super::alpha_blend_rgb888(black, white, 255,), black,);
+    }
+
+    #[test]
+    fn alpha_blending_produces_intermediate_gray() {
+        let black = Rgb888::new(0, 0, 0);
+        let white = Rgb888::new(255, 255, 255);
+
+        assert_eq!(
+            super::alpha_blend_rgb888(black, white, 128,),
+            Rgb888::new(127, 127, 127,),
+        );
+    }
+
+    #[test]
+    fn ordered_dither_half_coverage_draws_half_of_matrix() {
+        let mut drawn = 0usize;
+        for y in 0..4 {
+            for x in 0..4 {
+                if super::ordered_dither_accepts(128, EgPoint::new(x, y)) {
+                    drawn += 1;
+                }
+            }
+        }
+
+        assert_eq!(drawn, 8,);
+    }
+
+    #[test]
+    fn ordered_dither_is_stable_in_absolute_coordinates() {
+        for y in 0..4 {
+            for x in 0..4 {
+                let first = super::ordered_dither_accepts(93, EgPoint::new(x, y));
+                let repeated = super::ordered_dither_accepts(93, EgPoint::new(x + 4, y + 4));
+
+                assert_eq!(first, repeated,);
+            }
+        }
     }
 }
