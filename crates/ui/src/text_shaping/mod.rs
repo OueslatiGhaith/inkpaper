@@ -332,6 +332,29 @@ impl SimpleShaper {
         }
     }
 
+    pub fn shape_piece_into<'font, const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        preferred_font: FontId,
+        size_px: u16,
+        text: &str,
+        state: &mut ShapeState,
+        output: &mut [ShapedGlyph],
+    ) -> Result<ShapeSummary, ShapeError> {
+        let mut written = 0usize;
+
+        self.try_shape_piece_with(registry, preferred_font, size_px, text, state, |glyph| {
+            let Some(destination) = output.get_mut(written) else {
+                return Err(ShapeError::BufferTooSmall);
+            };
+
+            *destination = glyph;
+            written = written.saturating_add(1);
+
+            Ok(())
+        })
+    }
+
     pub fn measure<'font, const FONTS: usize>(
         &self,
         registry: &FontRegistry<'font, FONTS>,
@@ -352,31 +375,26 @@ impl SimpleShaper {
         output: &'out mut [ShapedGlyph],
     ) -> Result<ShapedRun<'out>, ShapeError> {
         let mut state = ShapeState::new();
-        let mut written = 0;
 
-        let summary = self.try_shape_piece_with(
-            registry,
-            preferred_font,
-            size_px,
-            text,
-            &mut state,
-            |glyph| {
-                let Some(destination) = output.get_mut(written) else {
-                    return Err(ShapeError::BufferTooSmall);
-                };
+        let summary =
+            self.shape_piece_into(registry, preferred_font, size_px, text, &mut state, output)?;
+        let glyph_count = summary.glyph_count();
 
-                *destination = glyph;
-                written = written.saturating_add(1);
+        Ok(self.visual_order(text, &mut output[..glyph_count], summary.advance()))
+    }
 
-                Ok(())
-            },
-        )?;
+    pub fn visual_order<'out>(
+        &self,
+        text: &str,
+        glyphs: &'out mut [ShapedGlyph],
+        advance: Pixels,
+    ) -> ShapedRun<'out> {
+        let direction = simple_text_direction(text);
+        if direction == TextDirection::RightToLeft {
+            glyphs.reverse();
+        }
 
-        Ok(ShapedRun::new(
-            &output[..written],
-            TextDirection::LeftToRight,
-            summary.advance(),
-        ))
+        ShapedRun::new(glyphs, direction, advance)
     }
 }
 
@@ -457,6 +475,54 @@ where
     state.previous = Some((font, glyph));
 
     Ok(true)
+}
+
+fn simple_text_direction(text: &str) -> TextDirection {
+    let mut has_rtl = false;
+
+    for character in text.chars() {
+        // numeric runs require bidi handling of their own. Reversing completethe line
+        // would turn "123" into "321", so leave lines in logical order until directional
+        // runs are implemented
+        if is_directional_number(character) {
+            return TextDirection::LeftToRight;
+        }
+        if is_arabic_directional(character) {
+            has_rtl = true;
+            continue;
+        }
+        // a non-arabic alphabetic character means this is a mixed-direction line.
+        if character.is_alphabetic() {
+            return TextDirection::LeftToRight;
+        }
+    }
+
+    if has_rtl {
+        TextDirection::RightToLeft
+    } else {
+        TextDirection::LeftToRight
+    }
+}
+
+fn is_directional_number(character: char) -> bool {
+    matches!(
+        character,
+        '0'..='9'
+            | '\u{0660}'..='\u{0669}'
+            | '\u{06F0}'..='\u{06F9}'
+    )
+}
+
+fn is_arabic_directional(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0600}'..='\u{06FF}'
+            | '\u{0750}'..='\u{077F}'
+            | '\u{0870}'..='\u{089F}'
+            | '\u{08A0}'..='\u{08FF}'
+            | '\u{FB50}'..='\u{FDFF}'
+            | '\u{FE70}'..='\u{FEFF}'
+    )
 }
 
 #[cfg(test)]
@@ -640,18 +706,31 @@ mod tests {
         let mut registry = FontRegistry::<1>::default();
         let font = registry.register(&arabic).unwrap();
         let mut output = [ShapedGlyph::EMPTY; 3];
-        let run = SimpleShaper::new()
+
+        let shaper = SimpleShaper::new();
+        let measured = shaper.measure(&registry, font, 16, "ببب");
+
+        let run = shaper
             .shape_into(&registry, font, 16, "ببب", &mut output)
             .unwrap();
 
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
         assert_eq!(run.len(), 3);
-        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(1));
+
+        // contextual shaping happens in logical order:
+        //     initial, medial, final
+        // but the returned run is in visual left-to-right storage order:
+        //     final, medial, initial
+        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(3));
         assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(2));
-        assert_eq!(run.glyphs()[2].glyph(), GlyphId::new(3));
-        // arabic UTF-8 scalars here are two bytes each.
-        assert_eq!(run.glyphs()[0].cluster(), 0);
+        assert_eq!(run.glyphs()[2].glyph(), GlyphId::new(1));
+        // logical UTF-8 source offsets stay attached to their glyphs.
+        assert_eq!(run.glyphs()[0].cluster(), 4);
         assert_eq!(run.glyphs()[1].cluster(), 2);
-        assert_eq!(run.glyphs()[2].cluster(), 4);
+        assert_eq!(run.glyphs()[2].cluster(), 0);
+        // visual reordering must not change line width.
+        assert_eq!(run.advance(), measured.advance());
+        assert_eq!(run.advance(), px(21));
     }
 
     #[test]
@@ -676,10 +755,16 @@ mod tests {
             .shape_into(&registry, font, 16, "بَب", &mut output)
             .unwrap();
 
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
         assert_eq!(run.len(), 3);
-        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(1));
+
+        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(3));
         assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(2));
-        assert_eq!(run.glyphs()[2].glyph(), GlyphId::new(3));
+        assert_eq!(run.glyphs()[2].glyph(), GlyphId::new(1));
+
+        assert_eq!(run.glyphs()[0].cluster(), 4);
+        assert_eq!(run.glyphs()[1].cluster(), 2);
+        assert_eq!(run.glyphs()[2].cluster(), 0);
     }
 
     #[test]
@@ -730,11 +815,15 @@ mod tests {
             .shape_into(&registry, font, 16, "بلا", &mut output)
             .unwrap();
 
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
         assert_eq!(run.len(), 2);
-        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(1));
-        assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(2));
-        // beh begins at byte 0; lam begins at byte 2.
-        assert_eq!(run.glyphs()[1].cluster(), 2);
+        // the lam-alef is logically after beh, but appears first in the left-to-right
+        // visual glyph buffer.
+        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(2));
+        assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(1));
+        // the ligature still points at the original logical lam.
+        assert_eq!(run.glyphs()[0].cluster(), 2);
+        assert_eq!(run.glyphs()[1].cluster(), 0);
     }
 
     #[test]
@@ -758,9 +847,13 @@ mod tests {
             .shape_into(&registry, font, 16, "لا", &mut output)
             .unwrap();
 
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
         assert_eq!(run.len(), 2);
-        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(1));
-        assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(2));
+        // both source characters survive; only their visual order changes.
+        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(2));
+        assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(1));
+        assert_eq!(run.glyphs()[0].cluster(), 2);
+        assert_eq!(run.glyphs()[1].cluster(), 0);
     }
 
     #[test]
@@ -783,5 +876,31 @@ mod tests {
         assert_eq!(run.len(), 2);
         assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(1));
         assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(1));
+    }
+
+    #[test]
+    fn arabic_with_numbers_stays_logical_until_bidi_runs_are_supported() {
+        static CHARACTERS: [char; 4] = ['ب', '1', '2', '?'];
+
+        let font = TestFont {
+            characters: &CHARACTERS,
+            advance: px(5),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&font).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 3];
+
+        let run = SimpleShaper::new()
+            .shape_into(&registry, font_id, 16, "ب12", &mut output)
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::LeftToRight);
+        assert_eq!(run.len(), 3);
+
+        assert_eq!(run.glyphs()[0].cluster(), 0);
+        assert_eq!(run.glyphs()[1].cluster(), 2);
+        assert_eq!(run.glyphs()[2].cluster(), 3);
     }
 }

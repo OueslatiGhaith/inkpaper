@@ -17,15 +17,18 @@ use embedded_graphics::{
 use crate::{
     BoxPaint, CanvasPainter, Color, DamageRegion, FontFace, FontId, FontRegistry, FontResources,
     GlyphBitmap, GlyphCacheError, ImageFit, ImageId, ImageSource, LineHeight, Painter, Pixels,
-    Point, Rect, ResolvedTextStyle, ShapeState, SimpleShaper, Size, TextAlign, TextMeasurer,
-    fitted_image_bounds, px,
+    Point, Rect, ResolvedTextStyle, ShapeError, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper,
+    Size, TextAlign, TextDirection, TextMeasurer, fitted_image_bounds, px,
     text_layout::{ELLIPSIS, for_each_visible_text_line},
 };
+
+const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
 
 #[derive(Debug)]
 pub enum EmbeddedGraphicsError<E> {
     Target(E),
     Font(GlyphCacheError),
+    Shape(ShapeError),
 }
 
 #[derive(Debug)]
@@ -672,6 +675,7 @@ where
     let line_advance = text_line_advance(font, size_px, style);
     let baseline_offset = font.metrics(size_px).ascent;
     let color = to_rgb888(style.color);
+    let shaper = SimpleShaper::new();
 
     let mut y = bounds.origin.y;
     let mut error = None;
@@ -689,44 +693,65 @@ where
                 return;
             }
 
-            let mut pen_x = aligned_line_x(bounds, line.width, style.align);
-            let baseline = y + baseline_offset;
+            let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
             let mut shape_state = ShapeState::new();
 
-            if let Err(draw_error) = draw_font_run(
-                target,
+            let text_summary = match shaper.shape_piece_into(
                 registry,
-                font_resources,
                 font_id,
                 size_px,
                 line.text,
+                &mut shape_state,
+                &mut glyphs,
+            ) {
+                Ok(summary) => summary,
+                Err(shape_error) => {
+                    error = Some(EmbeddedGraphicsError::Shape(shape_error));
+                    return;
+                }
+            };
+
+            let mut glyph_count = text_summary.glyph_count();
+            let mut advance = text_summary.advance();
+
+            if line.ellipsis {
+                let ellipsis_summary = match shaper.shape_piece_into(
+                    registry,
+                    font_id,
+                    size_px,
+                    ELLIPSIS,
+                    &mut shape_state,
+                    &mut glyphs[glyph_count..],
+                ) {
+                    Ok(summary) => summary,
+                    Err(shape_error) => {
+                        error = Some(EmbeddedGraphicsError::Shape(shape_error));
+                        return;
+                    }
+                };
+
+                glyph_count += glyph_count.saturating_add(ellipsis_summary.glyph_count());
+                advance += ellipsis_summary.advance();
+            }
+
+            let run = shaper.visual_order(line.text, &mut glyphs[..glyph_count], advance);
+
+            debug_assert_eq!(run.advance(), line.width);
+
+            let mut pen_x = aligned_line_x(bounds, line.width, style.align, run.direction());
+            let baseline = y + baseline_offset;
+
+            if let Err(draw_error) = draw_shaped_run(
+                target,
+                font_resources,
+                size_px,
+                &run,
                 baseline,
                 color,
                 clip,
                 coverage_mode,
-                &mut shape_state,
                 &mut pen_x,
             ) {
-                error = Some(draw_error);
-                return;
-            }
-
-            if line.ellipsis
-                && let Err(draw_error) = draw_font_run(
-                    target,
-                    registry,
-                    font_resources,
-                    font_id,
-                    size_px,
-                    ELLIPSIS,
-                    baseline,
-                    color,
-                    clip,
-                    coverage_mode,
-                    &mut shape_state,
-                    &mut pen_x,
-                )
-            {
                 error = Some(draw_error);
                 return;
             }
@@ -742,49 +767,38 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_font_run<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
+fn draw_shaped_run<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
     target: &mut D,
-    registry: &FontRegistry<'_, FONTS>,
     font_resources: &mut FontResources<'_, '_, FONTS, GLYPH_SLOTS>,
-    preferred_font: FontId,
     size_px: u16,
-    text: &str,
+    run: &ShapedRun<'_>,
     baseline: Pixels,
     color: EgRgb888,
     clip: Rect,
     coverage_mode: CoverageMode<D>,
-    shape_state: &mut ShapeState,
     pen_x: &mut Pixels,
 ) -> Result<(), EmbeddedGraphicsError<D::Error>>
 where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,
 {
-    SimpleShaper::new().try_shape_piece_with(
-        registry,
-        preferred_font,
-        size_px,
-        text,
-        shape_state,
-        |shaped| {
-            let bitmap = font_resources
-                .glyph_bitmap(shaped.font(), shaped.glyph(), size_px)
-                .map_err(EmbeddedGraphicsError::Font)?;
+    for shaped in run.glyphs().iter().copied() {
+        let bitmap = font_resources
+            .glyph_bitmap(shaped.font(), shaped.glyph(), size_px)
+            .map_err(EmbeddedGraphicsError::Font)?;
 
-            let metrics = bitmap.metrics();
-            let offset = shaped.offset();
-            let origin = Point::new(
-                *pen_x + offset.x + metrics.bearing_x,
-                baseline + offset.y + metrics.bearing_y,
-            );
+        let metrics = bitmap.metrics();
+        let offset = shaped.offset();
 
-            draw_coverage_bitmap(target, &bitmap, origin, color, clip, coverage_mode)?;
+        let origin = Point::new(
+            *pen_x + offset.x + metrics.bearing_x,
+            baseline + offset.y + metrics.bearing_y,
+        );
 
-            *pen_x += shaped.advance();
+        draw_coverage_bitmap(target, &bitmap, origin, color, clip, coverage_mode)?;
 
-            Ok(())
-        },
-    )?;
+        *pen_x += shaped.advance();
+    }
 
     Ok(())
 }
@@ -942,13 +956,21 @@ fn text_line_advance(font: &dyn FontFace, size_px: u16, style: ResolvedTextStyle
     }
 }
 
-fn aligned_line_x(bounds: Rect, line_width: Pixels, align: TextAlign) -> Pixels {
+fn aligned_line_x(
+    bounds: Rect,
+    line_width: Pixels,
+    align: TextAlign,
+    direction: TextDirection,
+) -> Pixels {
+    use TextAlign::*;
+    use TextDirection::*;
+
     let remaining = (bounds.width() - line_width).non_negative();
 
-    match align {
-        TextAlign::Start => bounds.origin.x,
-        TextAlign::Center => bounds.origin.x + remaining / 2,
-        TextAlign::End => bounds.origin.x + remaining,
+    match (align, direction) {
+        (Center, _) => bounds.origin.x + remaining / 2,
+        (Start, LeftToRight) | (End, RightToLeft) => bounds.origin.x,
+        (End, LeftToRight) | (Start, RightToLeft) => bounds.origin.x + remaining,
     }
 }
 
@@ -1233,9 +1255,23 @@ mod tests {
     fn centered_text_line_is_offset_inside_bounds() {
         let bounds = Rect::new(Point::new(px(10), px(5)), Size::new(px(100), px(20)));
 
-        assert_eq!(aligned_line_x(bounds, px(40), TextAlign::Center,), px(40));
-        assert_eq!(aligned_line_x(bounds, px(40), TextAlign::End,), px(70));
-        assert_eq!(aligned_line_x(bounds, px(40), TextAlign::Start,), px(10));
+        assert_eq!(
+            aligned_line_x(
+                bounds,
+                px(40),
+                TextAlign::Center,
+                TextDirection::LeftToRight
+            ),
+            px(40)
+        );
+        assert_eq!(
+            aligned_line_x(bounds, px(40), TextAlign::End, TextDirection::LeftToRight),
+            px(70)
+        );
+        assert_eq!(
+            aligned_line_x(bounds, px(40), TextAlign::Start, TextDirection::LeftToRight),
+            px(10)
+        );
     }
 
     #[test]
@@ -1753,5 +1789,28 @@ mod tests {
                 assert_eq!(first, repeated,);
             }
         }
+    }
+
+    #[test]
+    fn rtl_start_and_end_alignment_are_mirrored() {
+        let bounds = Rect::new(Point::new(px(10), px(5)), Size::new(px(100), px(20)));
+
+        assert_eq!(
+            aligned_line_x(bounds, px(40), TextAlign::Start, TextDirection::RightToLeft,),
+            px(70),
+        );
+        assert_eq!(
+            aligned_line_x(
+                bounds,
+                px(40),
+                TextAlign::Center,
+                TextDirection::RightToLeft,
+            ),
+            px(40),
+        );
+        assert_eq!(
+            aligned_line_x(bounds, px(40), TextAlign::End, TextDirection::RightToLeft,),
+            px(10),
+        );
     }
 }
