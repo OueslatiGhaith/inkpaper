@@ -270,7 +270,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         Some(ResolvedGlyph::new(font, face, glyph))
     }
 
-    fn resolve_character_exact(
+    pub(crate) fn resolve_character_exact(
         &self,
         preferred: FontId,
         character: char,
