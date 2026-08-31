@@ -271,19 +271,16 @@ fn gsub_single_substitution_for_face(
         let mut current = glyph;
         let mut changed = false;
 
-        // lookups within a feature are ordered.
-        // apply at most one subtable from each lookup, then continue with the next lookup
-        // using the substituted glyph.
+        // lookups inside a feature are applied in order.
         for lookup_index in feature_record.lookup_indices {
             let Some(lookup) = gsub.lookups.get(lookup_index) else {
                 continue;
             };
 
+            // subtables within one lookup are alternatives.
+            // apply the first one that handles the current glyph.
             for subtable in lookup.subtables.into_iter::<SubstitutionSubtable>() {
-                let SubstitutionSubtable::Single(substitution) = subtable else {
-                    continue;
-                };
-                let Some(next) = apply_single_substitution(substitution, current) else {
+                let Some(next) = apply_single_output_substitution(subtable, current) else {
                     continue;
                 };
 
@@ -323,6 +320,35 @@ fn apply_single_substitution(
 
             substitutes.get(index)
         }
+    }
+}
+
+fn apply_single_output_substitution(
+    substitution: SubstitutionSubtable<'_>,
+    glyph: TtfGlyphId,
+) -> Option<TtfGlyphId> {
+    match substitution {
+        SubstitutionSubtable::Single(substitution) => {
+            apply_single_substitution(substitution, glyph)
+        }
+
+        SubstitutionSubtable::Multiple(substitution) => {
+            let index = substitution.coverage.get(glyph)?;
+
+            let sequence = substitution.sequences.get(index)?;
+
+            // MultipleSubstitution is only compatible with this bounded one-glyph API
+            // when it produces exactly one glyph.
+            // zero outputs means deletion.
+            // more than one output requires a real glyph buffer rewrite and is
+            // deliberately unsupported here.
+            if sequence.substitutes.len() != 1 {
+                return None;
+            }
+
+            sequence.substitutes.get(0)
+        }
+        _ => None,
     }
 }
 
@@ -1133,6 +1159,8 @@ fn abs_f32(value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use ttf_parser::opentype_layout::LookupSubtable;
+
     use super::*;
 
     #[test]
@@ -1194,5 +1222,59 @@ mod tests {
         ]);
 
         assert_eq!(steps, MAX_CURVE_STEPS,);
+    }
+
+    const SINGLE_OUTPUT_MULTIPLE_SUBSTITUTION: &[u8] = &[
+        // MultipleSubst format 1
+        0x00, 0x01, // coverage offset = 8
+        0x00, 0x08, // sequence count = 1
+        0x00, 0x01, // sequence[0] offset = 14
+        0x00, 0x0E, // Coverage format 1
+        0x00, 0x01, // glyph count = 1
+        0x00, 0x01, // covered glyph = 5
+        0x00, 0x05, // Sequence:
+        // substitute count = 1
+        0x00, 0x01, // substitute glyph = 9
+        0x00, 0x09,
+    ];
+
+    const MULTI_OUTPUT_MULTIPLE_SUBSTITUTION: &[u8] = &[
+        // MultipleSubst format 1
+        0x00, 0x01, // coverage offset = 8
+        0x00, 0x08, // sequence count = 1
+        0x00, 0x01, // sequence[0] offset = 14
+        0x00, 0x0E, // Coverage format 1
+        0x00, 0x01, // glyph count = 1
+        0x00, 0x01, // covered glyph = 5
+        0x00, 0x05, // Sequence:
+        // substitute count = 2
+        0x00, 0x02, // substitute glyphs = 9, 10
+        0x00, 0x09, 0x00, 0x0A,
+    ];
+
+    #[test]
+    fn single_output_multiple_substitution_is_accepted() {
+        let substitution = <SubstitutionSubtable<'static> as LookupSubtable<'static>>::parse(
+            SINGLE_OUTPUT_MULTIPLE_SUBSTITUTION,
+            2,
+        )
+        .unwrap();
+
+        let result = apply_single_output_substitution(substitution, TtfGlyphId(5));
+
+        assert_eq!(result, Some(TtfGlyphId(9)),);
+    }
+
+    #[test]
+    fn multi_output_multiple_substitution_is_rejected() {
+        let substitution = <SubstitutionSubtable<'static> as LookupSubtable<'static>>::parse(
+            MULTI_OUTPUT_MULTIPLE_SUBSTITUTION,
+            2,
+        )
+        .unwrap();
+
+        let result = apply_single_output_substitution(substitution, TtfGlyphId(5));
+
+        assert_eq!(result, None);
     }
 }
