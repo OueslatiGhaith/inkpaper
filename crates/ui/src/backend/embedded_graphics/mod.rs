@@ -12,7 +12,10 @@ use embedded_graphics::{
 
 use crate::{
     BoxPaint, CanvasPainter, Color, DamageRegion, FontFace, FontId, FontResources, GlyphCacheError,
-    ImageFit, ImageId, ImageSource, Painter, Point, Rect, ResolvedTextStyle, ShapeError, Size, px,
+    ImageFit, ImageId, ImageRegistry, ImageResource, ImageSource, Painter, Point, Rect,
+    ResolvedTextStyle, ShapeError, Size,
+    backend::embedded_graphics::{image::draw_image_to, text::draw_text_to},
+    px,
 };
 
 mod canvas;
@@ -24,7 +27,6 @@ pub use coverage::CoverageMode;
 pub use image::EmbeddedGraphicsImage;
 
 use canvas::EmbeddedGraphicsCanvasPainter;
-use text::draw_text_to;
 
 #[cfg(test)]
 mod tests;
@@ -51,7 +53,7 @@ pub struct EmbeddedGraphicsPainter<
 {
     target: &'target mut D,
     font_resources: &'resources mut FontResources<'font, 'storage, FONTS, GLYPH_SLOTS>,
-    images: [EmbeddedGraphicsImage<'image, D>; IMAGES],
+    images: ImageRegistry<'image, IMAGES>,
     coverage_mode: CoverageMode<D>,
 }
 
@@ -83,7 +85,7 @@ where
     pub fn new(
         target: &'target mut D,
         font_resources: &'resources mut FontResources<'font, 'storage, FONTS, GLYPH_SLOTS>,
-        images: [EmbeddedGraphicsImage<'image, D>; IMAGES],
+        images: ImageRegistry<'image, IMAGES>,
     ) -> Self {
         assert!(
             !font_resources.is_empty(),
@@ -113,8 +115,8 @@ where
             .expect("EmbeddedGraphicsPainter requires a default font")
     }
 
-    fn resolve_image(&self, id: ImageId) -> Option<EmbeddedGraphicsImage<'image, D>> {
-        self.images.get(id.index()).copied()
+    fn resolve_image(&self, id: ImageId) -> Option<&'image dyn ImageResource> {
+        self.images.get(id)
     }
 
     pub fn clear_damage(&mut self, damage: DamageRegion, color: Color) -> Result<(), D::Error>
@@ -242,7 +244,7 @@ where
             image.size(),
             source.size(),
             "registered image size differs from ImageSource size for {:?}",
-            source.id()
+            source.id(),
         );
 
         let Some(image_clip) = (match clip {
@@ -252,8 +254,7 @@ where
             return Ok(());
         };
 
-        image
-            .draw(self.target, bounds, fit, Some(image_clip))
+        draw_image_to(self.target, image, bounds, fit, Some(image_clip))
             .map_err(EmbeddedGraphicsError::Target)
     }
 

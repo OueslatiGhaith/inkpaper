@@ -15,6 +15,7 @@ mod font;
 mod frame;
 mod geometry;
 mod global;
+mod image;
 mod interaction;
 mod layout;
 mod metrics;
@@ -34,6 +35,7 @@ pub use font::*;
 pub use frame::*;
 pub use geometry::*;
 pub use global::*;
+pub use image::*;
 pub use interaction::*;
 pub use layout::*;
 pub use metrics::*;
@@ -50,9 +52,10 @@ pub mod prelude {
         ActivateEvent, AppContext, CanvasPainter, Color, ComponentSlot, ConditionalElementExt,
         Context, DamageRegion, Either, EmptySlot, Entity, EventTarget, FontId, FontResources,
         Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError, IdentifiableElementExt,
-        Image, ImageFit, ImageId, ImageSource, IntoElement, Invalidation, LineHeight, Listener,
-        Offset, OnEvent, ParentElement, Pixels, Point, Rect, Render, RenderInvalidation,
-        RenderOnce, Runtime, Size, StatefulInteractiveElementExt, Style, Styled, TextAlign,
-        TextMaxLines, TextOverflow, TextStyled, TextWrap, canvas, div, image, px, text,
+        Image, ImageFit, ImageId, ImageRegistry, ImageRegistryError, ImageResource, ImageSource,
+        IntoElement, Invalidation, LineHeight, Listener, Offset, OnEvent, ParentElement, Pixels,
+        Point, Rect, Render, RenderInvalidation, RenderOnce, Runtime, Size,
+        StatefulInteractiveElementExt, Style, Styled, TextAlign, TextMaxLines, TextOverflow,
+        TextStyled, TextWrap, canvas, div, image, px, text,
     };
 }

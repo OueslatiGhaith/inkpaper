@@ -36,7 +36,8 @@ fn embedded_graphics_backend_rasterizes_box() {
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+        let mut painter =
+            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
         painter
             .draw_box(
@@ -70,7 +71,8 @@ fn text_measurement_wraps_at_word_boundaries() {
 
     let mut glyph_storage = [0; 4096];
     let mut fonts = test_font_resources(&mut glyph_storage);
-    let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+    let painter =
+        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
     let size = painter.measure_text(
         "hello world",
@@ -90,7 +92,8 @@ fn custom_line_height_affects_multiline_measurement() {
 
     let mut glyph_storage = [0; 4096];
     let mut fonts = test_font_resources(&mut glyph_storage);
-    let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+    let painter =
+        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
     let size = painter.measure_text(
         "first\nsecond",
@@ -133,7 +136,8 @@ fn max_lines_limits_measured_height() {
 
     let mut glyph_storage = [0; 4096];
     let mut fonts = test_font_resources(&mut glyph_storage);
-    let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+    let painter =
+        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
     let size = painter.measure_text(
         "hello world again",
@@ -154,7 +158,8 @@ fn ellipsis_respects_available_width() {
 
     let mut glyph_storage = [0; 4096];
     let mut fonts = test_font_resources(&mut glyph_storage);
-    let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+    let painter =
+        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
     let size = painter.measure_text(
         "abcdefghij",
@@ -174,7 +179,8 @@ fn wrapped_text_can_be_clamped_with_ellipsis() {
 
     let mut glyph_storage = [0; 4096];
     let mut fonts = test_font_resources(&mut glyph_storage);
-    let painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+    let painter =
+        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
     let size = painter.measure_text(
         "hello world again",
@@ -243,15 +249,17 @@ fn embedded_graphics_backend_draws_registered_image() {
         size: EgSize::new(4, 3),
         color: Rgb888::new(255, 0, 0),
     };
-    let registered = EmbeddedGraphicsImage::new(&bitmap);
-    let source = registered.source(ImageId::new(0));
+
+    let image = EmbeddedGraphicsImage::new(&bitmap);
+    let mut images = ImageRegistry::<1>::default();
+    let source = images.register(&image).unwrap();
 
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, [registered]);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
             .draw_image(
@@ -264,14 +272,14 @@ fn embedded_graphics_backend_draws_registered_image() {
     }
 
     assert_eq!(
-        display.get_pixel(EgPoint::new(2, 3,)),
-        Some(Rgb888::new(255, 0, 0,))
+        display.get_pixel(EgPoint::new(2, 3)),
+        Some(Rgb888::new(255, 0, 0))
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(5, 5,)),
-        Some(Rgb888::new(255, 0, 0,))
+        display.get_pixel(EgPoint::new(5, 5)),
+        Some(Rgb888::new(255, 0, 0))
     );
-    assert_eq!(display.get_pixel(EgPoint::new(1, 3,)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(1, 3)), None);
 }
 
 #[test]
@@ -280,15 +288,18 @@ fn embedded_graphics_backend_clips_image_to_layout_bounds() {
         size: EgSize::new(4, 4),
         color: Rgb888::new(0, 255, 0),
     };
-    let registered = EmbeddedGraphicsImage::new(&bitmap);
-    let source = registered.source(ImageId::new(0));
+
+    let image = EmbeddedGraphicsImage::new(&bitmap);
+    let mut images = ImageRegistry::<1>::default();
+    let source = images.register(&image).unwrap();
 
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, [registered]);
+
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
             .draw_image(
@@ -301,33 +312,34 @@ fn embedded_graphics_backend_clips_image_to_layout_bounds() {
     }
 
     assert_eq!(
-        display.get_pixel(EgPoint::new(10, 10,)),
-        Some(Rgb888::new(0, 255, 0,))
+        display.get_pixel(EgPoint::new(10, 10)),
+        Some(Rgb888::new(0, 255, 0))
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(11, 11,)),
-        Some(Rgb888::new(0, 255, 0,))
+        display.get_pixel(EgPoint::new(11, 11)),
+        Some(Rgb888::new(0, 255, 0))
     );
-    assert_eq!(display.get_pixel(EgPoint::new(12, 10,)), None);
-    assert_eq!(display.get_pixel(EgPoint::new(10, 12,)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(12, 10)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(10, 12)), None);
 }
 
 #[test]
 fn embedded_graphics_backend_combines_image_bounds_with_ancestor_clip() {
     let bitmap = SolidTestImage {
         size: EgSize::new(6, 4),
-
         color: Rgb888::new(0, 0, 255),
     };
-    let registered = EmbeddedGraphicsImage::new(&bitmap);
-    let source = registered.source(ImageId::new(0));
+
+    let image = EmbeddedGraphicsImage::new(&bitmap);
+    let mut images = ImageRegistry::<1>::default();
+    let source = images.register(&image).unwrap();
 
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, [registered]);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
             .draw_image(
@@ -340,15 +352,15 @@ fn embedded_graphics_backend_combines_image_bounds_with_ancestor_clip() {
     }
 
     assert_eq!(
-        display.get_pixel(EgPoint::new(5, 5,)),
-        Some(Rgb888::new(0, 0, 255,))
+        display.get_pixel(EgPoint::new(5, 5)),
+        Some(Rgb888::new(0, 0, 255))
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(6, 6,)),
-        Some(Rgb888::new(0, 0, 255,))
+        display.get_pixel(EgPoint::new(6, 6)),
+        Some(Rgb888::new(0, 0, 255))
     );
-    assert_eq!(display.get_pixel(EgPoint::new(4, 4,)), None);
-    assert_eq!(display.get_pixel(EgPoint::new(7, 5,)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(4, 4)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(7, 5)), None);
 }
 
 #[test]
@@ -358,15 +370,16 @@ fn embedded_graphics_backend_scales_image_with_contain() {
         color: Rgb888::new(255, 0, 0),
     };
 
-    let registered = EmbeddedGraphicsImage::new(&bitmap);
-    let source = registered.source(ImageId::new(0));
+    let image = EmbeddedGraphicsImage::new(&bitmap);
+    let mut images = ImageRegistry::<1>::default();
+    let source = images.register(&image).unwrap();
 
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, [registered]);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
             .draw_image(
@@ -379,15 +392,15 @@ fn embedded_graphics_backend_scales_image_with_contain() {
     }
 
     assert_eq!(
-        display.get_pixel(EgPoint::new(0, 2,)),
-        Some(Rgb888::new(255, 0, 0,))
+        display.get_pixel(EgPoint::new(0, 2)),
+        Some(Rgb888::new(255, 0, 0))
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(7, 5,)),
-        Some(Rgb888::new(255, 0, 0,))
+        display.get_pixel(EgPoint::new(7, 5)),
+        Some(Rgb888::new(255, 0, 0))
     );
-    assert_eq!(display.get_pixel(EgPoint::new(0, 1,)), None);
-    assert_eq!(display.get_pixel(EgPoint::new(0, 6,)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(0, 1)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(0, 6)), None);
 }
 
 fn draw_backend_test_canvas(bounds: Rect, painter: &mut dyn CanvasPainter) {
@@ -410,7 +423,8 @@ fn embedded_graphics_backend_draws_canvas_at_visual_origin() {
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+        let mut painter =
+            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
         painter
             .draw_canvas(
@@ -443,7 +457,8 @@ fn embedded_graphics_backend_clips_custom_drawing_to_canvas_bounds() {
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+        let mut painter =
+            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
         painter
             .draw_canvas(
@@ -473,7 +488,8 @@ fn embedded_graphics_backend_combines_canvas_and_ancestor_clipping() {
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+        let mut painter =
+            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
         painter
             .draw_canvas(
@@ -512,7 +528,8 @@ fn embedded_graphics_backend_clears_only_partial_damage() {
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+        let mut painter =
+            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
         painter
             .clear_damage(
@@ -553,7 +570,8 @@ fn embedded_graphics_backend_full_damage_clears_target() {
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+        let mut painter =
+            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
         painter
             .clear_damage(DamageRegion::full(), Color::BLUE)
@@ -577,7 +595,8 @@ fn embedded_graphics_backend_draws_text_through_font_resources() {
     let mut fonts = test_font_resources(&mut glyph_storage);
 
     {
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+        let mut painter =
+            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
         painter
             .draw_text(

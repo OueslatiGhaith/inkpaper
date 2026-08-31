@@ -1,39 +1,6 @@
-use crate::{Element, MountCx, MountError, NodeId, Pixels, Point, Rect, Size, px};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ImageId(u16);
-
-impl ImageId {
-    pub const fn new(value: u16) -> Self {
-        Self(value)
-    }
-
-    pub(crate) const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ImageSource {
-    id: ImageId,
-    size: Size,
-}
-
-impl ImageSource {
-    pub const fn new(id: ImageId, size: Size) -> Self {
-        Self { id, size }
-    }
-
-    pub const fn id(self) -> ImageId {
-        self.id
-    }
-
-    pub const fn size(self) -> Size {
-        self.size
-    }
-}
+use crate::{
+    Element, MountCx, MountError, NodeId, Pixels, Point, Rect, Size, image::ImageSource, px,
+};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

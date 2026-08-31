@@ -142,11 +142,11 @@ fn render_invalidation(
 
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
     {
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, fonts, []).with_coverage_mode(
-            CoverageMode::AlphaBlend {
-                read_pixel: read_framebuffer_pixel,
-            },
-        );
+        let mut painter =
+            EmbeddedGraphicsPainter::new(&mut display, fonts, ImageRegistry::<0>::default())
+                .with_coverage_mode(CoverageMode::AlphaBlend {
+                    read_pixel: read_framebuffer_pixel,
+                });
         match invalidation.kind() {
             Invalidation::None => return None,
             Invalidation::Paint => {}

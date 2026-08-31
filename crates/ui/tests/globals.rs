@@ -256,7 +256,7 @@ fn global_slot_capacity_is_enforced() {
 fn global_byte_capacity_is_enforced() {
     #[derive(Debug)]
     struct LargeGlobal {
-        bytes: [u8; 64],
+        _bytes: [u8; 64],
     }
 
     impl Global for LargeGlobal {}
@@ -266,7 +266,7 @@ fn global_byte_capacity_is_enforced() {
     let mut runtime = TinyGlobalRuntime::default();
 
     assert_eq!(
-        runtime.set_global(LargeGlobal { bytes: [0; 64] },),
+        runtime.set_global(LargeGlobal { _bytes: [0; 64] },),
         Err(GlobalSetError::StorageFull),
     );
 }

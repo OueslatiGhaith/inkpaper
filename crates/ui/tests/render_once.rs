@@ -116,7 +116,8 @@ fn render_once_component_can_borrow_from_persistent_component() {
 
     let mut glyph_storage = [0; 4096];
     let mut fonts = test_font_resources(&mut glyph_storage);
-    let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+    let mut painter =
+        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
     let size = runtime.layout(
         Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32)),
@@ -145,7 +146,8 @@ fn render_once_components_can_nest_other_render_once_components() {
 
     let mut glyph_storage = [0; 4096];
     let mut fonts = test_font_resources(&mut glyph_storage);
-    let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+    let mut painter =
+        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
     runtime
         .layout(

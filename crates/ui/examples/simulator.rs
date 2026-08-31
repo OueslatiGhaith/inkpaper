@@ -41,15 +41,11 @@ type UiFonts<'storage> = FontResources<'static, 'storage, 3, 128>;
 
 const DEMO_IMAGE_WIDTH: u32 = 48;
 const DEMO_IMAGE_HEIGHT: u32 = 24;
-
-const DEMO_IMAGE_SOURCE: ImageSource = ImageSource::new(
-    ImageId::new(0),
-    Size::new(px(DEMO_IMAGE_WIDTH as i32), px(DEMO_IMAGE_HEIGHT as i32)),
-);
-
 struct DemoImage;
-
 static DEMO_IMAGE: DemoImage = DemoImage;
+static DEMO_IMAGE_RESOURCE: EmbeddedGraphicsImage<'static, DemoImage> =
+    EmbeddedGraphicsImage::new(&DEMO_IMAGE);
+type UiImages = ImageRegistry<'static, 1>;
 
 impl OriginDimensions for DemoImage {
     fn size(&self) -> EgSize {
@@ -350,7 +346,7 @@ fn scroll_row(
         .child(label)
 }
 
-fn image_fit_card(label: &'static str, fit: ImageFit) -> impl IntoElement {
+fn image_fit_card(source: ImageSource, label: &'static str, fit: ImageFit) -> impl IntoElement {
     div()
         .w(px(88))
         .p(px(4))
@@ -364,11 +360,7 @@ fn image_fit_card(label: &'static str, fit: ImageFit) -> impl IntoElement {
                 .text_center()
                 .text_color(Color::rgb(193, 203, 219)),
         )
-        .child(
-            image(DEMO_IMAGE_SOURCE)
-                .size(Size::new(px(78), px(52)))
-                .fit(fit),
-        )
+        .child(image(source).size(Size::new(px(78), px(52))).fit(fit))
 }
 
 struct App {
@@ -376,10 +368,15 @@ struct App {
     counter: Entity<Counter>,
     show_details: bool,
     text_demo_font: Option<FontId>,
+    demo_image: ImageSource,
 }
 
 impl App {
-    fn new(cx: &mut Context<Self>, text_demo_font: Option<FontId>) -> Self {
+    fn new(
+        cx: &mut Context<Self>,
+        text_demo_font: Option<FontId>,
+        demo_image: ImageSource,
+    ) -> Self {
         let subtitle = if text_demo_font.is_some() {
             "Feature gallery - Arabic shaping, bidi and cluster-aware layout enabled. Mouse wheel scrolls; Tab/arrows move focus."
         } else {
@@ -395,6 +392,7 @@ impl App {
             counter,
             show_details: false,
             text_demo_font,
+            demo_image,
         }
     }
 
@@ -481,7 +479,7 @@ fn text_styling_section() -> impl IntoElement {
         )
 }
 
-fn images_section() -> impl IntoElement {
+fn images_section(source: ImageSource) -> impl IntoElement {
     div()
         .w_full()
         .p(px(8))
@@ -501,9 +499,9 @@ fn images_section() -> impl IntoElement {
                 .w_full()
                 .flex()
                 .gap(px(5))
-                .child(image_fit_card("contain", ImageFit::Contain))
-                .child(image_fit_card("cover", ImageFit::Cover))
-                .child(image_fit_card("fill", ImageFit::Fill)),
+                .child(image_fit_card(source, "contain", ImageFit::Contain))
+                .child(image_fit_card(source, "cover", ImageFit::Cover))
+                .child(image_fit_card(source, "fill", ImageFit::Fill)),
         )
         .child(
             div()
@@ -513,7 +511,7 @@ fn images_section() -> impl IntoElement {
                 .bg(Color::rgb(27, 31, 41))
                 .rounded(px(4))
                 .child(text("Native size").text_color(Color::rgb(190, 201, 221)))
-                .child(image(DEMO_IMAGE_SOURCE).native()),
+                .child(image(source).native()),
         )
 }
 
@@ -1248,6 +1246,7 @@ impl Render for App {
 
         let toggle_details = cx.listener(Self::toggle_details);
         let text_demo_font = self.text_demo_font;
+        let demo_image = self.demo_image;
 
         div()
             .id("page")
@@ -1265,7 +1264,7 @@ impl Render for App {
             .when(text_demo_font.is_some(), |page| {
                 page.child(text_shaping_section(text_demo_font.unwrap()))
             })
-            .child(images_section())
+            .child(images_section(demo_image))
             .child(alignment_section())
             .child(weighted_flex_section())
             .child(positioning_section(demo_click))
@@ -1283,32 +1282,35 @@ fn update_ui(
     runtime: &mut UiRuntime,
     app: Entity<App>,
     fonts: &mut UiFonts<'_>,
+    images: UiImages,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
     let invalidation = runtime.take_render_invalidation();
     match invalidation.kind() {
         Invalidation::None => {}
-        Invalidation::Paint => paint_ui(runtime, fonts, display, invalidation.damage()),
+        Invalidation::Paint => paint_ui(runtime, fonts, images, display, invalidation.damage()),
         Invalidation::Layout => {
-            layout_ui(runtime, fonts, display);
-            paint_ui(runtime, fonts, display, invalidation.damage());
+            layout_ui(runtime, fonts, images, display);
+            paint_ui(runtime, fonts, images, display, invalidation.damage());
         }
-        Invalidation::Rebuild => rebuild_ui(runtime, app, fonts, display),
+        Invalidation::Rebuild => rebuild_ui(runtime, app, fonts, images, display),
     }
 }
 
 fn layout_ui(
     runtime: &mut UiRuntime,
     fonts: &mut UiFonts<'_>,
+    images: UiImages,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
-    let painter = EmbeddedGraphicsPainter::new(display, fonts, []);
+    let painter = EmbeddedGraphicsPainter::new(display, fonts, images);
     runtime.layout(DISPLAY_SIZE, &painter).unwrap();
 }
 
 fn paint_ui(
     runtime: &mut UiRuntime,
     fonts: &mut UiFonts<'_>,
+    images: UiImages,
     display: &mut SimulatorDisplay<Rgb888>,
     damage: DamageRegion,
 ) {
@@ -1316,9 +1318,8 @@ fn paint_ui(
         return;
     }
 
-    let demo_image: EmbeddedGraphicsImage<'static, SimulatorDisplay<Rgb888>> =
-        EmbeddedGraphicsImage::new(&DEMO_IMAGE);
-    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, [demo_image]);
+    EmbeddedGraphicsImage::new(&DEMO_IMAGE);
+    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, images);
 
     painter.clear_damage(damage, Color::BLACK).unwrap();
     runtime
@@ -1331,11 +1332,12 @@ fn rebuild_ui(
     runtime: &mut UiRuntime,
     app: Entity<App>,
     fonts: &mut UiFonts<'_>,
+    images: UiImages,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
     runtime.rebuild(app).unwrap();
-    layout_ui(runtime, fonts, display);
-    paint_ui(runtime, fonts, display, DamageRegion::full());
+    layout_ui(runtime, fonts, images, display);
+    paint_ui(runtime, fonts, images, display, DamageRegion::full());
 }
 
 fn handle_key_down(runtime: &mut UiRuntime, keycode: Keycode) {
@@ -1426,15 +1428,21 @@ fn main() {
 
     let mut runtime = UiRuntime::default();
 
-    let app = runtime.create(|cx| App::new(cx, text_demo_font)).unwrap();
-
     let mut glyph_storage = [0u8; 16 * 1024];
     let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
     let mut fonts = make_fonts(&mut glyph_storage, runtime_font);
 
+    let mut images = UiImages::default();
+    let demo_image = images
+        .register(&DEMO_IMAGE_RESOURCE)
+        .expect("demo image slot must fit");
+
+    let app = runtime
+        .create(|cx| App::new(cx, text_demo_font, demo_image))
+        .unwrap();
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, app, &mut fonts, &mut display);
+    rebuild_ui(&mut runtime, app, &mut fonts, images, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
     let mut window = Window::new(
@@ -1485,6 +1493,6 @@ fn main() {
             }
         }
 
-        update_ui(&mut runtime, app, &mut fonts, &mut display);
+        update_ui(&mut runtime, app, &mut fonts, images, &mut display);
     }
 }

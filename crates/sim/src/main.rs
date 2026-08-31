@@ -221,7 +221,7 @@ fn paint_ui(
         return;
     }
 
-    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, [])
+    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, ImageRegistry::<0>::default())
         .with_coverage_mode(CoverageMode::alpha_blend(read_simulator_pixel));
 
     painter.clear_damage(damage, Color::WHITE).unwrap();
@@ -271,7 +271,7 @@ fn layout_ui(
     fonts: &mut UiFonts<'_>,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
-    let painter = EmbeddedGraphicsPainter::new(display, fonts, []);
+    let painter = EmbeddedGraphicsPainter::new(display, fonts, ImageRegistry::<0>::default());
 
     runtime.layout(DISPLAY_SIZE, &painter).unwrap();
 }

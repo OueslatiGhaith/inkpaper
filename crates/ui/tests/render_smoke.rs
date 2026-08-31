@@ -51,7 +51,8 @@ fn full_runtime_can_render_to_simulator_display() {
 
     let mut glyph_storage = [0; 4096];
     let mut fonts = test_font_resources(&mut glyph_storage);
-    let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, []);
+    let mut painter =
+        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
     let laid_out = runtime.layout(
         Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32)),
