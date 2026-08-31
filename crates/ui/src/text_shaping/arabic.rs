@@ -27,6 +27,40 @@ impl JoiningType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) enum MarkPlacement {
+    /// shadda is handled separately so it stays closest to the base when combined
+    /// with another above-base vowel mark.
+    Shadda,
+    Above,
+    Below,
+}
+
+pub(crate) fn mark_placement(character: char) -> Option<MarkPlacement> {
+    match character as u32 {
+        // arabic shadda.
+        0x0651 => Some(MarkPlacement::Shadda),
+        // common below-base harakat and combining signs.
+        0x064D // kasratan
+        | 0x0650 // kasra
+        | 0x0655 // hamza below
+        | 0x0656 // subscript alef
+        | 0x065C // vowel sign dot below
+        | 0x065F // wavy hamza below
+        => Some(MarkPlacement::Below),
+        // common above-base harakat and combining signs.
+        0x064B..=0x064C // fathatan, dammatan
+        | 0x064E..=0x064F // fatha, damma
+        | 0x0652..=0x0654 // sukun, maddah, hamza above
+        | 0x0657..=0x065B
+        | 0x065D..=0x065E
+        | 0x0670 // superscript alef
+        => Some(MarkPlacement::Above),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ArabicForms {
     base: u16,

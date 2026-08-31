@@ -1,13 +1,16 @@
 use core::{convert::Infallible, str::CharIndices};
 
 use crate::{
-    FontId, FontRegistry, GlyphId, Offset, Pixels, ResolvedGlyph, px,
-    text_shaping::arabic::{contextual_form, joining_type, lam_alef_form},
+    FontId, FontRegistry, GlyphId, GlyphMetrics, Offset, Pixels, ResolvedGlyph, px,
+    text_shaping::arabic::{
+        MarkPlacement, contextual_form, joining_type, lam_alef_form, mark_placement,
+    },
 };
 
 mod arabic;
 
 const DIRECTIONAL_RUN_CAPACITY: usize = 32;
+const MARK_GAP: Pixels = px(1);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -76,6 +79,8 @@ pub struct ShapedGlyph {
     /// logical-order and rebuild final visual positioning without recovering the value
     /// from `offset`
     base_advance: Pixels,
+    /// arabic combining-mark role
+    mark_placement: Option<MarkPlacement>,
     /// visual position relative to the current pen
     offset: Offset,
     /// amount by which the visual pen moves after this glyph
@@ -94,6 +99,7 @@ impl ShapedGlyph {
         glyph: GlyphId::new(0),
         cluster: 0,
         base_advance: Pixels::ZERO,
+        mark_placement: None,
         offset: Offset::ZERO,
         advance: Pixels::ZERO,
     };
@@ -111,8 +117,28 @@ impl ShapedGlyph {
             glyph,
             cluster,
             base_advance,
+            mark_placement: None,
             offset,
             advance,
+        }
+    }
+
+    const fn new_mark(
+        font: FontId,
+        glyph: GlyphId,
+        cluster: usize,
+        base_advance: Pixels,
+        mark_placement: MarkPlacement,
+        offset: Offset,
+    ) -> Self {
+        Self {
+            font,
+            glyph,
+            cluster,
+            base_advance,
+            mark_placement: Some(mark_placement),
+            offset,
+            advance: Pixels::ZERO,
         }
     }
 
@@ -130,6 +156,10 @@ impl ShapedGlyph {
 
     pub const fn base_advance(self) -> Pixels {
         self.base_advance
+    }
+
+    const fn mark_placement(self) -> Option<MarkPlacement> {
+        self.mark_placement
     }
 
     pub const fn offset(self) -> Offset {
@@ -282,14 +312,29 @@ impl SimpleShaper {
                 let cluster = previous_cluster.unwrap_or(cluster);
 
                 if let Some(resolved) = registry.resolve_glyph(preferred_font, character) {
-                    emit_resolved_glyph(
-                        resolved,
-                        cluster,
-                        size_px,
-                        &mut advance,
-                        &mut glyph_count,
-                        &mut visit,
-                    )?;
+                    if let Some(placement) = mark_placement(character) {
+                        emit_resolved_mark(
+                            resolved,
+                            cluster,
+                            size_px,
+                            placement,
+                            &mut glyph_count,
+                            &mut visit,
+                        )?;
+                    } else {
+                        // Preserve the existing behavior for transparent
+                        // characters outside our supported Arabic-mark
+                        // subset. We can expand the table deliberately
+                        // later rather than guessing their placement.
+                        emit_resolved_glyph(
+                            resolved,
+                            cluster,
+                            size_px,
+                            &mut advance,
+                            &mut glyph_count,
+                            &mut visit,
+                        )?;
+                    }
                 }
 
                 continue;
@@ -299,7 +344,7 @@ impl SimpleShaper {
 
             // mandatory lam-alef ligatures remain deliberately conservative:
             //     lam + immediately adjacent alef
-            // a transparent mark between them prevents ligation for now.
+            // a transparent mark between them still prevents ligation for this simple shaper.
             if character == '\u{0644}'
                 && let Some((_alef_cluster, alef)) = characters.clone().next()
             {
@@ -503,7 +548,7 @@ impl SimpleShaper {
         let run_count = merge_same_level_runs(&mut runs[..run_count]);
         reorder_directional_runs(glyphs, &mut runs[..run_count]);
 
-        let advance = apply_visual_kerning(registry, size_px, glyphs);
+        let advance = apply_visual_positioning(registry, size_px, glyphs);
 
         Ok(ShapedRun::new(glyphs, direction, advance))
     }
@@ -541,6 +586,36 @@ fn resolve_contextual_glyph<'font, const FONTS: usize>(
     // if they aren't available, preserve readable base text rather than prematurely
     // returning a replacement character.
     registry.resolve_glyph(preferred_font, base_character)
+}
+
+fn emit_resolved_mark<'font, F, E>(
+    resolved: ResolvedGlyph<'font>,
+    cluster: usize,
+    size_px: u16,
+    placement: MarkPlacement,
+    glyph_count: &mut usize,
+    visit: &mut F,
+) -> Result<bool, E>
+where
+    F: FnMut(ShapedGlyph) -> Result<(), E>,
+{
+    let font = resolved.font();
+    let face = resolved.face();
+    let glyph = resolved.glyph();
+
+    let Some(base_advance) = face.glyph_advance(glyph, size_px) else {
+        return Ok(false);
+    };
+
+    let shaped = ShapedGlyph::new_mark(font, glyph, cluster, base_advance, placement, Offset::ZERO);
+
+    visit(shaped)?;
+
+    // a combining mark exists in the glyph stream and counts toward buffer capacity,
+    // but does not move the pen.
+    *glyph_count = glyph_count.saturating_add(1);
+
+    Ok(true)
 }
 
 fn emit_resolved_glyph<'font, F, E>(
@@ -1006,18 +1081,35 @@ fn reverse_glyph_clusters(glyphs: &mut [ShapedGlyph]) {
     }
 }
 
-fn apply_visual_kerning<'font, const FONTS: usize>(
+fn apply_visual_positioning<'font, const FONTS: usize>(
     registry: &FontRegistry<'font, FONTS>,
     size_px: u16,
     glyphs: &mut [ShapedGlyph],
 ) -> Pixels {
-    let mut previous: Option<ShapedGlyph> = None;
+    let mut previous_base: Option<ShapedGlyph> = None;
     let mut visual_advance = px(0);
+    let mut index = 0usize;
 
-    for glyph in glyphs.iter_mut() {
-        let shaped = *glyph;
+    while index < glyphs.len() {
+        let shaped = glyphs[index];
 
-        let kerning = match previous {
+        // a mark without a base can occur at the beginning of malformed or intentionally
+        // isolated input. Keep it non-spacing and leave it at its natural baseline origin.
+        if let Some(placement) = shaped.mark_placement() {
+            glyphs[index] = ShapedGlyph::new_mark(
+                shaped.font(),
+                shaped.glyph(),
+                shaped.cluster(),
+                shaped.base_advance(),
+                placement,
+                Offset::ZERO,
+            );
+
+            index = index.saturating_add(1);
+            continue;
+        }
+
+        let kerning = match previous_base {
             Some(previous) if previous.font() == shaped.font() => registry
                 .get(shaped.font())
                 .map(|face| face.kerning(previous.glyph(), shaped.glyph(), size_px))
@@ -1026,7 +1118,7 @@ fn apply_visual_kerning<'font, const FONTS: usize>(
             _ => px(0),
         };
 
-        let positioned = ShapedGlyph::new(
+        let positioned_base = ShapedGlyph::new(
             shaped.font(),
             shaped.glyph(),
             shaped.cluster(),
@@ -1035,12 +1127,157 @@ fn apply_visual_kerning<'font, const FONTS: usize>(
             shaped.base_advance() + kerning,
         );
 
-        *glyph = positioned;
-        visual_advance += positioned.advance();
-        previous = Some(positioned);
+        glyphs[index] = positioned_base;
+        visual_advance += positioned_base.advance();
+
+        let mut mark_end = index.saturating_add(1);
+
+        while mark_end < glyphs.len() {
+            let candidate = glyphs[mark_end];
+            if candidate.cluster() != positioned_base.cluster()
+                || candidate.mark_placement().is_none()
+            {
+                break;
+            }
+
+            mark_end = mark_end.saturating_add(1);
+        }
+
+        position_cluster_marks(
+            registry,
+            size_px,
+            positioned_base,
+            &mut glyphs[index.saturating_add(1)..mark_end],
+        );
+
+        previous_base = Some(positioned_base);
+        index = mark_end;
     }
 
     visual_advance
+}
+
+fn position_cluster_marks<'font, const FONTS: usize>(
+    registry: &FontRegistry<'font, FONTS>,
+    size_px: u16,
+    base: ShapedGlyph,
+    marks: &mut [ShapedGlyph],
+) {
+    if marks.is_empty() {
+        return;
+    }
+
+    let fallback_offset = Offset::new(Pixels::ZERO - base.base_advance(), Pixels::ZERO);
+
+    let Some(base_metrics) = registry
+        .get(base.font())
+        .and_then(|face| face.glyph_metrics(base.glyph(), size_px))
+    else {
+        for mark in marks {
+            let shaped = *mark;
+
+            let Some(placement) = shaped.mark_placement() else {
+                continue;
+            };
+
+            *mark = ShapedGlyph::new_mark(
+                shaped.font(),
+                shaped.glyph(),
+                shaped.cluster(),
+                shaped.base_advance(),
+                placement,
+                fallback_offset,
+            );
+        }
+
+        return;
+    };
+
+    let base_height = px(i32::from(base_metrics.height));
+    let mut above_edge = base_metrics.bearing_y;
+    let mut below_edge = base_metrics.bearing_y + base_height;
+
+    // shadda must be nearest to the base even when Unicode canonical ordering puts
+    // the vowel mark before it.
+    for target in [
+        MarkPlacement::Shadda,
+        MarkPlacement::Above,
+        MarkPlacement::Below,
+    ] {
+        for mark in marks.iter_mut() {
+            let shaped = *mark;
+            if shaped.mark_placement() != Some(target) {
+                continue;
+            }
+
+            let mark_metrics = registry
+                .get(shaped.font())
+                .and_then(|face| face.glyph_metrics(shaped.glyph(), size_px));
+
+            let offset = match mark_metrics {
+                Some(mark_metrics) => {
+                    let edge = match target {
+                        MarkPlacement::Shadda | MarkPlacement::Above => &mut above_edge,
+                        MarkPlacement::Below => &mut below_edge,
+                    };
+
+                    positioned_mark_offset(base, base_metrics, mark_metrics, target, edge)
+                }
+
+                None => fallback_offset,
+            };
+
+            *mark = ShapedGlyph::new_mark(
+                shaped.font(),
+                shaped.glyph(),
+                shaped.cluster(),
+                shaped.base_advance(),
+                target,
+                offset,
+            );
+        }
+    }
+}
+
+fn positioned_mark_offset(
+    base: ShapedGlyph,
+    base_metrics: GlyphMetrics,
+    mark_metrics: GlyphMetrics,
+    placement: MarkPlacement,
+    edge: &mut Pixels,
+) -> Offset {
+    let base_width = px(i32::from(base_metrics.width));
+    let mark_width = px(i32::from(mark_metrics.width));
+    let mark_height = px(i32::from(mark_metrics.height));
+
+    // the renderer reaches the mark after it has already advanced past the base. Move back
+    // by the base's intrinsic advance, then center the mark over the base's actual ink bounds.
+    // pair kerning on the base cancels naturally because it shifts both the drawn base
+    // and the post-base pen by the same amount.
+    let x = base_metrics.bearing_x + (base_width - mark_width) / 2
+        - mark_metrics.bearing_x
+        - base.base_advance();
+
+    let y = match placement {
+        MarkPlacement::Shadda | MarkPlacement::Above => {
+            let bottom = *edge - MARK_GAP;
+            let top = bottom - mark_height;
+
+            *edge = top;
+
+            top - mark_metrics.bearing_y
+        }
+
+        MarkPlacement::Below => {
+            let top = *edge + MARK_GAP;
+
+            *edge = top + mark_height;
+
+            top - mark_metrics.bearing_y
+        }
+    };
+
+    Offset::new(x, y)
 }
 
 #[cfg(test)]
@@ -1312,7 +1549,7 @@ mod tests {
     }
 
     #[test]
-    fn transparent_arabic_marks_do_not_break_joining_or_clusters() {
+    fn transparent_arabic_marks_do_not_break_joining_or_advance() {
         static ARABIC: [char; 4] = [
             '\u{FE91}', // beh initial
             '\u{064E}', // fatha
@@ -1323,30 +1560,62 @@ mod tests {
         let arabic = TestFont {
             characters: &ARABIC,
             advance: px(7),
-            kerning: px(0),
+            kerning: px(-1),
         };
 
         let mut registry = FontRegistry::<1>::default();
-        let font = registry.register(&arabic).unwrap();
+        let arabic_id = registry.register(&arabic).unwrap();
+        let shaper = SimpleShaper::new();
+        let mut measured_output = [ShapedGlyph::EMPTY; 3];
+
+        let measured = shaper
+            .measure(&registry, arabic_id, 16, "بَب", &mut measured_output)
+            .unwrap();
+
         let mut output = [ShapedGlyph::EMPTY; 3];
-        let run = SimpleShaper::new()
-            .shape_into(&registry, font, 16, "بَب", &mut output)
+
+        let run = shaper
+            .shape_into(&registry, arabic_id, 16, "بَب", &mut output)
             .unwrap();
 
         assert_eq!(run.direction(), TextDirection::RightToLeft);
         assert_eq!(run.len(), 3);
 
-        // logical shaping:
-        //     beh(initial), fatha, beh(final)
-        // the base + fatha share cluster 0. Visual RTL reordering moves complete clusters,
-        // while preserving glyph order inside cluster 0.
-        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(3));
-        assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(1));
-        assert_eq!(run.glyphs()[2].glyph(), GlyphId::new(2));
-
+        // visual RTL order:
+        // final beh
+        // initial beh
+        // fatha attached to initial beh
+        assert_eq!(
+            run.glyphs()[0].glyph(),
+            arabic.glyph_id('\u{FE90}').unwrap(),
+        );
+        assert_eq!(
+            run.glyphs()[1].glyph(),
+            arabic.glyph_id('\u{FE91}').unwrap(),
+        );
+        assert_eq!(
+            run.glyphs()[2].glyph(),
+            arabic.glyph_id('\u{064E}').unwrap(),
+        );
         assert_eq!(run.glyphs()[0].cluster(), 4);
         assert_eq!(run.glyphs()[1].cluster(), 0);
         assert_eq!(run.glyphs()[2].cluster(), 0);
+        // kerning still applies directly between the two visual bases.
+        assert_eq!(run.glyphs()[1].offset().x, px(-1));
+        // TestFont has a 1x1 bitmap with bearing (0, -1).
+        // the fatha moves back over the base and one pixel above it.
+        assert_eq!(run.glyphs()[2].offset().x, px(-7));
+
+        assert_eq!(run.glyphs()[2].offset().y, px(-2));
+
+        // the font itself reports an advance of 7 for every test glyph, but a combining
+        // mark must not consume horizontal space.
+        assert_eq!(run.glyphs()[2].base_advance(), px(7));
+        assert_eq!(run.glyphs()[2].advance(), px(0));
+        // two bases, with -1 visual kerning:
+        //     7 + (7 - 1) = 13
+        assert_eq!(run.advance(), px(13));
+        assert_eq!(measured.advance(), run.advance());
     }
 
     #[test]
@@ -1889,5 +2158,82 @@ mod tests {
         assert_eq!(run.glyphs()[0].advance(), px(5));
         assert_eq!(run.glyphs()[1].advance(), px(4));
         assert_eq!(run.advance(), px(9));
+    }
+
+    #[test]
+    fn arabic_marks_stack_around_their_base() {
+        static ARABIC: [char; 5] = [
+            '\u{FE8F}', // beh isolated
+            '\u{064E}', // fatha
+            '\u{0651}', // shadda
+            '\u{0650}', // kasra
+            '?',
+        ];
+
+        let arabic = TestFont {
+            characters: &ARABIC,
+            advance: px(5),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+
+        let arabic_id = registry.register(&arabic).unwrap();
+
+        let mut output = [ShapedGlyph::EMPTY; 4];
+
+        let run = SimpleShaper::new()
+            .shape_into(
+                &registry,
+                arabic_id,
+                16,
+                concat!(
+                    "\u{0628}", // beh
+                    "\u{064E}", // fatha
+                    "\u{0651}", // shadda
+                    "\u{0650}", // kasra
+                ),
+                &mut output,
+            )
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft,);
+        assert_eq!(run.len(), 4);
+        assert_eq!(
+            run.glyphs()[0].glyph(),
+            arabic.glyph_id('\u{FE8F}').unwrap(),
+        );
+        // source order is fatha then shadda.
+        assert_eq!(
+            run.glyphs()[1].glyph(),
+            arabic.glyph_id('\u{064E}').unwrap(),
+        );
+        assert_eq!(
+            run.glyphs()[2].glyph(),
+            arabic.glyph_id('\u{0651}').unwrap(),
+        );
+        assert_eq!(
+            run.glyphs()[3].glyph(),
+            arabic.glyph_id('\u{0650}').unwrap(),
+        );
+
+        for glyph in run.glyphs() {
+            assert_eq!(glyph.cluster(), 0,);
+        }
+
+        // all marks return to the base's horizontal position.
+        assert_eq!(run.glyphs()[1].offset().x, px(-5),);
+        assert_eq!(run.glyphs()[2].offset().x, px(-5),);
+        assert_eq!(run.glyphs()[3].offset().x, px(-5),);
+        // shadda is deliberately closest to the base even though fatha occurs first
+        // in the source string.
+        assert_eq!(run.glyphs()[2].offset().y, px(-2),);
+        assert_eq!(run.glyphs()[1].offset().y, px(-4),);
+        // kasra is independently stacked below.
+        assert_eq!(run.glyphs()[3].offset().y, px(2),);
+        assert_eq!(run.glyphs()[1].advance(), px(0),);
+        assert_eq!(run.glyphs()[2].advance(), px(0),);
+        assert_eq!(run.glyphs()[3].advance(), px(0),);
+        assert_eq!(run.advance(), px(5),);
     }
 }
