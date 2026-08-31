@@ -1,5 +1,6 @@
 use std::{fs::File, io::Read, path::Path};
 
+use clap::Parser;
 use embedded_graphics::{
     geometry::{Point as EgPoint, Size as EgSize},
     mono_font::ascii::{FONT_6X10, FONT_10X20},
@@ -22,6 +23,11 @@ use inkpaper_ui::{
 };
 use static_cell::StaticCell;
 
+use crate::{args::SimulatorArgs, host_image::HostImage};
+
+mod args;
+mod host_image;
+
 const DISPLAY_WIDTH: u32 = 480;
 const DISPLAY_HEIGHT: u32 = 800;
 
@@ -36,6 +42,8 @@ static RUNTIME_FONT: StaticCell<TtfFont> = StaticCell::new();
 static BODY_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_6X10);
 static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_10X20);
 type UiFonts<'storage> = FontResources<'static, 'storage, 2, 128>;
+
+type UiImages<'image> = ImageRegistry<'image, 1>;
 
 type UiRuntime = Runtime<
     16_384, // entity bytes
@@ -118,17 +126,9 @@ fn make_fonts<'a>(
     fonts
 }
 
-fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
-    let mut args = std::env::args_os();
-    let _ = args.next();
-    let path = args.next()?;
+fn runtime_font_path(path: Option<&Path>) -> Option<&'static TtfFont<'static>> {
+    let path = path?;
 
-    assert!(
-        args.next().is_none(),
-        "usage: inkpaper-simulator [font.ttf]"
-    );
-
-    let path = Path::new(&path);
     let data = load_font_data(path);
     let font = TtfFont::parse(data, 0).unwrap_or_else(|error| {
         panic!(
@@ -139,7 +139,7 @@ fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
 
     let font = RUNTIME_FONT.init(font);
 
-    eprintln!("runtime font: {} ({} bytes)", path.display(), data.len());
+    eprintln!("runtime font: {} ({} bytes)", path.display(), data.len(),);
 
     Some(font)
 }
@@ -215,13 +215,14 @@ fn paint_ui(
     runtime: &mut UiRuntime,
     display: &mut SimulatorDisplay<Rgb888>,
     fonts: &mut UiFonts<'_>,
+    images: UiImages<'_>,
     damage: DamageRegion,
 ) {
     if damage.is_none() {
         return;
     }
 
-    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, ImageRegistry::<0>::default())
+    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, images)
         .with_coverage_mode(CoverageMode::alpha_blend(read_simulator_pixel));
 
     painter.clear_damage(damage, Color::WHITE).unwrap();
@@ -236,17 +237,19 @@ fn rebuild_ui(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
     fonts: &mut UiFonts<'_>,
+    images: UiImages<'_>,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
     runtime.rebuild(app).unwrap();
-    layout_ui(runtime, fonts, display);
-    paint_ui(runtime, display, fonts, DamageRegion::full());
+    layout_ui(runtime, fonts, images, display);
+    paint_ui(runtime, display, fonts, images, DamageRegion::full());
 }
 
 fn update_ui(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
     fonts: &mut UiFonts<'_>,
+    images: UiImages<'_>,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
     let invalidation = runtime.take_render_invalidation();
@@ -254,14 +257,14 @@ fn update_ui(
     match invalidation.kind() {
         Invalidation::None => {}
         Invalidation::Paint => {
-            paint_ui(runtime, display, fonts, invalidation.damage());
+            paint_ui(runtime, display, fonts, images, invalidation.damage());
         }
         Invalidation::Layout => {
-            layout_ui(runtime, fonts, display);
-            paint_ui(runtime, display, fonts, invalidation.damage());
+            layout_ui(runtime, fonts, images, display);
+            paint_ui(runtime, display, fonts, images, invalidation.damage());
         }
         Invalidation::Rebuild => {
-            rebuild_ui(runtime, app, fonts, display);
+            rebuild_ui(runtime, app, fonts, images, display);
         }
     }
 }
@@ -269,27 +272,54 @@ fn update_ui(
 fn layout_ui(
     runtime: &mut UiRuntime,
     fonts: &mut UiFonts<'_>,
+    images: UiImages<'_>,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
-    let painter = EmbeddedGraphicsPainter::new(display, fonts, ImageRegistry::<0>::default());
+    let painter = EmbeddedGraphicsPainter::new(display, fonts, images);
 
     runtime.layout(DISPLAY_SIZE, &painter).unwrap();
 }
 
 fn main() {
+    let args = SimulatorArgs::parse();
+
     let mut runtime = UiRuntime::default();
     runtime.set_global(Theme::EINK).unwrap();
-    let model = demo_model();
-    let app = runtime.create(move |_| InkPaperApp::new(model)).unwrap();
 
-    let runtime_font = runtime_font_from_args();
+    let runtime_font = runtime_font_path(args.font.as_deref());
     let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
     let mut glyph_storage = [0u8; 16 * 1024];
     let mut fonts = make_fonts(&mut glyph_storage, runtime_font);
 
+    let cover_image = args.cover.as_deref().map(|path| {
+        HostImage::open(path)
+            .unwrap_or_else(|error| panic!("failed to load cover {}: {error}", path.display()))
+    });
+    let mut images = UiImages::default();
+    let cover_source = cover_image.as_ref().map(|cover| {
+        images
+            .register(cover)
+            .expect("simulator cover image must fit registry")
+    });
+    if let (Some(path), Some(source)) = (args.cover.as_deref(), cover_source) {
+        eprintln!(
+            "cover image: {} ({}x{})",
+            path.display(),
+            source.size().width.get(),
+            source.size().height.get(),
+        );
+    }
+
+    let model = demo_model();
+    let mut app_state = InkPaperApp::new(model);
+    if let Some(cover) = cover_source {
+        app_state = app_state.with_current_cover(cover);
+    }
+    let app = runtime.create(move |_| app_state).unwrap();
+
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, app, &mut fonts, &mut display);
+    rebuild_ui(&mut runtime, app, &mut fonts, images, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("InkPaper X4 Pro", &output_settings);
@@ -368,7 +398,7 @@ fn main() {
             }
         }
 
-        update_ui(&mut runtime, app, &mut fonts, &mut display);
+        update_ui(&mut runtime, app, &mut fonts, images, &mut display);
     }
 
     eprintln!(

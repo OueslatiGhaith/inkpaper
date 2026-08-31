@@ -6,11 +6,12 @@ const PROGRESS_TRACK_WIDTH: i32 = 220;
 
 pub struct HomeScreen<'a> {
     model: &'a AppModel,
+    cover: Option<ImageSource>,
 }
 
 impl<'a> HomeScreen<'a> {
-    pub const fn new(model: &'a AppModel) -> Self {
-        Self { model }
+    pub const fn new(model: &'a AppModel, cover: Option<ImageSource>) -> Self {
+        Self { model, cover }
     }
 }
 
@@ -21,6 +22,21 @@ impl RenderOnce for HomeScreen<'_> {
 
         let progress_width =
             px(i32::from(book.progress().value()).saturating_mul(PROGRESS_TRACK_WIDTH) / 100);
+
+        let cover = match self.cover {
+            Some(source) => Either::Left(image(source).size(Size::new(px(110), px(150))).cover()),
+            None => Either::Right(
+                div()
+                    .w(px(110))
+                    .h(px(150))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(theme.ink)
+                    .text_color(theme.paper)
+                    .child("BOOK"),
+            ),
+        };
 
         div()
             .w_full()
@@ -41,17 +57,7 @@ impl RenderOnce for HomeScreen<'_> {
                     .border(px(2))
                     .border_color(theme.ink)
                     .rounded(px(8))
-                    .child(
-                        div()
-                            .w(px(110))
-                            .h(px(150))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(theme.ink)
-                            .text_color(theme.paper)
-                            .child("BOOK"),
-                    )
+                    .child(cover)
                     .child(
                         div()
                             .flex_1()

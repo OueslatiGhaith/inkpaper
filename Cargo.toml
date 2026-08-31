@@ -10,6 +10,7 @@ embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 defmt = "1.1.1"
 heapless = "0.9.3"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 static_cell = "2.1.1"
 # TODO: update when released on crates.io
 esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", rev = "160b107" }

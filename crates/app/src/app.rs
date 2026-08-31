@@ -18,6 +18,7 @@ pub enum Route {
 pub struct InkPaperApp {
     route: Route,
     model: AppModel,
+    current_cover: Option<ImageSource>,
 }
 
 impl InkPaperApp {
@@ -25,7 +26,13 @@ impl InkPaperApp {
         Self {
             route: Route::Home,
             model,
+            current_cover: None,
         }
+    }
+
+    pub const fn with_current_cover(mut self, cover: ImageSource) -> Self {
+        self.current_cover = Some(cover);
+        self
     }
 
     pub const fn route(&self) -> Route {
@@ -38,6 +45,10 @@ impl InkPaperApp {
 
     pub fn model_mut(&mut self) -> &mut AppModel {
         &mut self.model
+    }
+
+    pub const fn current_cover(&self) -> Option<ImageSource> {
+        self.current_cover
     }
 
     fn open_home(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
@@ -72,9 +83,10 @@ impl Render for InkPaperApp {
 
         let route = self.route;
         let model = &self.model;
+        let current_cover = self.current_cover;
 
         let screen = match route {
-            Route::Home => Either::Left(HomeScreen::new(model)),
+            Route::Home => Either::Left(HomeScreen::new(model, current_cover)),
             Route::Library => Either::Right(Either::Left(LibraryScreen::new(model.library()))),
             Route::Settings => Either::Right(Either::Right(PlaceholderScreen::new(
                 "Settings",
