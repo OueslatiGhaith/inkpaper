@@ -1,5 +1,43 @@
 use crate::{Pixels, TextMaxLines, TextOverflow, TextWrap, px};
 
+fn next_scalar_boundary(text: &str, from: usize) -> Option<usize> {
+    if from >= text.len() || !text.is_char_boundary(from) {
+        return None;
+    }
+
+    let character = text[from..].chars().next()?;
+
+    Some(from.saturating_add(character.len_utf8()))
+}
+
+fn next_text_boundary<B>(text: &str, from: usize, next_boundary: &B) -> Option<usize>
+where
+    B: Fn(&str, usize) -> Option<usize>,
+{
+    if from >= text.len() {
+        return None;
+    }
+
+    let candidate = next_boundary(text, from);
+    debug_assert!(
+        candidate.is_some(),
+        "text boundary provider must make progress before end of input",
+    );
+
+    let boundary = candidate.or_else(|| next_scalar_boundary(text, from))?;
+
+    if boundary <= from || boundary > text.len() || !text.is_char_boundary(boundary) {
+        debug_assert!(
+            false,
+            "text boundary provider returned an invalid UTF-8 boundary",
+        );
+
+        return next_scalar_boundary(text, from);
+    }
+
+    Some(boundary)
+}
+
 fn is_wrap_whitespace(character: char) -> bool {
     matches!(character, ' ' | '\t')
 }
@@ -36,35 +74,49 @@ fn next_word(text: &str, from: usize) -> Option<(usize, usize)> {
     Some((start, end))
 }
 
-fn emit_oversized_word<'a, M, V>(word: &'a str, max_width: Pixels, measure: &mut M, visit: &mut V)
-where
+fn emit_oversized_word<'a, B, M, V>(
+    word: &'a str,
+    max_width: Pixels,
+    next_boundary: &B,
+    measure: &mut M,
+    visit: &mut V,
+) where
+    B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> Pixels,
     V: FnMut(&'a str, Pixels),
 {
-    let mut start = 0;
+    let mut start = 0usize;
+
     while start < word.len() {
-        let mut first_end = None;
+        let first_end = next_text_boundary(word, start, next_boundary)
+            .expect("non-empty word must contain a text boundary");
+
+        let mut end = first_end;
         let mut last_fit = None;
 
-        for (relative, character) in word[start..].char_indices() {
-            let end = start + relative + character.len_utf8();
-            first_end.get_or_insert(end);
-
+        loop {
             let candidate = &word[start..end];
             let width = measure(candidate);
+
             if width <= max_width {
                 last_fit = Some((end, width));
             } else {
                 break;
             }
+            if end == word.len() {
+                break;
+            }
+
+            let Some(next_end) = next_text_boundary(word, end, next_boundary) else {
+                break;
+            };
+
+            end = next_end;
         }
 
         let (end, width) = match last_fit {
             Some(result) => result,
-            None => {
-                let end = first_end.expect("non-empty word must contain a character");
-                (end, measure(&word[start..end]))
-            }
+            None => (first_end, measure(&word[start..first_end])),
         };
 
         visit(&word[start..end], width);
@@ -72,8 +124,14 @@ where
     }
 }
 
-fn wrap_paragraph<'a, M, V>(paragraph: &'a str, max_width: Pixels, measure: &mut M, visit: &mut V)
-where
+fn wrap_paragraph<'a, B, M, V>(
+    paragraph: &'a str,
+    max_width: Pixels,
+    next_boundary: &B,
+    measure: &mut M,
+    visit: &mut V,
+) where
+    B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> Pixels,
     V: FnMut(&'a str, Pixels),
 {
@@ -87,9 +145,9 @@ where
         return;
     }
 
-    let mut cursor = 0;
+    let mut cursor = 0usize;
     let mut line_start: Option<usize> = None;
-    let mut line_end = 0;
+    let mut line_end = 0usize;
     let mut emitted = false;
 
     while let Some((word_start, word_end)) = next_word(paragraph, cursor) {
@@ -120,7 +178,7 @@ where
             line_end = word_end;
             cursor = word_end;
         } else {
-            emit_oversized_word(word, max_width, measure, visit);
+            emit_oversized_word(word, max_width, next_boundary, measure, visit);
 
             emitted = true;
             cursor = word_end;
@@ -138,13 +196,15 @@ where
     }
 }
 
-pub(crate) fn for_each_text_line<'a, M, V>(
+pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
     text: &'a str,
     wrap: TextWrap,
     max_width: Pixels,
+    next_boundary: B,
     mut measure: M,
     mut visit: V,
 ) where
+    B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> Pixels,
     V: FnMut(&'a str, Pixels),
 {
@@ -152,12 +212,13 @@ pub(crate) fn for_each_text_line<'a, M, V>(
         return;
     }
 
-    let mut paragraph_start = 0;
+    let mut paragraph_start = 0usize;
 
     loop {
         let remaining = &text[paragraph_start..];
+
         let (paragraph_end, has_newline) = match remaining.find('\n') {
-            Some(relative) => (paragraph_start + relative, true),
+            Some(relative) => (paragraph_start.saturating_add(relative), true),
             None => (text.len(), false),
         };
 
@@ -165,19 +226,40 @@ pub(crate) fn for_each_text_line<'a, M, V>(
 
         match wrap {
             TextWrap::NoWrap => visit(paragraph, measure(paragraph)),
-            TextWrap::Word => wrap_paragraph(paragraph, max_width, &mut measure, &mut visit),
+            TextWrap::Word => {
+                wrap_paragraph(
+                    paragraph,
+                    max_width,
+                    &next_boundary,
+                    &mut measure,
+                    &mut visit,
+                );
+            }
         }
 
         if !has_newline {
             break;
         }
 
-        paragraph_start = paragraph_end + 1;
+        paragraph_start = paragraph_end.saturating_add(1);
         if paragraph_start == text.len() {
             visit("", Pixels::ZERO);
             break;
         }
     }
+}
+
+pub(crate) fn for_each_text_line<'a, M, V>(
+    text: &'a str,
+    wrap: TextWrap,
+    max_width: Pixels,
+    measure: M,
+    visit: V,
+) where
+    M: FnMut(&str) -> Pixels,
+    V: FnMut(&'a str, Pixels),
+{
+    for_each_text_line_with_boundaries(text, wrap, max_width, next_scalar_boundary, measure, visit);
 }
 
 pub(crate) const ELLIPSIS: &str = "...";
@@ -189,12 +271,14 @@ pub(crate) struct VisibleTextLine<'a> {
     pub(crate) ellipsis: bool,
 }
 
-fn eliipsize_line<'a, M>(
+fn ellipsize_line<'a, B, M>(
     line: &'a str,
     max_width: Pixels,
+    next_boundary: &B,
     measured_ellipsized: &mut M,
 ) -> VisibleTextLine<'a>
 where
+    B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> Pixels,
 {
     if max_width.is_non_positive() {
@@ -214,17 +298,24 @@ where
         };
     }
 
-    let mut best_end = 0;
+    let mut best_end = 0usize;
     let mut best_width = ellipsis_only_width;
+    let mut cursor = 0usize;
 
-    for (offset, character) in line.char_indices() {
-        let end = offset + character.len_utf8();
+    while let Some(end) = next_text_boundary(line, cursor, next_boundary) {
         let width = measured_ellipsized(&line[..end]);
         if width > max_width {
             break;
         }
+
         best_end = end;
         best_width = width;
+
+        if end == line.len() {
+            break;
+        }
+
+        cursor = end;
     }
 
     VisibleTextLine {
@@ -234,20 +325,29 @@ where
     }
 }
 
-fn emit_visible_line<'a, M, V>(
+#[allow(clippy::too_many_arguments)]
+fn emit_visible_line<'a, B, M, V>(
     line: &'a str,
     width: Pixels,
     max_width: Pixels,
     overflow: TextOverflow,
     force_ellipsis: bool,
+    next_boundary: &B,
     measured_ellipsized: &mut M,
     visit: &mut V,
 ) where
+    B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> Pixels,
     V: FnMut(VisibleTextLine<'a>),
 {
     if overflow == TextOverflow::Ellipsis && (force_ellipsis || width > max_width) {
-        visit(eliipsize_line(line, max_width, measured_ellipsized));
+        visit(ellipsize_line(
+            line,
+            max_width,
+            next_boundary,
+            measured_ellipsized,
+        ));
+
         return;
     }
 
@@ -255,34 +355,37 @@ fn emit_visible_line<'a, M, V>(
         text: line,
         width,
         ellipsis: false,
-    })
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn for_each_visible_text_line<'a, M, E, V>(
+pub(crate) fn for_each_visible_text_line_with_boundaries<'a, B, M, E, V>(
     text: &'a str,
     wrap: TextWrap,
     max_width: Pixels,
     max_lines: TextMaxLines,
     overflow: TextOverflow,
+    next_boundary: B,
     mut measure: M,
     mut measured_ellipsized: E,
     mut visit: V,
 ) where
+    B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> Pixels,
     E: FnMut(&str) -> Pixels,
     V: FnMut(VisibleTextLine<'a>),
 {
     let limit = max_lines.limit();
 
-    let mut seen = 0;
+    let mut seen = 0usize;
     let mut pending = None;
     let mut truncated = false;
 
-    for_each_text_line(
+    for_each_text_line_with_boundaries(
         text,
         wrap,
         max_width,
+        &next_boundary,
         |line| measure(line),
         |line, width| match limit {
             None => emit_visible_line(
@@ -291,6 +394,7 @@ pub(crate) fn for_each_visible_text_line<'a, M, E, V>(
                 max_width,
                 overflow,
                 false,
+                &next_boundary,
                 &mut measured_ellipsized,
                 &mut visit,
             ),
@@ -300,7 +404,8 @@ pub(crate) fn for_each_visible_text_line<'a, M, E, V>(
                     return;
                 }
 
-                seen += 1;
+                seen = seen.saturating_add(1);
+
                 if seen == limit {
                     pending = Some((line, width));
                 } else {
@@ -310,6 +415,7 @@ pub(crate) fn for_each_visible_text_line<'a, M, E, V>(
                         max_width,
                         overflow,
                         false,
+                        &next_boundary,
                         &mut measured_ellipsized,
                         &mut visit,
                     );
@@ -325,10 +431,39 @@ pub(crate) fn for_each_visible_text_line<'a, M, E, V>(
             max_width,
             overflow,
             truncated,
+            &next_boundary,
             &mut measured_ellipsized,
             &mut visit,
         );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn for_each_visible_text_line<'a, M, E, V>(
+    text: &'a str,
+    wrap: TextWrap,
+    max_width: Pixels,
+    max_lines: TextMaxLines,
+    overflow: TextOverflow,
+    measure: M,
+    measured_ellipsized: E,
+    visit: V,
+) where
+    M: FnMut(&str) -> Pixels,
+    E: FnMut(&str) -> Pixels,
+    V: FnMut(VisibleTextLine<'a>),
+{
+    for_each_visible_text_line_with_boundaries(
+        text,
+        wrap,
+        max_width,
+        max_lines,
+        overflow,
+        next_scalar_boundary,
+        measure,
+        measured_ellipsized,
+        visit,
+    );
 }
 
 #[cfg(test)]
@@ -336,13 +471,36 @@ mod tests {
     use std::{vec, vec::Vec};
 
     use crate::{
-        text_layout::{for_each_text_line, for_each_visible_text_line},
+        text_layout::{
+            for_each_text_line, for_each_text_line_with_boundaries, for_each_visible_text_line,
+            for_each_visible_text_line_with_boundaries,
+        },
         *,
     };
 
     fn measure(text: &str) -> Pixels {
         let count = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
         px(count)
+    }
+
+    fn combining_mark_cluster_boundary(text: &str, from: usize) -> Option<usize> {
+        if from >= text.len() || !text.is_char_boundary(from) {
+            return None;
+        }
+
+        let first = text[from..].chars().next()?;
+        let mut end = from.saturating_add(first.len_utf8());
+
+        while end < text.len() {
+            let character = text[end..].chars().next()?;
+            if character != '\u{0301}' {
+                break;
+            }
+
+            end = end.saturating_add(character.len_utf8());
+        }
+
+        Some(end)
     }
 
     #[test]
@@ -520,5 +678,47 @@ mod tests {
         );
 
         assert_eq!(lines, vec![("éé", px(3), true),]);
+    }
+
+    #[test]
+    fn oversized_words_break_only_at_supplied_cluster_boundaries() {
+        let mut lines = Vec::new();
+
+        for_each_text_line_with_boundaries(
+            "a\u{0301}b",
+            TextWrap::Word,
+            px(1),
+            combining_mark_cluster_boundary,
+            measure,
+            |line, width| {
+                lines.push((line, width));
+            },
+        );
+
+        assert_eq!(lines, vec![("a\u{0301}", px(2)), ("b", px(1)),],);
+    }
+
+    #[test]
+    fn ellipsis_does_not_split_a_supplied_cluster() {
+        let mut lines = Vec::new();
+
+        for_each_visible_text_line_with_boundaries(
+            "a\u{0301}bc",
+            TextWrap::NoWrap,
+            px(2),
+            TextMaxLines::Unlimited,
+            TextOverflow::Ellipsis,
+            combining_mark_cluster_boundary,
+            measure,
+            |text| measure(text) + px(1),
+            |line| {
+                lines.push((line.text, line.width, line.ellipsis));
+            },
+        );
+
+        // "a + combining acute" is one cluster and would require three units including
+        // the ellipsis. We therefore render only the ellipsis instead of illegally
+        // keeping just "a".
+        assert_eq!(lines, vec![("", px(1), true)],);
     }
 }

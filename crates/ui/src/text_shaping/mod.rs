@@ -259,13 +259,18 @@ impl SimpleShaper {
         let mut advance = px(0);
         let mut glyph_count = 0usize;
         let mut characters = text.char_indices();
+        let mut previous_cluster = None;
 
         while let Some((cluster, character)) = characters.next() {
             let joining = joining_type(character);
 
-            // transparent marks remain ordinary output glyphs, but they must not modify
-            // the logical joining chain.
+            // transparent marks belong to the preceeding logical cluster
+            // they remain separate glyphs for now because we don't mark positioning yet,
+            // but line breaking, ellipsis and bidi must treat the bae + marks as
+            // invisible unit
             if joining.is_transparent() {
+                let cluster = previous_cluster.unwrap_or(cluster);
+
                 match registry.resolve_glyph(preferred_font, character) {
                     Some(resolved) => {
                         emit_resolved_glyph(
@@ -283,6 +288,8 @@ impl SimpleShaper {
 
                 continue;
             }
+
+            previous_cluster = Some(cluster);
 
             // mandatory lam-alef ligatures are deliberately conservative:
             //      lam + immediately adjacent alef
@@ -409,6 +416,43 @@ impl SimpleShaper {
     ) -> ShapeSummary {
         let mut state = ShapeState::new();
         self.shape_piece_with(registry, preferred_font, size_px, text, &mut state, |_| {})
+    }
+
+    pub fn next_cluster_boundary<'font, const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        preferred_font: FontId,
+        size_px: u16,
+        text: &str,
+        from: usize,
+    ) -> Option<usize> {
+        if from >= text.len() || !text.is_char_boundary(from) {
+            return None;
+        }
+
+        let mut state = ShapeState::new();
+        let mut next_boundary: Option<usize> = None;
+
+        self.shape_piece_with(
+            registry,
+            preferred_font,
+            size_px,
+            text,
+            &mut state,
+            |glyph| {
+                let cluster = glyph.cluster();
+                if cluster <= from {
+                    return;
+                }
+
+                next_boundary = Some(match next_boundary {
+                    Some(current) => current.min(cluster),
+                    None => cluster,
+                });
+            },
+        );
+
+        next_boundary.or(Some(text.len()))
     }
 
     pub fn shape_into<'out, 'font, const FONTS: usize>(
@@ -819,7 +863,7 @@ fn reverse_directional_span(glyphs: &mut [ShapedGlyph], runs: &mut [DirectionalR
     let start = first.start;
     let end = last.end;
 
-    glyphs[start..end].reverse();
+    reverse_glyph_clusters(&mut glyphs[start..end]);
     runs.reverse();
 
     let mut cursor = start;
@@ -834,6 +878,27 @@ fn reverse_directional_span(glyphs: &mut [ShapedGlyph], runs: &mut [DirectionalR
     }
 
     debug_assert_eq!(cursor, end);
+}
+
+fn reverse_glyph_clusters(glyphs: &mut [ShapedGlyph]) {
+    glyphs.reverse();
+
+    let mut start = 0usize;
+
+    while start < glyphs.len() {
+        let cluster = glyphs[start].cluster();
+        let mut end = start.saturating_add(1);
+
+        while end < glyphs.len() && glyphs[end].cluster() == cluster {
+            end = end.saturating_add(1);
+        }
+
+        // reversing the complete span changed both cluster order and the order of glyphs
+        // inside each cluster. Reverse each cluster again so only the cluster sequence changes.
+        glyphs[start..end].reverse();
+
+        start = end;
+    }
 }
 
 #[cfg(test)]
@@ -1045,7 +1110,7 @@ mod tests {
     }
 
     #[test]
-    fn transparent_arabic_marks_do_not_break_joining() {
+    fn transparent_arabic_marks_do_not_break_joining_or_clusters() {
         static ARABIC: [char; 4] = [
             '\u{FE91}', // beh initial
             '\u{064E}', // fatha
@@ -1069,12 +1134,16 @@ mod tests {
         assert_eq!(run.direction(), TextDirection::RightToLeft);
         assert_eq!(run.len(), 3);
 
+        // logical shaping:
+        //     beh(initial), fatha, beh(final)
+        // the base + fatha share cluster 0. Visual RTL reordering moves complete clusters,
+        // while preserving glyph order inside cluster 0.
         assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(3));
-        assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(2));
-        assert_eq!(run.glyphs()[2].glyph(), GlyphId::new(1));
+        assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(1));
+        assert_eq!(run.glyphs()[2].glyph(), GlyphId::new(2));
 
         assert_eq!(run.glyphs()[0].cluster(), 4);
-        assert_eq!(run.glyphs()[1].cluster(), 2);
+        assert_eq!(run.glyphs()[1].cluster(), 0);
         assert_eq!(run.glyphs()[2].cluster(), 0);
     }
 
@@ -1341,5 +1410,74 @@ mod tests {
 
         assert_eq!(run.glyphs()[2].cluster(), 0);
         assert_eq!(run.glyphs()[2].font(), arabic_id);
+    }
+
+    #[test]
+    fn cluster_boundary_keeps_transparent_mark_with_base() {
+        static ARABIC: [char; 4] = [
+            '\u{FE91}', // beh initial
+            '\u{064E}', // fatha
+            '\u{FE90}', // beh final
+            '?',
+        ];
+
+        let arabic = TestFont {
+            characters: &ARABIC,
+            advance: px(7),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font = registry.register(&arabic).unwrap();
+
+        let shaper = SimpleShaper::new();
+        let text = "بَب";
+
+        // UTF-8:
+        //     ب   0..2
+        //     َ   2..4
+        //     ب   4..6
+        // the first legal break is after base + mark.
+        assert_eq!(
+            shaper.next_cluster_boundary(&registry, font, 16, text, 0),
+            Some(4),
+        );
+        assert_eq!(
+            shaper.next_cluster_boundary(&registry, font, 16, text, 4),
+            Some(6),
+        );
+        assert_eq!(
+            shaper.next_cluster_boundary(&registry, font, 16, text, 6),
+            None,
+        );
+    }
+
+    #[test]
+    fn cluster_boundary_keeps_lam_alef_ligature_together() {
+        static ARABIC: [char; 2] = [
+            '\u{FEFB}', // isolated lam-alef
+            '?',
+        ];
+
+        let arabic = TestFont {
+            characters: &ARABIC,
+            advance: px(9),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font = registry.register(&arabic).unwrap();
+
+        let shaper = SimpleShaper::new();
+        let text = "لا";
+
+        assert_eq!(
+            shaper.next_cluster_boundary(&registry, font, 16, text, 0,),
+            Some(text.len()),
+        );
+        assert_eq!(
+            shaper.next_cluster_boundary(&registry, font, 16, text, text.len(),),
+            None,
+        );
     }
 }

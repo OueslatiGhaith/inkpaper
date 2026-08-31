@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{fmt::Write, path::Path};
 
 use embedded_graphics::{
     draw_target::DrawTarget,
@@ -15,7 +15,7 @@ use embedded_graphics_simulator::{
 };
 use heapless::String;
 use inkpaper_ui::{
-    DamageRegion, Offset,
+    DamageRegion, FontData, FontFace, Offset, TtfFont,
     backend::{EmbeddedGraphicsImage, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
@@ -37,7 +37,7 @@ type UiRuntime = Runtime<
 
 static BODY_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_10X20);
-type UiFonts<'storage> = FontResources<'static, 'storage, 2, 128>;
+type UiFonts<'storage> = FontResources<'static, 'storage, 3, 128>;
 
 const DEMO_IMAGE_WIDTH: u32 = 48;
 const DEMO_IMAGE_HEIGHT: u32 = 24;
@@ -375,17 +375,26 @@ struct App {
     header: Entity<Header>,
     counter: Entity<Counter>,
     show_details: bool,
+    text_demo_font: Option<FontId>,
 }
 
 impl App {
-    fn new(cx: &mut Context<Self>) -> Self {
-        let header = cx.new(|_| Header::new("InkPaper UI", "Feature gallery - mouse wheel scrolls, Tab/arrows move focus, Enter/Space activates, C clears focus.")).unwrap();
+    fn new(cx: &mut Context<Self>, text_demo_font: Option<FontId>) -> Self {
+        let subtitle = if text_demo_font.is_some() {
+            "Feature gallery - Arabic shaping, bidi and cluster-aware layout enabled. Mouse wheel scrolls; Tab/arrows move focus."
+        } else {
+            "Feature gallery - pass a TTF/OTF path on the command line to enable the Arabic shaping + cluster layout demo."
+        };
+
+        let header = cx.new(|_| Header::new("InkPaper UI", subtitle)).unwrap();
+
         let counter = cx.new(|_| Counter::new()).unwrap();
 
         Self {
             header,
             counter,
             show_details: false,
+            text_demo_font,
         }
     }
 
@@ -915,11 +924,155 @@ fn positioning_section(demo_click: Listener<ActivateEvent>) -> impl IntoElement 
         )
 }
 
+fn text_shaping_section(font: FontId) -> impl IntoElement {
+    div()
+        .w_full()
+        .p(px(8))
+        .gap(px(7))
+        .bg(Color::rgb(37, 43, 55))
+        .border(px(1))
+        .border_color(Color::rgb(62, 72, 91))
+        .rounded(px(6))
+        .child(
+            section_title(
+                "Arabic shaping + bidi + cluster layout",
+            ),
+        )
+        .child(
+            text(
+                "Mixed RTL/LTR: Arabic flows right-to-left while InkPaper and 123 stay left-to-right.",
+            )
+            .wrap()
+            .text_color(
+                Color::rgb(164, 176, 196),
+            ),
+        )
+        .child(
+            div()
+                .w_full()
+                .p(px(6))
+                .bg(Color::rgb(27, 31, 41))
+                .rounded(px(4))
+                .child(
+                    text(
+                        "مرحبا InkPaper — الصفحة 123",
+                    )
+                    .font(font)
+                    .font_size(px(20))
+                    .text_color(
+                        Color::rgb(225, 231, 240),
+                    ),
+                ),
+        )
+        .child(
+            text(
+                "The narrow box below contains one oversized Arabic word. Wrapping may break between shaped clusters, but never inside lam-alef.",
+            )
+            .wrap()
+            .text_color(
+                Color::rgb(164, 176, 196),
+            ),
+        )
+        .child(
+            div()
+                .w(px(92))
+                .p(px(5))
+                .bg(Color::rgb(27, 31, 41))
+                .border(px(1))
+                .border_color(
+                    Color::rgb(86, 100, 126),
+                )
+                .rounded(px(4))
+                .child(
+                    text("لالالالالالالالا")
+                        .font(font)
+                        .font_size(px(22))
+                        .wrap()
+                        .text_color(
+                            Color::rgb(
+                                156,
+                                225,
+                                184,
+                            ),
+                        ),
+                ),
+        )
+        .child(
+            text(
+                "Combining marks share their base cluster, so wrapping keeps each beh + fatha together.",
+            )
+            .wrap()
+            .text_color(
+                Color::rgb(164, 176, 196),
+            ),
+        )
+        .child(
+            div()
+                .w(px(92))
+                .p(px(5))
+                .bg(Color::rgb(27, 31, 41))
+                .border(px(1))
+                .border_color(
+                    Color::rgb(86, 100, 126),
+                )
+                .rounded(px(4))
+                .child(
+                    text("بَبَبَبَبَبَبَبَ")
+                        .font(font)
+                        .font_size(px(22))
+                        .wrap()
+                        .text_color(
+                            Color::rgb(
+                                126,
+                                172,
+                                235,
+                            ),
+                        ),
+                ),
+        )
+        .child(
+            text(
+                "Ellipsis is also cluster-aware: the final visible unit is always a complete shaped cluster.",
+            )
+            .wrap()
+            .text_color(
+                Color::rgb(164, 176, 196),
+            ),
+        )
+        .child(
+            div()
+                .w(px(108))
+                .p(px(5))
+                .bg(Color::rgb(27, 31, 41))
+                .border(px(1))
+                .border_color(
+                    Color::rgb(86, 100, 126),
+                )
+                .rounded(px(4))
+                .child(
+                    text("لالالالالالالالالا")
+                        .font(font)
+                        .font_size(px(22))
+                        .no_wrap()
+                        .max_lines(1)
+                        .text_ellipsis()
+                        .text_color(
+                            Color::rgb(
+                                230,
+                                167,
+                                87,
+                            ),
+                        ),
+                ),
+        )
+}
+
 impl Render for App {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         let demo_click = cx.listener(Self::demo_clicked);
 
         let toggle_details = cx.listener(Self::toggle_details);
+        let text_demo_font = self.text_demo_font;
 
         div()
             .id("page")
@@ -934,6 +1087,9 @@ impl Render for App {
             .child(self.counter)
             .child(conditional_section(self.show_details, toggle_details))
             .child(text_styling_section())
+            .when(text_demo_font.is_some(), |page| {
+                page.child(text_shaping_section(text_demo_font.unwrap()))
+            })
             .child(images_section())
             .child(alignment_section())
             .child(weighted_flex_section())
@@ -1035,21 +1191,71 @@ fn handle_key_up(runtime: &mut UiRuntime, keycode: Keycode) {
     }
 }
 
-fn make_fonts(glyph_storage: &mut [u8]) -> UiFonts<'_> {
+fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
+    let mut args = std::env::args_os();
+
+    let _ = args.next();
+    let path = args.next()?;
+    assert!(
+        args.next().is_none(),
+        "usage: cargo run -p inkpaper-ui --example simulator -- [font.ttf]",
+    );
+
+    let path = Path::new(&path);
+    let bytes = std::fs::read(path)
+        .unwrap_or_else(|error| panic!("failed to read font {}: {error}", path.display(),));
+
+    assert!(!bytes.is_empty(), "font {} is empty", path.display(),);
+
+    let byte_len = bytes.len();
+    let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+
+    let data = FontData::new(bytes);
+
+    let font = TtfFont::parse(data, 0).unwrap_or_else(|error| {
+        panic!(
+            "{} is not a supported TTF/OTF face: {error:?}",
+            path.display(),
+        )
+    });
+
+    let font = Box::leak(Box::new(font));
+
+    eprintln!(
+        "text shaping demo font: {} ({byte_len} bytes)",
+        path.display(),
+    );
+
+    Some(font)
+}
+
+fn make_fonts<'a>(
+    glyph_storage: &'a mut [u8],
+    runtime_font: Option<&'static dyn FontFace>,
+) -> UiFonts<'a> {
     let mut fonts = FontResources::new(glyph_storage);
 
-    assert_eq!(fonts.register(&BODY_FONT,).unwrap(), FontId::DEFAULT);
-    assert_eq!(fonts.register(&HEADING_FONT).unwrap(), FontId::new(1));
+    assert_eq!(fonts.register(&BODY_FONT).unwrap(), FontId::DEFAULT,);
+    assert_eq!(fonts.register(&HEADING_FONT).unwrap(), FontId::new(1),);
+
+    if let Some(runtime_font) = runtime_font {
+        assert_eq!(fonts.register(runtime_font).unwrap(), FontId::new(2),);
+    }
 
     fonts
 }
 
 fn main() {
+    let runtime_font = runtime_font_from_args();
+    let text_demo_font = runtime_font.map(|_| FontId::new(2));
+
     let mut runtime = UiRuntime::default();
 
-    let app = runtime.create(App::new).unwrap();
+    let app = runtime.create(|cx| App::new(cx, text_demo_font)).unwrap();
+
     let mut glyph_storage = [0u8; 16 * 1024];
-    let mut fonts = make_fonts(&mut glyph_storage);
+    let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
+    let mut fonts = make_fonts(&mut glyph_storage, runtime_font);
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 

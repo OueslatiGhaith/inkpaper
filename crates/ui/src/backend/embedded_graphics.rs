@@ -19,7 +19,9 @@ use crate::{
     GlyphBitmap, GlyphCacheError, ImageFit, ImageId, ImageSource, LineHeight, Painter, Pixels,
     Point, Rect, ResolvedTextStyle, ShapeError, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper,
     Size, TextAlign, TextDirection, TextMeasurer, fitted_image_bounds, px,
-    text_layout::{ELLIPSIS, for_each_visible_text_line},
+    text_layout::{
+        ELLIPSIS, for_each_visible_text_line, for_each_visible_text_line_with_boundaries,
+    },
 };
 
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
@@ -418,23 +420,30 @@ where
         }
 
         let (font_id, font) = self.resolve_font(style.font);
+
         let registry = self.font_resources.registry();
+        let shaper = SimpleShaper::new();
+
         let size_px = font_size_px(style);
         let glyph_height = font.metrics(size_px).line_height();
+
         let line_advance = text_line_advance(font, size_px, style);
+
         let mut longest_line = Pixels::ZERO;
         let mut line_count = 0i32;
 
-        for_each_visible_text_line(
+        for_each_visible_text_line_with_boundaries(
             text,
             style.wrap,
             max_size.width,
             style.max_lines,
             style.overflow,
+            |line, from| shaper.next_cluster_boundary(&registry, font_id, size_px, line, from),
             |line| measure_shaped_line(&registry, font_id, size_px, line),
             |line| measure_shaped_line_with_ellipsis(&registry, font_id, size_px, line),
             |line| {
                 longest_line = longest_line.max(line.width);
+
                 line_count = line_count.saturating_add(1);
             },
         );
@@ -443,7 +452,8 @@ where
             return Size::ZERO;
         }
 
-        let height = glyph_height.saturating_add(line_advance.saturating_mul(line_count - 1));
+        let height =
+            glyph_height.saturating_add(line_advance.saturating_mul(line_count.saturating_sub(1)));
 
         Size::new(
             longest_line
@@ -673,19 +683,22 @@ where
 
     let size_px = font_size_px(style);
     let line_advance = text_line_advance(font, size_px, style);
+
     let baseline_offset = font.metrics(size_px).ascent;
+
     let color = to_rgb888(style.color);
     let shaper = SimpleShaper::new();
 
     let mut y = bounds.origin.y;
     let mut error = None;
 
-    for_each_visible_text_line(
+    for_each_visible_text_line_with_boundaries(
         text,
         style.wrap,
         bounds.width(),
         style.max_lines,
         style.overflow,
+        |line, from| shaper.next_cluster_boundary(registry, font_id, size_px, line, from),
         |line| measure_shaped_line(registry, font_id, size_px, line),
         |line| measure_shaped_line_with_ellipsis(registry, font_id, size_px, line),
         |line| {
