@@ -114,6 +114,23 @@ impl GlyphMetrics {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct CursiveAttachment {
+    origin_delta: Offset,
+}
+
+impl CursiveAttachment {
+    pub const fn new(origin_delta: Offset) -> Self {
+        Self { origin_delta }
+    }
+
+    /// desired origin of the visual-right glyph relative to the origin of the visual-left glyph.
+    pub const fn origin_delta(self) -> Offset {
+        self.origin_delta
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FontRasterError {
     InvalidFont,
     InvalidGlyph,
@@ -142,6 +159,16 @@ pub trait FontFace {
 
     fn kerning(&self, _left: GlyphId, _right: GlyphId, _size_px: u16) -> Pixels {
         px(0)
+    }
+
+    fn cursive_attachment(
+        &self,
+        _visual_left: GlyphId,
+        _visual_right: GlyphId,
+        _size_px: u16,
+        _right_to_left: bool,
+    ) -> Option<CursiveAttachment> {
+        None
     }
 
     /// returns the child mark glyph origin relative to the base glyph origin,

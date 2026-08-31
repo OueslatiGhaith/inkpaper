@@ -4,7 +4,8 @@ use ttf_parser::{
 };
 
 use crate::{
-    FontData, FontFace, FontMetrics, FontRasterError, GlyphId, GlyphMetrics, Offset, Pixels, px,
+    CursiveAttachment, FontData, FontFace, FontMetrics, FontRasterError, GlyphId, GlyphMetrics,
+    Offset, Pixels, px,
 };
 
 const SUPERSAMPLE_X: usize = 4;
@@ -104,6 +105,24 @@ impl FontFace for TtfFont<'_> {
         }
 
         legacy_kerning_for_face(&face, left, right, size_px).unwrap_or(px(0))
+    }
+
+    fn cursive_attachment(
+        &self,
+        visual_left: GlyphId,
+        visual_right: GlyphId,
+        size_px: u16,
+        right_to_left: bool,
+    ) -> Option<CursiveAttachment> {
+        let face = self.face().ok()?;
+
+        gpos_cursive_attachment_for_face(
+            &face,
+            to_ttf_glyph(visual_left),
+            to_ttf_glyph(visual_right),
+            size_px,
+            right_to_left,
+        )
     }
 
     fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, size_px: u16) -> Option<Offset> {
@@ -210,6 +229,80 @@ impl FontFace for TtfFont<'_> {
 
 fn to_ttf_glyph(glyph: GlyphId) -> TtfGlyphId {
     TtfGlyphId(glyph.value())
+}
+
+fn gpos_cursive_attachment_for_face(
+    face: &Face<'_>,
+    visual_left: TtfGlyphId,
+    visual_right: TtfGlyphId,
+    size_px: u16,
+    right_to_left: bool,
+) -> Option<CursiveAttachment> {
+    let scale = font_scale(face, size_px)?;
+    let gpos = face.tables().gpos?;
+    let curs_tag = Tag::from_bytes(b"curs");
+
+    for feature in gpos.features {
+        if feature.tag != curs_tag {
+            continue;
+        }
+
+        for lookup_index in feature.lookup_indices {
+            let Some(lookup) = gpos.lookups.get(lookup_index) else {
+                continue;
+            };
+
+            // supporting the opposite baseline-root direction requires maintaining
+            // and reversing an attachment graph.
+            // for our bounded shaper, only accept the normal case where lookup direction
+            // agrees with the bidi run direction.
+            if lookup.flags.right_to_left() != right_to_left {
+                continue;
+            }
+
+            for subtable in lookup.subtables.into_iter::<PositioningSubtable>() {
+                let PositioningSubtable::Cursive(adjustment) = subtable else {
+                    continue;
+                };
+                let Some(left_index) = adjustment.coverage.get(visual_left) else {
+                    continue;
+                };
+                let Some(right_index) = adjustment.coverage.get(visual_right) else {
+                    continue;
+                };
+                let origin_delta = if right_to_left {
+                    // visual order:
+                    //     logical second | logical first
+                    //        left              right
+                    // the exit anchor of the logical first glyph attaches to the entry
+                    // anchor of logical second.
+                    let Some(left_entry) = adjustment.sets.entry(left_index) else {
+                        continue;
+                    };
+                    let Some(right_exit) = adjustment.sets.exit(right_index) else {
+                        continue;
+                    };
+
+                    anchor_attachment_offset(left_entry, right_exit, scale)
+                } else {
+                    // LTR visual order is also logical order:
+                    //     left.exit == right.entry
+                    let Some(left_exit) = adjustment.sets.exit(left_index) else {
+                        continue;
+                    };
+                    let Some(right_entry) = adjustment.sets.entry(right_index) else {
+                        continue;
+                    };
+
+                    anchor_attachment_offset(left_exit, right_entry, scale)
+                };
+
+                return Some(CursiveAttachment::new(origin_delta));
+            }
+        }
+    }
+
+    None
 }
 
 fn gpos_kerning_for_face(

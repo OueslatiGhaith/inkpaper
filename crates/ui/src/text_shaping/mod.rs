@@ -598,7 +598,7 @@ impl SimpleShaper {
         let run_count = merge_same_level_runs(&mut runs[..run_count]);
         reorder_directional_runs(glyphs, &mut runs[..run_count]);
 
-        let advance = apply_visual_positioning(registry, size_px, glyphs);
+        let advance = apply_visual_positioning(registry, size_px, glyphs, &runs[..run_count]);
 
         Ok(ShapedRun::new(glyphs, direction, advance))
     }
@@ -1175,6 +1175,34 @@ fn apply_visual_positioning<'font, const FONTS: usize>(
     registry: &FontRegistry<'font, FONTS>,
     size_px: u16,
     glyphs: &mut [ShapedGlyph],
+    runs: &[DirectionalRun],
+) -> Pixels {
+    let mut advance = px(0);
+
+    for run in runs.iter().copied() {
+        debug_assert!(run.start <= run.end);
+        debug_assert!(run.end <= glyphs.len());
+
+        if run.start >= run.end || run.end > glyphs.len() {
+            continue;
+        }
+
+        advance += apply_visual_run_positioning(
+            registry,
+            size_px,
+            &mut glyphs[run.start..run.end],
+            run.level % 2 == 1,
+        );
+    }
+
+    advance
+}
+
+fn apply_visual_run_positioning<'font, const FONTS: usize>(
+    registry: &FontRegistry<'font, FONTS>,
+    size_px: u16,
+    glyphs: &mut [ShapedGlyph],
+    right_to_left: bool,
 ) -> Pixels {
     let mut previous_base: Option<ShapedGlyph> = None;
     let mut visual_advance = px(0);
@@ -1183,8 +1211,7 @@ fn apply_visual_positioning<'font, const FONTS: usize>(
     while index < glyphs.len() {
         let shaped = glyphs[index];
 
-        // a mark without a base can occur at the beginning of malformed or intentionally
-        // isolated input. Keep it non-spacing and leave it at its natural baseline origin.
+        // marks are positioned after their base below.
         if let Some(placement) = shaped.mark_placement() {
             glyphs[index] = ShapedGlyph::new_mark(
                 shaped.font(),
@@ -1199,17 +1226,54 @@ fn apply_visual_positioning<'font, const FONTS: usize>(
             continue;
         }
 
-        let kerning = match previous_base {
-            Some(previous) if previous.font() == shaped.font() => registry
-                .get(shaped.font())
-                .map(|face| face.kerning(previous.glyph(), shaped.glyph(), size_px))
-                .unwrap_or(px(0)),
+        let cursive = match previous_base {
+            Some(previous) if previous.font() == shaped.font() => {
+                registry.get(shaped.font()).and_then(|face| {
+                    face.cursive_attachment(
+                        previous.glyph(),
+                        shaped.glyph(),
+                        size_px,
+                        right_to_left,
+                    )
+                })
+            }
 
-            _ => px(0),
+            _ => None,
         };
 
-        let positioned_base =
-            shaped.with_positioning(Offset::new(kerning, px(0)), shaped.base_advance() + kerning);
+        let (x_adjustment, y_offset) = match (previous_base, cursive) {
+            (Some(previous), Some(attachment)) => {
+                let delta = attachment.origin_delta();
+
+                // before pair positioning, the visual-right origin would be one intrinsic
+                // advance after the previous glyph's origin.
+                // convert the desired absolute origin distance into our existing
+                // per-glyph offset/advance refinement.
+                (
+                    delta.x - previous.base_advance(),
+                    previous.offset().y + delta.y,
+                )
+            }
+            _ => {
+                let kerning = match previous_base {
+                    Some(previous) if previous.font() == shaped.font() => registry
+                        .get(shaped.font())
+                        .map(|face| face.kerning(previous.glyph(), shaped.glyph(), size_px))
+                        .unwrap_or(px(0)),
+
+                    _ => px(0),
+                };
+
+                (kerning, px(0))
+            }
+        };
+
+        // cursive attachment takes precedence over ordinary pair kerning for a pair
+        // because the anchors define an exact connection geometry.
+        let positioned_base = shaped.with_positioning(
+            Offset::new(x_adjustment, y_offset),
+            shaped.base_advance() + x_adjustment,
+        );
 
         glyphs[index] = positioned_base;
         visual_advance += positioned_base.advance();
@@ -1297,7 +1361,9 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
                 .and_then(|face| {
                     face.mark_to_ligature_offset(base.glyph(), component, shaped.glyph(), size_px)
                 })
-                .map(|offset| Offset::new(offset.x - base.base_advance(), offset.y));
+                .map(|offset| {
+                    Offset::new(offset.x - base.base_advance(), base.offset().y + offset.y)
+                });
         }
 
         // ordinary single-component base.
@@ -1305,7 +1371,9 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
             attachment = registry
                 .get(shaped.font())
                 .and_then(|face| face.mark_to_base_offset(base.glyph(), shaped.glyph(), size_px))
-                .map(|offset| Offset::new(offset.x - base.base_advance(), offset.y));
+                .map(|offset| {
+                    Offset::new(offset.x - base.base_advance(), base.offset().y + offset.y)
+                });
         }
 
         let Some(offset) = attachment else {
@@ -1325,7 +1393,6 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
         );
 
         *mark = positioned;
-
         previous_mark = Some(positioned);
     }
 
@@ -1338,7 +1405,7 @@ fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
     base: ShapedGlyph,
     marks: &mut [ShapedGlyph],
 ) {
-    let fallback_offset = Offset::new(Pixels::ZERO - base.base_advance(), Pixels::ZERO);
+    let fallback_offset = Offset::new(Pixels::ZERO - base.base_advance(), base.offset().y);
 
     let Some(base_metrics) = registry
         .get(base.font())
@@ -1429,7 +1496,7 @@ fn positioned_mark_offset(
         - mark_metrics.bearing_x
         - base.base_advance();
 
-    let y = match placement {
+    let relative_y = match placement {
         MarkPlacement::Shadda | MarkPlacement::Above => {
             let bottom = *edge - MARK_GAP;
             let top = bottom - mark_height;
@@ -1448,7 +1515,7 @@ fn positioned_mark_offset(
         }
     };
 
-    Offset::new(x, y)
+    Offset::new(x, base.offset().y + relative_y)
 }
 
 #[cfg(test)]
@@ -1664,6 +1731,86 @@ mod tests {
             match (ligature.value(), component, mark.value()) {
                 // isolated lam-alef, second logical component, fatha.
                 (1, 1, 2) => Some(Offset::new(px(3), px(-4))),
+                _ => None,
+            }
+        }
+
+        fn rasterize(
+            &self,
+            _: GlyphId,
+            _: u16,
+            coverage: &mut [u8],
+        ) -> Result<(), FontRasterError> {
+            let Some(pixel) = coverage.first_mut() else {
+                return Err(FontRasterError::BufferTooSmall);
+            };
+
+            *pixel = 255;
+
+            Ok(())
+        }
+    }
+
+    struct CursiveTestFont {
+        characters: &'static [char],
+        advance: Pixels,
+    }
+
+    impl FontFace for CursiveTestFont {
+        fn glyph_id(&self, character: char) -> Option<GlyphId> {
+            let index = self
+                .characters
+                .iter()
+                .position(|candidate| *candidate == character)?;
+
+            let index = u16::try_from(index).ok()?;
+
+            Some(GlyphId::new(index.saturating_add(1)))
+        }
+
+        fn metrics(&self, _: u16) -> FontMetrics {
+            FontMetrics::new(px(8), px(2), px(0))
+        }
+
+        fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+            if glyph.value() == 0 {
+                return None;
+            }
+
+            Some(GlyphMetrics::new(1, 1, px(0), px(-1), self.advance))
+        }
+
+        fn kerning(&self, _: GlyphId, _: GlyphId, _: u16) -> Pixels {
+            // deliberately large enough that the regression fails if cursive attachment
+            // does not takeprecedence.
+            px(-5)
+        }
+
+        fn cursive_attachment(
+            &self,
+            visual_left: GlyphId,
+            visual_right: GlyphId,
+            _: u16,
+            right_to_left: bool,
+        ) -> Option<crate::CursiveAttachment> {
+            if !right_to_left {
+                return None;
+            }
+
+            match (visual_left.value(), visual_right.value()) {
+                // final beh -> medial beh
+                (1, 2) => Some(crate::CursiveAttachment::new(Offset::new(px(4), px(-2)))),
+                // medial beh -> initial beh
+                (2, 4) => Some(crate::CursiveAttachment::new(Offset::new(px(3), px(1)))),
+                _ => None,
+            }
+        }
+
+        fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, _: u16) -> Option<Offset> {
+            match (base.value(), mark.value()) {
+                // medial beh -> fatha
+                (2, 3) => Some(Offset::new(px(1), px(-3))),
+
                 _ => None,
             }
         }
@@ -2637,5 +2784,76 @@ mod tests {
         assert_eq!(fatha.offset(), Offset::new(px(-5), px(-4)));
         assert_eq!(fatha.advance(), px(0));
         assert_eq!(run.advance(), px(8));
+    }
+
+    #[test]
+    fn rtl_cursive_attachment_chains_bases_and_marks() {
+        static ARABIC: [char; 5] = [
+            '\u{FE90}', // beh final
+            '\u{FE92}', // beh medial
+            '\u{064E}', // fatha
+            '\u{FE91}', // beh initial
+            '?',
+        ];
+
+        let arabic = CursiveTestFont {
+            characters: &ARABIC,
+            advance: px(7),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&arabic).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 4];
+        let run = SimpleShaper::new()
+            .shape_into(
+                &registry,
+                font_id,
+                16,
+                concat!(
+                    "\u{0628}", // beh
+                    "\u{0628}", // beh
+                    "\u{064E}", // fatha
+                    "\u{0628}", // beh
+                ),
+                &mut output,
+            )
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+        assert_eq!(run.len(), 4);
+
+        let final_beh = run.glyphs()[0];
+        let medial_beh = run.glyphs()[1];
+        let fatha = run.glyphs()[2];
+        let initial_beh = run.glyphs()[3];
+
+        assert_eq!(final_beh.glyph(), arabic.glyph_id('\u{FE90}').unwrap());
+        assert_eq!(medial_beh.glyph(), arabic.glyph_id('\u{FE92}').unwrap());
+        assert_eq!(fatha.glyph(), arabic.glyph_id('\u{064E}').unwrap());
+        assert_eq!(initial_beh.glyph(), arabic.glyph_id('\u{FE91}').unwrap());
+
+        // first base remains the visual chain root.
+        assert_eq!(final_beh.offset(), Offset::ZERO);
+        assert_eq!(final_beh.advance(), px(7));
+        // desired origin delta from final -> medial is (4, -2).
+        // nominal advance is 7, therefore:
+        //     x adjustment = 4 - 7 = -3
+        assert_eq!(medial_beh.offset(), Offset::new(px(-3), px(-2)));
+        assert_eq!(medial_beh.advance(), px(4));
+        // the mark anchor is (1, -3) relative to its cursively shifted medial base.
+        // horizontal mark offset:
+        //     1 - 7 = -6
+        // vertical mark offset:
+        //     -2 + -3 = -5
+        assert_eq!(fatha.offset(), Offset::new(px(-6), px(-5)));
+        assert_eq!(fatha.advance(), px(0));
+
+        // medial -> initial origin delta is (3, 1).
+        // x: 3 - 7 = -4
+        // y: -2 + 1 = -1
+        assert_eq!(initial_beh.offset(), Offset::new(px(-4), px(-1)));
+        assert_eq!(initial_beh.advance(), px(3));
+        // 7 + 4 + 0 + 3
+        assert_eq!(run.advance(), px(14));
     }
 }
