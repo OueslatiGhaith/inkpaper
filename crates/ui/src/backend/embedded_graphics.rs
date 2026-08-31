@@ -711,7 +711,8 @@ where
                 }
             };
 
-            let mut glyph_count = text_summary.glyph_count();
+            let text_glyph_count = text_summary.glyph_count();
+            let mut glyph_count = text_glyph_count;
             let mut advance = text_summary.advance();
 
             if line.ellipsis {
@@ -730,11 +731,22 @@ where
                     }
                 };
 
-                glyph_count += glyph_count.saturating_add(ellipsis_summary.glyph_count());
+                glyph_count = glyph_count.saturating_add(ellipsis_summary.glyph_count());
                 advance += ellipsis_summary.advance();
             }
 
-            let run = shaper.visual_order(line.text, &mut glyphs[..glyph_count], advance);
+            let run = match shaper.visual_order(
+                line.text,
+                text_glyph_count,
+                &mut glyphs[..glyph_count],
+                advance,
+            ) {
+                Ok(run) => run,
+                Err(shape_error) => {
+                    error = Some(EmbeddedGraphicsError::Shape(shape_error));
+                    return;
+                }
+            };
 
             debug_assert_eq!(run.advance(), line.width);
 

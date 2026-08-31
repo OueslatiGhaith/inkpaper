@@ -7,12 +7,56 @@ use crate::{
 
 mod arabic;
 
+const DIRECTIONAL_RUN_CAPACITY: usize = 32;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TextDirection {
     #[default]
     LeftToRight,
     RightToLeft,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum DirectionalClass {
+    LeftToRight,
+    RightToLeft,
+    Number,
+    Neutral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DirectionalRun {
+    start: usize,
+    end: usize,
+    class: DirectionalClass,
+    context_direction: TextDirection,
+    level: u8,
+}
+
+impl DirectionalRun {
+    const EMPTY: Self = Self {
+        start: 0,
+        end: 0,
+        class: DirectionalClass::Neutral,
+        context_direction: TextDirection::LeftToRight,
+        level: 0,
+    };
+
+    const fn new(start: usize, end: usize, class: DirectionalClass) -> Self {
+        Self {
+            start,
+            end,
+            class,
+            context_direction: TextDirection::LeftToRight,
+            level: 0,
+        }
+    }
+
+    const fn len(self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +185,7 @@ impl ShapeState {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ShapeError {
     BufferTooSmall,
+    TooManyDirectionalRuns,
 }
 
 pub struct ShapedRun<'a> {
@@ -380,21 +425,36 @@ impl SimpleShaper {
             self.shape_piece_into(registry, preferred_font, size_px, text, &mut state, output)?;
         let glyph_count = summary.glyph_count();
 
-        Ok(self.visual_order(text, &mut output[..glyph_count], summary.advance()))
+        self.visual_order(
+            text,
+            glyph_count,
+            &mut output[..glyph_count],
+            summary.advance(),
+        )
     }
 
     pub fn visual_order<'out>(
         &self,
         text: &str,
+        text_glyph_count: usize,
         glyphs: &'out mut [ShapedGlyph],
         advance: Pixels,
-    ) -> ShapedRun<'out> {
-        let direction = simple_text_direction(text);
-        if direction == TextDirection::RightToLeft {
-            glyphs.reverse();
+    ) -> Result<ShapedRun<'out>, ShapeError> {
+        let direction = paragraph_direction(text);
+        if glyphs.len() <= 1 {
+            return Ok(ShapedRun::new(glyphs, direction, advance));
         }
 
-        ShapedRun::new(glyphs, direction, advance)
+        let text_glyph_count = text_glyph_count.min(glyphs.len());
+        let mut runs = [DirectionalRun::EMPTY; DIRECTIONAL_RUN_CAPACITY];
+
+        let run_count = build_directional_runs(text, text_glyph_count, glyphs, &mut runs)?;
+        resolve_directional_run_levels(&mut runs[..run_count], direction);
+
+        let run_count = merge_same_level_runs(&mut runs[..run_count]);
+        reorder_directional_runs(glyphs, &mut runs[..run_count]);
+
+        Ok(ShapedRun::new(glyphs, direction, advance))
     }
 }
 
@@ -477,31 +537,75 @@ where
     Ok(true)
 }
 
-fn simple_text_direction(text: &str) -> TextDirection {
-    let mut has_rtl = false;
-
+fn paragraph_direction(text: &str) -> TextDirection {
     for character in text.chars() {
-        // numeric runs require bidi handling of their own. Reversing completethe line
-        // would turn "123" into "321", so leave lines in logical order until directional
-        // runs are implemented
-        if is_directional_number(character) {
-            return TextDirection::LeftToRight;
+        match directional_class(character) {
+            DirectionalClass::LeftToRight => return TextDirection::LeftToRight,
+            DirectionalClass::RightToLeft => return TextDirection::RightToLeft,
+            DirectionalClass::Number | DirectionalClass::Neutral => {}
         }
-        if is_arabic_directional(character) {
-            has_rtl = true;
+    }
+
+    TextDirection::LeftToRight
+}
+
+fn build_directional_runs(
+    text: &str,
+    text_glyph_count: usize,
+    glyphs: &[ShapedGlyph],
+    output: &mut [DirectionalRun],
+) -> Result<usize, ShapeError> {
+    let mut written = 0;
+
+    for (index, glyph) in glyphs.iter().copied().enumerate() {
+        let class = if index < text_glyph_count {
+            directional_class_for_cluster(text, glyph.cluster())
+        } else {
+            // extr glyphs, currently the renderer's ellipsis suffix, don't have cluster
+            // offsets into `text`. Treat them as neutrals and let the paragraph context
+            // place them
+            DirectionalClass::Neutral
+        };
+
+        if written > 0 && output[written - 1].class == class {
+            output[written - 1].end = index.saturating_add(1);
             continue;
         }
-        // a non-arabic alphabetic character means this is a mixed-direction line.
-        if character.is_alphabetic() {
-            return TextDirection::LeftToRight;
-        }
+
+        let Some(desstination) = output.get_mut(written) else {
+            return Err(ShapeError::TooManyDirectionalRuns);
+        };
+
+        *desstination = DirectionalRun::new(index, index.saturating_add(1), class);
+        written = written.saturating_add(1);
     }
 
-    if has_rtl {
-        TextDirection::RightToLeft
-    } else {
-        TextDirection::LeftToRight
+    Ok(written)
+}
+
+fn directional_class_for_cluster(text: &str, cluster: usize) -> DirectionalClass {
+    let Some(remaining) = text.get(cluster..) else {
+        return DirectionalClass::Neutral;
+    };
+    let Some(character) = remaining.chars().next() else {
+        return DirectionalClass::Neutral;
+    };
+
+    directional_class(character)
+}
+
+fn directional_class(character: char) -> DirectionalClass {
+    if is_directional_number(character) {
+        return DirectionalClass::Number;
     }
+    if is_arabic_directional(character) && character.is_alphabetic() {
+        return DirectionalClass::RightToLeft;
+    }
+    if character.is_alphabetic() {
+        return DirectionalClass::LeftToRight;
+    }
+
+    DirectionalClass::Neutral
 }
 
 fn is_directional_number(character: char) -> bool {
@@ -523,6 +627,213 @@ fn is_arabic_directional(character: char) -> bool {
             | '\u{FB50}'..='\u{FDFF}'
             | '\u{FE70}'..='\u{FEFF}'
     )
+}
+
+fn resolve_directional_run_levels(runs: &mut [DirectionalRun], paragraph_direction: TextDirection) {
+    for index in 0..runs.len() {
+        let context_direction = match runs[index].class {
+            DirectionalClass::LeftToRight => TextDirection::LeftToRight,
+            DirectionalClass::RightToLeft => TextDirection::RightToLeft,
+            DirectionalClass::Number => previous_strong_direction(runs, index)
+                .or_else(|| next_strong_direction(runs, index))
+                .unwrap_or(paragraph_direction),
+            DirectionalClass::Neutral => paragraph_direction,
+        };
+
+        runs[index].context_direction = context_direction;
+    }
+
+    for index in 0..runs.len() {
+        if runs[index].class != DirectionalClass::Neutral {
+            continue;
+        }
+
+        let left = previous_context_direction(runs, index, paragraph_direction);
+        let right = next_context_direction(runs, index, paragraph_direction);
+
+        runs[index].context_direction = if left == right {
+            left
+        } else {
+            paragraph_direction
+        };
+    }
+
+    for run in runs {
+        run.level = match run.class {
+            DirectionalClass::Number => number_level(paragraph_direction, run.context_direction),
+            _ => direction_level(paragraph_direction, run.context_direction),
+        };
+    }
+}
+
+fn previous_strong_direction(runs: &[DirectionalRun], index: usize) -> Option<TextDirection> {
+    for run in runs[..index].iter().rev() {
+        match run.class {
+            DirectionalClass::LeftToRight => return Some(TextDirection::LeftToRight),
+            DirectionalClass::RightToLeft => return Some(TextDirection::RightToLeft),
+            DirectionalClass::Number | DirectionalClass::Neutral => {}
+        }
+    }
+
+    None
+}
+
+fn next_strong_direction(runs: &[DirectionalRun], index: usize) -> Option<TextDirection> {
+    for run in runs[index.saturating_add(1)..].iter() {
+        match run.class {
+            DirectionalClass::LeftToRight => return Some(TextDirection::LeftToRight),
+            DirectionalClass::RightToLeft => return Some(TextDirection::RightToLeft),
+            DirectionalClass::Number | DirectionalClass::Neutral => {}
+        }
+    }
+
+    None
+}
+
+fn previous_context_direction(
+    runs: &[DirectionalRun],
+    index: usize,
+    fallback: TextDirection,
+) -> TextDirection {
+    for run in runs[..index].iter().rev() {
+        if run.class != DirectionalClass::Neutral {
+            return run.context_direction;
+        }
+    }
+
+    fallback
+}
+
+fn next_context_direction(
+    runs: &[DirectionalRun],
+    index: usize,
+    fallback: TextDirection,
+) -> TextDirection {
+    for run in runs[index.saturating_add(1)..].iter() {
+        if run.class != DirectionalClass::Neutral {
+            return run.context_direction;
+        }
+    }
+
+    fallback
+}
+
+fn direction_level(paragraph_direction: TextDirection, run_direction: TextDirection) -> u8 {
+    match (paragraph_direction, run_direction) {
+        (TextDirection::LeftToRight, TextDirection::LeftToRight) => 0,
+        (TextDirection::LeftToRight, TextDirection::RightToLeft) => 1,
+        (TextDirection::RightToLeft, TextDirection::RightToLeft) => 1,
+        (TextDirection::RightToLeft, TextDirection::LeftToRight) => 2,
+    }
+}
+
+fn number_level(paragraph_direction: TextDirection, context_direction: TextDirection) -> u8 {
+    if paragraph_direction == TextDirection::RightToLeft
+        || context_direction == TextDirection::RightToLeft
+    {
+        2
+    } else {
+        0
+    }
+}
+
+fn merge_same_level_runs(runs: &mut [DirectionalRun]) -> usize {
+    if runs.is_empty() {
+        return 0;
+    }
+
+    let mut written = 1usize;
+
+    for read in 1..runs.len() {
+        let run = runs[read];
+
+        if runs[written - 1].level == run.level {
+            runs[written - 1].end = run.end;
+            continue;
+        }
+
+        runs[written] = run;
+        written = written.saturating_add(1);
+    }
+
+    written
+}
+
+fn reorder_directional_runs(glyphs: &mut [ShapedGlyph], runs: &mut [DirectionalRun]) {
+    let mut highest_level = 0u8;
+    let mut lowest_odd_level: Option<u8> = None;
+
+    for run in runs.iter().copied() {
+        highest_level = highest_level.max(run.level);
+        if run.level % 2 == 1 {
+            lowest_odd_level = Some(match lowest_odd_level {
+                Some(current) => current.min(run.level),
+                None => run.level,
+            });
+        }
+    }
+
+    let Some(lowest_odd_level) = lowest_odd_level else {
+        return;
+    };
+
+    let mut level = highest_level;
+
+    loop {
+        reverse_level_spans(glyphs, runs, level);
+        if level == lowest_odd_level {
+            break;
+        }
+
+        level = level.saturating_sub(1);
+    }
+}
+
+fn reverse_level_spans(glyphs: &mut [ShapedGlyph], runs: &mut [DirectionalRun], level: u8) {
+    let mut cursor = 0usize;
+
+    while cursor < runs.len() {
+        if runs[cursor].level < level {
+            cursor = cursor.saturating_add(1);
+            continue;
+        }
+
+        let start = cursor;
+
+        while cursor < runs.len() && runs[cursor].level >= level {
+            cursor = cursor.saturating_add(1);
+        }
+
+        reverse_directional_span(glyphs, &mut runs[start..cursor]);
+    }
+}
+
+fn reverse_directional_span(glyphs: &mut [ShapedGlyph], runs: &mut [DirectionalRun]) {
+    let Some(first) = runs.first().copied() else {
+        return;
+    };
+    let Some(last) = runs.last().copied() else {
+        return;
+    };
+
+    let start = first.start;
+    let end = last.end;
+
+    glyphs[start..end].reverse();
+    runs.reverse();
+
+    let mut cursor = start;
+
+    for run in runs {
+        let len = run.len();
+
+        run.start = cursor;
+        run.end = cursor.saturating_add(len);
+
+        cursor = run.end;
+    }
+
+    debug_assert_eq!(cursor, end);
 }
 
 #[cfg(test)]
@@ -879,8 +1190,8 @@ mod tests {
     }
 
     #[test]
-    fn arabic_with_numbers_stays_logical_until_bidi_runs_are_supported() {
-        static CHARACTERS: [char; 4] = ['ب', '1', '2', '?'];
+    fn arabic_with_numbers_keeps_digits_in_ltr_order() {
+        static CHARACTERS: [char; 5] = ['ب', ' ', '1', '2', '?'];
 
         let font = TestFont {
             characters: &CHARACTERS,
@@ -890,17 +1201,145 @@ mod tests {
 
         let mut registry = FontRegistry::<1>::default();
         let font_id = registry.register(&font).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 4];
+
+        let shaper = SimpleShaper::new();
+        let measured = shaper.measure(&registry, font_id, 16, "ب 12");
+
+        let run = shaper
+            .shape_into(&registry, font_id, 16, "ب 12", &mut output)
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+        assert_eq!(run.len(), 4);
+
+        // logical clusters:
+        //  ب = 0
+        //   = 2
+        // 1 = 3
+        // 2 = 4
+        //
+        // visual storage is:
+        // 1 2 <space> ب
+        assert_eq!(run.glyphs()[0].cluster(), 3);
+        assert_eq!(run.glyphs()[1].cluster(), 4);
+        assert_eq!(run.glyphs()[2].cluster(), 2);
+        assert_eq!(run.glyphs()[3].cluster(), 0);
+
+        assert_eq!(run.advance(), measured.advance());
+    }
+
+    #[test]
+    fn arabic_with_latin_preserves_ltr_run_order() {
+        static CHARACTERS: [char; 5] = ['ب', ' ', 'A', 'B', '?'];
+
+        let font = TestFont {
+            characters: &CHARACTERS,
+            advance: px(5),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&font).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 4];
+
+        let shaper = SimpleShaper::new();
+        let measured = shaper.measure(&registry, font_id, 16, "ب AB");
+
+        let run = shaper
+            .shape_into(&registry, font_id, 16, "ب AB", &mut output)
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+
+        // logical:
+        // ب <space> A B
+        //
+        // visual:
+        // A B <space> ب
+        assert_eq!(run.glyphs()[0].cluster(), 3);
+        assert_eq!(run.glyphs()[1].cluster(), 4);
+        assert_eq!(run.glyphs()[2].cluster(), 2);
+        assert_eq!(run.glyphs()[3].cluster(), 0);
+
+        assert_eq!(run.advance(), measured.advance());
+    }
+
+    #[test]
+    fn ltr_run_between_arabic_runs_keeps_internal_order() {
+        static CHARACTERS: [char; 5] = ['ب', ' ', 'A', 'B', '?'];
+
+        let font = TestFont {
+            characters: &CHARACTERS,
+            advance: px(5),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&font).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 6];
+
+        let run = SimpleShaper::new()
+            .shape_into(&registry, font_id, 16, "ب AB ب", &mut output)
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+
+        // logical clusters:
+        // ب 0
+        //   2
+        // A 3
+        // B 4
+        //   5
+        // ب 6
+        //
+        // visual:
+        // ب <space> A B <space> ب
+        // the Arabic runs exchange sides, while AB remains A,B.
+        assert_eq!(run.glyphs()[0].cluster(), 6);
+        assert_eq!(run.glyphs()[1].cluster(), 5);
+        assert_eq!(run.glyphs()[2].cluster(), 3);
+        assert_eq!(run.glyphs()[3].cluster(), 4);
+        assert_eq!(run.glyphs()[4].cluster(), 2);
+        assert_eq!(run.glyphs()[5].cluster(), 0);
+    }
+
+    #[test]
+    fn bidi_reordering_preserves_resolved_fallback_fonts() {
+        static LATIN: [char; 3] = ['A', ' ', '?'];
+        static ARABIC: [char; 2] = ['ب', '?'];
+
+        let latin = TestFont {
+            characters: &LATIN,
+            advance: px(5),
+            kerning: px(0),
+        };
+        let arabic = TestFont {
+            characters: &ARABIC,
+            advance: px(7),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<2>::default();
+
+        let latin_id = registry.register(&latin).unwrap();
+        let arabic_id = registry.register(&arabic).unwrap();
+
         let mut output = [ShapedGlyph::EMPTY; 3];
 
         let run = SimpleShaper::new()
-            .shape_into(&registry, font_id, 16, "ب12", &mut output)
+            .shape_into(&registry, latin_id, 16, "ب A", &mut output)
             .unwrap();
 
-        assert_eq!(run.direction(), TextDirection::LeftToRight);
-        assert_eq!(run.len(), 3);
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
 
-        assert_eq!(run.glyphs()[0].cluster(), 0);
+        assert_eq!(run.glyphs()[0].cluster(), 3);
+        assert_eq!(run.glyphs()[0].font(), latin_id);
+
         assert_eq!(run.glyphs()[1].cluster(), 2);
-        assert_eq!(run.glyphs()[2].cluster(), 3);
+        assert_eq!(run.glyphs()[1].font(), latin_id);
+
+        assert_eq!(run.glyphs()[2].cluster(), 0);
+        assert_eq!(run.glyphs()[2].font(), arabic_id);
     }
 }
