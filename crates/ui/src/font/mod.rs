@@ -155,6 +155,20 @@ pub trait FontFace {
         None
     }
 
+    /// returns the child mark glyph origin relative to one logical component of a
+    /// ligature glyph
+    ///
+    /// `component` is zero-based and follows the ligature's logical component order
+    fn mark_to_ligature_offset(
+        &self,
+        _ligature: GlyphId,
+        _component: u16,
+        _mark: GlyphId,
+        _size_px: u16,
+    ) -> Option<Offset> {
+        None
+    }
+
     /// returns the child mark glyph origin relative to an already positioned parent
     /// mark glyph origin.
     ///

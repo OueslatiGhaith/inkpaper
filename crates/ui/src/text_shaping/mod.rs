@@ -79,6 +79,11 @@ pub struct ShapedGlyph {
     /// logical-order and rebuild final visual positioning without recovering the value
     /// from `offset`
     base_advance: Pixels,
+    /// number of logical source components represented by this base glyph.
+    ///
+    /// normal bases contain one component. Marks contain zero. Our current lam-alef
+    /// ligature contains 2
+    ligature_components: u16,
     /// arabic combining-mark role
     mark_placement: Option<MarkPlacement>,
     /// visual position relative to the current pen
@@ -99,6 +104,7 @@ impl ShapedGlyph {
         glyph: GlyphId::new(0),
         cluster: 0,
         base_advance: Pixels::ZERO,
+        ligature_components: 0,
         mark_placement: None,
         offset: Offset::ZERO,
         advance: Pixels::ZERO,
@@ -117,6 +123,28 @@ impl ShapedGlyph {
             glyph,
             cluster,
             base_advance,
+            ligature_components: 1,
+            mark_placement: None,
+            offset,
+            advance,
+        }
+    }
+
+    const fn new_ligature(
+        font: FontId,
+        glyph: GlyphId,
+        cluster: usize,
+        base_advance: Pixels,
+        ligature_components: u16,
+        offset: Offset,
+        advance: Pixels,
+    ) -> Self {
+        Self {
+            font,
+            glyph,
+            cluster,
+            base_advance,
+            ligature_components,
             mark_placement: None,
             offset,
             advance,
@@ -136,9 +164,23 @@ impl ShapedGlyph {
             glyph,
             cluster,
             base_advance,
+            ligature_components: 0,
             mark_placement: Some(mark_placement),
             offset,
             advance: Pixels::ZERO,
+        }
+    }
+
+    const fn with_positioning(self, offset: Offset, advance: Pixels) -> Self {
+        Self {
+            font: self.font,
+            glyph: self.glyph,
+            cluster: self.cluster,
+            base_advance: self.base_advance,
+            ligature_components: self.ligature_components,
+            mark_placement: self.mark_placement,
+            offset,
+            advance,
         }
     }
 
@@ -156,6 +198,14 @@ impl ShapedGlyph {
 
     pub const fn base_advance(self) -> Pixels {
         self.base_advance
+    }
+
+    const fn final_ligature_component(self) -> Option<u16> {
+        if self.ligature_components > 1 {
+            Some(self.ligature_components - 1)
+        } else {
+            None
+        }
     }
 
     const fn mark_placement(self) -> Option<MarkPlacement> {
@@ -342,9 +392,7 @@ impl SimpleShaper {
 
             previous_cluster = Some(cluster);
 
-            // mandatory lam-alef ligatures remain deliberately conservative:
-            //     lam + immediately adjacent alef
-            // a transparent mark between them still prevents ligation for this simple shaper.
+            // the only ligature produced by the simple shaper today is adjacent lam + alef.
             if character == '\u{0644}'
                 && let Some((_alef_cluster, alef)) = characters.clone().next()
             {
@@ -359,10 +407,12 @@ impl SimpleShaper {
                         .is_some()
                 {
                     let _ = characters.next();
-                    emit_resolved_glyph(
+
+                    emit_resolved_ligature(
                         resolved,
                         cluster,
                         size_px,
+                        2,
                         &mut advance,
                         &mut glyph_count,
                         &mut visit,
@@ -613,6 +663,46 @@ where
 
     // a combining mark exists in the glyph stream and counts toward buffer capacity,
     // but does not move the pen.
+    *glyph_count = glyph_count.saturating_add(1);
+
+    Ok(true)
+}
+
+fn emit_resolved_ligature<'font, F, E>(
+    resolved: ResolvedGlyph<'font>,
+    cluster: usize,
+    size_px: u16,
+    ligature_components: u16,
+    advance: &mut Pixels,
+    glyph_count: &mut usize,
+    visit: &mut F,
+) -> Result<bool, E>
+where
+    F: FnMut(ShapedGlyph) -> Result<(), E>,
+{
+    debug_assert!(ligature_components > 1);
+
+    let font = resolved.font();
+    let face = resolved.face();
+    let glyph = resolved.glyph();
+
+    let Some(base_advance) = face.glyph_advance(glyph, size_px) else {
+        return Ok(false);
+    };
+
+    let shaped = ShapedGlyph::new_ligature(
+        font,
+        glyph,
+        cluster,
+        base_advance,
+        ligature_components,
+        Offset::ZERO,
+        base_advance,
+    );
+
+    visit(shaped)?;
+
+    *advance += base_advance;
     *glyph_count = glyph_count.saturating_add(1);
 
     Ok(true)
@@ -1118,14 +1208,8 @@ fn apply_visual_positioning<'font, const FONTS: usize>(
             _ => px(0),
         };
 
-        let positioned_base = ShapedGlyph::new(
-            shaped.font(),
-            shaped.glyph(),
-            shaped.cluster(),
-            shaped.base_advance(),
-            Offset::new(kerning, px(0)),
-            shaped.base_advance() + kerning,
-        );
+        let positioned_base =
+            shaped.with_positioning(Offset::new(kerning, px(0)), shaped.base_advance() + kerning);
 
         glyphs[index] = positioned_base;
         visual_advance += positioned_base.advance();
@@ -1189,7 +1273,7 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
 
         let mut attachment = None;
 
-        // prefer mkmk when this mark can attach to the preceding mark in the same font.
+        // prefer mark-to-mark when another mark in this cluster has already been positioned.
         if let Some(parent) = previous_mark
             && parent.font() == shaped.font()
         {
@@ -1201,23 +1285,33 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
                 });
         }
 
-        // if mkmk doesn't apply, try ordinary mark-to-base attachment.
+        // our current ligature producer is lam-alef.
+        // a mark encountered after the consumed alef belongs to the final logical
+        // component of that ligature.
+        if attachment.is_none()
+            && base.font() == shaped.font()
+            && let Some(component) = base.final_ligature_component()
+        {
+            attachment = registry
+                .get(shaped.font())
+                .and_then(|face| {
+                    face.mark_to_ligature_offset(base.glyph(), component, shaped.glyph(), size_px)
+                })
+                .map(|offset| Offset::new(offset.x - base.base_advance(), offset.y));
+        }
+
+        // ordinary single-component base.
         if attachment.is_none() && base.font() == shaped.font() {
             attachment = registry
                 .get(shaped.font())
                 .and_then(|face| face.mark_to_base_offset(base.glyph(), shaped.glyph(), size_px))
-                .map(|offset| {
-                    // at mark drawing time the renderer's pen has already moved past the base.
-                    // the base glyph origin is exactly `base_advance` behind that current pen.
-                    // base kerning cancels because it shifts both the base origin and final pen equally.
-                    Offset::new(offset.x - base.base_advance(), offset.y)
-                });
+                .map(|offset| Offset::new(offset.x - base.base_advance(), offset.y));
         }
 
         let Some(offset) = attachment else {
-            // deliberately reject the whole anchored cluster.
-            // the caller will overwrite every mark using the existing metric fallback,
-            // avoiding a cluster that mixes font anchors with heuristic stacking.
+            // keep the cluster internally consistent:
+            // if any mark cannot use font anchors, the caller will replace the whole
+            // cluster with metric positioning.
             return false;
         };
 
@@ -1511,6 +1605,65 @@ mod tests {
                 // fatha -> shadda
                 (2, 3) => Some(Offset::new(px(0), px(-2))),
 
+                _ => None,
+            }
+        }
+
+        fn rasterize(
+            &self,
+            _: GlyphId,
+            _: u16,
+            coverage: &mut [u8],
+        ) -> Result<(), FontRasterError> {
+            let Some(pixel) = coverage.first_mut() else {
+                return Err(FontRasterError::BufferTooSmall);
+            };
+
+            *pixel = 255;
+
+            Ok(())
+        }
+    }
+
+    struct LigatureAnchorFont {
+        characters: &'static [char],
+        advance: Pixels,
+    }
+
+    impl FontFace for LigatureAnchorFont {
+        fn glyph_id(&self, character: char) -> Option<GlyphId> {
+            let index = self
+                .characters
+                .iter()
+                .position(|candidate| *candidate == character)?;
+
+            let index = u16::try_from(index).ok()?;
+
+            Some(GlyphId::new(index.saturating_add(1)))
+        }
+
+        fn metrics(&self, _: u16) -> FontMetrics {
+            FontMetrics::new(px(8), px(2), px(0))
+        }
+
+        fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+            if glyph.value() == 0 {
+                return None;
+            }
+
+            Some(GlyphMetrics::new(1, 1, px(0), px(-1), self.advance))
+        }
+
+        fn mark_to_ligature_offset(
+            &self,
+            ligature: GlyphId,
+            component: u16,
+            mark: GlyphId,
+            _: u16,
+        ) -> Option<Offset> {
+            match (ligature.value(), component, mark.value()) {
+                // isolated lam-alef, second logical component, fatha.
+                (1, 1, 2) => Some(Offset::new(px(3), px(-4))),
                 _ => None,
             }
         }
@@ -2432,5 +2585,57 @@ mod tests {
         assert_eq!(shadda.advance(), px(0));
         // marks never contribute to horizontal width.
         assert_eq!(run.advance(), px(5));
+    }
+
+    #[test]
+    fn mark_after_lam_alef_uses_ligature_component_anchor() {
+        static ARABIC: [char; 3] = [
+            '\u{FEFB}', // isolated lam-alef
+            '\u{064E}', // fatha
+            '?',
+        ];
+
+        let arabic = LigatureAnchorFont {
+            characters: &ARABIC,
+            advance: px(8),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&arabic).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 2];
+        let run = SimpleShaper::new()
+            .shape_into(
+                &registry,
+                font_id,
+                16,
+                concat!(
+                    "\u{0644}", // lam
+                    "\u{0627}", // alef
+                    "\u{064E}", // fatha
+                ),
+                &mut output,
+            )
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+        assert_eq!(run.len(), 2);
+
+        let ligature = run.glyphs()[0];
+        let fatha = run.glyphs()[1];
+
+        assert_eq!(ligature.glyph(), arabic.glyph_id('\u{FEFB}').unwrap());
+        assert_eq!(fatha.glyph(), arabic.glyph_id('\u{064E}').unwrap());
+        assert_eq!(ligature.cluster(), 0);
+        assert_eq!(fatha.cluster(), 0);
+        // the lam-alef base remembers that it represents two logical source components.
+        assert_eq!(ligature.ligature_components, 2);
+        // only component 1 has an anchor in LigatureAnchorFont.
+        // font anchor:
+        //     (3, -4)
+        // renderer pen after the 8px ligature:
+        //     x = 3 - 8 = -5
+        assert_eq!(fatha.offset(), Offset::new(px(-5), px(-4)));
+        assert_eq!(fatha.advance(), px(0));
+        assert_eq!(run.advance(), px(8));
     }
 }

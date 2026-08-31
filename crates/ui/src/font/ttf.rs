@@ -128,6 +128,24 @@ impl FontFace for TtfFont<'_> {
         mark_to_base_offset_for_face(&face, to_ttf_glyph(base), to_ttf_glyph(mark), size_px)
     }
 
+    fn mark_to_ligature_offset(
+        &self,
+        ligature: GlyphId,
+        component: u16,
+        mark: GlyphId,
+        size_px: u16,
+    ) -> Option<Offset> {
+        let face = self.face().ok()?;
+
+        mark_to_ligature_offset_for_face(
+            &face,
+            to_ttf_glyph(ligature),
+            component,
+            to_ttf_glyph(mark),
+            size_px,
+        )
+    }
+
     fn mark_to_mark_offset(
         &self,
         base_mark: GlyphId,
@@ -248,6 +266,59 @@ fn mark_to_base_offset_for_face(
                 };
 
                 return Some(anchor_attachment_offset(base_anchor, mark_anchor, scale));
+            }
+        }
+    }
+
+    None
+}
+
+fn mark_to_ligature_offset_for_face(
+    face: &Face<'_>,
+    ligature: TtfGlyphId,
+    component: u16,
+    mark: TtfGlyphId,
+    size_px: u16,
+) -> Option<Offset> {
+    let scale = font_scale(face, size_px)?;
+    let gpos = face.tables().gpos?;
+    let mark_tag = Tag::from_bytes(b"mark");
+
+    for feature in gpos.features {
+        if feature.tag != mark_tag {
+            continue;
+        }
+
+        for lookup_index in feature.lookup_indices {
+            let Some(lookup) = gpos.lookups.get(lookup_index) else {
+                continue;
+            };
+
+            for subtable in lookup.subtables.into_iter::<PositioningSubtable>() {
+                let PositioningSubtable::MarkToLigature(adjustment) = subtable else {
+                    continue;
+                };
+                let Some(mark_index) = adjustment.mark_coverage.get(mark) else {
+                    continue;
+                };
+                let Some(ligature_index) = adjustment.ligature_coverage.get(ligature) else {
+                    continue;
+                };
+                let Some((class, mark_anchor)) = adjustment.marks.get(mark_index) else {
+                    continue;
+                };
+                let Some(matrix) = adjustment.ligature_array.get(ligature_index) else {
+                    continue;
+                };
+                let Some(ligature_anchor) = matrix.get(component, class) else {
+                    continue;
+                };
+
+                return Some(anchor_attachment_offset(
+                    ligature_anchor,
+                    mark_anchor,
+                    scale,
+                ));
             }
         }
     }
