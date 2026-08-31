@@ -1,6 +1,6 @@
 use ttf_parser::{
     Face, GlyphId as TtfGlyphId, OutlineBuilder, Tag,
-    gpos::{Anchor, PositioningSubtable},
+    gpos::{Anchor, PairAdjustment, PositioningSubtable},
 };
 
 use crate::{
@@ -95,31 +95,15 @@ impl FontFace for TtfFont<'_> {
 
     fn kerning(&self, left: GlyphId, right: GlyphId, size_px: u16) -> Pixels {
         let Ok(face) = self.face() else { return px(0) };
-        let Some(scale) = font_scale(&face, size_px) else {
-            return px(0);
-        };
-        let Some(kern) = face.tables().kern else {
-            return px(0);
-        };
 
         let left = to_ttf_glyph(left);
         let right = to_ttf_glyph(right);
 
-        for subtable in kern.subtables {
-            if !subtable.horizontal
-                || subtable.variable
-                || subtable.has_cross_stream
-                || subtable.has_state_machine
-            {
-                continue;
-            }
-
-            if let Some(value) = subtable.glyphs_kerning(left, right) {
-                return px(round_to_i32(f32::from(value) * scale));
-            };
+        if let Some(adjustment) = gpos_kerning_for_face(&face, left, right, size_px) {
+            return adjustment;
         }
 
-        px(0)
+        legacy_kerning_for_face(&face, left, right, size_px).unwrap_or(px(0))
     }
 
     fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, size_px: u16) -> Option<Offset> {
@@ -226,6 +210,103 @@ impl FontFace for TtfFont<'_> {
 
 fn to_ttf_glyph(glyph: GlyphId) -> TtfGlyphId {
     TtfGlyphId(glyph.value())
+}
+
+fn gpos_kerning_for_face(
+    face: &Face<'_>,
+    left: TtfGlyphId,
+    right: TtfGlyphId,
+    size_px: u16,
+) -> Option<Pixels> {
+    let scale = font_scale(face, size_px)?;
+    let gpos = face.tables().gpos?;
+    let kern_tag = Tag::from_bytes(b"kern");
+
+    for feature in gpos.features {
+        if feature.tag != kern_tag {
+            continue;
+        }
+
+        for lookup_index in feature.lookup_indices {
+            let Some(lookup) = gpos.lookups.get(lookup_index) else {
+                continue;
+            };
+
+            for subtable in lookup.subtables.into_iter::<PositioningSubtable>() {
+                let PositioningSubtable::Pair(adjustment) = subtable else {
+                    continue;
+                };
+
+                let pair = match adjustment {
+                    PairAdjustment::Format1 { coverage, sets } => {
+                        let Some(left_index) = coverage.get(left) else {
+                            continue;
+                        };
+                        let Some(set) = sets.get(left_index) else {
+                            continue;
+                        };
+
+                        set.get(right)
+                    }
+
+                    PairAdjustment::Format2 {
+                        coverage,
+                        classes,
+                        matrix,
+                    } => {
+                        if coverage.get(left).is_none() {
+                            continue;
+                        }
+
+                        let left_class = classes.0.get(left);
+                        let right_class = classes.1.get(right);
+
+                        matrix.get((left_class, right_class))
+                    }
+                };
+
+                let Some((left_value, _right_value)) = pair else {
+                    continue;
+                };
+
+                // InkPaper's current FontFace::kerning contract is a scalar horizontal pair
+                // advance adjustment.
+                // OpenType kerning conventionally expresses this in the first glyph's
+                // xAdvance value.
+                // placement fields and the second glyph's advance are deliberately not
+                // folded into this scalar because doing so would change their semantics.
+                return Some(px(round_to_i32(f32::from(left_value.x_advance) * scale)));
+            }
+        }
+    }
+
+    None
+}
+
+fn legacy_kerning_for_face(
+    face: &Face<'_>,
+    left: TtfGlyphId,
+    right: TtfGlyphId,
+    size_px: u16,
+) -> Option<Pixels> {
+    let scale = font_scale(face, size_px)?;
+    let kern = face.tables().kern?;
+
+    for subtable in kern.subtables {
+        if !subtable.horizontal
+            || subtable.variable
+            || subtable.has_cross_stream
+            || subtable.has_state_machine
+        {
+            continue;
+        }
+
+        if let Some(value) = subtable.glyphs_kerning(left, right) {
+            return Some(px(round_to_i32(f32::from(value) * scale)));
+        }
+    }
+
+    None
 }
 
 fn mark_to_base_offset_for_face(
