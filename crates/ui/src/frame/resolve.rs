@@ -2,8 +2,8 @@ use super::{FrameArena, NodeId, NodeKind};
 
 use crate::{
     Offset,
-    element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
-    scroll::ScrollStateTable,
+    element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
+    interaction::scroll::ScrollStateTable,
 };
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {

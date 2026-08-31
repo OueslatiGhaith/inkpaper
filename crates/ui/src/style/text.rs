@@ -1,4 +1,6 @@
-use crate::{Color, FontId, Pixels, Styled, TextStyle, px};
+use crate::{Color, FontId, Pixels, px};
+
+use super::{Styled, TextStyle};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

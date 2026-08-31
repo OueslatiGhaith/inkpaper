@@ -1,4 +1,4 @@
-use crate::{Offset, element_state::ElementStateId};
+use crate::{Offset, element::state::ElementStateId};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScrollAxes {

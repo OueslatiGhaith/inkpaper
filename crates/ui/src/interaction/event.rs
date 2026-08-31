@@ -3,7 +3,7 @@ use core::any::TypeId;
 use crate::{
     Element, IntoElement, Listener, MountCx, MountError, NodeId, ParentElement,
     StatefulInteractiveElement, StatefulInteractivity, Style, Styled, callback::CallbackId,
-    element_state::ElementStateId,
+    element::state::ElementStateId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

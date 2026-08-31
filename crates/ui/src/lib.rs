@@ -7,71 +7,52 @@ extern crate std;
 pub mod backend;
 
 mod callback;
-mod canvas;
 mod color;
-mod composition;
 mod context;
-mod div;
 mod element;
-mod element_state;
 mod entity;
-mod event;
 mod font;
 mod frame;
 mod geometry;
 mod global;
-mod identity;
-mod image;
-mod input;
+mod interaction;
 mod layout;
 mod metrics;
-mod render;
 mod rendering;
 mod runtime;
-mod scroll;
-mod stateful;
 mod style;
 mod text_layout;
 mod text_shaping;
-mod text_style;
 
 pub use callback::Listener;
-pub use canvas::*;
 pub use color::*;
-pub use composition::*;
 pub use context::*;
-pub use div::*;
 pub use element::*;
 pub use entity::{Entity, EntityAccessError, EntityAllocError, EntityId};
 pub(crate) use entity::{EntityArena, EntityBorrowKind, align_up};
-pub use event::*;
 pub use font::*;
 pub use frame::*;
 pub use geometry::*;
 pub use global::*;
-pub use identity::*;
-pub use image::*;
+pub use interaction::*;
 pub use layout::*;
 pub use metrics::*;
-pub use render::*;
 pub use rendering::*;
 pub use runtime::*;
-pub use stateful::*;
 pub use style::*;
 pub use text_shaping::*;
-pub use text_style::*;
+
 #[cfg(feature = "ttf")]
 pub use ttf::*;
 
 pub mod prelude {
-    // TODO: fill predlude
     pub use crate::{
         ActivateEvent, AppContext, CanvasPainter, Color, ComponentSlot, ConditionalElementExt,
         Context, DamageRegion, Either, EmptySlot, Entity, EventTarget, FontId, FontResources,
         Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError, IdentifiableElementExt,
-        Image, ImageFit, ImageId, ImageSource, IntoElement, Invalidation, Listener, Offset,
-        OnEvent, ParentElement, Pixels, Point, Rect, Render, RenderInvalidation, RenderOnce,
-        Runtime, Size, StatefulInteractiveElementExt, Style, Styled, TextAlign, TextStyled,
-        TextWrap, canvas::canvas, div::div, image::image, px, text,
+        Image, ImageFit, ImageId, ImageSource, IntoElement, Invalidation, LineHeight, Listener,
+        Offset, OnEvent, ParentElement, Pixels, Point, Rect, Render, RenderInvalidation,
+        RenderOnce, Runtime, Size, StatefulInteractiveElementExt, Style, Styled, TextAlign,
+        TextMaxLines, TextOverflow, TextStyled, TextWrap, canvas, div, image, px, text,
     };
 }

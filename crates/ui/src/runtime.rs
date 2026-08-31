@@ -7,12 +7,12 @@ use crate::{
     EventTarget, FrameArena, Invalidation, Listener, MountError, NodeId, Offset, Painter, Point,
     Render, RenderInvalidation, Size, TextMeasurer,
     callback::{CallbackArena, ListenerInvokeError},
-    element_state::{ElementStateId, ElementStateTable, IdentityError},
+    element::state::{ElementStateId, ElementStateTable, IdentityError},
     entity::create_entity,
     global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
-    input::ActivationState,
+    interaction::input::ActivationState,
     px,
-    scroll::ScrollStateTable,
+    interaction::scroll::ScrollStateTable,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

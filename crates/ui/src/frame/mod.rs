@@ -3,8 +3,8 @@ use heapless::Vec;
 use crate::{
     CanvasDraw, CanvasStyle, ElementId, EntityAccessError, EntityId, EntityRenderFn, EventBinding,
     EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size,
-    StatefulInteractivity, Style, StylePatch, TextStyle, element_state::ElementStateId,
-    scroll::ScrollAxes,
+    StatefulInteractivity, Style, StylePatch, TextStyle, element::state::ElementStateId,
+    interaction::scroll::ScrollAxes,
 };
 #[cfg(feature = "metrics")]
 use crate::{PerformanceMetrics, PerformanceMetricsCell};

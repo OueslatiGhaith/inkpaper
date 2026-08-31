@@ -3,7 +3,7 @@
 
     use crate::{
         callback::CallbackArena,
-        element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
+        element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
         *,
     };
 

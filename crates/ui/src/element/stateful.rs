@@ -1,7 +1,7 @@
 use crate::{
     ActivateEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
     MountCx, MountError, NodeId, OnEvent, ParentElement, Style, StylePatch, Styled,
-    scroll::ScrollAxes,
+    interaction::scroll::ScrollAxes,
 };
 
 pub struct Stateful<E> {

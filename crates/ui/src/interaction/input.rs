@@ -3,9 +3,9 @@ use core::any::TypeId;
 use crate::{
     DamageRegion, FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect, count_metric,
     element,
-    element_state::ElementStateId,
+    element::state::ElementStateId,
     px,
-    scroll::{ScrollAxes, ScrollStateTable},
+    interaction::scroll::{ScrollAxes, ScrollStateTable},
 };
 
 #[cfg(test)]

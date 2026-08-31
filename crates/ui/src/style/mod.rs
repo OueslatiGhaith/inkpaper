@@ -1,7 +1,8 @@
-use crate::{
-    Color, FontId, Invalidation, Length, LineHeight, Pixels, TextAlign, TextMaxLines, TextOverflow,
-    TextWrap, px,
-};
+mod text;
+
+pub use text::*;
+
+use crate::{Color, FontId, Invalidation, Length, Pixels, px};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
