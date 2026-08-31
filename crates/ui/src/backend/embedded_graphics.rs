@@ -748,6 +748,7 @@ where
 
             let run = match shaper.visual_order(
                 registry,
+                size_px,
                 line.text,
                 text_glyph_count,
                 &mut glyphs[..glyph_count],

@@ -1021,6 +1021,55 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
         )
         .child(
             text(
+                "Kerning is rebuilt after bidi visual ordering instead of travelling with a glyph from logical order.",
+            )
+            .wrap()
+            .text_color(
+                Color::rgb(164, 176, 196),
+            ),
+        )
+        .child(
+            div()
+                .w_full()
+                .p(px(6))
+                .gap(px(5))
+                .bg(Color::rgb(27, 31, 41))
+                .border(px(1))
+                .border_color(
+                    Color::rgb(86, 100, 126),
+                )
+                .rounded(px(4))
+                .child(
+                    text(
+                        "AVATAR To WA — مرحبا",
+                    )
+                    .font(font)
+                    .font_size(px(22))
+                    .text_color(
+                        Color::rgb(
+                            230,
+                            167,
+                            87,
+                        ),
+                    ),
+                )
+                .child(
+                    text(
+                        "مرحبا — AVATAR To WA",
+                    )
+                    .font(font)
+                    .font_size(px(22))
+                    .text_color(
+                        Color::rgb(
+                            230,
+                            167,
+                            87,
+                        ),
+                    ),
+                ),
+        )
+        .child(
+            text(
                 "The narrow box below contains one oversized Arabic word. Wrapping may break between shaped clusters, but never inside lam-alef.",
             )
             .wrap()

@@ -67,9 +67,15 @@ pub struct ShapedGlyph {
     /// UTF-8 byte offset in the original input corresponding to the logical cluster that
     /// produced this glyph.
     ///
-    /// multiple glyphs may later share one cluster, and one glyph represents multiple
+    /// multiple glyphs may share one cluster, and one glyph represents multiple
     /// source characters
     cluster: usize,
+    /// unpositioned horizontal advance reported by the font.
+    ///
+    /// this deliberately remains separate from `advance` so bidi reordering can discard
+    /// logical-order and rebuild final visual positioning without recovering the value
+    /// from `offset`
+    base_advance: Pixels,
     /// visual position relative to the current pen
     offset: Offset,
     /// amount by which the visual pen moves after this glyph
@@ -87,6 +93,7 @@ impl ShapedGlyph {
         font: FontId::DEFAULT,
         glyph: GlyphId::new(0),
         cluster: 0,
+        base_advance: Pixels::ZERO,
         offset: Offset::ZERO,
         advance: Pixels::ZERO,
     };
@@ -95,6 +102,7 @@ impl ShapedGlyph {
         font: FontId,
         glyph: GlyphId,
         cluster: usize,
+        base_advance: Pixels,
         offset: Offset,
         advance: Pixels,
     ) -> Self {
@@ -102,6 +110,7 @@ impl ShapedGlyph {
             font,
             glyph,
             cluster,
+            base_advance,
             offset,
             advance,
         }
@@ -117,6 +126,10 @@ impl ShapedGlyph {
 
     pub const fn cluster(self) -> usize {
         self.cluster
+    }
+
+    pub const fn base_advance(self) -> Pixels {
+        self.base_advance
     }
 
     pub const fn offset(self) -> Offset {
@@ -471,6 +484,7 @@ impl SimpleShaper {
 
         self.visual_order(
             registry,
+            size_px,
             text,
             glyph_count,
             &mut output[..glyph_count],
@@ -481,14 +495,15 @@ impl SimpleShaper {
     pub fn visual_order<'out, 'font, const FONTS: usize>(
         &self,
         registry: &FontRegistry<'font, FONTS>,
+        size_px: u16,
         text: &str,
         text_glyph_count: usize,
         glyphs: &'out mut [ShapedGlyph],
-        advance: Pixels,
+        measured_advance: Pixels,
     ) -> Result<ShapedRun<'out>, ShapeError> {
         let direction = paragraph_direction(text);
-        if glyphs.len() <= 1 {
-            return Ok(ShapedRun::new(glyphs, direction, advance));
+        if glyphs.is_empty() {
+            return Ok(ShapedRun::new(glyphs, direction, measured_advance));
         }
 
         let text_glyph_count = text_glyph_count.min(glyphs.len());
@@ -497,12 +512,17 @@ impl SimpleShaper {
         let run_count = build_directional_runs(text, text_glyph_count, glyphs, &mut runs)?;
         resolve_directional_run_levels(&mut runs[..run_count], direction);
 
+        // positioning produced while walking logical input cannot survive arbitrary visual reordering.
+        reset_to_base_positioning(glyphs);
+
         mirror_odd_level_glyphs(registry, text, text_glyph_count, glyphs, &runs[..run_count]);
 
         let run_count = merge_same_level_runs(&mut runs[..run_count]);
         reorder_directional_runs(glyphs, &mut runs[..run_count]);
 
-        Ok(ShapedRun::new(glyphs, direction, advance))
+        apply_visual_kerning(registry, size_px, glyphs, measured_advance);
+
+        Ok(ShapedRun::new(glyphs, direction, measured_advance))
     }
 }
 
@@ -561,6 +581,10 @@ where
         return Ok(false);
     };
 
+    // logical-order kerning remains here for now because the existing streaming
+    // measurement path uses ShapeSummary::advance.
+    // visual_order() discards this positioning and recomputes kerning against
+    // the actual visual neighbors after bidi reordering.
     let kerning = match state.previous {
         Some((previous_font, previous_glyph)) if previous_font == font => {
             face.kerning(previous_glyph, glyph, size_px)
@@ -572,6 +596,7 @@ where
         font,
         glyph,
         cluster,
+        base_advance,
         Offset::new(kerning, px(0)),
         base_advance + kerning,
     );
@@ -761,12 +786,13 @@ fn mirror_odd_level_glyphs<'font, const FONTS: usize>(
                 continue;
             };
 
-            // preserve the original advance and positioning for now. Mirroring is
-            // a visual substitution and must not change line measurement.
+            // keep source character metrics as the layout contract.
+            // the mirrored glyph is a visual substitution.
             *glyph = ShapedGlyph::new(
                 resolved.font(),
                 resolved.glyph(),
                 shaped.cluster(),
+                shaped.base_advance(),
                 shaped.offset(),
                 shaped.advance(),
             );
@@ -1004,6 +1030,78 @@ fn reverse_glyph_clusters(glyphs: &mut [ShapedGlyph]) {
     }
 }
 
+fn reset_to_base_positioning(glyphs: &mut [ShapedGlyph]) {
+    for glyph in glyphs {
+        let shaped = *glyph;
+
+        *glyph = ShapedGlyph::new(
+            shaped.font(),
+            shaped.glyph(),
+            shaped.cluster(),
+            shaped.base_advance(),
+            Offset::ZERO,
+            shaped.base_advance(),
+        );
+    }
+}
+
+fn apply_visual_kerning<'font, const FONTS: usize>(
+    registry: &FontRegistry<'font, FONTS>,
+    size_px: u16,
+    glyphs: &mut [ShapedGlyph],
+    measured_advance: Pixels,
+) {
+    let mut previous: Option<ShapedGlyph> = None;
+    let mut visual_advance = px(0);
+
+    for glyph in glyphs.iter_mut() {
+        let shaped = *glyph;
+
+        let kerning = match previous {
+            Some(previous)
+                if previous.font() == shaped.font() && previous.cluster() != shaped.cluster() =>
+            {
+                registry
+                    .get(shaped.font())
+                    .map(|face| face.kerning(previous.glyph(), shaped.glyph(), size_px))
+                    .unwrap_or(px(0))
+            }
+            _ => px(0),
+        };
+
+        let positioned = ShapedGlyph::new(
+            shaped.font(),
+            shaped.glyph(),
+            shaped.cluster(),
+            shaped.base_advance(),
+            Offset::new(kerning, px(0)),
+            shaped.base_advance() + kerning,
+        );
+
+        *glyph = positioned;
+        visual_advance += positioned.advance();
+        previous = Some(positioned);
+    }
+
+    // layout is still measured by the existing streaming logical-order path.
+    // the correction belongs on the final advance only, so it cannot move any rendered glyph.
+    // Every visible pair above therefore uses its proper visual-order kerning while
+    // alignment/layout remain unchanged.
+    if let Some(last) = glyphs.last_mut() {
+        let correction = measured_advance - visual_advance;
+        let shaped = *last;
+
+        *last = ShapedGlyph::new(
+            shaped.font(),
+            shaped.glyph(),
+            shaped.cluster(),
+            shaped.base_advance(),
+            shaped.offset(),
+            shaped.advance() + correction,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1042,6 +1140,61 @@ mod tests {
 
         fn kerning(&self, _: GlyphId, _: GlyphId, _: u16) -> Pixels {
             self.kerning
+        }
+
+        fn rasterize(
+            &self,
+            _: GlyphId,
+            _: u16,
+            coverage: &mut [u8],
+        ) -> Result<(), FontRasterError> {
+            let Some(pixel) = coverage.first_mut() else {
+                return Err(FontRasterError::BufferTooSmall);
+            };
+
+            *pixel = 255;
+
+            Ok(())
+        }
+    }
+
+    struct AsymmetricKerningFont {
+        characters: &'static [char],
+        advance: Pixels,
+    }
+
+    impl FontFace for AsymmetricKerningFont {
+        fn glyph_id(&self, character: char) -> Option<GlyphId> {
+            let index = self
+                .characters
+                .iter()
+                .position(|candidate| *candidate == character)?;
+
+            let index = u16::try_from(index).ok()?;
+
+            Some(GlyphId::new(index.saturating_add(1)))
+        }
+
+        fn metrics(&self, _: u16) -> FontMetrics {
+            FontMetrics::new(px(8), px(2), px(0))
+        }
+
+        fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+            if glyph.value() == 0 {
+                return None;
+            }
+
+            Some(GlyphMetrics::new(1, 1, px(0), px(-1), self.advance))
+        }
+
+        fn kerning(&self, left: GlyphId, right: GlyphId, _: u16) -> Pixels {
+            match (left.value(), right.value()) {
+                // logical initial -> final
+                (1, 2) => px(-1),
+                // visual final -> initial
+                (2, 1) => px(-3),
+                _ => px(0),
+            }
         }
 
         fn rasterize(
@@ -1652,18 +1805,18 @@ mod tests {
             .shape_into(&registry, font_id, 16, "AB (ب)", &mut output)
             .unwrap();
 
-        assert_eq!(run.direction(), TextDirection::LeftToRight,);
+        assert_eq!(run.direction(), TextDirection::LeftToRight);
 
-        assert_eq!(run.glyphs()[0].cluster(), 0,);
-        assert_eq!(run.glyphs()[1].cluster(), 1,);
-        assert_eq!(run.glyphs()[2].cluster(), 2,);
-        assert_eq!(run.glyphs()[3].cluster(), 3,);
-        assert_eq!(run.glyphs()[4].cluster(), 4,);
-        assert_eq!(run.glyphs()[5].cluster(), 6,);
+        assert_eq!(run.glyphs()[0].cluster(), 0);
+        assert_eq!(run.glyphs()[1].cluster(), 1);
+        assert_eq!(run.glyphs()[2].cluster(), 2);
+        assert_eq!(run.glyphs()[3].cluster(), 3);
+        assert_eq!(run.glyphs()[4].cluster(), 4);
+        assert_eq!(run.glyphs()[5].cluster(), 6);
 
-        assert_eq!(run.glyphs()[3].glyph(), font.glyph_id('(').unwrap(),);
+        assert_eq!(run.glyphs()[3].glyph(), font.glyph_id('(').unwrap());
 
-        assert_eq!(run.glyphs()[5].glyph(), font.glyph_id(')').unwrap(),);
+        assert_eq!(run.glyphs()[5].glyph(), font.glyph_id(')').unwrap());
     }
 
     #[test]
@@ -1693,13 +1846,84 @@ mod tests {
 
         // the logical closing ')' originally came from the fallback face.
         // after RTL mirroring it becomes '(' and resolves back to PRIMARY.
-        assert_eq!(run.glyphs()[0].glyph(), primary.glyph_id('(').unwrap(),);
-        assert_eq!(run.glyphs()[0].font(), primary_id,);
+        assert_eq!(run.glyphs()[0].glyph(), primary.glyph_id('(').unwrap());
+        assert_eq!(run.glyphs()[0].font(), primary_id);
         // the logical opening '(' becomes ')' and therefore resolves through
         // the registered fallback face.
-        assert_eq!(run.glyphs()[3].glyph(), fallback.glyph_id(')').unwrap(),);
-        assert_eq!(run.glyphs()[3].font(), fallback_id,);
+        assert_eq!(run.glyphs()[3].glyph(), fallback.glyph_id(')').unwrap());
+        assert_eq!(run.glyphs()[3].font(), fallback_id);
         // mirroring does not alter measured line width.
-        assert_eq!(run.advance(), px(32),);
+        assert_eq!(run.advance(), px(32));
+    }
+
+    #[test]
+    fn rtl_kerning_is_rebuilt_for_visual_neighbors() {
+        static ARABIC: [char; 3] = [
+            '\u{FE91}', // beh initial
+            '\u{FE90}', // beh final
+            '?',
+        ];
+
+        let font = AsymmetricKerningFont {
+            characters: &ARABIC,
+            advance: px(5),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&font).unwrap();
+        let shaper = SimpleShaper::new();
+        let measured = shaper.measure(&registry, font_id, 16, "بب");
+
+        // logical shaping sees:
+        //     initial -> final = -1
+        // so the existing streaming measurement remains 9.
+        assert_eq!(measured.advance(), px(9));
+
+        let mut output = [ShapedGlyph::EMPTY; 2];
+
+        let run = shaper
+            .shape_into(&registry, font_id, 16, "بب", &mut output)
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+
+        // visual order is final -> initial.
+        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(2));
+        assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(1));
+        assert_eq!(run.glyphs()[0].base_advance(), px(5));
+        assert_eq!(run.glyphs()[1].base_advance(), px(5));
+        // the first visual glyph has no preceding pair.
+        assert_eq!(run.glyphs()[0].offset().x, px(0));
+        // kerning is now computed from the actual visual pair:
+        //     final -> initial = -3
+        assert_eq!(run.glyphs()[1].offset().x, px(-3));
+        // layout width remains the established streaming measurement.
+        assert_eq!(run.advance(), px(9));
+        assert_eq!(run.glyphs()[0].advance() + run.glyphs()[1].advance(), px(9));
+    }
+
+    #[test]
+    fn ltr_kerning_stays_on_the_second_visual_glyph() {
+        static CHARACTERS: [char; 2] = ['A', '?'];
+
+        let font = TestFont {
+            characters: &CHARACTERS,
+            advance: px(5),
+            kerning: px(-1),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&font).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 2];
+        let run = SimpleShaper::new()
+            .shape_into(&registry, font_id, 16, "AA", &mut output)
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::LeftToRight);
+        assert_eq!(run.glyphs()[0].offset().x, px(0));
+        assert_eq!(run.glyphs()[1].offset().x, px(-1));
+        assert_eq!(run.glyphs()[0].advance(), px(5));
+        assert_eq!(run.glyphs()[1].advance(), px(4));
+        assert_eq!(run.advance(), px(9));
     }
 }
