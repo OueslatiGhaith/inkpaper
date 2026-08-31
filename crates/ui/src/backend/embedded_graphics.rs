@@ -724,7 +724,6 @@ where
 
             let text_glyph_count = text_summary.glyph_count();
             let mut glyph_count = text_glyph_count;
-            let mut advance = text_summary.advance();
 
             if line.ellipsis {
                 let ellipsis_summary = match shaper.shape_piece_into(
@@ -743,7 +742,6 @@ where
                 };
 
                 glyph_count = glyph_count.saturating_add(ellipsis_summary.glyph_count());
-                advance += ellipsis_summary.advance();
             }
 
             let run = match shaper.visual_order(
@@ -752,7 +750,6 @@ where
                 line.text,
                 text_glyph_count,
                 &mut glyphs[..glyph_count],
-                advance,
             ) {
                 Ok(run) => run,
                 Err(shape_error) => {
@@ -955,9 +952,15 @@ fn measure_shaped_line<const FONTS: usize>(
     size_px: u16,
     text: &str,
 ) -> Pixels {
-    SimpleShaper::new()
-        .measure(registry, font, size_px, text)
-        .advance()
+    let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
+
+    match SimpleShaper::new().measure(registry, font, size_px, text, &mut glyphs) {
+        Ok(summary) => summary.advance(),
+        // textMeasurer cannot currently surface ShapeError.
+        // treat an unmeasurable candidate as wider than any available line. Word wrapping
+        // can then keep reducing the candidate until it fits the bounded shaper.
+        Err(_) => Pixels::MAX,
+    }
 }
 
 fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
@@ -967,11 +970,41 @@ fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
     text: &str,
 ) -> Pixels {
     let shaper = SimpleShaper::new();
+    let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
     let mut state = ShapeState::new();
-    let text = shaper.shape_piece_with(registry, font, size_px, text, &mut state, |_| {});
-    let ellipsis = shaper.shape_piece_with(registry, font, size_px, ELLIPSIS, &mut state, |_| {});
 
-    text.advance() + ellipsis.advance()
+    let text_summary =
+        match shaper.shape_piece_into(registry, font, size_px, text, &mut state, &mut glyphs) {
+            Ok(summary) => summary,
+            Err(_) => return Pixels::MAX,
+        };
+
+    let text_glyph_count = text_summary.glyph_count();
+    let mut glyph_count = text_glyph_count;
+    let ellipsis_summary = match shaper.shape_piece_into(
+        registry,
+        font,
+        size_px,
+        ELLIPSIS,
+        &mut state,
+        &mut glyphs[glyph_count..],
+    ) {
+        Ok(summary) => summary,
+        Err(_) => return Pixels::MAX,
+    };
+
+    glyph_count = glyph_count.saturating_add(ellipsis_summary.glyph_count());
+
+    match shaper.visual_order(
+        registry,
+        size_px,
+        text,
+        text_glyph_count,
+        &mut glyphs[..glyph_count],
+    ) {
+        Ok(run) => run.advance(),
+        Err(_) => Pixels::MAX,
+    }
 }
 
 fn text_line_advance(font: &dyn FontFace, size_px: u16, style: ResolvedTextStyle) -> Pixels {

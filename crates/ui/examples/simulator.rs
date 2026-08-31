@@ -1175,6 +1175,71 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     ),
                 ),
         )
+        .child(
+            text(
+                "The two lines below are deliberately narrow: ellipsis selection and painted glyph positions now use the exact same final visual advances.",
+            )
+            .wrap()
+            .text_color(
+                Color::rgb(164, 176, 196),
+            ),
+        )
+        .child(
+            div()
+                .w(px(170))
+                .p(px(5))
+                .bg(Color::rgb(20, 24, 32))
+                .border(px(1))
+                .border_color(
+                    Color::rgb(86, 100, 126),
+                )
+                .rounded(px(4))
+                .child(
+                    text(
+                        "AVAVAVAV To WA — مرحبا",
+                    )
+                    .font(font)
+                    .font_size(px(22))
+                    .no_wrap()
+                    .max_lines(1)
+                    .text_ellipsis()
+                    .text_color(
+                        Color::rgb(
+                            225,
+                            231,
+                            240,
+                        ),
+                    ),
+                ),
+        )
+        .child(
+            div()
+                .w(px(170))
+                .p(px(5))
+                .bg(Color::rgb(20, 24, 32))
+                .border(px(1))
+                .border_color(
+                    Color::rgb(86, 100, 126),
+                )
+                .rounded(px(4))
+                .child(
+                    text(
+                        "مرحبا — AVAVAVAV To WA",
+                    )
+                    .font(font)
+                    .font_size(px(22))
+                    .no_wrap()
+                    .max_lines(1)
+                    .text_ellipsis()
+                    .text_color(
+                        Color::rgb(
+                            225,
+                            231,
+                            240,
+                        ),
+                    ),
+                ),
+        )
 }
 
 impl Render for App {
