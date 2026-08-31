@@ -23,7 +23,11 @@ pub(super) fn positive_scaled_units(units: i32, scale: f32) -> Pixels {
     px(ceil_to_i32(units as f32 * scale))
 }
 
-pub(super) fn glyph_advance_for_face(face: &Face<'_>, glyph: TtfGlyphId, size_px: u16) -> Option<Pixels> {
+pub(super) fn glyph_advance_for_face(
+    face: &Face<'_>,
+    glyph: TtfGlyphId,
+    size_px: u16,
+) -> Option<Pixels> {
     let scale = font_scale(face, size_px)?;
     let advance = face.glyph_hor_advance(glyph)?;
 

@@ -1,18 +1,15 @@
-use embedded_graphics::{
-    pixelcolor::Rgb888 as EgRgb888,
-    prelude::DrawTarget as EgDrawTarget,
-};
+use embedded_graphics::{pixelcolor::Rgb888 as EgRgb888, prelude::DrawTarget as EgDrawTarget};
 
 use crate::{
-    FontFace, FontId, FontRegistry, FontResources, LineHeight, Pixels, Point,
-    Rect, ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper,
-    Size, TextAlign, TextDirection, TextMeasurer, px,
+    FontFace, FontId, FontRegistry, FontResources, LineHeight, Pixels, Point, Rect,
+    ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, Size, TextAlign,
+    TextDirection, TextMeasurer, px,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
 
 use super::{
-    CoverageMode, EmbeddedGraphicsError, EmbeddedGraphicsPainter,
-    coverage::draw_coverage_bitmap, to_rgb888,
+    CoverageMode, EmbeddedGraphicsError, EmbeddedGraphicsPainter, coverage::draw_coverage_bitmap,
+    to_rgb888,
 };
 
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;

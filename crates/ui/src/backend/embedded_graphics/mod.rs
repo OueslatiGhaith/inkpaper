@@ -12,7 +12,7 @@ use embedded_graphics::{
 
 use crate::{
     BoxPaint, CanvasPainter, Color, DamageRegion, FontFace, FontId, FontResources, GlyphCacheError,
-    ImageFit, ImageId, ImageRegistry, ImageResource, ImageSource, Painter, Point, Rect,
+    ImageId, ImagePaint, ImageRegistry, ImageResource, ImageSource, Painter, Point, Rect,
     ResolvedTextStyle, ShapeError, Size,
     backend::embedded_graphics::{image::draw_image_to, text::draw_text_to},
     px,
@@ -228,7 +228,7 @@ where
         &mut self,
         source: ImageSource,
         bounds: Rect,
-        fit: ImageFit,
+        paint: ImagePaint,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
         if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
@@ -244,7 +244,7 @@ where
             image.size(),
             source.size(),
             "registered image size differs from ImageSource size for {:?}",
-            source.id(),
+            source.id()
         );
 
         let Some(image_clip) = (match clip {
@@ -254,7 +254,7 @@ where
             return Ok(());
         };
 
-        draw_image_to(self.target, image, bounds, fit, Some(image_clip))
+        draw_image_to(self.target, image, bounds, paint, Some(image_clip))
             .map_err(EmbeddedGraphicsError::Target)
     }
 

@@ -11,8 +11,8 @@ use crate::{
     entity::create_entity,
     global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
     interaction::input::ActivationState,
-    px,
     interaction::scroll::ScrollStateTable,
+    px,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

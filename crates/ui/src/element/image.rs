@@ -14,10 +14,41 @@ pub enum ImageFit {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ImagePosition {
+    #[default]
+    Center,
+    Top,
+    Bottom,
+    Left,
+    Right,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ImageSampling {
+    #[default]
+    Nearest,
+    Bilinear,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ImagePaint {
+    pub fit: ImageFit,
+    pub position: ImagePosition,
+    pub sampling: ImageSampling,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct ImageStyle {
     pub(crate) width: Option<Pixels>,
     pub(crate) height: Option<Pixels>,
-    pub(crate) fit: ImageFit,
+    pub(crate) paint: ImagePaint,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +65,11 @@ impl Image {
             style: ImageStyle {
                 width: None,
                 height: None,
-                fit: ImageFit::None,
+                paint: ImagePaint {
+                    fit: ImageFit::None,
+                    position: ImagePosition::Center,
+                    sampling: ImageSampling::Nearest,
+                },
             },
         }
     }
@@ -60,7 +95,17 @@ impl Image {
     }
 
     pub fn fit(mut self, fit: ImageFit) -> Self {
-        self.style.fit = fit;
+        self.style.paint.fit = fit;
+        self
+    }
+
+    pub fn position(mut self, position: ImagePosition) -> Self {
+        self.style.paint.position = position;
+        self
+    }
+
+    pub fn sampling(mut self, sampling: ImageSampling) -> Self {
+        self.style.paint.sampling = sampling;
         self
     }
 
@@ -91,14 +136,33 @@ pub fn image(source: impl Into<ImageSource>) -> Image {
     Image::new(source.into())
 }
 
-fn centered_image_bounds(bounds: Rect, size: Size) -> Rect {
-    let x = bounds.origin.x + (bounds.width() - size.width) / 2;
-    let y = bounds.origin.y + (bounds.height() - size.height) / 2;
+fn positioned_image_bounds(bounds: Rect, size: Size, position: ImagePosition) -> Rect {
+    use ImagePosition::*;
+
+    let remaining_x = bounds.width() - size.width;
+    let remaining_y = bounds.height() - size.height;
+
+    let x = match position {
+        Left | TopLeft | BottomLeft => bounds.origin.x,
+        Right | TopRight | BottomRight => bounds.origin.x + remaining_x,
+        Center | Top | Bottom => bounds.origin.x + remaining_x / 2,
+    };
+
+    let y = match position {
+        Top | TopLeft | TopRight => bounds.origin.y,
+        Bottom | BottomLeft | BottomRight => bounds.origin.y + remaining_y,
+        Center | Left | Right => bounds.origin.y + remaining_y / 2,
+    };
 
     Rect::new(Point::new(x, y), size)
 }
 
-pub(crate) fn fitted_image_bounds(source_size: Size, bounds: Rect, fit: ImageFit) -> Rect {
+pub(crate) fn fitted_image_bounds(
+    source_size: Size,
+    bounds: Rect,
+    fit: ImageFit,
+    position: ImagePosition,
+) -> Rect {
     let source_width = source_size.width.non_negative();
     let source_height = source_size.height.non_negative();
     let bounds_width = bounds.width().non_negative();
@@ -112,32 +176,35 @@ pub(crate) fn fitted_image_bounds(source_size: Size, bounds: Rect, fit: ImageFit
         return Rect::new(bounds.origin, Size::ZERO);
     }
 
-    match fit {
-        ImageFit::None => Rect::new(bounds.origin, Size::new(source_width, source_height)),
-        ImageFit::Fill => Rect::new(bounds.origin, Size::new(bounds_width, bounds_height)),
+    let size = match fit {
+        ImageFit::None => Size::new(source_width, source_height),
+        ImageFit::Fill => {
+            return Rect::new(bounds.origin, Size::new(bounds_width, bounds_height));
+        }
         ImageFit::Contain => {
             let height_at_full_width = source_height.scale_ratio_floor(bounds_width, source_width);
-            let size = if height_at_full_width <= bounds_height {
+
+            if height_at_full_width <= bounds_height {
                 Size::new(bounds_width, height_at_full_width.max(px(1)))
             } else {
                 let width = source_width.scale_ratio_floor(bounds_height, source_height);
-                Size::new(width.max(px(1)), bounds_height)
-            };
 
-            centered_image_bounds(bounds, size)
+                Size::new(width.max(px(1)), bounds_height)
+            }
         }
+
         ImageFit::Cover => {
             let height_at_full_width = source_height.scale_ratio_ceil(bounds_width, source_width);
-            let size = if height_at_full_width >= bounds_height {
+            if height_at_full_width >= bounds_height {
                 Size::new(bounds_width, height_at_full_width.max(px(1)))
             } else {
                 let width = source_width.scale_ratio_ceil(bounds_height, source_height);
                 Size::new(width.max(px(1)), bounds_height)
-            };
-
-            centered_image_bounds(bounds, size)
+            }
         }
-    }
+    };
+
+    positioned_image_bounds(bounds, size, position)
 }
 
 #[cfg(test)]
@@ -150,11 +217,12 @@ mod tests {
             Size::new(px(4), px(2)),
             Rect::new(Point::ZERO, Size::new(px(8), px(8))),
             ImageFit::Contain,
+            ImagePosition::Center,
         );
 
         assert_eq!(
             fitted,
-            Rect::new(Point::new(px(0), px(2),), Size::new(px(8), px(4),),)
+            Rect::new(Point::new(px(0), px(2)), Size::new(px(8), px(4)))
         );
     }
 
@@ -164,35 +232,88 @@ mod tests {
             Size::new(px(4), px(2)),
             Rect::new(Point::ZERO, Size::new(px(8), px(8))),
             ImageFit::Cover,
+            ImagePosition::Center,
         );
 
         assert_eq!(
             fitted,
-            Rect::new(Point::new(px(-4), px(0),), Size::new(px(16), px(8),),)
+            Rect::new(Point::new(px(-4), px(0)), Size::new(px(16), px(8)))
         );
     }
 
     #[test]
-    fn fill_uses_exact_layout_bounds() {
+    fn cover_can_align_horizontal_crop_to_edges() {
+        let bounds = Rect::new(Point::ZERO, Size::new(px(8), px(8)));
+        let source = Size::new(px(4), px(2));
+
+        assert_eq!(
+            fitted_image_bounds(source, bounds, ImageFit::Cover, ImagePosition::Left),
+            Rect::new(Point::ZERO, Size::new(px(16), px(8)))
+        );
+
+        assert_eq!(
+            fitted_image_bounds(source, bounds, ImageFit::Cover, ImagePosition::Right),
+            Rect::new(Point::new(px(-8), px(0)), Size::new(px(16), px(8)))
+        );
+    }
+
+    #[test]
+    fn cover_can_align_vertical_crop_to_edges() {
+        let bounds = Rect::new(Point::ZERO, Size::new(px(8), px(8)));
+        let source = Size::new(px(2), px(4));
+
+        assert_eq!(
+            fitted_image_bounds(source, bounds, ImageFit::Cover, ImagePosition::Top),
+            Rect::new(Point::ZERO, Size::new(px(8), px(16)))
+        );
+        assert_eq!(
+            fitted_image_bounds(source, bounds, ImageFit::Cover, ImagePosition::Bottom),
+            Rect::new(Point::new(px(0), px(-8)), Size::new(px(8), px(16)))
+        );
+    }
+
+    #[test]
+    fn contain_can_align_image_inside_unused_space() {
+        let fitted = fitted_image_bounds(
+            Size::new(px(4), px(2)),
+            Rect::new(Point::ZERO, Size::new(px(8), px(8))),
+            ImageFit::Contain,
+            ImagePosition::Bottom,
+        );
+
+        assert_eq!(
+            fitted,
+            Rect::new(Point::new(px(0), px(4)), Size::new(px(8), px(4)))
+        );
+    }
+
+    #[test]
+    fn fill_uses_exact_layout_bounds_regardless_of_position() {
         let bounds = Rect::new(Point::new(px(3), px(7)), Size::new(px(25), px(40)));
 
         assert_eq!(
-            fitted_image_bounds(Size::new(px(10), px(5),), bounds, ImageFit::Fill,),
+            fitted_image_bounds(
+                Size::new(px(10), px(5)),
+                bounds,
+                ImageFit::Fill,
+                ImagePosition::BottomRight,
+            ),
             bounds
         );
     }
 
     #[test]
-    fn native_fit_keeps_intrinsic_image_size() {
+    fn native_fit_can_be_explicitly_aligned() {
         let fitted = fitted_image_bounds(
             Size::new(px(20), px(10)),
             Rect::new(Point::new(px(5), px(7)), Size::new(px(100), px(100))),
             ImageFit::None,
+            ImagePosition::TopLeft,
         );
 
         assert_eq!(
             fitted,
-            Rect::new(Point::new(px(5), px(7),), Size::new(px(20), px(10),),)
+            Rect::new(Point::new(px(5), px(7)), Size::new(px(20), px(10)))
         );
     }
 }

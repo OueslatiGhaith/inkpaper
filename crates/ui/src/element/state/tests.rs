@@ -1,357 +1,358 @@
-    use crate::{
-        element::state::{ElementStateTable, IdentityError, IdentityParent},
-        *,
-    };
 
-    fn entity_parent(slot: u16) -> IdentityParent {
-        IdentityParent::Entity(EntityId::new(slot, 0))
-    }
+use crate::{
+    element::state::{ElementStateTable, IdentityError, IdentityParent},
+    *,
+};
 
-    #[test]
-    fn resolves_new_element_identity() {
-        let mut states = ElementStateTable::<8>::default();
+fn entity_parent(slot: u16) -> IdentityParent {
+    IdentityParent::Entity(EntityId::new(slot, 0))
+}
 
-        let id = states
-            .resolve(entity_parent(0), ElementId::Name("button"), 1)
-            .unwrap();
+#[test]
+fn resolves_new_element_identity() {
+    let mut states = ElementStateTable::<8>::default();
 
-        assert!(states.contains(id));
-        assert_eq!(states.len(), 1);
-    }
+    let id = states
+        .resolve(entity_parent(0), ElementId::Name("button"), 1)
+        .unwrap();
 
-    #[test]
-    fn identity_is_stable_across_frames() {
-        let mut states = ElementStateTable::<8>::default();
+    assert!(states.contains(id));
+    assert_eq!(states.len(), 1);
+}
 
-        let parent = entity_parent(0);
+#[test]
+fn identity_is_stable_across_frames() {
+    let mut states = ElementStateTable::<8>::default();
 
-        let first = states
-            .resolve(parent, ElementId::Name("button"), 1)
-            .unwrap();
-        states.sweep(1);
+    let parent = entity_parent(0);
 
-        let second = states
-            .resolve(parent, ElementId::Name("button"), 2)
-            .unwrap();
-        states.sweep(2);
+    let first = states
+        .resolve(parent, ElementId::Name("button"), 1)
+        .unwrap();
+    states.sweep(1);
 
-        assert_eq!(first, second,);
-        assert!(states.contains(first));
-    }
+    let second = states
+        .resolve(parent, ElementId::Name("button"), 2)
+        .unwrap();
+    states.sweep(2);
 
-    #[test]
-    fn duplicate_identity_in_same_frame_is_rejected() {
-        let mut states = ElementStateTable::<8>::default();
+    assert_eq!(first, second,);
+    assert!(states.contains(first));
+}
 
-        let parent = entity_parent(0);
+#[test]
+fn duplicate_identity_in_same_frame_is_rejected() {
+    let mut states = ElementStateTable::<8>::default();
 
-        states
-            .resolve(parent, ElementId::Name("button"), 1)
-            .unwrap();
+    let parent = entity_parent(0);
 
-        let result = states.resolve(parent, ElementId::Name("button"), 1);
+    states
+        .resolve(parent, ElementId::Name("button"), 1)
+        .unwrap();
 
-        assert_eq!(
-            result,
-            Err(IdentityError::DuplicateElementId {
-                id: ElementId::Name("button"),
-            }),
-        );
-    }
+    let result = states.resolve(parent, ElementId::Name("button"), 1);
 
-    #[test]
-    fn same_local_id_is_allowed_under_different_entities() {
-        let mut states = ElementStateTable::<8>::default();
+    assert_eq!(
+        result,
+        Err(IdentityError::DuplicateElementId {
+            id: ElementId::Name("button"),
+        }),
+    );
+}
 
-        let first = states
-            .resolve(entity_parent(0), ElementId::Name("button"), 1)
-            .unwrap();
+#[test]
+fn same_local_id_is_allowed_under_different_entities() {
+    let mut states = ElementStateTable::<8>::default();
 
-        let second = states
-            .resolve(entity_parent(1), ElementId::Name("button"), 1)
-            .unwrap();
+    let first = states
+        .resolve(entity_parent(0), ElementId::Name("button"), 1)
+        .unwrap();
 
-        assert_ne!(first, second,);
-        assert_eq!(states.len(), 2,);
-    }
+    let second = states
+        .resolve(entity_parent(1), ElementId::Name("button"), 1)
+        .unwrap();
 
-    #[test]
-    fn same_local_id_is_allowed_under_different_element_parents() {
-        let mut states = ElementStateTable::<8>::default();
+    assert_ne!(first, second,);
+    assert_eq!(states.len(), 2,);
+}
 
-        let root = entity_parent(0);
-        let left = states.resolve(root, ElementId::Name("left"), 1).unwrap();
-        let right = states.resolve(root, ElementId::Name("right"), 1).unwrap();
-        let left_button = states
-            .resolve(IdentityParent::Element(left), ElementId::Name("button"), 1)
-            .unwrap();
-        let right_button = states
-            .resolve(IdentityParent::Element(right), ElementId::Name("button"), 1)
-            .unwrap();
+#[test]
+fn same_local_id_is_allowed_under_different_element_parents() {
+    let mut states = ElementStateTable::<8>::default();
 
-        assert_ne!(left_button, right_button,);
-        assert_eq!(states.len(), 4,);
-    }
+    let root = entity_parent(0);
+    let left = states.resolve(root, ElementId::Name("left"), 1).unwrap();
+    let right = states.resolve(root, ElementId::Name("right"), 1).unwrap();
+    let left_button = states
+        .resolve(IdentityParent::Element(left), ElementId::Name("button"), 1)
+        .unwrap();
+    let right_button = states
+        .resolve(IdentityParent::Element(right), ElementId::Name("button"), 1)
+        .unwrap();
 
-    #[test]
-    fn nested_identity_uses_parent_element_state() {
-        let mut states = ElementStateTable::<8>::default();
+    assert_ne!(left_button, right_button,);
+    assert_eq!(states.len(), 4,);
+}
 
-        let root = entity_parent(0);
-        let panel = states.resolve(root, ElementId::Name("panel"), 1).unwrap();
-        let button = states
-            .resolve(IdentityParent::Element(panel), ElementId::Name("button"), 1)
-            .unwrap();
+#[test]
+fn nested_identity_uses_parent_element_state() {
+    let mut states = ElementStateTable::<8>::default();
 
-        assert_ne!(panel, button,);
+    let root = entity_parent(0);
+    let panel = states.resolve(root, ElementId::Name("panel"), 1).unwrap();
+    let button = states
+        .resolve(IdentityParent::Element(panel), ElementId::Name("button"), 1)
+        .unwrap();
 
-        let button_slot = &states.slots[button.slot()];
-        let button_entry = button_slot.entry.as_ref().unwrap();
+    assert_ne!(panel, button,);
 
-        assert_eq!(button_entry.key.parent, IdentityParent::Element(panel),);
-        assert_eq!(button_entry.key.local, ElementId::Name("button"),);
-    }
+    let button_slot = &states.slots[button.slot()];
+    let button_entry = button_slot.entry.as_ref().unwrap();
 
-    #[test]
-    fn sweep_removes_elements_not_seen_in_current_frame() {
-        let mut states = ElementStateTable::<8>::default();
+    assert_eq!(button_entry.key.parent, IdentityParent::Element(panel),);
+    assert_eq!(button_entry.key.local, ElementId::Name("button"),);
+}
 
-        let parent = entity_parent(0);
-        let button = states
-            .resolve(parent, ElementId::Name("button"), 1)
-            .unwrap();
-        states.sweep(1);
+#[test]
+fn sweep_removes_elements_not_seen_in_current_frame() {
+    let mut states = ElementStateTable::<8>::default();
 
-        assert!(states.contains(button));
+    let parent = entity_parent(0);
+    let button = states
+        .resolve(parent, ElementId::Name("button"), 1)
+        .unwrap();
+    states.sweep(1);
 
-        // frame 2 doesn't resolve "button".
-        states.sweep(2);
+    assert!(states.contains(button));
 
-        assert!(!states.contains(button));
-        assert_eq!(states.len(), 0,);
-    }
+    // frame 2 doesn't resolve "button".
+    states.sweep(2);
 
-    #[test]
-    fn reappearing_element_gets_new_generation() {
-        let mut states = ElementStateTable::<8>::default();
+    assert!(!states.contains(button));
+    assert_eq!(states.len(), 0,);
+}
 
-        let parent = entity_parent(0);
+#[test]
+fn reappearing_element_gets_new_generation() {
+    let mut states = ElementStateTable::<8>::default();
 
-        let old = states
-            .resolve(parent, ElementId::Name("button"), 1)
-            .unwrap();
-        states.sweep(1);
+    let parent = entity_parent(0);
 
-        // button disappears during frame 2.
-        states.sweep(2);
+    let old = states
+        .resolve(parent, ElementId::Name("button"), 1)
+        .unwrap();
+    states.sweep(1);
 
-        assert!(!states.contains(old));
+    // button disappears during frame 2.
+    states.sweep(2);
 
-        let new = states
-            .resolve(parent, ElementId::Name("button"), 3)
-            .unwrap();
-        states.sweep(3);
+    assert!(!states.contains(old));
 
-        assert_ne!(old, new,);
+    let new = states
+        .resolve(parent, ElementId::Name("button"), 3)
+        .unwrap();
+    states.sweep(3);
 
-        // with the current first-free-slot strategy, the slot should normally be
-        // reused, but with a new generation.
-        assert_eq!(old.slot(), new.slot());
-        assert_ne!(old.generation(), new.generation());
-    }
+    assert_ne!(old, new,);
 
-    #[test]
-    fn existing_entry_tracks_previous_seen_frame() {
-        let mut states = ElementStateTable::<8>::default();
+    // with the current first-free-slot strategy, the slot should normally be
+    // reused, but with a new generation.
+    assert_eq!(old.slot(), new.slot());
+    assert_ne!(old.generation(), new.generation());
+}
 
-        let parent = entity_parent(0);
-        let id = states
-            .resolve(parent, ElementId::Name("button"), 1)
-            .unwrap();
-        states.sweep(1);
+#[test]
+fn existing_entry_tracks_previous_seen_frame() {
+    let mut states = ElementStateTable::<8>::default();
 
-        states
-            .resolve(parent, ElementId::Name("button"), 2)
-            .unwrap();
+    let parent = entity_parent(0);
+    let id = states
+        .resolve(parent, ElementId::Name("button"), 1)
+        .unwrap();
+    states.sweep(1);
 
+    states
+        .resolve(parent, ElementId::Name("button"), 2)
+        .unwrap();
+
+    let entry = states.slots[id.slot()].entry.as_ref().unwrap();
+
+    assert_eq!(entry.created_frame, 1,);
+    assert_eq!(entry.previous_seen_frame, 1,);
+    assert_eq!(entry.last_seen_frame, 2,);
+}
+
+#[test]
+fn newly_created_entry_records_creation_frame() {
+    let mut states = ElementStateTable::<8>::default();
+
+    let id = states
+        .resolve(entity_parent(0), ElementId::Name("button"), 42)
+        .unwrap();
+
+    let entry = states.slots[id.slot()].entry.as_ref().unwrap();
+
+    assert_eq!(entry.created_frame, 42);
+    assert_eq!(entry.previous_seen_frame, 42);
+    assert_eq!(entry.last_seen_frame, 42);
+}
+
+#[test]
+fn abort_removes_elements_created_during_failed_frame() {
+    let mut states = ElementStateTable::<8>::default();
+
+    let parent = entity_parent(0);
+    let existing = states
+        .resolve(parent, ElementId::Name("existing"), 1)
+        .unwrap();
+    states.sweep(1);
+
+    let created = states
+        .resolve(parent, ElementId::Name("created"), 2)
+        .unwrap();
+
+    assert!(states.contains(created));
+    assert_eq!(states.len(), 2,);
+
+    states.abort_frame(2);
+
+    assert!(states.contains(existing));
+    assert!(!states.contains(created));
+    assert_eq!(states.len(), 1,);
+}
+
+#[test]
+fn abort_restores_existing_entry_last_seen_frame() {
+    let mut states = ElementStateTable::<8>::default();
+
+    let parent = entity_parent(0);
+    let id = states
+        .resolve(parent, ElementId::Name("button"), 1)
+        .unwrap();
+    states.sweep(1);
+
+    states
+        .resolve(parent, ElementId::Name("button"), 2)
+        .unwrap();
+
+    {
         let entry = states.slots[id.slot()].entry.as_ref().unwrap();
 
-        assert_eq!(entry.created_frame, 1,);
         assert_eq!(entry.previous_seen_frame, 1,);
         assert_eq!(entry.last_seen_frame, 2,);
     }
 
-    #[test]
-    fn newly_created_entry_records_creation_frame() {
-        let mut states = ElementStateTable::<8>::default();
+    states.abort_frame(2);
 
-        let id = states
-            .resolve(entity_parent(0), ElementId::Name("button"), 42)
-            .unwrap();
+    let entry = states.slots[id.slot()].entry.as_ref().unwrap();
 
-        let entry = states.slots[id.slot()].entry.as_ref().unwrap();
+    assert_eq!(entry.last_seen_frame, 1);
+    assert!(states.contains(id));
+}
 
-        assert_eq!(entry.created_frame, 42);
-        assert_eq!(entry.previous_seen_frame, 42);
-        assert_eq!(entry.last_seen_frame, 42);
-    }
+#[test]
+fn aborted_existing_identity_remains_stable_next_frame() {
+    let mut states = ElementStateTable::<8>::default();
 
-    #[test]
-    fn abort_removes_elements_created_during_failed_frame() {
-        let mut states = ElementStateTable::<8>::default();
+    let parent = entity_parent(0);
 
-        let parent = entity_parent(0);
-        let existing = states
-            .resolve(parent, ElementId::Name("existing"), 1)
-            .unwrap();
-        states.sweep(1);
+    let original = states
+        .resolve(parent, ElementId::Name("button"), 1)
+        .unwrap();
+    states.sweep(1);
 
-        let created = states
-            .resolve(parent, ElementId::Name("created"), 2)
-            .unwrap();
+    // failed frame.
+    let during_failed_frame = states
+        .resolve(parent, ElementId::Name("button"), 2)
+        .unwrap();
 
-        assert!(states.contains(created));
-        assert_eq!(states.len(), 2,);
+    assert_eq!(original, during_failed_frame,);
 
-        states.abort_frame(2);
+    states.abort_frame(2);
 
-        assert!(states.contains(existing));
-        assert!(!states.contains(created));
-        assert_eq!(states.len(), 1,);
-    }
+    // next valid frame.
+    let after_abort = states
+        .resolve(parent, ElementId::Name("button"), 3)
+        .unwrap();
+    states.sweep(3);
 
-    #[test]
-    fn abort_restores_existing_entry_last_seen_frame() {
-        let mut states = ElementStateTable::<8>::default();
+    assert_eq!(original, after_abort,);
+}
 
-        let parent = entity_parent(0);
-        let id = states
-            .resolve(parent, ElementId::Name("button"), 1)
-            .unwrap();
-        states.sweep(1);
+#[test]
+fn failed_frame_can_remove_new_and_restore_existing_entries_together() {
+    let mut states = ElementStateTable::<8>::default();
 
-        states
-            .resolve(parent, ElementId::Name("button"), 2)
-            .unwrap();
+    let parent = entity_parent(0);
+    let old = states.resolve(parent, ElementId::Name("old"), 1).unwrap();
+    states.sweep(1);
 
-        {
-            let entry = states.slots[id.slot()].entry.as_ref().unwrap();
+    // frame 2 starts successfully touching existing state...
+    let same_old = states.resolve(parent, ElementId::Name("old"), 2).unwrap();
 
-            assert_eq!(entry.previous_seen_frame, 1,);
-            assert_eq!(entry.last_seen_frame, 2,);
-        }
+    assert_eq!(old, same_old,);
 
-        states.abort_frame(2);
+    // ...and creates new state.
+    let new = states.resolve(parent, ElementId::Name("new"), 2).unwrap();
 
-        let entry = states.slots[id.slot()].entry.as_ref().unwrap();
+    assert_eq!(states.len(), 2,);
 
-        assert_eq!(entry.last_seen_frame, 1);
-        assert!(states.contains(id));
-    }
+    // something later in frame building fails.
+    states.abort_frame(2);
 
-    #[test]
-    fn aborted_existing_identity_remains_stable_next_frame() {
-        let mut states = ElementStateTable::<8>::default();
+    assert!(states.contains(old));
+    assert!(!states.contains(new));
+    assert_eq!(states.len(), 1,);
 
-        let parent = entity_parent(0);
+    let old_entry = states.slots[old.slot()].entry.as_ref().unwrap();
 
-        let original = states
-            .resolve(parent, ElementId::Name("button"), 1)
-            .unwrap();
-        states.sweep(1);
+    assert_eq!(old_entry.last_seen_frame, 1,);
+}
 
-        // failed frame.
-        let during_failed_frame = states
-            .resolve(parent, ElementId::Name("button"), 2)
-            .unwrap();
+#[test]
+fn clearing_table_invalidates_existing_ids() {
+    let mut states = ElementStateTable::<8>::default();
 
-        assert_eq!(original, during_failed_frame,);
+    let id = states
+        .resolve(entity_parent(0), ElementId::Name("button"), 1)
+        .unwrap();
+    states.sweep(1);
 
-        states.abort_frame(2);
+    assert!(states.contains(id));
 
-        // next valid frame.
-        let after_abort = states
-            .resolve(parent, ElementId::Name("button"), 3)
-            .unwrap();
-        states.sweep(3);
+    states.clear();
 
-        assert_eq!(original, after_abort,);
-    }
+    assert!(!states.contains(id));
+    assert_eq!(states.len(), 0,);
+}
 
-    #[test]
-    fn failed_frame_can_remove_new_and_restore_existing_entries_together() {
-        let mut states = ElementStateTable::<8>::default();
+#[test]
+fn clear_changes_generation_when_slot_is_reused() {
+    let mut states = ElementStateTable::<8>::default();
 
-        let parent = entity_parent(0);
-        let old = states.resolve(parent, ElementId::Name("old"), 1).unwrap();
-        states.sweep(1);
+    let parent = entity_parent(0);
+    let old = states
+        .resolve(parent, ElementId::Name("button"), 1)
+        .unwrap();
+    states.clear();
 
-        // frame 2 starts successfully touching existing state...
-        let same_old = states.resolve(parent, ElementId::Name("old"), 2).unwrap();
+    let new = states
+        .resolve(parent, ElementId::Name("button"), 2)
+        .unwrap();
 
-        assert_eq!(old, same_old,);
+    assert_eq!(old.slot(), new.slot(),);
+    assert_ne!(old.generation(), new.generation(),);
+    assert_ne!(old, new,);
+}
 
-        // ...and creates new state.
-        let new = states.resolve(parent, ElementId::Name("new"), 2).unwrap();
+#[test]
+fn reports_state_capacity_exhaustion() {
+    let mut states = ElementStateTable::<1>::default();
 
-        assert_eq!(states.len(), 2,);
+    let parent = entity_parent(0);
+    states.resolve(parent, ElementId::Name("first"), 1).unwrap();
 
-        // something later in frame building fails.
-        states.abort_frame(2);
+    let result = states.resolve(parent, ElementId::Name("second"), 1);
 
-        assert!(states.contains(old));
-        assert!(!states.contains(new));
-        assert_eq!(states.len(), 1,);
-
-        let old_entry = states.slots[old.slot()].entry.as_ref().unwrap();
-
-        assert_eq!(old_entry.last_seen_frame, 1,);
-    }
-
-    #[test]
-    fn clearing_table_invalidates_existing_ids() {
-        let mut states = ElementStateTable::<8>::default();
-
-        let id = states
-            .resolve(entity_parent(0), ElementId::Name("button"), 1)
-            .unwrap();
-        states.sweep(1);
-
-        assert!(states.contains(id));
-
-        states.clear();
-
-        assert!(!states.contains(id));
-        assert_eq!(states.len(), 0,);
-    }
-
-    #[test]
-    fn clear_changes_generation_when_slot_is_reused() {
-        let mut states = ElementStateTable::<8>::default();
-
-        let parent = entity_parent(0);
-        let old = states
-            .resolve(parent, ElementId::Name("button"), 1)
-            .unwrap();
-        states.clear();
-
-        let new = states
-            .resolve(parent, ElementId::Name("button"), 2)
-            .unwrap();
-
-        assert_eq!(old.slot(), new.slot(),);
-        assert_ne!(old.generation(), new.generation(),);
-        assert_ne!(old, new,);
-    }
-
-    #[test]
-    fn reports_state_capacity_exhaustion() {
-        let mut states = ElementStateTable::<1>::default();
-
-        let parent = entity_parent(0);
-        states.resolve(parent, ElementId::Name("first"), 1).unwrap();
-
-        let result = states.resolve(parent, ElementId::Name("second"), 1);
-
-        assert_eq!(result, Err(IdentityError::StatesFull),);
-    }
+    assert_eq!(result, Err(IdentityError::StatesFull),);
+}

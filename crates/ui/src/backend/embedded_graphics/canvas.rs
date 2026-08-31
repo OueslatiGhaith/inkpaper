@@ -3,10 +3,8 @@ use embedded_graphics::{
     pixelcolor::Rgb888 as EgRgb888,
     prelude::DrawTarget as EgDrawTarget,
     primitives::{
-        Circle as EgCircle, Line as EgLine, Primitive,
-        PrimitiveStyle as EgPrimitiveStyle,
-        PrimitiveStyleBuilder as EgPrimitiveStyleBuilder,
-        StrokeAlignment as EgStrokeAlignment,
+        Circle as EgCircle, Line as EgLine, Primitive, PrimitiveStyle as EgPrimitiveStyle,
+        PrimitiveStyleBuilder as EgPrimitiveStyleBuilder, StrokeAlignment as EgStrokeAlignment,
     },
 };
 

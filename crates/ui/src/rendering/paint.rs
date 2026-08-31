@@ -1,5 +1,5 @@
 use crate::{
-    Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImageFit, ImageSource,
+    Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImagePaint, ImageSource,
     NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, TextMeasurer,
     callback::CallbackStore, count_metric, entity::EntityStore, flow_axis, visual::VisualNode,
 };
@@ -42,7 +42,7 @@ pub trait Painter: TextMeasurer {
         &mut self,
         source: ImageSource,
         bounds: Rect,
-        fit: ImageFit,
+        paint: ImagePaint,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error>;
 
@@ -76,6 +76,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         match node.kind {
             NodeKind::Div { .. } => {
                 let style = node.style().expect("div node must have style");
+
                 let border = match (style.border_width.is_positive(), style.border_color) {
                     (true, Some(color)) => Some(BorderPaint {
                         width: style.border_width,
@@ -128,7 +129,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             }
 
             NodeKind::Image { source, style } => {
-                painter.draw_image(source, bounds, style.fit, clip)
+                painter.draw_image(source, bounds, style.paint, clip)
             }
             NodeKind::Entity { .. } => Ok(()),
         }

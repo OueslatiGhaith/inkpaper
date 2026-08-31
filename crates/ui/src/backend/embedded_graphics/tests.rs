@@ -243,6 +243,46 @@ impl EgGetPixel for SolidTestImage {
     }
 }
 
+struct FourColorImage;
+
+impl ImageResource for FourColorImage {
+    fn size(&self) -> Size {
+        Size::new(px(2), px(2))
+    }
+
+    fn pixel(&self, x: u32, y: u32) -> Option<Color> {
+        match (x, y) {
+            (0, 0) => Some(Color::BLACK),
+            (1, 0) => Some(Color::RED),
+            (0, 1) => Some(Color::GREEN),
+            (1, 1) => Some(Color::BLUE),
+            _ => None,
+        }
+    }
+}
+
+struct HorizontalStripImage;
+
+impl ImageResource for HorizontalStripImage {
+    fn size(&self) -> Size {
+        Size::new(px(4), px(1))
+    }
+
+    fn pixel(&self, x: u32, y: u32) -> Option<Color> {
+        if y != 0 {
+            return None;
+        }
+
+        match x {
+            0 => Some(Color::RED),
+            1 => Some(Color::GREEN),
+            2 => Some(Color::BLUE),
+            3 => Some(Color::WHITE),
+            _ => None,
+        }
+    }
+}
+
 #[test]
 fn embedded_graphics_backend_draws_registered_image() {
     let bitmap = SolidTestImage {
@@ -265,7 +305,7 @@ fn embedded_graphics_backend_draws_registered_image() {
             .draw_image(
                 source,
                 Rect::new(Point::new(px(2), px(3)), source.size()),
-                ImageFit::None,
+                ImagePaint::default(),
                 None,
             )
             .unwrap();
@@ -298,14 +338,13 @@ fn embedded_graphics_backend_clips_image_to_layout_bounds() {
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
-
         let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
             .draw_image(
                 source,
                 Rect::new(Point::new(px(10), px(10)), Size::new(px(2), px(2))),
-                ImageFit::None,
+                ImagePaint::default(),
                 None,
             )
             .unwrap();
@@ -345,7 +384,7 @@ fn embedded_graphics_backend_combines_image_bounds_with_ancestor_clip() {
             .draw_image(
                 source,
                 Rect::new(Point::new(px(4), px(4)), source.size()),
-                ImageFit::None,
+                ImagePaint::default(),
                 Some(Rect::new(Point::new(px(5), px(5)), Size::new(px(2), px(2)))),
             )
             .unwrap();
@@ -385,7 +424,10 @@ fn embedded_graphics_backend_scales_image_with_contain() {
             .draw_image(
                 source,
                 Rect::new(Point::ZERO, Size::new(px(8), px(8))),
-                ImageFit::Contain,
+                ImagePaint {
+                    fit: ImageFit::Contain,
+                    ..ImagePaint::default()
+                },
                 None,
             )
             .unwrap();
@@ -684,4 +726,160 @@ fn rtl_start_and_end_alignment_are_mirrored() {
         aligned_line_x(bounds, px(40), TextAlign::End, TextDirection::RightToLeft,),
         px(10),
     );
+}
+
+#[test]
+fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
+    let image = HorizontalStripImage;
+
+    let mut images = ImageRegistry::<1>::default();
+    let source = images.register(&image).unwrap();
+
+    let bounds = Rect::new(Point::ZERO, Size::new(px(2), px(2)));
+
+    let mut left_display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut left_display, &mut fonts, images);
+
+        painter
+            .draw_image(
+                source,
+                bounds,
+                ImagePaint {
+                    fit: ImageFit::Cover,
+                    position: ImagePosition::Left,
+                    sampling: ImageSampling::Nearest,
+                },
+                None,
+            )
+            .unwrap();
+    }
+
+    let mut right_display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut right_display, &mut fonts, images);
+
+        painter
+            .draw_image(
+                source,
+                bounds,
+                ImagePaint {
+                    fit: ImageFit::Cover,
+                    position: ImagePosition::Right,
+                    sampling: ImageSampling::Nearest,
+                },
+                None,
+            )
+            .unwrap();
+    }
+
+    assert_eq!(
+        left_display.get_pixel(EgPoint::new(0, 0)),
+        Some(Rgb888::new(255, 0, 0))
+    );
+
+    assert_eq!(
+        right_display.get_pixel(EgPoint::new(0, 0)),
+        Some(Rgb888::new(255, 255, 255))
+    );
+}
+
+#[test]
+fn embedded_graphics_backend_bilinear_sampling_blends_neighboring_pixels() {
+    let image = FourColorImage;
+
+    let mut images = ImageRegistry::<1>::default();
+    let source = images.register(&image).unwrap();
+
+    let mut display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
+
+        painter
+            .draw_image(
+                source,
+                Rect::new(Point::ZERO, Size::new(px(3), px(3))),
+                ImagePaint {
+                    fit: ImageFit::Fill,
+                    sampling: ImageSampling::Bilinear,
+                    ..ImagePaint::default()
+                },
+                None,
+            )
+            .unwrap();
+    }
+
+    assert_eq!(
+        display.get_pixel(EgPoint::new(0, 0)),
+        Some(Rgb888::new(0, 0, 0))
+    );
+
+    assert_eq!(
+        display.get_pixel(EgPoint::new(1, 1)),
+        Some(Rgb888::new(64, 64, 64))
+    );
+
+    assert_eq!(
+        display.get_pixel(EgPoint::new(2, 2)),
+        Some(Rgb888::new(0, 0, 255))
+    );
+}
+
+#[test]
+fn embedded_graphics_backend_bilinear_sampling_is_stable_when_clipped() {
+    let image = FourColorImage;
+
+    let mut images = ImageRegistry::<1>::default();
+    let source = images.register(&image).unwrap();
+
+    let bounds = Rect::new(Point::ZERO, Size::new(px(5), px(5)));
+
+    let paint = ImagePaint {
+        fit: ImageFit::Fill,
+        sampling: ImageSampling::Bilinear,
+        ..ImagePaint::default()
+    };
+
+    let mut full_display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut full_display, &mut fonts, images);
+
+        painter.draw_image(source, bounds, paint, None).unwrap();
+    }
+
+    let clip = Rect::new(Point::new(px(1), px(1)), Size::new(px(3), px(3)));
+
+    let mut clipped_display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display, &mut fonts, images);
+
+        painter
+            .draw_image(source, bounds, paint, Some(clip))
+            .unwrap();
+    }
+
+    for y in 1..4 {
+        for x in 1..4 {
+            assert_eq!(
+                clipped_display.get_pixel(EgPoint::new(x, y)),
+                full_display.get_pixel(EgPoint::new(x, y)),
+                "clipped bilinear sample differs at ({x}, {y})",
+            );
+        }
+    }
 }

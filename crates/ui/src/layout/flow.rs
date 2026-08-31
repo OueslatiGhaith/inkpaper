@@ -1,8 +1,6 @@
 use super::*;
 
-use crate::{
-    AlignItems, FrameArena, JustifyContent, NodeId, NodeKind, Position, count_metric,
-};
+use crate::{AlignItems, FrameArena, JustifyContent, NodeId, NodeKind, Position, count_metric};
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
     fn layout_node(

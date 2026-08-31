@@ -343,9 +343,6 @@ pub(super) fn normalize_coverage(coverage: &mut [u8]) {
     }
 }
 
-
-
-
 fn abs_f32(value: f32) -> f32 {
     if value < 0.0 { -value } else { value }
 }

@@ -24,7 +24,13 @@ impl RenderOnce for HomeScreen<'_> {
             px(i32::from(book.progress().value()).saturating_mul(PROGRESS_TRACK_WIDTH) / 100);
 
         let cover = match self.cover {
-            Some(source) => Either::Left(image(source).size(Size::new(px(110), px(150))).cover()),
+            Some(source) => Either::Left(
+                image(source)
+                    .size(Size::new(px(110), px(150)))
+                    .cover()
+                    .sampling(ImageSampling::Bilinear),
+            ),
+
             None => Either::Right(
                 div()
                     .w(px(110))

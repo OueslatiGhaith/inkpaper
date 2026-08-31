@@ -1,9 +1,6 @@
 use crate::px;
 
-use super::{
-    FontId, FontRasterError, GlyphId, GlyphMetrics,
-    registry::FontRegistry,
-};
+use super::{FontId, FontRasterError, GlyphId, GlyphMetrics, registry::FontRegistry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct GlyphCacheKey {

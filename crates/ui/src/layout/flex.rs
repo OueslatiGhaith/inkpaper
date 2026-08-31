@@ -1,8 +1,6 @@
 use super::*;
 
-use crate::{
-    FlexBasis, FrameArena, NodeId, NodeKind, Position, count_metric,
-};
+use crate::{FlexBasis, FrameArena, NodeId, NodeKind, Position, count_metric};
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
     pub(super) fn flow_child_count(&self, parent: NodeId) -> usize {

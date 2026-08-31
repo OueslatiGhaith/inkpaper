@@ -2,9 +2,7 @@ use core::cell::Cell;
 
 use crate::{
     Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, Rect,
-    callback::{
-        CallbackAllocError, CallbackStore, register_canvas_callback, register_listener,
-    },
+    callback::{CallbackAllocError, CallbackStore, register_canvas_callback, register_listener},
     entity::{EntityStore, create_entity},
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
 };

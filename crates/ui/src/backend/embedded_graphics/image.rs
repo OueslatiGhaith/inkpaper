@@ -8,8 +8,8 @@ use embedded_graphics::{
 };
 
 use crate::{
-    Color, ImageFit, ImageResource, Rect, Size, backend::embedded_graphics::to_rgb888,
-    fitted_image_bounds,
+    Color, ImagePaint, ImageResource, ImageSampling, Rect, Size,
+    backend::embedded_graphics::to_rgb888, fitted_image_bounds,
 };
 
 use super::from_embedded_size;
@@ -18,11 +18,8 @@ pub struct EmbeddedGraphicsImage<'image, T> {
     image: &'image T,
 }
 
-impl<'image, D> Copy for EmbeddedGraphicsImage<'image, D> where D: EgDrawTarget {}
-impl<'image, D> Clone for EmbeddedGraphicsImage<'image, D>
-where
-    D: EgDrawTarget,
-{
+impl<T> Copy for EmbeddedGraphicsImage<'_, T> {}
+impl<T> Clone for EmbeddedGraphicsImage<'_, T> {
     fn clone(&self) -> Self {
         *self
     }
@@ -61,7 +58,7 @@ pub(super) fn draw_image_to<D>(
     target: &mut D,
     image: &dyn ImageResource,
     bounds: Rect,
-    fit: ImageFit,
+    paint: ImagePaint,
     clip: Option<Rect>,
 ) -> Result<(), D::Error>
 where
@@ -69,7 +66,7 @@ where
     D::Color: From<EgRgb888>,
 {
     let source_size = image.size();
-    let destination = fitted_image_bounds(source_size, bounds, fit);
+    let destination = fitted_image_bounds(source_size, bounds, paint.fit, paint.position);
 
     if source_size.width.is_non_positive()
         || source_size.height.is_non_positive()
@@ -86,16 +83,18 @@ where
         return Ok(());
     };
 
-    let source_width = u64::try_from(source_size.width.get()).unwrap_or(0);
-    let source_height = u64::try_from(source_size.height.get()).unwrap_or(0);
-    if source_width == 0 || source_height == 0 {
+    let source_width = u32::try_from(source_size.width.get()).unwrap_or(0);
+    let source_height = u32::try_from(source_size.height.get()).unwrap_or(0);
+    let destination_width = u32::try_from(destination.width().get()).unwrap_or(0);
+    let destination_height = u32::try_from(destination.height().get()).unwrap_or(0);
+
+    if source_width == 0 || source_height == 0 || destination_width == 0 || destination_height == 0
+    {
         return Ok(());
     }
 
     let destination_x = destination.x().get();
     let destination_y = destination.y().get();
-    let destination_width = destination.width().get().max(1);
-    let destination_height = destination.height().get().max(1);
 
     let left = visible.x().get();
     let top = visible.y().get();
@@ -106,33 +105,140 @@ where
         (left..right).filter_map(move |x| {
             let relative_x = i64::from(x) - i64::from(destination_x);
             let relative_y = i64::from(y) - i64::from(destination_y);
-            if relative_x < 0 || relative_y < 0 {
-                return None;
-            }
 
-            let source_x = u64::try_from(relative_x)
-                .unwrap_or(0)
-                .saturating_mul(source_width)
-                / u64::try_from(destination_width).unwrap_or(1);
+            let relative_x = u32::try_from(relative_x).ok()?;
+            let relative_y = u32::try_from(relative_y).ok()?;
 
-            let source_y = u64::try_from(relative_y)
-                .unwrap_or(0)
-                .saturating_mul(source_height)
-                / u64::try_from(destination_height).unwrap_or(1);
+            let color = sample_image(
+                image,
+                relative_x,
+                relative_y,
+                source_width,
+                source_height,
+                destination_width,
+                destination_height,
+                paint.sampling,
+            )?;
 
-            let source_x = source_x.min(source_width.saturating_sub(1));
-            let source_y = source_y.min(source_height.saturating_sub(1));
-
-            let source_x = u32::try_from(source_x).ok()?;
-            let source_y = u32::try_from(source_y).ok()?;
-
-            image
-                .pixel(source_x, source_y)
-                .map(|color| EgPixel(EgPoint::new(x, y), to_rgb888(color)))
+            Some(EgPixel(EgPoint::new(x, y), to_rgb888(color)))
         })
     });
 
     let mut target = target.color_converted::<EgRgb888>();
 
     target.draw_iter(pixels)
+}
+
+fn sample_image(
+    image: &dyn ImageResource,
+    x: u32,
+    y: u32,
+    source_width: u32,
+    source_height: u32,
+    destination_width: u32,
+    destination_height: u32,
+    sampling: ImageSampling,
+) -> Option<Color> {
+    match sampling {
+        ImageSampling::Nearest => sample_nearest(
+            image,
+            x,
+            y,
+            source_width,
+            source_height,
+            destination_width,
+            destination_height,
+        ),
+        ImageSampling::Bilinear => sample_bilinear(
+            image,
+            x,
+            y,
+            source_width,
+            source_height,
+            destination_width,
+            destination_height,
+        ),
+    }
+}
+
+fn sample_nearest(
+    image: &dyn ImageResource,
+    x: u32,
+    y: u32,
+    source_width: u32,
+    source_height: u32,
+    destination_width: u32,
+    destination_height: u32,
+) -> Option<Color> {
+    let source_x =
+        u64::from(x).saturating_mul(u64::from(source_width)) / u64::from(destination_width);
+    let source_y =
+        u64::from(y).saturating_mul(u64::from(source_height)) / u64::from(destination_height);
+
+    let source_x = source_x.min(u64::from(source_width.saturating_sub(1)));
+    let source_y = source_y.min(u64::from(source_height.saturating_sub(1)));
+
+    image.pixel(u32::try_from(source_x).ok()?, u32::try_from(source_y).ok()?)
+}
+
+fn sample_bilinear(
+    image: &dyn ImageResource,
+    x: u32,
+    y: u32,
+    source_width: u32,
+    source_height: u32,
+    destination_width: u32,
+    destination_height: u32,
+) -> Option<Color> {
+    let (x0, x1, x_fraction) = bilinear_axis(x, source_width, destination_width);
+    let (y0, y1, y_fraction) = bilinear_axis(y, source_height, destination_height);
+
+    let top_left = image.pixel(x0, y0)?;
+    let top_right = image.pixel(x1, y0)?;
+    let bottom_left = image.pixel(x0, y1)?;
+    let bottom_right = image.pixel(x1, y1)?;
+
+    let top = lerp_color(top_left, top_right, x_fraction);
+    let bottom = lerp_color(bottom_left, bottom_right, x_fraction);
+
+    Some(lerp_color(top, bottom, y_fraction))
+}
+
+fn bilinear_axis(destination: u32, source_len: u32, destination_len: u32) -> (u32, u32, u16) {
+    if source_len <= 1 {
+        return (0, 0, 0);
+    }
+
+    // map destination pixel centers to source pixel centers using 8 bits of fractional precision:
+    // source = ((destination + 0.5) * source_len / destination_len) - 0.5
+    let numerator = (i128::from(destination) * 2 + 1) * i128::from(source_len) * 256;
+
+    let denominator = i128::from(destination_len) * 2;
+
+    let coordinate = numerator / denominator - 128;
+    let maximum = i128::from(source_len - 1) * 256;
+    let coordinate = coordinate.clamp(0, maximum);
+
+    let first = u32::try_from(coordinate / 256).unwrap_or(source_len - 1);
+    let second = first.saturating_add(1).min(source_len - 1);
+    let fraction = u16::try_from(coordinate % 256).unwrap_or(0);
+
+    (first, second, fraction)
+}
+
+fn lerp_color(first: Color, second: Color, fraction: u16) -> Color {
+    Color::rgb(
+        lerp_channel(first.r, second.r, fraction),
+        lerp_channel(first.g, second.g, fraction),
+        lerp_channel(first.b, second.b, fraction),
+    )
+}
+
+fn lerp_channel(first: u8, second: u8, fraction: u16) -> u8 {
+    let fraction = u32::from(fraction);
+    let inverse = 256 - fraction;
+
+    let value = (u32::from(first) * inverse + u32::from(second) * fraction + 128) / 256;
+
+    u8::try_from(value).unwrap_or(u8::MAX)
 }
