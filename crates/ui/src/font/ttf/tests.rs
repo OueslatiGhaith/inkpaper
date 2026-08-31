@@ -1,6 +1,16 @@
-    use ttf_parser::opentype_layout::LookupSubtable;
+use ttf_parser::{
+    GlyphId as TtfGlyphId,
+    gsub::SubstitutionSubtable,
+    opentype_layout::LookupSubtable,
+};
 
-    use super::*;
+use super::{
+    gsub::apply_single_output_substitution,
+    raster::{
+        Intersection, MAX_CURVE_STEPS, RasterPoint, SUPERSAMPLE_Y, ScanlineBuilder,
+        accumulate_scanline, curve_steps, normalize_coverage,
+    },
+};
 
     #[test]
     fn non_zero_winding_fills_between_intersections() {

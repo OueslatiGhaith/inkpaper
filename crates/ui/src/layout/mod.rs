@@ -6,6 +6,8 @@ use crate::{
 mod flex;
 mod flow;
 mod measure;
+#[cfg(test)]
+mod tests;
 
 pub trait TextMeasurer {
     fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size;
@@ -263,9 +265,3 @@ fn size_with_main(size: Size, main: Pixels, axis: Axis) -> Size {
         Axis::Vertical => Size::new(size.width, main),
     }
 }
-
-
-
-
-#[cfg(test)]
-mod tests;

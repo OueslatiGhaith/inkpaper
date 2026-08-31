@@ -11,6 +11,8 @@ use crate::{PerformanceMetrics, PerformanceMetricsCell};
 
 mod mount;
 mod resolve;
+#[cfg(test)]
+mod tests;
 
 pub(crate) use mount::FrameStore;
 pub use mount::MountCx;
@@ -302,6 +304,3 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.subtree_paint_bounds(node)
     }
 }
-
-#[cfg(test)]
-mod tests;

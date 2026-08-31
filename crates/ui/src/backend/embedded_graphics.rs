@@ -22,6 +22,9 @@ use crate::{
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
 
+#[cfg(test)]
+mod tests;
+
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
 
 #[derive(Debug)]
@@ -1201,6 +1204,3 @@ fn ordered_dither_accepts(coverage: u8, point: EgPoint) -> bool {
 
     coverage > threshold
 }
-
-#[cfg(test)]
-mod tests;

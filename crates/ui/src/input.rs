@@ -8,6 +8,9 @@ use crate::{
     scroll::{ScrollAxes, ScrollStateTable},
 };
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FocusTarget {
     pub(crate) element: ElementStateId,
@@ -520,6 +523,3 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         damage
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,5 +1,8 @@
 use crate::{Offset, Point, Rect, Size};
 
+#[cfg(test)]
+mod tests;
+
 const DAMAGE_RECT_CAPACITY: usize = 4;
 const EMPTY_DAMAGE_RECT: Rect = Rect::new(Point::ZERO, Size::ZERO);
 
@@ -280,6 +283,3 @@ impl RenderInvalidation {
         Self::damaged(kind, damage)
     }
 }
-
-#[cfg(test)]
-mod tests;

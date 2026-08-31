@@ -1,9 +1,11 @@
 use crate::{
     Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImageFit, ImageSource,
     NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, TextMeasurer,
-    callback::CallbackStore, count_metric, entity::EntityStore, flow_axis,
-    visual::VisualNode,
+    callback::CallbackStore, count_metric, entity::EntityStore, flow_axis, visual::VisualNode,
 };
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BorderPaint {
@@ -509,6 +511,3 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         })
     }
 }
-
-#[cfg(test)]
-mod tests;
