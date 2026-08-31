@@ -1,4 +1,4 @@
-use crate::{Pixels, px};
+use crate::{Offset, Pixels, px};
 
 #[cfg(feature = "ttf")]
 pub mod ttf;
@@ -142,6 +142,30 @@ pub trait FontFace {
 
     fn kerning(&self, _left: GlyphId, _right: GlyphId, _size_px: u16) -> Pixels {
         px(0)
+    }
+
+    /// returns the child mark glyph origin relative to the base glyph origin,
+    /// in framebuffer coordinates.
+    ///
+    /// the returned Y axis therefore grows downward even when the underlying font stores
+    /// its anchor in the usual OpenType Y-up coodinate system.
+    ///
+    /// fonts without attachement metadata simply return `None`
+    fn mark_to_base_offset(&self, _base: GlyphId, _mark: GlyphId, _size_px: u16) -> Option<Offset> {
+        None
+    }
+
+    /// returns the child mark glyph origin relative to an already positioned parent
+    /// mark glyph origin.
+    ///
+    /// this is the font-independent interface used for OpenType mark-to-mark attachement
+    fn mark_to_mark_offset(
+        &self,
+        _base_mark: GlyphId,
+        _mark: GlyphId,
+        _size_px: u16,
+    ) -> Option<Offset> {
+        None
     }
 
     /// rasterize the glyph into an 8-bit coverage bitmap:

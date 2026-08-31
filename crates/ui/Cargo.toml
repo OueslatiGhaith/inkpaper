@@ -14,7 +14,7 @@ metrics = []
 defmt = { workspace = true, optional = true }
 embedded-graphics = { workspace = true, optional = true }
 heapless = { workspace = true }
-ttf-parser = { version = "0.25.1", optional = true, default-features = false, features = ["no-std-float"] }
+ttf-parser = { version = "0.25.1", optional = true, default-features = false, features = ["no-std-float", "opentype-layout"] }
 
 [dev-dependencies]
 criterion = "0.8.2"

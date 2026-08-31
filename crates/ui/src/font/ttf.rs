@@ -1,6 +1,11 @@
-use ttf_parser::{Face, GlyphId as TtfGlyphId, OutlineBuilder};
+use ttf_parser::{
+    Face, GlyphId as TtfGlyphId, OutlineBuilder, Tag,
+    gpos::{Anchor, PositioningSubtable},
+};
 
-use crate::{FontData, FontFace, FontMetrics, FontRasterError, GlyphId, GlyphMetrics, Pixels, px};
+use crate::{
+    FontData, FontFace, FontMetrics, FontRasterError, GlyphId, GlyphMetrics, Offset, Pixels, px,
+};
 
 const SUPERSAMPLE_X: usize = 4;
 const SUPERSAMPLE_Y: usize = 4;
@@ -117,6 +122,23 @@ impl FontFace for TtfFont<'_> {
         px(0)
     }
 
+    fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, size_px: u16) -> Option<Offset> {
+        let face = self.face().ok()?;
+
+        mark_to_base_offset_for_face(&face, to_ttf_glyph(base), to_ttf_glyph(mark), size_px)
+    }
+
+    fn mark_to_mark_offset(
+        &self,
+        base_mark: GlyphId,
+        mark: GlyphId,
+        size_px: u16,
+    ) -> Option<Offset> {
+        let face = self.face().ok()?;
+
+        mark_to_mark_offset_for_face(&face, to_ttf_glyph(base_mark), to_ttf_glyph(mark), size_px)
+    }
+
     fn rasterize(
         &self,
         glyph: GlyphId,
@@ -186,6 +208,119 @@ impl FontFace for TtfFont<'_> {
 
 fn to_ttf_glyph(glyph: GlyphId) -> TtfGlyphId {
     TtfGlyphId(glyph.value())
+}
+
+fn mark_to_base_offset_for_face(
+    face: &Face<'_>,
+    base: TtfGlyphId,
+    mark: TtfGlyphId,
+    size_px: u16,
+) -> Option<Offset> {
+    let scale = font_scale(face, size_px)?;
+    let gpos = face.tables().gpos?;
+    let mark_tag = Tag::from_bytes(b"mark");
+
+    for feature in gpos.features {
+        if feature.tag != mark_tag {
+            continue;
+        }
+
+        for lookup_index in feature.lookup_indices {
+            let Some(lookup) = gpos.lookups.get(lookup_index) else {
+                continue;
+            };
+
+            for subtable in lookup.subtables.into_iter::<PositioningSubtable>() {
+                let PositioningSubtable::MarkToBase(adjustment) = subtable else {
+                    continue;
+                };
+                let Some(mark_index) = adjustment.mark_coverage.get(mark) else {
+                    continue;
+                };
+                let Some(base_index) = adjustment.base_coverage.get(base) else {
+                    continue;
+                };
+                let Some((class, mark_anchor)) = adjustment.marks.get(mark_index) else {
+                    continue;
+                };
+                let Some(base_anchor) = adjustment.anchors.get(base_index, class) else {
+                    continue;
+                };
+
+                return Some(anchor_attachment_offset(base_anchor, mark_anchor, scale));
+            }
+        }
+    }
+
+    None
+}
+
+fn mark_to_mark_offset_for_face(
+    face: &Face<'_>,
+    base_mark: TtfGlyphId,
+    mark: TtfGlyphId,
+    size_px: u16,
+) -> Option<Offset> {
+    let scale = font_scale(face, size_px)?;
+    let gpos = face.tables().gpos?;
+    let mark_tag = Tag::from_bytes(b"mkmk");
+
+    for feature in gpos.features {
+        if feature.tag != mark_tag {
+            continue;
+        }
+
+        for lookup_index in feature.lookup_indices {
+            let Some(lookup) = gpos.lookups.get(lookup_index) else {
+                continue;
+            };
+
+            for subtable in lookup.subtables.into_iter::<PositioningSubtable>() {
+                let PositioningSubtable::MarkToMark(adjustment) = subtable else {
+                    continue;
+                };
+                // mark1 is the child mark being positioned.
+                let Some(mark_index) = adjustment.mark1_coverage.get(mark) else {
+                    continue;
+                };
+                // mark2 is the already-positioned
+                // attachment mark.
+                let Some(base_index) = adjustment.mark2_coverage.get(base_mark) else {
+                    continue;
+                };
+                let Some((class, mark_anchor)) = adjustment.marks.get(mark_index) else {
+                    continue;
+                };
+                let Some(base_anchor) = adjustment.mark2_matrix.get(base_index, class) else {
+                    continue;
+                };
+
+                return Some(anchor_attachment_offset(base_anchor, mark_anchor, scale));
+            }
+        }
+    }
+
+    None
+}
+
+fn anchor_attachment_offset(parent: Anchor<'_>, child: Anchor<'_>, scale: f32) -> Offset {
+    // OpenType attachment means:
+    //     child_origin + child_anchor
+    //         ==
+    //     parent_origin + parent_anchor
+    // therefore:
+    //     child_origin - parent_origin
+    //         =
+    //     parent_anchor - child_anchor
+    // OpenType's Y axis grows upward while InkPaper's framebuffer Y grows downward,
+    // hence the reversed subtraction on Y.
+    let x_units = i32::from(parent.x) - i32::from(child.x);
+    let y_units = i32::from(child.y) - i32::from(parent.y);
+
+    Offset::new(
+        px(round_to_i32(x_units as f32 * scale)),
+        px(round_to_i32(y_units as f32 * scale)),
+    )
 }
 
 fn font_scale(face: &Face<'_>, size_px: u16) -> Option<f32> {

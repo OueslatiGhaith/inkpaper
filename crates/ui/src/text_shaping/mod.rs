@@ -1166,7 +1166,84 @@ fn position_cluster_marks<'font, const FONTS: usize>(
     if marks.is_empty() {
         return;
     }
+    if position_cluster_marks_with_font_anchors(registry, size_px, base, marks) {
+        return;
+    }
 
+    position_cluster_marks_with_metrics(registry, size_px, base, marks);
+}
+
+fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
+    registry: &FontRegistry<'font, FONTS>,
+    size_px: u16,
+    base: ShapedGlyph,
+    marks: &mut [ShapedGlyph],
+) -> bool {
+    let mut previous_mark: Option<ShapedGlyph> = None;
+
+    for mark in marks.iter_mut() {
+        let shaped = *mark;
+        let Some(placement) = shaped.mark_placement() else {
+            return false;
+        };
+
+        let mut attachment = None;
+
+        // prefer mkmk when this mark can attach to the preceding mark in the same font.
+        if let Some(parent) = previous_mark
+            && parent.font() == shaped.font()
+        {
+            attachment = registry
+                .get(shaped.font())
+                .and_then(|face| face.mark_to_mark_offset(parent.glyph(), shaped.glyph(), size_px))
+                .map(|offset| {
+                    Offset::new(parent.offset().x + offset.x, parent.offset().y + offset.y)
+                });
+        }
+
+        // if mkmk doesn't apply, try ordinary mark-to-base attachment.
+        if attachment.is_none() && base.font() == shaped.font() {
+            attachment = registry
+                .get(shaped.font())
+                .and_then(|face| face.mark_to_base_offset(base.glyph(), shaped.glyph(), size_px))
+                .map(|offset| {
+                    // at mark drawing time the renderer's pen has already moved past the base.
+                    // the base glyph origin is exactly `base_advance` behind that current pen.
+                    // base kerning cancels because it shifts both the base origin and final pen equally.
+                    Offset::new(offset.x - base.base_advance(), offset.y)
+                });
+        }
+
+        let Some(offset) = attachment else {
+            // deliberately reject the whole anchored cluster.
+            // the caller will overwrite every mark using the existing metric fallback,
+            // avoiding a cluster that mixes font anchors with heuristic stacking.
+            return false;
+        };
+
+        let positioned = ShapedGlyph::new_mark(
+            shaped.font(),
+            shaped.glyph(),
+            shaped.cluster(),
+            shaped.base_advance(),
+            placement,
+            offset,
+        );
+
+        *mark = positioned;
+
+        previous_mark = Some(positioned);
+    }
+
+    true
+}
+
+fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
+    registry: &FontRegistry<'font, FONTS>,
+    size_px: u16,
+    base: ShapedGlyph,
+    marks: &mut [ShapedGlyph],
+) {
     let fallback_offset = Offset::new(Pixels::ZERO - base.base_advance(), Pixels::ZERO);
 
     let Some(base_metrics) = registry
@@ -1197,8 +1274,8 @@ fn position_cluster_marks<'font, const FONTS: usize>(
     let mut above_edge = base_metrics.bearing_y;
     let mut below_edge = base_metrics.bearing_y + base_height;
 
-    // shadda must be nearest to the base even when Unicode canonical ordering puts
-    // the vowel mark before it.
+    // shadda stays nearest to the base even when canonical Unicode ordering places
+    // another above-base mark first.
     for target in [
         MarkPlacement::Shadda,
         MarkPlacement::Above,
@@ -1372,6 +1449,69 @@ mod tests {
                 // visual final -> initial
                 (2, 1) => px(-3),
                 _ => px(0),
+            }
+        }
+
+        fn rasterize(
+            &self,
+            _: GlyphId,
+            _: u16,
+            coverage: &mut [u8],
+        ) -> Result<(), FontRasterError> {
+            let Some(pixel) = coverage.first_mut() else {
+                return Err(FontRasterError::BufferTooSmall);
+            };
+
+            *pixel = 255;
+
+            Ok(())
+        }
+    }
+
+    struct AnchoredMarkFont {
+        characters: &'static [char],
+        advance: Pixels,
+    }
+
+    impl FontFace for AnchoredMarkFont {
+        fn glyph_id(&self, character: char) -> Option<GlyphId> {
+            let index = self
+                .characters
+                .iter()
+                .position(|candidate| *candidate == character)?;
+
+            let index = u16::try_from(index).ok()?;
+
+            Some(GlyphId::new(index.saturating_add(1)))
+        }
+
+        fn metrics(&self, _: u16) -> FontMetrics {
+            FontMetrics::new(px(8), px(2), px(0))
+        }
+
+        fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+            if glyph.value() == 0 {
+                return None;
+            }
+
+            Some(GlyphMetrics::new(1, 1, px(0), px(-1), self.advance))
+        }
+
+        fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, _: u16) -> Option<Offset> {
+            match (base.value(), mark.value()) {
+                // isolated beh -> fatha
+                (1, 2) => Some(Offset::new(px(2), px(-3))),
+
+                _ => None,
+            }
+        }
+
+        fn mark_to_mark_offset(&self, base_mark: GlyphId, mark: GlyphId, _: u16) -> Option<Offset> {
+            match (base_mark.value(), mark.value()) {
+                // fatha -> shadda
+                (2, 3) => Some(Offset::new(px(0), px(-2))),
+
+                _ => None,
             }
         }
 
@@ -2197,7 +2337,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(run.direction(), TextDirection::RightToLeft,);
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
         assert_eq!(run.len(), 4);
         assert_eq!(
             run.glyphs()[0].glyph(),
@@ -2218,22 +2358,79 @@ mod tests {
         );
 
         for glyph in run.glyphs() {
-            assert_eq!(glyph.cluster(), 0,);
+            assert_eq!(glyph.cluster(), 0);
         }
 
         // all marks return to the base's horizontal position.
-        assert_eq!(run.glyphs()[1].offset().x, px(-5),);
-        assert_eq!(run.glyphs()[2].offset().x, px(-5),);
-        assert_eq!(run.glyphs()[3].offset().x, px(-5),);
+        assert_eq!(run.glyphs()[1].offset().x, px(-5));
+        assert_eq!(run.glyphs()[2].offset().x, px(-5));
+        assert_eq!(run.glyphs()[3].offset().x, px(-5));
         // shadda is deliberately closest to the base even though fatha occurs first
         // in the source string.
-        assert_eq!(run.glyphs()[2].offset().y, px(-2),);
-        assert_eq!(run.glyphs()[1].offset().y, px(-4),);
+        assert_eq!(run.glyphs()[2].offset().y, px(-2));
+        assert_eq!(run.glyphs()[1].offset().y, px(-4));
         // kasra is independently stacked below.
-        assert_eq!(run.glyphs()[3].offset().y, px(2),);
-        assert_eq!(run.glyphs()[1].advance(), px(0),);
-        assert_eq!(run.glyphs()[2].advance(), px(0),);
-        assert_eq!(run.glyphs()[3].advance(), px(0),);
-        assert_eq!(run.advance(), px(5),);
+        assert_eq!(run.glyphs()[3].offset().y, px(2));
+        assert_eq!(run.glyphs()[1].advance(), px(0));
+        assert_eq!(run.glyphs()[2].advance(), px(0));
+        assert_eq!(run.glyphs()[3].advance(), px(0));
+        assert_eq!(run.advance(), px(5));
+    }
+
+    #[test]
+    fn font_anchors_position_arabic_mark_chain() {
+        static ARABIC: [char; 4] = [
+            '\u{FE8F}', // beh isolated
+            '\u{064E}', // fatha
+            '\u{0651}', // shadda
+            '?',
+        ];
+
+        let arabic = AnchoredMarkFont {
+            characters: &ARABIC,
+            advance: px(5),
+        };
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&arabic).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 3];
+        let run = SimpleShaper::new()
+            .shape_into(
+                &registry,
+                font_id,
+                16,
+                concat!(
+                    "\u{0628}", // beh
+                    "\u{064E}", // fatha
+                    "\u{0651}", // shadda
+                ),
+                &mut output,
+            )
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+        assert_eq!(run.len(), 3);
+
+        let base = run.glyphs()[0];
+        let fatha = run.glyphs()[1];
+        let shadda = run.glyphs()[2];
+
+        assert_eq!(base.glyph(), arabic.glyph_id('\u{FE8F}').unwrap());
+        assert_eq!(fatha.glyph(), arabic.glyph_id('\u{064E}').unwrap());
+        assert_eq!(shadda.glyph(), arabic.glyph_id('\u{0651}').unwrap());
+        assert_eq!(base.cluster(), 0);
+        assert_eq!(fatha.cluster(), 0);
+        assert_eq!(shadda.cluster(), 0);
+
+        // font gives the fatha an attachment origin of (2, -3) relative to the base.
+        // the renderer is already 5px past the base when it draws the mark:
+        //     2 - 5 = -3
+        assert_eq!(fatha.offset(), Offset::new(px(-3), px(-3)));
+        // shadda then attaches directly to fatha:
+        //     (-3, -3) + (0, -2) = (-3, -5)
+        assert_eq!(shadda.offset(), Offset::new(px(-3), px(-5)));
+        assert_eq!(fatha.advance(), px(0));
+        assert_eq!(shadda.advance(), px(0));
+        // marks never contribute to horizontal width.
+        assert_eq!(run.advance(), px(5));
     }
 }
