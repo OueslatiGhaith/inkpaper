@@ -8,9 +8,8 @@ use core::{
 
 use heapless::Vec;
 
-use crate::{
-    Entity, EntityId,
-    entity_store::{BorrowState, EntityStore, RawEntityBorrow, RawEntityReservation, drop_value},
+use super::{
+    BorrowState, Entity, EntityId, EntityStore, RawEntityBorrow, RawEntityReservation, drop_value,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

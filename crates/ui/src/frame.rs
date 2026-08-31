@@ -8,10 +8,10 @@ use crate::{
     IntoElement, Offset, Rect, ResolvedTextStyle, Size, StatefulInteractivity, Style, StylePatch,
     TextStyle,
     callback::CallbackId,
-    callback_store::CallbackStore,
+    callback::CallbackStore,
     count_metric,
     element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
-    entity_store::EntityStore,
+    entity::EntityStore,
     global::GlobalStore,
     scroll::{ScrollAxes, ScrollStateTable},
 };

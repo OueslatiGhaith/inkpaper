@@ -9,10 +9,9 @@ use core::{
 use heapless::Vec;
 
 use crate::{
-    CanvasPainter, Context, Entity, EntityAccessError, EntityBorrowKind, EntityId, Listener, Rect,
-    align_up,
+    CanvasPainter, Context, Entity, EntityAccessError, EntityId, Listener, Rect,
     callback::CallbackId,
-    entity_store::{EntityStore, RawEntityBorrow},
+    entity::{EntityBorrowKind, EntityStore, RawEntityBorrow, align_up},
     global::GlobalStore,
 };
 

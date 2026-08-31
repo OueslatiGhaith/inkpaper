@@ -6,19 +6,15 @@ extern crate std;
 #[cfg(feature = "embedded-graphics")]
 pub mod backend;
 
-mod arena;
 mod callback;
-mod callback_store;
 mod canvas;
 mod color;
-mod component;
-mod conditional;
+mod composition;
 mod context;
 mod div;
 mod element;
 mod element_state;
 mod entity;
-mod entity_store;
 mod event;
 mod font;
 mod frame;
@@ -29,7 +25,6 @@ mod image;
 mod input;
 mod invalidation;
 mod layout;
-mod listener;
 mod metrics;
 mod paint;
 mod presentation;
@@ -41,18 +36,17 @@ mod style;
 mod text_layout;
 mod text_shaping;
 mod text_style;
-mod units;
 mod visual;
 
-pub use arena::*;
+pub use callback::Listener;
 pub use canvas::*;
 pub use color::*;
-pub use component::*;
-pub use conditional::*;
+pub use composition::*;
 pub use context::*;
 pub use div::*;
 pub use element::*;
-pub use entity::*;
+pub use entity::{Entity, EntityAccessError, EntityAllocError, EntityId};
+pub(crate) use entity::{EntityArena, EntityBorrowKind, align_up};
 pub use event::*;
 pub use font::*;
 pub use frame::*;
@@ -62,7 +56,6 @@ pub use identity::*;
 pub use image::*;
 pub use invalidation::*;
 pub use layout::*;
-pub use listener::*;
 pub use metrics::*;
 pub use paint::*;
 pub use presentation::*;
@@ -74,7 +67,6 @@ pub use text_shaping::*;
 pub use text_style::*;
 #[cfg(feature = "ttf")]
 pub use ttf::*;
-pub use units::*;
 
 pub mod prelude {
     // TODO: fill predlude

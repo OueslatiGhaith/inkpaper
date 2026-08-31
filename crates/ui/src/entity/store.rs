@@ -1,9 +1,8 @@
 use core::{alloc::Layout, any::TypeId, cell::Cell, ptr::NonNull};
 
-use crate::{
-    Context, Entity, EntityAccessError, EntityAllocError, EntityBorrowKind, EntityId,
-    callback_store::CallbackStore, global::GlobalStore,
-};
+use super::{Entity, EntityAccessError, EntityAllocError, EntityBorrowKind, EntityId};
+
+use crate::{Context, callback::CallbackStore, global::GlobalStore};
 
 pub(crate) struct RawEntityReservation {
     pub(crate) id: EntityId,

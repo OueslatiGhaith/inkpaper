@@ -3,8 +3,8 @@ use core::{any::TypeId, cell::Cell};
 use crate::{
     AppContext, Context, Element, Entity, EntityBorrowKind, EntityId, FrameStore, IntoElement,
     MountCx, MountError, NodeId,
-    callback_store::CallbackStore,
-    entity_store::{EntityStore, RawEntityBorrow},
+    callback::CallbackStore,
+    entity::{EntityStore, RawEntityBorrow},
     global::GlobalStore,
 };
 

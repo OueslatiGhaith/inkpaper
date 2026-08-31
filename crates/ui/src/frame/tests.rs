@@ -2,7 +2,7 @@
     use std::string::String;
 
     use crate::{
-        callback_store::CallbackArena,
+        callback::CallbackArena,
         element_state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
         *,
     };

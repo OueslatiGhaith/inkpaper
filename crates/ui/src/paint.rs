@@ -1,7 +1,7 @@
 use crate::{
     Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImageFit, ImageSource,
     NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, TextMeasurer,
-    callback_store::CallbackStore, count_metric, entity_store::EntityStore, flow_axis,
+    callback::CallbackStore, count_metric, entity::EntityStore, flow_axis,
     visual::VisualNode,
 };
 

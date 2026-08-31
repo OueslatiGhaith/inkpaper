@@ -2,10 +2,10 @@ use core::cell::Cell;
 
 use crate::{
     Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, Rect,
-    callback_store::{
+    callback::{
         CallbackAllocError, CallbackStore, register_canvas_callback, register_listener,
     },
-    entity_store::{EntityStore, create_entity},
+    entity::{EntityStore, create_entity},
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
 };
 
@@ -163,7 +163,7 @@ impl<'a> AppContext<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{EntityAccessError, EntityArena, GlobalArena, callback_store::CallbackArena};
+    use crate::{EntityAccessError, EntityArena, GlobalArena, callback::CallbackArena};
 
     use super::*;
 
