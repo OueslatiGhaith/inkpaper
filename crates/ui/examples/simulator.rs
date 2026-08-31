@@ -931,7 +931,9 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
         .gap(px(7))
         .bg(Color::rgb(37, 43, 55))
         .border(px(1))
-        .border_color(Color::rgb(62, 72, 91))
+        .border_color(
+            Color::rgb(62, 72, 91),
+        )
         .rounded(px(6))
         .child(
             section_title(
@@ -960,7 +962,60 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     .font(font)
                     .font_size(px(20))
                     .text_color(
-                        Color::rgb(225, 231, 240),
+                        Color::rgb(
+                            225,
+                            231,
+                            240,
+                        ),
+                    ),
+                ),
+        )
+        .child(
+            text(
+                "Paired punctuation is mirrored only inside RTL embedding levels. Latin and numeric runs keep their internal order.",
+            )
+            .wrap()
+            .text_color(
+                Color::rgb(164, 176, 196),
+            ),
+        )
+        .child(
+            div()
+                .w_full()
+                .p(px(6))
+                .gap(px(5))
+                .bg(Color::rgb(27, 31, 41))
+                .border(px(1))
+                .border_color(
+                    Color::rgb(86, 100, 126),
+                )
+                .rounded(px(4))
+                .child(
+                    text(
+                        "مرحبا (InkPaper 123) — [كتاب جديد]",
+                    )
+                    .font(font)
+                    .font_size(px(20))
+                    .text_color(
+                        Color::rgb(
+                            156,
+                            225,
+                            184,
+                        ),
+                    ),
+                )
+                .child(
+                    text(
+                        "InkPaper (مرحبا) — page [42]",
+                    )
+                    .font(font)
+                    .font_size(px(20))
+                    .text_color(
+                        Color::rgb(
+                            126,
+                            172,
+                            235,
+                        ),
                     ),
                 ),
         )
@@ -984,17 +1039,19 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                 )
                 .rounded(px(4))
                 .child(
-                    text("لالالالالالالالا")
-                        .font(font)
-                        .font_size(px(22))
-                        .wrap()
-                        .text_color(
-                            Color::rgb(
-                                156,
-                                225,
-                                184,
-                            ),
+                    text(
+                        "لالالالالالالالا",
+                    )
+                    .font(font)
+                    .font_size(px(22))
+                    .wrap()
+                    .text_color(
+                        Color::rgb(
+                            156,
+                            225,
+                            184,
                         ),
+                    ),
                 ),
         )
         .child(
@@ -1017,17 +1074,19 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                 )
                 .rounded(px(4))
                 .child(
-                    text("بَبَبَبَبَبَبَبَ")
-                        .font(font)
-                        .font_size(px(22))
-                        .wrap()
-                        .text_color(
-                            Color::rgb(
-                                126,
-                                172,
-                                235,
-                            ),
+                    text(
+                        "بَبَبَبَبَبَبَبَ",
+                    )
+                    .font(font)
+                    .font_size(px(22))
+                    .wrap()
+                    .text_color(
+                        Color::rgb(
+                            126,
+                            172,
+                            235,
                         ),
+                    ),
                 ),
         )
         .child(
@@ -1050,19 +1109,21 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                 )
                 .rounded(px(4))
                 .child(
-                    text("لالالالالالالالالا")
-                        .font(font)
-                        .font_size(px(22))
-                        .no_wrap()
-                        .max_lines(1)
-                        .text_ellipsis()
-                        .text_color(
-                            Color::rgb(
-                                230,
-                                167,
-                                87,
-                            ),
+                    text(
+                        "لالالالالالالالالا",
+                    )
+                    .font(font)
+                    .font_size(px(22))
+                    .no_wrap()
+                    .max_lines(1)
+                    .text_ellipsis()
+                    .text_color(
+                        Color::rgb(
+                            230,
+                            167,
+                            87,
                         ),
+                    ),
                 ),
         )
 }

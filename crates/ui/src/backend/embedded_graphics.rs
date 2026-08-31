@@ -19,9 +19,7 @@ use crate::{
     GlyphBitmap, GlyphCacheError, ImageFit, ImageId, ImageSource, LineHeight, Painter, Pixels,
     Point, Rect, ResolvedTextStyle, ShapeError, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper,
     Size, TextAlign, TextDirection, TextMeasurer, fitted_image_bounds, px,
-    text_layout::{
-        ELLIPSIS, for_each_visible_text_line, for_each_visible_text_line_with_boundaries,
-    },
+    text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
 
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
@@ -749,6 +747,7 @@ where
             }
 
             let run = match shaper.visual_order(
+                registry,
                 line.text,
                 text_glyph_count,
                 &mut glyphs[..glyph_count],

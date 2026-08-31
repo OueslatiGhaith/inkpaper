@@ -470,6 +470,7 @@ impl SimpleShaper {
         let glyph_count = summary.glyph_count();
 
         self.visual_order(
+            registry,
             text,
             glyph_count,
             &mut output[..glyph_count],
@@ -477,8 +478,9 @@ impl SimpleShaper {
         )
     }
 
-    pub fn visual_order<'out>(
+    pub fn visual_order<'out, 'font, const FONTS: usize>(
         &self,
+        registry: &FontRegistry<'font, FONTS>,
         text: &str,
         text_glyph_count: usize,
         glyphs: &'out mut [ShapedGlyph],
@@ -494,6 +496,8 @@ impl SimpleShaper {
 
         let run_count = build_directional_runs(text, text_glyph_count, glyphs, &mut runs)?;
         resolve_directional_run_levels(&mut runs[..run_count], direction);
+
+        mirror_odd_level_glyphs(registry, text, text_glyph_count, glyphs, &runs[..run_count]);
 
         let run_count = merge_same_level_runs(&mut runs[..run_count]);
         reorder_directional_runs(glyphs, &mut runs[..run_count]);
@@ -707,6 +711,105 @@ fn resolve_directional_run_levels(runs: &mut [DirectionalRun], paragraph_directi
             DirectionalClass::Number => number_level(paragraph_direction, run.context_direction),
             _ => direction_level(paragraph_direction, run.context_direction),
         };
+    }
+}
+
+fn mirror_odd_level_glyphs<'font, const FONTS: usize>(
+    registry: &FontRegistry<'font, FONTS>,
+    text: &str,
+    text_glyph_count: usize,
+    glyphs: &mut [ShapedGlyph],
+    runs: &[DirectionalRun],
+) {
+    for run in runs.iter().copied() {
+        if run.level % 2 == 0 {
+            continue;
+        }
+
+        let start = run.start.min(text_glyph_count).min(glyphs.len());
+        let end = run.end.min(text_glyph_count).min(glyphs.len());
+        let mut previous_cluster = None;
+
+        for glyph in &mut glyphs[start..end] {
+            let shaped = *glyph;
+            let cluster = shaped.cluster();
+
+            // multiple glyphs can share a shaping cluster, such as an Arabic base
+            // + transparent mark. Mirroring is a source-character operation,
+            // so process the cluster once.
+            if previous_cluster == Some(cluster) {
+                continue;
+            }
+
+            previous_cluster = Some(cluster);
+
+            let Some(remaining) = text.get(cluster..) else {
+                continue;
+            };
+            let Some(character) = remaining.chars().next() else {
+                continue;
+            };
+            let Some(mirrored) = mirrored_character(character) else {
+                continue;
+            };
+
+            // prefer the face that produced the original glyph, then use the normal
+            // registered fallback order.
+            // do not use replacement fallback here: if the actual mirrored character
+            // doesn't exist, keeping the original glyph is better than rendering '?'.
+            let Some(resolved) = registry.resolve_character_exact(shaped.font(), mirrored) else {
+                continue;
+            };
+
+            // preserve the original advance and positioning for now. Mirroring is
+            // a visual substitution and must not change line measurement.
+            *glyph = ShapedGlyph::new(
+                resolved.font(),
+                resolved.glyph(),
+                shaped.cluster(),
+                shaped.offset(),
+                shaped.advance(),
+            );
+        }
+    }
+}
+
+fn mirrored_character(character: char) -> Option<char> {
+    match character {
+        '(' => Some(')'),
+        ')' => Some('('),
+
+        '[' => Some(']'),
+        ']' => Some('['),
+
+        '{' => Some('}'),
+        '}' => Some('{'),
+
+        '<' => Some('>'),
+        '>' => Some('<'),
+
+        '«' => Some('»'),
+        '»' => Some('«'),
+
+        '‹' => Some('›'),
+        '›' => Some('‹'),
+
+        '⁅' => Some('⁆'),
+        '⁆' => Some('⁅'),
+
+        '〈' => Some('〉'),
+        '〉' => Some('〈'),
+
+        '⟨' => Some('⟩'),
+        '⟩' => Some('⟨'),
+
+        '⟦' => Some('⟧'),
+        '⟧' => Some('⟦'),
+
+        '⟪' => Some('⟫'),
+        '⟫' => Some('⟪'),
+
+        _ => None,
     }
 }
 
@@ -1472,12 +1575,131 @@ mod tests {
         let text = "لا";
 
         assert_eq!(
-            shaper.next_cluster_boundary(&registry, font, 16, text, 0,),
+            shaper.next_cluster_boundary(&registry, font, 16, text, 0),
             Some(text.len()),
         );
         assert_eq!(
-            shaper.next_cluster_boundary(&registry, font, 16, text, text.len(),),
+            shaper.next_cluster_boundary(&registry, font, 16, text, text.len()),
             None,
         );
+    }
+
+    #[test]
+    fn rtl_brackets_are_mirrored_around_ltr_run() {
+        static CHARACTERS: [char; 7] = ['ب', ' ', '(', ')', 'A', 'B', '?'];
+
+        let font = TestFont {
+            characters: &CHARACTERS,
+            advance: px(5),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+
+        let font_id = registry.register(&font).unwrap();
+
+        let mut output = [ShapedGlyph::EMPTY; 6];
+
+        let run = SimpleShaper::new()
+            .shape_into(&registry, font_id, 16, "ب (AB)", &mut output)
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+
+        // logical UTF-8 clusters:
+        //     ب  0
+        //        2
+        //     (  3
+        //     A  4
+        //     B  5
+        //     )  6
+        //
+        // visual:
+        //     ( A B ) <space> ب
+        //
+        // the LTR run stays A,B and the bracket glyphs are mirrored.
+        assert_eq!(run.glyphs()[0].cluster(), 6);
+        assert_eq!(run.glyphs()[1].cluster(), 4);
+        assert_eq!(run.glyphs()[2].cluster(), 5);
+        assert_eq!(run.glyphs()[3].cluster(), 3);
+        assert_eq!(run.glyphs()[4].cluster(), 2);
+        assert_eq!(run.glyphs()[5].cluster(), 0);
+
+        assert_eq!(run.glyphs()[0].glyph(), font.glyph_id('(').unwrap());
+
+        assert_eq!(run.glyphs()[3].glyph(), font.glyph_id(')').unwrap());
+
+        assert_eq!(run.advance(), px(30));
+    }
+
+    #[test]
+    fn ltr_brackets_around_rtl_run_are_not_mirrored() {
+        static CHARACTERS: [char; 7] = ['A', 'B', ' ', '(', ')', 'ب', '?'];
+
+        let font = TestFont {
+            characters: &CHARACTERS,
+            advance: px(5),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+
+        let font_id = registry.register(&font).unwrap();
+
+        let mut output = [ShapedGlyph::EMPTY; 6];
+
+        let run = SimpleShaper::new()
+            .shape_into(&registry, font_id, 16, "AB (ب)", &mut output)
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::LeftToRight,);
+
+        assert_eq!(run.glyphs()[0].cluster(), 0,);
+        assert_eq!(run.glyphs()[1].cluster(), 1,);
+        assert_eq!(run.glyphs()[2].cluster(), 2,);
+        assert_eq!(run.glyphs()[3].cluster(), 3,);
+        assert_eq!(run.glyphs()[4].cluster(), 4,);
+        assert_eq!(run.glyphs()[5].cluster(), 6,);
+
+        assert_eq!(run.glyphs()[3].glyph(), font.glyph_id('(').unwrap(),);
+
+        assert_eq!(run.glyphs()[5].glyph(), font.glyph_id(')').unwrap(),);
+    }
+
+    #[test]
+    fn mirrored_brackets_can_resolve_through_font_fallback() {
+        static PRIMARY: [char; 6] = ['ب', ' ', '(', 'A', 'B', '?'];
+        static FALLBACK: [char; 2] = [')', '?'];
+
+        let primary = TestFont {
+            characters: &PRIMARY,
+            advance: px(5),
+            kerning: px(0),
+        };
+        let fallback = TestFont {
+            characters: &FALLBACK,
+            advance: px(7),
+            kerning: px(0),
+        };
+
+        let mut registry = FontRegistry::<2>::default();
+        let primary_id = registry.register(&primary).unwrap();
+        let fallback_id = registry.register(&fallback).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 6];
+
+        let run = SimpleShaper::new()
+            .shape_into(&registry, primary_id, 16, "ب (AB)", &mut output)
+            .unwrap();
+
+        // the logical closing ')' originally came from the fallback face.
+        // after RTL mirroring it becomes '(' and resolves back to PRIMARY.
+        assert_eq!(run.glyphs()[0].glyph(), primary.glyph_id('(').unwrap(),);
+        assert_eq!(run.glyphs()[0].font(), primary_id,);
+        // the logical opening '(' becomes ')' and therefore resolves through
+        // the registered fallback face.
+        assert_eq!(run.glyphs()[3].glyph(), fallback.glyph_id(')').unwrap(),);
+        assert_eq!(run.glyphs()[3].font(), fallback_id,);
+        // mirroring does not alter measured line width.
+        assert_eq!(run.advance(), px(32),);
     }
 }
