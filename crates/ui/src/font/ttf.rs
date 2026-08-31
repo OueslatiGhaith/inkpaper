@@ -1,11 +1,12 @@
 use ttf_parser::{
     Face, GlyphId as TtfGlyphId, OutlineBuilder, Tag,
     gpos::{Anchor, PairAdjustment, PositioningSubtable},
+    gsub::{SingleSubstitution, SubstitutionSubtable},
 };
 
 use crate::{
     CursiveAttachment, FontData, FontFace, FontMetrics, FontRasterError, GlyphId, GlyphMetrics,
-    Offset, Pixels, px,
+    Offset, OpenTypeFeature, Pixels, px,
 };
 
 const SUPERSAMPLE_X: usize = 4;
@@ -105,6 +106,28 @@ impl FontFace for TtfFont<'_> {
         }
 
         legacy_kerning_for_face(&face, left, right, size_px).unwrap_or(px(0))
+    }
+
+    fn single_substitution(&self, feature: OpenTypeFeature, glyph: GlyphId) -> Option<GlyphId> {
+        let face = self.face().ok()?;
+
+        let substituted = gsub_single_substitution_for_face(&face, feature, to_ttf_glyph(glyph))?;
+
+        Some(GlyphId::new(substituted.0))
+    }
+
+    fn ligature_substitution(
+        &self,
+        feature: OpenTypeFeature,
+        first: GlyphId,
+        second: GlyphId,
+    ) -> Option<GlyphId> {
+        let face = self.face().ok()?;
+
+        let substituted =
+            gsub_pair_ligature_for_face(&face, feature, to_ttf_glyph(first), to_ttf_glyph(second))?;
+
+        Some(GlyphId::new(substituted.0))
     }
 
     fn cursive_attachment(
@@ -229,6 +252,133 @@ impl FontFace for TtfFont<'_> {
 
 fn to_ttf_glyph(glyph: GlyphId) -> TtfGlyphId {
     TtfGlyphId(glyph.value())
+}
+
+fn gsub_single_substitution_for_face(
+    face: &Face<'_>,
+    feature: OpenTypeFeature,
+    glyph: TtfGlyphId,
+) -> Option<TtfGlyphId> {
+    let gsub = face.tables().gsub?;
+    let feature_bytes = feature.tag();
+    let feature_tag = Tag::from_bytes(&feature_bytes);
+
+    for feature_record in gsub.features {
+        if feature_record.tag != feature_tag {
+            continue;
+        }
+
+        let mut current = glyph;
+        let mut changed = false;
+
+        // lookups within a feature are ordered.
+        // apply at most one subtable from each lookup, then continue with the next lookup
+        // using the substituted glyph.
+        for lookup_index in feature_record.lookup_indices {
+            let Some(lookup) = gsub.lookups.get(lookup_index) else {
+                continue;
+            };
+
+            for subtable in lookup.subtables.into_iter::<SubstitutionSubtable>() {
+                let SubstitutionSubtable::Single(substitution) = subtable else {
+                    continue;
+                };
+                let Some(next) = apply_single_substitution(substitution, current) else {
+                    continue;
+                };
+
+                current = next;
+                changed = true;
+
+                // subtables inside one lookup are alternatives, not a pipeline.
+                break;
+            }
+        }
+
+        if changed {
+            return Some(current);
+        }
+    }
+
+    None
+}
+
+fn apply_single_substitution(
+    substitution: SingleSubstitution<'_>,
+    glyph: TtfGlyphId,
+) -> Option<TtfGlyphId> {
+    match substitution {
+        SingleSubstitution::Format1 { coverage, delta } => {
+            coverage.get(glyph)?;
+
+            // OpenType SingleSubst format 1 adds the signed delta modulo 65536 to
+            // the original glyph ID.
+            Some(TtfGlyphId(glyph.0.wrapping_add(delta as u16)))
+        }
+        SingleSubstitution::Format2 {
+            coverage,
+            substitutes,
+        } => {
+            let index = coverage.get(glyph)?;
+
+            substitutes.get(index)
+        }
+    }
+}
+
+fn gsub_pair_ligature_for_face(
+    face: &Face<'_>,
+    feature: OpenTypeFeature,
+    first: TtfGlyphId,
+    second: TtfGlyphId,
+) -> Option<TtfGlyphId> {
+    let gsub = face.tables().gsub?;
+    let feature_bytes = feature.tag();
+    let feature_tag = Tag::from_bytes(&feature_bytes);
+
+    for feature_record in gsub.features {
+        if feature_record.tag != feature_tag {
+            continue;
+        }
+
+        for lookup_index in feature_record.lookup_indices {
+            let Some(lookup) = gsub.lookups.get(lookup_index) else {
+                continue;
+            };
+
+            for subtable in lookup.subtables.into_iter::<SubstitutionSubtable>() {
+                let SubstitutionSubtable::Ligature(substitution) = subtable else {
+                    continue;
+                };
+                let Some(first_index) = substitution.coverage.get(first) else {
+                    continue;
+                };
+                let Some(set) = substitution.ligature_sets.get(first_index) else {
+                    continue;
+                };
+
+                let mut index = 0u16;
+
+                while index < set.len() {
+                    let Some(ligature) = set.get(index) else {
+                        index = index.saturating_add(1);
+
+                        continue;
+                    };
+
+                    // this bounded API deliberately handles exactly a two-glyph ligature.
+                    if ligature.components.len() == 1 && ligature.components.get(0) == Some(second)
+                    {
+                        return Some(ligature.glyph);
+                    }
+
+                    index = index.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn gpos_cursive_attachment_for_face(

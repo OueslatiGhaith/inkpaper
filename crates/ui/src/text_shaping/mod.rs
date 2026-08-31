@@ -1,7 +1,8 @@
 use core::{convert::Infallible, str::CharIndices};
 
 use crate::{
-    FontId, FontRegistry, GlyphId, GlyphMetrics, Offset, Pixels, ResolvedGlyph, px,
+    FontId, FontRegistry, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, Pixels, ResolvedGlyph,
+    px,
     text_shaping::arabic::{
         MarkPlacement, contextual_form, joining_type, lam_alef_form, mark_placement,
     },
@@ -11,6 +12,12 @@ mod arabic;
 
 const DIRECTIONAL_RUN_CAPACITY: usize = 32;
 const MARK_GAP: Pixels = px(1);
+
+const ARABIC_ISOL_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"isol");
+const ARABIC_INIT_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"init");
+const ARABIC_MEDI_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"medi");
+const ARABIC_FINA_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"fina");
+const ARABIC_RLIG_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"rlig");
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -392,20 +399,21 @@ impl SimpleShaper {
 
             previous_cluster = Some(cluster);
 
-            // the only ligature produced by the simple shaper today is adjacent lam + alef.
+            // lam-alef remains the only ligature the bounded shaper explicitly recognizes.
+            // modern fonts get first priority through GSUB rlig.
+            // Presentation Forms remain the compatibility fallback.
             if character == '\u{0644}'
                 && let Some((_alef_cluster, alef)) = characters.clone().next()
             {
                 let joins_previous = state.previous_joins_forward && joining.accepts_previous();
 
-                if let Some(ligature_character) = lam_alef_form(alef, joins_previous)
-                    && let Some(resolved) =
-                        registry.resolve_character_exact(preferred_font, ligature_character)
-                    && resolved
-                        .face()
-                        .glyph_advance(resolved.glyph(), size_px)
-                        .is_some()
-                {
+                if let Some(resolved) = resolve_lam_alef_ligature(
+                    registry,
+                    preferred_font,
+                    alef,
+                    joins_previous,
+                    size_px,
+                ) {
                     let _ = characters.next();
 
                     emit_resolved_ligature(
@@ -427,8 +435,21 @@ impl SimpleShaper {
             let joins_previous = state.previous_joins_forward && joining.accepts_previous();
             let joins_next = joining.connects_forward() && next_accepts;
             let presentation = contextual_form(character, joins_previous, joins_next);
-            let resolved =
-                resolve_contextual_glyph(registry, preferred_font, character, presentation);
+
+            // we only enable Arabic contextual GSUB for characters covered by our existing
+            // Arabic forms data.
+            // that keeps unrelated scripts out of Arabic isol/init/medi/fina features
+            // while still making Presentation Forms merely a fallback.
+            let feature =
+                presentation.map(|_| arabic_contextual_feature(joins_previous, joins_next));
+
+            let resolved = resolve_contextual_glyph(
+                registry,
+                preferred_font,
+                character,
+                feature,
+                presentation,
+            );
 
             if let Some(resolved) = resolved {
                 emit_resolved_glyph(
@@ -624,18 +645,89 @@ fn resolve_contextual_glyph<'font, const FONTS: usize>(
     registry: &FontRegistry<'font, FONTS>,
     preferred_font: FontId,
     base_character: char,
+    feature: Option<OpenTypeFeature>,
     presentation: Option<char>,
 ) -> Option<ResolvedGlyph<'font>> {
+    let base = registry.resolve_character_exact(preferred_font, base_character);
+
+    // modern OpenType path.
+    // crucially, substitution happens on the glyph from the face that actually resolved
+    //  the base character.
+    if let Some(base) = base
+        && let Some(feature) = feature
+        && let Some(glyph) = base.face().single_substitution(feature, base.glyph())
+    {
+        return Some(ResolvedGlyph::new(base.font(), base.face(), glyph));
+    }
+
+    // compatibility path for bitmap fonts and fonts which expose Arabic Presentation
+    // Forms directly through cmap.
     if let Some(presentation) = presentation
         && let Some(resolved) = registry.resolve_character_exact(preferred_font, presentation)
     {
         return Some(resolved);
     }
 
-    // presentation Forms aren't mandatory in modern OpenType fonts.
-    // if they aren't available, preserve readable base text rather than prematurely
-    // returning a replacement character.
+    // if we had a valid base glyph but neither shaping path changed it, keep it readable
+    // rather than replacing it.
+    if let Some(base) = base {
+        return Some(base);
+    }
+
     registry.resolve_glyph(preferred_font, base_character)
+}
+
+fn resolve_lam_alef_ligature<'font, const FONTS: usize>(
+    registry: &FontRegistry<'font, FONTS>,
+    preferred_font: FontId,
+    alef: char,
+    joins_previous: bool,
+    size_px: u16,
+) -> Option<ResolvedGlyph<'font>> {
+    // besides identifying the supported alef variants, this gives us the legacy compatibility glyph.
+    let presentation = lam_alef_form(alef, joins_previous)?;
+
+    // resolve lam first, then require alef from that same face. A GSUB ligature cannot span fonts.
+    if let Some(lam) = registry.resolve_character_exact(preferred_font, '\u{0644}') {
+        let face = lam.face();
+
+        if let Some(alef_glyph) = face.glyph_id(alef) {
+            let lam_feature = if joins_previous {
+                ARABIC_MEDI_FEATURE
+            } else {
+                ARABIC_INIT_FEATURE
+            };
+
+            // arabic form substitutions run before rlig in our bounded shaping pipeline.
+            let contextual_lam = face
+                .single_substitution(lam_feature, lam.glyph())
+                .unwrap_or(lam.glyph());
+
+            let contextual_alef = face
+                .single_substitution(ARABIC_FINA_FEATURE, alef_glyph)
+                .unwrap_or(alef_glyph);
+
+            let mut ligature =
+                face.ligature_substitution(ARABIC_RLIG_FEATURE, contextual_lam, contextual_alef);
+
+            // some simpler fonts encode the required ligature directly against cmap
+            // glyphs instead of contextual-form outputs.
+            if ligature.is_none()
+                && (contextual_lam != lam.glyph() || contextual_alef != alef_glyph)
+            {
+                ligature = face.ligature_substitution(ARABIC_RLIG_FEATURE, lam.glyph(), alef_glyph);
+            }
+
+            if let Some(glyph) = ligature
+                && face.glyph_advance(glyph, size_px).is_some()
+            {
+                return Some(ResolvedGlyph::new(lam.font(), face, glyph));
+            }
+        }
+    }
+
+    // old bitmap / Presentation Forms path.
+    registry.resolve_character_exact(preferred_font, presentation)
 }
 
 fn emit_resolved_mark<'font, F, E>(
@@ -837,6 +929,15 @@ fn is_arabic_directional(character: char) -> bool {
             | '\u{FB50}'..='\u{FDFF}'
             | '\u{FE70}'..='\u{FEFF}'
     )
+}
+
+const fn arabic_contextual_feature(joins_previous: bool, joins_next: bool) -> OpenTypeFeature {
+    match (joins_previous, joins_next) {
+        (false, false) => ARABIC_ISOL_FEATURE,
+        (false, true) => ARABIC_INIT_FEATURE,
+        (true, true) => ARABIC_MEDI_FEATURE,
+        (true, false) => ARABIC_FINA_FEATURE,
+    }
 }
 
 fn resolve_directional_run_levels(runs: &mut [DirectionalRun], paragraph_direction: TextDirection) {
@@ -1810,6 +1911,86 @@ mod tests {
             match (base.value(), mark.value()) {
                 // medial beh -> fatha
                 (2, 3) => Some(Offset::new(px(1), px(-3))),
+
+                _ => None,
+            }
+        }
+
+        fn rasterize(
+            &self,
+            _: GlyphId,
+            _: u16,
+            coverage: &mut [u8],
+        ) -> Result<(), FontRasterError> {
+            let Some(pixel) = coverage.first_mut() else {
+                return Err(FontRasterError::BufferTooSmall);
+            };
+
+            *pixel = 255;
+
+            Ok(())
+        }
+    }
+
+    struct GsubArabicFont {
+        characters: &'static [char],
+        advance: Pixels,
+    }
+
+    impl FontFace for GsubArabicFont {
+        fn glyph_id(&self, character: char) -> Option<GlyphId> {
+            let index = self
+                .characters
+                .iter()
+                .position(|candidate| *candidate == character)?;
+
+            let index = u16::try_from(index).ok()?;
+
+            Some(GlyphId::new(index.saturating_add(1)))
+        }
+
+        fn metrics(&self, _: u16) -> FontMetrics {
+            FontMetrics::new(px(8), px(2), px(0))
+        }
+
+        fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+            if glyph.value() == 0 {
+                return None;
+            }
+
+            Some(GlyphMetrics::new(1, 1, px(0), px(-1), self.advance))
+        }
+
+        fn single_substitution(
+            &self,
+            feature: crate::OpenTypeFeature,
+            glyph: GlyphId,
+        ) -> Option<GlyphId> {
+            match glyph.value() {
+                // first cmap glyph is either beh or lam, depending on the test.
+                1 if feature == ARABIC_ISOL_FEATURE => Some(GlyphId::new(104)),
+                1 if feature == ARABIC_INIT_FEATURE => Some(GlyphId::new(101)),
+                1 if feature == ARABIC_MEDI_FEATURE => Some(GlyphId::new(102)),
+                1 if feature == ARABIC_FINA_FEATURE => Some(GlyphId::new(103)),
+                // second cmap glyph in the lam-alef test is alef.
+                2 if feature == ARABIC_FINA_FEATURE => Some(GlyphId::new(203)),
+                _ => None,
+            }
+        }
+
+        fn ligature_substitution(
+            &self,
+            feature: crate::OpenTypeFeature,
+            first: GlyphId,
+            second: GlyphId,
+        ) -> Option<GlyphId> {
+            if feature != ARABIC_RLIG_FEATURE {
+                return None;
+            }
+
+            match (first.value(), second.value()) {
+                // contextual lam initial + contextual alef final
+                (101, 203) => Some(GlyphId::new(300)),
 
                 _ => None,
             }
@@ -2855,5 +3036,74 @@ mod tests {
         assert_eq!(initial_beh.advance(), px(3));
         // 7 + 4 + 0 + 3
         assert_eq!(run.advance(), px(14));
+    }
+
+    #[test]
+    fn gsub_shapes_arabic_contextual_forms_without_presentation_glyphs() {
+        static ARABIC: [char; 2] = [
+            '\u{0628}', // beh base character only
+            '?',
+        ];
+
+        let arabic = GsubArabicFont {
+            characters: &ARABIC,
+            advance: px(6),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&arabic).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 3];
+        let run = SimpleShaper::new()
+            .shape_into(
+                &registry,
+                font_id,
+                16,
+                "\u{0628}\u{0628}\u{0628}",
+                &mut output,
+            )
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+        assert_eq!(run.len(), 3);
+
+        // logical Arabic forms are:
+        //     initial, medial, final
+        // after RTL visual ordering:
+        //     final, medial, initial
+        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(103));
+        assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(102));
+        assert_eq!(run.glyphs()[2].glyph(), GlyphId::new(101));
+        assert_eq!(run.glyphs()[0].cluster(), 4);
+        assert_eq!(run.glyphs()[1].cluster(), 2);
+        assert_eq!(run.glyphs()[2].cluster(), 0);
+        assert_eq!(run.advance(), px(18));
+    }
+
+    #[test]
+    fn gsub_required_ligature_shapes_lam_alef_without_presentation_glyphs() {
+        static ARABIC: [char; 3] = [
+            '\u{0644}', // lam base
+            '\u{0627}', // alef base
+            '?',
+        ];
+
+        let arabic = GsubArabicFont {
+            characters: &ARABIC,
+            advance: px(9),
+        };
+
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(&arabic).unwrap();
+        let mut output = [ShapedGlyph::EMPTY; 2];
+        let run = SimpleShaper::new()
+            .shape_into(&registry, font_id, 16, "\u{0644}\u{0627}", &mut output)
+            .unwrap();
+
+        assert_eq!(run.direction(), TextDirection::RightToLeft);
+        assert_eq!(run.len(), 1);
+        assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(300));
+        assert_eq!(run.glyphs()[0].cluster(), 0);
+        assert_eq!(run.glyphs()[0].final_ligature_component(), Some(1));
+        assert_eq!(run.advance(), px(9));
     }
 }

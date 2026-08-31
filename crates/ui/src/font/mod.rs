@@ -33,6 +33,20 @@ impl GlyphId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct OpenTypeFeature([u8; 4]);
+
+impl OpenTypeFeature {
+    pub const fn new(tag: [u8; 4]) -> Self {
+        Self(tag)
+    }
+
+    pub const fn tag(self) -> [u8; 4] {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FontData<'a> {
     bytes: &'a [u8],
@@ -159,6 +173,19 @@ pub trait FontFace {
 
     fn kerning(&self, _left: GlyphId, _right: GlyphId, _size_px: u16) -> Pixels {
         px(0)
+    }
+
+    fn single_substitution(&self, _feature: OpenTypeFeature, _glyph: GlyphId) -> Option<GlyphId> {
+        None
+    }
+
+    fn ligature_substitution(
+        &self,
+        _feature: OpenTypeFeature,
+        _first: GlyphId,
+        _second: GlyphId,
+    ) -> Option<GlyphId> {
+        None
     }
 
     fn cursive_attachment(
