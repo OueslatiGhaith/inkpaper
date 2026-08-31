@@ -9,7 +9,7 @@ use embedded_graphics::{
 
 use crate::{
     Color, ImagePaint, ImageResource, ImageSampling, Rect, Size,
-    backend::embedded_graphics::to_rgb888, fitted_image_bounds,
+    backend::embedded_graphics::to_rgb888, fitted_image_bounds, process_image_pixel,
 };
 
 use super::from_embedded_size;
@@ -120,6 +120,8 @@ where
                 paint.sampling,
             )?;
 
+            let color = process_image_pixel(color, paint, x, y);
+
             Some(EgPixel(EgPoint::new(x, y), to_rgb888(color)))
         })
     });
@@ -129,6 +131,7 @@ where
     target.draw_iter(pixels)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sample_image(
     image: &dyn ImageResource,
     x: u32,

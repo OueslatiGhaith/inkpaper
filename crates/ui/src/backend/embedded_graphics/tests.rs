@@ -5,7 +5,7 @@ use embedded_graphics::{
     image::{GetPixel as EgGetPixel, ImageDrawable as EgImageDrawable},
     mock_display::MockDisplay,
     mono_font::ascii::FONT_6X10,
-    pixelcolor::Rgb888,
+    pixelcolor::{Rgb888, RgbColor},
     primitives::Rectangle as EgRectangle,
 };
 
@@ -742,6 +742,7 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
+
         let mut painter = EmbeddedGraphicsPainter::new(&mut left_display, &mut fonts, images);
 
         painter
@@ -752,6 +753,7 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
                     fit: ImageFit::Cover,
                     position: ImagePosition::Left,
                     sampling: ImageSampling::Nearest,
+                    ..ImagePaint::default()
                 },
                 None,
             )
@@ -763,6 +765,7 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
     {
         let mut glyph_storage = [0; 4096];
         let mut fonts = test_font_resources(&mut glyph_storage);
+
         let mut painter = EmbeddedGraphicsPainter::new(&mut right_display, &mut fonts, images);
 
         painter
@@ -773,6 +776,7 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
                     fit: ImageFit::Cover,
                     position: ImagePosition::Right,
                     sampling: ImageSampling::Nearest,
+                    ..ImagePaint::default()
                 },
                 None,
             )
@@ -781,12 +785,12 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
 
     assert_eq!(
         left_display.get_pixel(EgPoint::new(0, 0)),
-        Some(Rgb888::new(255, 0, 0))
+        Some(Rgb888::new(255, 0, 0)),
     );
 
     assert_eq!(
         right_display.get_pixel(EgPoint::new(0, 0)),
-        Some(Rgb888::new(255, 255, 255))
+        Some(Rgb888::new(255, 255, 255)),
     );
 }
 
@@ -879,6 +883,70 @@ fn embedded_graphics_backend_bilinear_sampling_is_stable_when_clipped() {
                 clipped_display.get_pixel(EgPoint::new(x, y)),
                 full_display.get_pixel(EgPoint::new(x, y)),
                 "clipped bilinear sample differs at ({x}, {y})",
+            );
+        }
+    }
+}
+
+#[test]
+fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
+    let bitmap = SolidTestImage {
+        size: EgSize::new(8, 8),
+        color: Rgb888::new(128, 128, 128),
+    };
+
+    let image = EmbeddedGraphicsImage::new(&bitmap);
+
+    let mut images = ImageRegistry::<1>::default();
+
+    let source = images.register(&image).unwrap();
+
+    let bounds = Rect::new(Point::ZERO, Size::new(px(8), px(8)));
+
+    let paint = ImagePaint {
+        fit: ImageFit::Fill,
+        color_mode: ImageColorMode::Monochrome,
+        dither: ImageDither::Bayer4x4,
+        ..ImagePaint::default()
+    };
+
+    let mut full_display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+
+        let mut painter = EmbeddedGraphicsPainter::new(&mut full_display, &mut fonts, images);
+
+        painter.draw_image(source, bounds, paint, None).unwrap();
+    }
+
+    let clip = Rect::new(Point::new(px(1), px(2)), Size::new(px(4), px(4)));
+
+    let mut clipped_display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut glyph_storage = [0; 4096];
+        let mut fonts = test_font_resources(&mut glyph_storage);
+
+        let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display, &mut fonts, images);
+
+        painter
+            .draw_image(source, bounds, paint, Some(clip))
+            .unwrap();
+    }
+
+    for y in 2..6 {
+        for x in 1..5 {
+            let full = full_display.get_pixel(EgPoint::new(x, y));
+
+            let clipped = clipped_display.get_pixel(EgPoint::new(x, y));
+
+            assert_eq!(clipped, full, "clipped dither differs at ({x}, {y})",);
+
+            assert!(
+                matches!(clipped, Some(Rgb888::BLACK | Rgb888::WHITE)),
+                "monochrome rendering emitted a non-binary pixel",
             );
         }
     }

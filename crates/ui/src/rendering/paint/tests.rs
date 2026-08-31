@@ -435,7 +435,9 @@ fn frame_emits_image_paint_command() {
     let source = ImageSource::new(ImageId::new(0), Size::new(px(20), px(12)));
 
     let mut frame = FrameArena::<8, 128>::default();
+
     let globals = GlobalArena::<0, 0>::default();
+
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -444,7 +446,12 @@ fn frame_emits_image_paint_command() {
                 image(source)
                     .cover()
                     .position(ImagePosition::Bottom)
-                    .sampling(ImageSampling::Bilinear),
+                    .sampling(ImageSampling::Bilinear)
+                    .monochrome()
+                    .brightness(8)
+                    .contrast(125)
+                    .invert()
+                    .dither(ImageDither::Bayer2x2),
             ),
             cx,
         )
@@ -466,6 +473,11 @@ fn frame_emits_image_paint_command() {
                 fit: ImageFit::Cover,
                 position: ImagePosition::Bottom,
                 sampling: ImageSampling::Bilinear,
+                color_mode: ImageColorMode::Monochrome,
+                brightness: 8,
+                contrast: 125,
+                invert: true,
+                dither: ImageDither::Bayer2x2,
             },
             clip: None,
         }

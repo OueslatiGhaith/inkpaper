@@ -52,10 +52,11 @@ pub mod prelude {
         ActivateEvent, AppContext, CanvasPainter, Color, ComponentSlot, ConditionalElementExt,
         Context, DamageRegion, Either, EmptySlot, Entity, EventTarget, FontId, FontResources,
         Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError, IdentifiableElementExt,
-        Image, ImageFit, ImageId, ImagePaint, ImagePosition, ImageRegistry, ImageRegistryError,
-        ImageResource, ImageSampling, ImageSource, IntoElement, Invalidation, LineHeight, Listener,
-        Offset, OnEvent, ParentElement, Pixels, Point, Rect, Render, RenderInvalidation,
-        RenderOnce, Runtime, Size, StatefulInteractiveElementExt, Style, Styled, TextAlign,
-        TextMaxLines, TextOverflow, TextStyled, TextWrap, canvas, div, image, px, text,
+        Image, ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint, ImagePosition,
+        ImageRegistry, ImageRegistryError, ImageResource, ImageSampling, ImageSource, IntoElement,
+        Invalidation, LineHeight, Listener, Offset, OnEvent, ParentElement, Pixels, Point, Rect,
+        Render, RenderInvalidation, RenderOnce, Runtime, Size, StatefulInteractiveElementExt,
+        Style, Styled, TextAlign, TextMaxLines, TextOverflow, TextStyled, TextWrap, canvas, div,
+        image, px, text,
     };
 }

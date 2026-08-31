@@ -37,10 +37,59 @@ pub enum ImageSampling {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ImageColorMode {
+    #[default]
+    Color,
+    Grayscale,
+    Monochrome,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ImageDither {
+    #[default]
+    Threshold,
+    Bayer2x2,
+    Bayer4x4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ImagePaint {
     pub fit: ImageFit,
     pub position: ImagePosition,
     pub sampling: ImageSampling,
+    pub color_mode: ImageColorMode,
+    /// brightness offset in channel-value units.
+    ///
+    /// `0` leaves brightness unchanged. Values are clamped to `-255..=255` by the `Image` builder.
+    pub brightness: i16,
+    /// contrast percentage.
+    ///
+    /// `100` leaves contrast unchanged.
+    pub contrast: u16,
+    pub invert: bool,
+    /// used only when `color_mode` is `ImageColorMode::Monochrome`.
+    pub dither: ImageDither,
+}
+
+impl ImagePaint {
+    pub const DEFAULT: Self = Self {
+        fit: ImageFit::None,
+        position: ImagePosition::Center,
+        sampling: ImageSampling::Nearest,
+        color_mode: ImageColorMode::Color,
+        brightness: 0,
+        contrast: 100,
+        invert: false,
+        dither: ImageDither::Threshold,
+    };
+}
+
+impl Default for ImagePaint {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -65,11 +114,7 @@ impl Image {
             style: ImageStyle {
                 width: None,
                 height: None,
-                paint: ImagePaint {
-                    fit: ImageFit::None,
-                    position: ImagePosition::Center,
-                    sampling: ImageSampling::Nearest,
-                },
+                paint: ImagePaint::DEFAULT,
             },
         }
     }
@@ -109,6 +154,31 @@ impl Image {
         self
     }
 
+    pub fn color_mode(mut self, color_mode: ImageColorMode) -> Self {
+        self.style.paint.color_mode = color_mode;
+        self
+    }
+
+    pub fn brightness(mut self, brightness: i16) -> Self {
+        self.style.paint.brightness = brightness.clamp(-255, 255);
+        self
+    }
+
+    pub fn contrast(mut self, contrast: u16) -> Self {
+        self.style.paint.contrast = contrast;
+        self
+    }
+
+    pub fn invert(mut self) -> Self {
+        self.style.paint.invert = true;
+        self
+    }
+
+    pub fn dither(mut self, dither: ImageDither) -> Self {
+        self.style.paint.dither = dither;
+        self
+    }
+
     pub fn contain(self) -> Self {
         self.fit(ImageFit::Contain)
     }
@@ -123,6 +193,18 @@ impl Image {
 
     pub fn native(self) -> Self {
         self.fit(ImageFit::None)
+    }
+
+    pub fn color(self) -> Self {
+        self.color_mode(ImageColorMode::Color)
+    }
+
+    pub fn grayscale(self) -> Self {
+        self.color_mode(ImageColorMode::Grayscale)
+    }
+
+    pub fn monochrome(self) -> Self {
+        self.color_mode(ImageColorMode::Monochrome)
     }
 }
 
@@ -313,7 +395,7 @@ mod tests {
 
         assert_eq!(
             fitted,
-            Rect::new(Point::new(px(5), px(7)), Size::new(px(20), px(10)))
+            Rect::new(Point::new(px(5), px(7)), Size::new(px(20), px(10)),)
         );
     }
 }

@@ -1,9 +1,12 @@
 use crate::{Color, Size};
 
+mod processing;
 mod registry;
+
 #[cfg(test)]
 mod tests;
 
+pub(crate) use processing::process_image_pixel;
 pub use registry::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

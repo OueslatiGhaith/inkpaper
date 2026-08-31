@@ -28,7 +28,9 @@ impl RenderOnce for HomeScreen<'_> {
                 image(source)
                     .size(Size::new(px(110), px(150)))
                     .cover()
-                    .sampling(ImageSampling::Bilinear),
+                    .sampling(ImageSampling::Bilinear)
+                    .monochrome()
+                    .dither(ImageDither::Bayer4x4),
             ),
 
             None => Either::Right(
