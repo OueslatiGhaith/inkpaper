@@ -20,10 +20,11 @@ const DISPLAY_BOUNDS: Rect = Rect::new(Point::ZERO, DISPLAY_SIZE);
 
 static BODY_FONT: MonoFontFace = MonoFontFace::ascii(&FONT_6X10);
 static HEADING_FONT: MonoFontFace = MonoFontFace::ascii(&FONT_10X20);
-pub const UI_GLYPH_CACHE_BYTES: usize = 8 * 1024;
-const UI_GLYPH_CACHE_SLOTS: usize = 64;
 
-type UiFontResources<'storage> = FontResources<'static, 'storage, 2, UI_GLYPH_CACHE_SLOTS>;
+const UI_GLYPH_CACHE_BYTES: usize = 8 * 1024;
+const UI_GLYPH_CACHE_SLOTS: usize = 64;
+pub(crate) type UiFontResources =
+    FontResources<'static, 2, UI_GLYPH_CACHE_SLOTS, UI_GLYPH_CACHE_BYTES>;
 
 pub type UiRuntime = Runtime<
     4_096, // entity bytes
@@ -73,20 +74,19 @@ impl FrameUpdate {
     }
 }
 
-pub struct Presenter<'storage> {
-    fonts: UiFontResources<'storage>,
+pub struct Presenter<'resources> {
+    fonts: &'resources mut UiFontResources,
 }
 
-impl<'storage> Presenter<'storage> {
-    pub fn new(glyph_storage: &'storage mut [u8]) -> Self {
-        let mut fonts = FontResources::new(glyph_storage);
+impl<'resources> Presenter<'resources> {
+    pub fn new(fonts: &'resources mut UiFontResources) -> Self {
         let body = fonts.register(&BODY_FONT).expect("body font slot must fit");
         let heading = fonts
             .register(&HEADING_FONT)
             .expect("heading font slot must fit");
 
-        defmt::assert_eq!(body, FontId::DEFAULT,);
-        defmt::assert_eq!(heading, FontId::new(1,),);
+        defmt::assert_eq!(body, FontId::DEFAULT);
+        defmt::assert_eq!(heading, FontId::new(1));
 
         Self { fonts }
     }
@@ -128,7 +128,7 @@ fn render_invalidation(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
     frame: &mut [u8; FRAMEBUFFER_LEN],
-    fonts: &mut UiFontResources<'_>,
+    fonts: &mut UiFontResources,
     invalidation: RenderInvalidation,
 ) -> Option<Region> {
     if invalidation.is_none() {

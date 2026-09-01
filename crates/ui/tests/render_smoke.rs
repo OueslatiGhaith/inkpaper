@@ -31,8 +31,8 @@ impl Render for App {
 
 static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 
-fn test_font_resources(storage: &mut [u8]) -> FontResources<'static, '_, 1, 64> {
-    let mut resources = FontResources::new(storage);
+fn test_font_resources() -> FontResources<'static, 1, 64, 4096> {
+    let mut resources = FontResources::default();
 
     let id = resources.register(&TEST_FONT_FACE).unwrap();
     assert_eq!(id, FontId::DEFAULT,);
@@ -49,8 +49,7 @@ fn full_runtime_can_render_to_simulator_display() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 
-    let mut glyph_storage = [0; 4096];
-    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut fonts = test_font_resources();
     let mut painter =
         EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 

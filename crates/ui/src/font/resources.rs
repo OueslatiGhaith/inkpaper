@@ -4,21 +4,30 @@ use super::{
     registry::{FontRegistry, FontRegistryError, ResolvedGlyph},
 };
 
-pub struct FontResources<'font, 'storage, const FONTS: usize, const GLYPH_SLOTS: usize> {
+pub struct FontResources<
+    'font,
+    const FONTS: usize,
+    const GLYPH_SLOTS: usize,
+    const GLYPH_BYTES: usize,
+> {
     registry: FontRegistry<'font, FONTS>,
-    cache: GlyphCache<'storage, GLYPH_SLOTS>,
+    cache: GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
 }
 
-impl<'font, 'storage, const FONTS: usize, const GLYPH_SLOTS: usize>
-    FontResources<'font, 'storage, FONTS, GLYPH_SLOTS>
+impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Default
+    for FontResources<'font, FONTS, GLYPH_SLOTS, GLYPH_BYTES>
 {
-    pub fn new(glyph_storage: &'storage mut [u8]) -> Self {
+    fn default() -> Self {
         Self {
             registry: FontRegistry::default(),
-            cache: GlyphCache::new(glyph_storage),
+            cache: GlyphCache::default(),
         }
     }
+}
 
+impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize>
+    FontResources<'font, FONTS, GLYPH_SLOTS, GLYPH_BYTES>
+{
     pub fn registry(&self) -> FontRegistry<'font, FONTS> {
         self.registry
     }

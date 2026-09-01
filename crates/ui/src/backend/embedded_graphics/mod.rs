@@ -42,17 +42,17 @@ pub struct EmbeddedGraphicsPainter<
     'target,
     'resources,
     'font,
-    'storage,
     'image,
     D,
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
+    const GLYPH_BYTES: usize,
     const IMAGES: usize,
 > where
     D: EgDrawTarget,
 {
     target: &'target mut D,
-    font_resources: &'resources mut FontResources<'font, 'storage, FONTS, GLYPH_SLOTS>,
+    font_resources: &'resources mut FontResources<'font, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
     images: ImageRegistry<'image, IMAGES>,
     coverage_mode: CoverageMode<D>,
 }
@@ -61,22 +61,22 @@ impl<
     'target,
     'resources,
     'font,
-    'storage,
     'image,
     D,
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
+    const GLYPH_BYTES: usize,
     const IMAGES: usize,
 >
     EmbeddedGraphicsPainter<
         'target,
         'resources,
         'font,
-        'storage,
         'image,
         D,
         FONTS,
         GLYPH_SLOTS,
+        GLYPH_BYTES,
         IMAGES,
     >
 where
@@ -84,7 +84,7 @@ where
 {
     pub fn new(
         target: &'target mut D,
-        font_resources: &'resources mut FontResources<'font, 'storage, FONTS, GLYPH_SLOTS>,
+        font_resources: &'resources mut FontResources<'font, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
         images: ImageRegistry<'image, IMAGES>,
     ) -> Self {
         assert!(
@@ -159,8 +159,8 @@ where
     }
 }
 
-impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const IMAGES: usize> Painter
-    for EmbeddedGraphicsPainter<'_, '_, '_, '_, '_, D, FONTS, GLYPH_SLOTS, IMAGES>
+impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
+    Painter for EmbeddedGraphicsPainter<'_, '_, '_, '_, D, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>
 where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,

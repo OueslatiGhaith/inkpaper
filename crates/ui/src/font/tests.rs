@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::px;
 
@@ -71,8 +70,7 @@ fn glyph_cache_returns_cached_coverage() {
     let font_id = registry.register(&font).unwrap();
     let glyph = font.glyph_id('A').unwrap();
 
-    let mut storage = [0u8; 16];
-    let mut cache = GlyphCache::<4>::new(&mut storage);
+    let mut cache = GlyphCache::<4, 16>::default();
 
     {
         let bitmap = cache
@@ -83,6 +81,7 @@ fn glyph_cache_returns_cached_coverage() {
     }
 
     assert_eq!(cache.used_bytes(), 4);
+    assert_eq!(cache.capacity_bytes(), 16);
 
     {
         let bitmap = cache
@@ -101,8 +100,8 @@ fn glyph_cache_flushes_when_storage_is_full() {
 
     let font = TestFont { fill: 99 };
     let font_id = registry.register(&font).unwrap();
-    let mut storage = [0u8; 6];
-    let mut cache = GlyphCache::<4>::new(&mut storage);
+
+    let mut cache = GlyphCache::<4, 6>::default();
 
     let first = font.glyph_id('A').unwrap();
     let second = font.glyph_id('B').unwrap();
@@ -130,8 +129,7 @@ fn glyph_larger_than_entire_cache_is_rejected() {
     let font_id = registry.register(&font).unwrap();
     let glyph = font.glyph_id('A').unwrap();
 
-    let mut storage = [0u8; 3];
-    let mut cache = GlyphCache::<4>::new(&mut storage);
+    let mut cache = GlyphCache::<4, 3>::default();
 
     let result = cache.get_or_rasterize(&registry, font_id, glyph, 16);
 

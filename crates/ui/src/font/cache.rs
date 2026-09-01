@@ -70,25 +70,27 @@ impl<'a> GlyphBitmap<'a> {
     }
 }
 
-pub struct GlyphCache<'storage, const SLOTS: usize> {
-    storage: &'storage mut [u8],
+pub struct GlyphCache<const SLOTS: usize, const BYTES: usize> {
+    storage: [u8; BYTES],
     used: usize,
     slots: [GlyphCacheSlot; SLOTS],
 }
 
-impl<'storage, const SLOTS: usize> GlyphCache<'storage, SLOTS> {
-    pub fn new(storage: &'storage mut [u8]) -> Self {
+impl<const SLOTS: usize, const BYTES: usize> Default for GlyphCache<SLOTS, BYTES> {
+    fn default() -> Self {
         assert!(SLOTS > 0, "glyph cache must contain at least one slot");
 
         Self {
-            storage,
+            storage: [0; BYTES],
             used: 0,
             slots: [GlyphCacheSlot::EMPTY; SLOTS],
         }
     }
+}
 
+impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
     pub const fn capacity_bytes(&self) -> usize {
-        self.storage.len()
+        BYTES
     }
 
     pub const fn used_bytes(&self) -> usize {
@@ -96,12 +98,11 @@ impl<'storage, const SLOTS: usize> GlyphCache<'storage, SLOTS> {
     }
 
     pub const fn remaining_bytes(&self) -> usize {
-        self.storage.len().saturating_sub(self.used)
+        BYTES.saturating_sub(self.used)
     }
 
     pub fn clear(&mut self) {
         self.used = 0;
-
         self.slots.fill(GlyphCacheSlot::EMPTY);
     }
 
@@ -153,7 +154,7 @@ impl<'storage, const SLOTS: usize> GlyphCache<'storage, SLOTS> {
             .coverage_bytes()
             .ok_or(GlyphCacheError::GlyphTooLarge)?;
 
-        if required > self.storage.len() {
+        if required > BYTES {
             return Err(GlyphCacheError::GlyphTooLarge);
         }
         if required > self.remaining_bytes() {

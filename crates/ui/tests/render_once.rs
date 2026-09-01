@@ -95,8 +95,8 @@ fn render_once_component_can_be_used_as_a_child() {
 
 static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 
-fn test_font_resources(storage: &mut [u8]) -> FontResources<'static, '_, 1, 64> {
-    let mut resources = FontResources::new(storage);
+fn test_font_resources() -> FontResources<'static, 1, 64, 4096> {
+    let mut resources = FontResources::default();
 
     let id = resources.register(&TEST_FONT_FACE).unwrap();
     assert_eq!(id, FontId::DEFAULT,);
@@ -114,8 +114,7 @@ fn render_once_component_can_borrow_from_persistent_component() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 
-    let mut glyph_storage = [0; 4096];
-    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut fonts = test_font_resources();
     let mut painter =
         EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -144,8 +143,7 @@ fn render_once_components_can_nest_other_render_once_components() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 
-    let mut glyph_storage = [0; 4096];
-    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut fonts = test_font_resources();
     let mut painter =
         EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 

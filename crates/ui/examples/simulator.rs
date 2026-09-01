@@ -37,7 +37,9 @@ type UiRuntime = Runtime<
 
 static BODY_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_10X20);
-type UiFonts<'storage> = FontResources<'static, 'storage, 3, 128>;
+
+const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
+type UiFonts = FontResources<'static, 3, 128, UI_GLYPH_CACHE_BYTES>;
 
 const DEMO_IMAGE_WIDTH: u32 = 48;
 const DEMO_IMAGE_HEIGHT: u32 = 24;
@@ -1281,7 +1283,7 @@ fn to_ui_point(point: EgPoint) -> Point {
 fn update_ui(
     runtime: &mut UiRuntime,
     app: Entity<App>,
-    fonts: &mut UiFonts<'_>,
+    fonts: &mut UiFonts,
     images: UiImages,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
@@ -1299,7 +1301,7 @@ fn update_ui(
 
 fn layout_ui(
     runtime: &mut UiRuntime,
-    fonts: &mut UiFonts<'_>,
+    fonts: &mut UiFonts,
     images: UiImages,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
@@ -1309,7 +1311,7 @@ fn layout_ui(
 
 fn paint_ui(
     runtime: &mut UiRuntime,
-    fonts: &mut UiFonts<'_>,
+    fonts: &mut UiFonts,
     images: UiImages,
     display: &mut SimulatorDisplay<Rgb888>,
     damage: DamageRegion,
@@ -1331,7 +1333,7 @@ fn paint_ui(
 fn rebuild_ui(
     runtime: &mut UiRuntime,
     app: Entity<App>,
-    fonts: &mut UiFonts<'_>,
+    fonts: &mut UiFonts,
     images: UiImages,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
@@ -1406,11 +1408,8 @@ fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
     Some(font)
 }
 
-fn make_fonts<'a>(
-    glyph_storage: &'a mut [u8],
-    runtime_font: Option<&'static dyn FontFace>,
-) -> UiFonts<'a> {
-    let mut fonts = FontResources::new(glyph_storage);
+fn make_fonts(runtime_font: Option<&'static dyn FontFace>) -> UiFonts {
+    let mut fonts = FontResources::default();
 
     assert_eq!(fonts.register(&BODY_FONT).unwrap(), FontId::DEFAULT,);
     assert_eq!(fonts.register(&HEADING_FONT).unwrap(), FontId::new(1),);
@@ -1428,9 +1427,8 @@ fn main() {
 
     let mut runtime = UiRuntime::default();
 
-    let mut glyph_storage = [0u8; 16 * 1024];
     let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
-    let mut fonts = make_fonts(&mut glyph_storage, runtime_font);
+    let mut fonts = make_fonts(runtime_font);
 
     let mut images = UiImages::default();
     let demo_image = images

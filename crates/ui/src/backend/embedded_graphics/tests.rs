@@ -18,13 +18,15 @@ use crate::{
     *,
 };
 
+const TEST_GLYPH_CACHE_BYTES: usize = 4096;
 static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 
-fn test_font_resources(storage: &mut [u8]) -> FontResources<'static, '_, 1, 64> {
-    let mut resources = FontResources::new(storage);
+fn test_font_resources() -> FontResources<'static, 1, 64, TEST_GLYPH_CACHE_BYTES> {
+    let mut resources = FontResources::default();
 
     let id = resources.register(&TEST_FONT_FACE).unwrap();
-    assert_eq!(id, FontId::DEFAULT,);
+
+    assert_eq!(id, FontId::DEFAULT);
 
     resources
 }
@@ -34,8 +36,7 @@ fn embedded_graphics_backend_rasterizes_box() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter =
             EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -69,8 +70,7 @@ fn embedded_graphics_backend_rasterizes_box() {
 fn text_measurement_wraps_at_word_boundaries() {
     let mut display = MockDisplay::<Rgb888>::new();
 
-    let mut glyph_storage = [0; 4096];
-    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut fonts = test_font_resources();
     let painter =
         EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -90,8 +90,7 @@ fn text_measurement_wraps_at_word_boundaries() {
 fn custom_line_height_affects_multiline_measurement() {
     let mut display = MockDisplay::<Rgb888>::new();
 
-    let mut glyph_storage = [0; 4096];
-    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut fonts = test_font_resources();
     let painter =
         EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -134,8 +133,7 @@ fn centered_text_line_is_offset_inside_bounds() {
 fn max_lines_limits_measured_height() {
     let mut display = MockDisplay::<Rgb888>::new();
 
-    let mut glyph_storage = [0; 4096];
-    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut fonts = test_font_resources();
     let painter =
         EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -156,8 +154,7 @@ fn max_lines_limits_measured_height() {
 fn ellipsis_respects_available_width() {
     let mut display = MockDisplay::<Rgb888>::new();
 
-    let mut glyph_storage = [0; 4096];
-    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut fonts = test_font_resources();
     let painter =
         EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -177,8 +174,7 @@ fn ellipsis_respects_available_width() {
 fn wrapped_text_can_be_clamped_with_ellipsis() {
     let mut display = MockDisplay::<Rgb888>::new();
 
-    let mut glyph_storage = [0; 4096];
-    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut fonts = test_font_resources();
     let painter =
         EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -297,8 +293,7 @@ fn embedded_graphics_backend_draws_registered_image() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
@@ -336,8 +331,7 @@ fn embedded_graphics_backend_clips_image_to_layout_bounds() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
@@ -376,8 +370,7 @@ fn embedded_graphics_backend_combines_image_bounds_with_ancestor_clip() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
@@ -416,8 +409,7 @@ fn embedded_graphics_backend_scales_image_with_contain() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
@@ -463,8 +455,7 @@ fn embedded_graphics_backend_draws_canvas_at_visual_origin() {
     display.set_allow_overdraw(true);
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter =
             EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -497,8 +488,7 @@ fn embedded_graphics_backend_clips_custom_drawing_to_canvas_bounds() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter =
             EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -528,8 +518,7 @@ fn embedded_graphics_backend_combines_canvas_and_ancestor_clipping() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter =
             EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -568,8 +557,7 @@ fn embedded_graphics_backend_clears_only_partial_damage() {
         .unwrap();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter =
             EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -610,8 +598,7 @@ fn embedded_graphics_backend_full_damage_clears_target() {
         .unwrap();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter =
             EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
 
@@ -633,8 +620,7 @@ fn embedded_graphics_backend_full_damage_clears_target() {
 #[test]
 fn embedded_graphics_backend_draws_text_through_font_resources() {
     let mut display = MockDisplay::<Rgb888>::new();
-    let mut glyph_storage = [0u8; 4096];
-    let mut fonts = test_font_resources(&mut glyph_storage);
+    let mut fonts = test_font_resources();
 
     {
         let mut painter =
@@ -740,8 +726,7 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
     let mut left_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
 
         let mut painter = EmbeddedGraphicsPainter::new(&mut left_display, &mut fonts, images);
 
@@ -763,8 +748,7 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
     let mut right_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
 
         let mut painter = EmbeddedGraphicsPainter::new(&mut right_display, &mut fonts, images);
 
@@ -804,8 +788,7 @@ fn embedded_graphics_backend_bilinear_sampling_blends_neighboring_pixels() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
 
         painter
@@ -856,8 +839,7 @@ fn embedded_graphics_backend_bilinear_sampling_is_stable_when_clipped() {
     let mut full_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter = EmbeddedGraphicsPainter::new(&mut full_display, &mut fonts, images);
 
         painter.draw_image(source, bounds, paint, None).unwrap();
@@ -868,8 +850,7 @@ fn embedded_graphics_backend_bilinear_sampling_is_stable_when_clipped() {
     let mut clipped_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
         let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display, &mut fonts, images);
 
         painter
@@ -913,8 +894,7 @@ fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
     let mut full_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
 
         let mut painter = EmbeddedGraphicsPainter::new(&mut full_display, &mut fonts, images);
 
@@ -926,8 +906,7 @@ fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
     let mut clipped_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut glyph_storage = [0; 4096];
-        let mut fonts = test_font_resources(&mut glyph_storage);
+        let mut fonts = test_font_resources();
 
         let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display, &mut fonts, images);
 

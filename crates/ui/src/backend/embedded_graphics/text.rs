@@ -14,8 +14,9 @@ use super::{
 
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
 
-impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const IMAGES: usize> TextMeasurer
-    for EmbeddedGraphicsPainter<'_, '_, '_, '_, '_, D, FONTS, GLYPH_SLOTS, IMAGES>
+impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
+    TextMeasurer
+    for EmbeddedGraphicsPainter<'_, '_, '_, '_, D, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>
 where
     D: EgDrawTarget,
 {
@@ -70,13 +71,18 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn draw_text_to<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
+pub(super) fn draw_text_to<
+    D,
+    const FONTS: usize,
+    const GLYPH_SLOTS: usize,
+    const GLYPH_BYTES: usize,
+>(
     target: &mut D,
     text: &str,
     bounds: Rect,
     clip: Rect,
     registry: &FontRegistry<'_, FONTS>,
-    font_resources: &mut FontResources<'_, '_, FONTS, GLYPH_SLOTS>,
+    font_resources: &mut FontResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
     font_id: FontId,
     font: &dyn FontFace,
     style: ResolvedTextStyle,
@@ -200,9 +206,9 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_shaped_run<D, const FONTS: usize, const GLYPH_SLOTS: usize>(
+fn draw_shaped_run<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize>(
     target: &mut D,
-    font_resources: &mut FontResources<'_, '_, FONTS, GLYPH_SLOTS>,
+    font_resources: &mut FontResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
     size_px: u16,
     run: &ShapedRun<'_>,
     baseline: Pixels,

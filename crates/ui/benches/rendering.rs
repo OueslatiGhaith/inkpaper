@@ -55,7 +55,7 @@ impl Painter for NullPainter {
         &mut self,
         _: ImageSource,
         _: Rect,
-        _: ImageFit,
+        _: ImagePaint,
         _: Option<Rect>,
     ) -> Result<(), Self::Error> {
         Ok(())
