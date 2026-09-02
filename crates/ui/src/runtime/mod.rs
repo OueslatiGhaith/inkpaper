@@ -16,6 +16,9 @@ use crate::{
     resources::RuntimeResources,
 };
 
+mod builder;
+pub use builder::RuntimeBuilder;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameBuildError {
     Mount(MountError),
