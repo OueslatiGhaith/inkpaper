@@ -11,18 +11,22 @@ mod navigation;
 mod package;
 mod path;
 mod source;
+mod xhtml;
 mod xml;
 
-pub use error::{ArchiveError, ContainerError, Error, NavigationError, PackageError};
+pub use error::{ArchiveError, ContainerError, Error, NavigationError, PackageError, XhtmlError};
 pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};
 pub use path::{ArchivePath, PathError};
 pub use source::{EpubSource, SliceSource, SliceSourceError};
+pub use xhtml::{BlockKind, Chapter, ChapterBlock, Inline, InlineStyle, LinkTarget, TextRun};
 
 use archive::Archive;
 use container::parse_container;
 use navigation::{parse_nav, parse_ncx};
 use package::parse_package;
+
+use crate::xhtml::parse_xhtml;
 
 #[derive(Debug, Clone, Copy)]
 enum NavigationFormat {
@@ -138,6 +142,45 @@ where
 
     pub fn into_source(self) -> S {
         self.archive.into_source()
+    }
+
+    pub async fn load_chapter(
+        &mut self,
+        path: &ArchivePath,
+    ) -> Result<Option<Chapter>, Error<S::Error>> {
+        let Some((path, media_type)) = self.package.manifest_item_by_path(path).map(|item| {
+            (
+                item.path().clone(),
+                alloc::string::String::from(item.media_type()),
+            )
+        }) else {
+            return Ok(None);
+        };
+
+        if media_type != "application/xhtml+xml" {
+            return Err(Error::Xhtml(XhtmlError::UnsupportedMediaType));
+        }
+
+        let bytes = self.archive.read_entry(&path).await?;
+        let xml = core::str::from_utf8(&bytes).map_err(Error::Utf8)?;
+        let chapter = parse_xhtml(xml, path).map_err(Error::Xhtml)?;
+
+        Ok(Some(chapter))
+    }
+
+    pub async fn load_spine_chapter(
+        &mut self,
+        index: usize,
+    ) -> Result<Option<Chapter>, Error<S::Error>> {
+        let Some(path) = self
+            .package
+            .spine_manifest_item(index)
+            .map(|item| item.path().clone())
+        else {
+            return Ok(None);
+        };
+
+        self.load_chapter(&path).await
     }
 }
 

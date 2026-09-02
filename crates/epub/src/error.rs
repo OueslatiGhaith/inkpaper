@@ -10,6 +10,7 @@ pub enum Error<E> {
     Container(ContainerError),
     Package(PackageError),
     Navigation(NavigationError),
+    Xhtml(XhtmlError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,4 +48,12 @@ pub enum PackageError {
 pub enum NavigationError {
     Xml(xmlparser::Error),
     Path(PathError),
+}
+
+#[derive(Debug)]
+pub enum XhtmlError {
+    Xml(xmlparser::Error),
+    Path(PathError),
+    MissingBody,
+    UnsupportedMediaType,
 }

@@ -1,4 +1,4 @@
-use epub::{ArchivePath, Epub, SliceSource};
+use epub::{ArchivePath, BlockKind, Epub, Inline, SliceSource};
 use futures_lite::future;
 use miniz_oxide::deflate::compress_to_vec;
 
@@ -99,6 +99,39 @@ fn reads_declared_manifest_and_spine_resources() {
     // resource API must not expose arbitrary archive entries.
     assert!(
         future::block_on(epub.read_resource(&mimetype))
+            .unwrap()
+            .is_none(),
+    );
+}
+
+#[test]
+fn loads_spine_xhtml_as_normalized_chapter() {
+    let bytes = build_test_epub(DEFLATED);
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(chapter.path().as_str(), "OPS/Text/chapter1.xhtml");
+    assert_eq!(chapter.blocks().len(), 1);
+
+    let block = &chapter.blocks()[0];
+
+    assert_eq!(block.kind(), BlockKind::Paragraph);
+    assert_eq!(block.inlines().len(), 1);
+
+    let Inline::Text(text) = &block.inlines()[0] else {
+        panic!("expected chapter text");
+    };
+
+    assert_eq!(text.text(), "One");
+    assert!(!text.style().bold());
+    assert!(!text.style().italic());
+    assert!(text.link().is_none());
+    assert!(
+        future::block_on(epub.load_spine_chapter(99))
             .unwrap()
             .is_none(),
     );
