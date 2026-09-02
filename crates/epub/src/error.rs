@@ -9,6 +9,7 @@ pub enum Error<E> {
     Utf8(Utf8Error),
     Container(ContainerError),
     Package(PackageError),
+    Navigation(NavigationError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,4 +41,10 @@ pub enum PackageError {
     MissingManifestAttribute(&'static str),
     MissingSpineIdref,
     InvalidSpineLinear,
+}
+
+#[derive(Debug)]
+pub enum NavigationError {
+    Xml(xmlparser::Error),
+    Path(PathError),
 }

@@ -1,3 +1,5 @@
+#[allow(async_fn_in_trait)]
+#[allow(clippy::len_without_is_empty)]
 pub trait EpubSource {
     type Error;
 

@@ -5,22 +5,28 @@ extern crate alloc;
 mod archive;
 mod container;
 mod error;
+mod navigation;
 mod package;
 mod path;
 mod source;
 mod xml;
 
-pub use error::{ArchiveError, ContainerError, Error, PackageError};
-
+pub use error::{ArchiveError, ContainerError, Error, NavigationError, PackageError};
+pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};
-
 pub use path::{ArchivePath, PathError};
-
 pub use source::{EpubSource, SliceSource, SliceSourceError};
 
 use archive::Archive;
 use container::parse_container;
+use navigation::{parse_nav, parse_ncx};
 use package::parse_package;
+
+#[derive(Debug, Clone, Copy)]
+enum NavigationFormat {
+    Epub3Nav,
+    Ncx,
+}
 
 pub struct Epub<S> {
     archive: Archive<S>,
@@ -64,7 +70,46 @@ where
         self.package.spine()
     }
 
+    pub async fn load_navigation(&mut self) -> Result<Option<Navigation>, Error<S::Error>> {
+        let Some((path, format)) = navigation_resource(&self.package) else {
+            return Ok(None);
+        };
+
+        let bytes = self.archive.read_entry(&path).await?;
+        let xml = core::str::from_utf8(&bytes).map_err(Error::Utf8)?;
+
+        let navigation = match format {
+            NavigationFormat::Epub3Nav => parse_nav(xml, path),
+            NavigationFormat::Ncx => parse_ncx(xml, path),
+        }
+        .map_err(Error::Navigation)?;
+
+        Ok(Some(navigation))
+    }
+
     pub fn into_source(self) -> S {
         self.archive.into_source()
     }
+}
+
+fn navigation_resource(package: &Package) -> Option<(ArchivePath, NavigationFormat)> {
+    if let Some(item) = package
+        .manifest()
+        .iter()
+        .find(|item| item.has_property("nav"))
+    {
+        return Some((item.path().clone(), NavigationFormat::Epub3Nav));
+    }
+
+    if let Some(toc_id) = package.spine().toc()
+        && let Some(item) = package.manifest_item(toc_id)
+    {
+        return Some((item.path().clone(), NavigationFormat::Ncx));
+    }
+
+    package
+        .manifest()
+        .iter()
+        .find(|item| item.media_type() == "application/x-dtbncx+xml")
+        .map(|item| (item.path().clone(), NavigationFormat::Ncx))
 }
