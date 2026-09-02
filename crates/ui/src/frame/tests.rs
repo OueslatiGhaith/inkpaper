@@ -1,4 +1,3 @@
-
 use core::{any::TypeId, cell::Cell};
 use std::string::String;
 
@@ -49,6 +48,7 @@ fn state_id<const NODES: usize, const TEXT_BYTES: usize>(
         .expect("element should have resolved state identity")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_frame<
     Root,
     const NODES: usize,
