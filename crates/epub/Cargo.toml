@@ -1,0 +1,11 @@
+[package]
+name = "epub"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+xmlparser = { version = "0.13.6", default-features = false }
+
+[dev-dependencies]
+futures-lite = "2.6.1"
