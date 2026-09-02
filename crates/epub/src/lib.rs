@@ -19,7 +19,10 @@ pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};
 pub use path::{ArchivePath, PathError};
 pub use source::{EpubSource, SliceSource, SliceSourceError};
-pub use xhtml::{BlockKind, Chapter, ChapterBlock, Inline, InlineStyle, LinkTarget, TextRun};
+pub use xhtml::{
+    BlockKind, Chapter, ChapterBlock, Inline, InlineStyle, LinkTarget, StyleNode, StyleNodeId,
+    StylesheetSource, TextRun,
+};
 
 use archive::Archive;
 use container::parse_container;

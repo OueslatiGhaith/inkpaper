@@ -4,7 +4,10 @@ use xmlparser::{ElementEnd, Token, Tokenizer};
 
 use crate::{ArchivePath, XhtmlError, xml::decode_xml_value};
 
-use super::{BlockKind, Chapter, ChapterBlock, ChapterBlockBuilder, InlineStyle, LinkTarget};
+use super::{
+    BlockKind, Chapter, ChapterBlock, ChapterBlockBuilder, InlineStyle, LinkTarget, StyleNode,
+    StyleNodeId, StylesheetSource,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ElementKind {
@@ -16,6 +19,8 @@ enum ElementKind {
     Emphasis,
     Anchor,
     Break,
+    Stylesheet,
+    StylesheetLink,
     BlockBoundary,
     Ignored,
     Other,
@@ -38,18 +43,19 @@ impl ElementKind {
             "li" => Self::ListItem,
 
             "strong" | "b" => Self::Strong,
-
             "em" | "i" => Self::Emphasis,
 
             "a" => Self::Anchor,
-
             "br" => Self::Break,
+
+            "style" => Self::Stylesheet,
+            "link" => Self::StylesheetLink,
 
             "div" | "section" | "article" | "aside" | "main" | "header" | "footer" | "nav"
             | "blockquote" | "ul" | "ol" | "dl" | "dt" | "dd" | "pre" | "table" | "thead"
             | "tbody" | "tfoot" | "tr" | "td" | "th" => Self::BlockBoundary,
 
-            "script" | "style" | "svg" | "math" => Self::Ignored,
+            "script" | "svg" | "math" => Self::Ignored,
 
             _ => Self::Other,
         }
@@ -66,19 +72,29 @@ impl ElementKind {
 }
 
 struct PendingElement {
+    local_name: String,
     kind: ElementKind,
+
     id: Option<String>,
-    name: Option<String>,
+    classes: Option<String>,
+    inline_style: Option<String>,
+
+    anchor_name: Option<String>,
     href: Option<String>,
+    rel: Option<String>,
 }
 
 impl PendingElement {
-    fn new(kind: ElementKind) -> Self {
+    fn new(local_name: &str) -> Self {
         Self {
-            kind,
+            local_name: String::from(local_name),
+            kind: ElementKind::from_name(local_name),
             id: None,
-            name: None,
+            classes: None,
+            inline_style: None,
+            anchor_name: None,
             href: None,
+            rel: None,
         }
     }
 }
@@ -86,6 +102,16 @@ impl PendingElement {
 struct ActiveLink {
     depth: usize,
     target: LinkTarget,
+}
+
+struct ActiveStyleNode {
+    depth: usize,
+    id: StyleNodeId,
+}
+
+struct StylesheetCapture {
+    depth: usize,
+    css: String,
 }
 
 struct XhtmlParser {
@@ -100,7 +126,6 @@ struct XhtmlParser {
     pending: Option<PendingElement>,
 
     current: Option<ChapterBlockBuilder>,
-
     blocks: Vec<ChapterBlock>,
 
     pending_anchors: Vec<String>,
@@ -109,6 +134,11 @@ struct XhtmlParser {
     italic_depth: usize,
 
     active_link: Option<ActiveLink>,
+
+    style_nodes: Vec<StyleNode>,
+    style_stack: Vec<ActiveStyleNode>,
+    stylesheets: Vec<StylesheetSource>,
+    stylesheet_capture: Option<StylesheetCapture>,
 }
 
 impl XhtmlParser {
@@ -126,12 +156,16 @@ impl XhtmlParser {
             bold_depth: 0,
             italic_depth: 0,
             active_link: None,
+            style_nodes: Vec::new(),
+            style_stack: Vec::new(),
+            stylesheets: Vec::new(),
+            stylesheet_capture: None,
         }
     }
 
     fn element_start(&mut self, name: &str) {
         self.depth = self.depth.saturating_add(1);
-        self.pending = Some(PendingElement::new(ElementKind::from_name(name)));
+        self.pending = Some(PendingElement::new(name));
     }
 
     fn attribute(&mut self, name: &str, value: &str) {
@@ -141,11 +175,21 @@ impl XhtmlParser {
 
         match name {
             "id" => element.id = Some(decode_xml_value(value)),
+            "class" => element.classes = Some(decode_xml_value(value)),
+            "style" => element.inline_style = Some(decode_xml_value(value)),
             "name" if element.kind == ElementKind::Anchor => {
-                element.name = Some(decode_xml_value(value));
+                element.anchor_name = Some(decode_xml_value(value));
             }
-            "href" if element.kind == ElementKind::Anchor => {
+            "href"
+                if matches!(
+                    element.kind,
+                    ElementKind::Anchor | ElementKind::StylesheetLink
+                ) =>
+            {
                 element.href = Some(decode_xml_value(value));
+            }
+            "rel" if element.kind == ElementKind::StylesheetLink => {
+                element.rel = Some(decode_xml_value(value));
             }
             _ => {}
         }
@@ -156,8 +200,27 @@ impl XhtmlParser {
             return Ok(());
         };
 
+        if element.kind == ElementKind::Stylesheet {
+            if !empty {
+                self.stylesheet_capture = Some(StylesheetCapture {
+                    depth: self.depth,
+                    css: String::new(),
+                });
+            }
+
+            return Ok(());
+        }
+
+        if element.kind == ElementKind::StylesheetLink {
+            self.collect_stylesheet_link(&element)?;
+            return Ok(());
+        }
+
         if element.kind == ElementKind::Body {
             self.saw_body = true;
+
+            let _ = self.create_style_node(&element, empty);
+
             if !empty {
                 self.body_depth = Some(self.depth);
             }
@@ -181,12 +244,15 @@ impl XhtmlParser {
             return Ok(());
         }
 
+        let style_node = self.create_style_node(&element, empty);
+
         if let Some(kind) = element.kind.block_kind() {
             self.finish_current();
 
             self.current = Some(ChapterBlockBuilder::new(
                 kind,
                 if empty { None } else { Some(self.depth) },
+                style_node,
             ));
 
             self.flush_pending_anchors();
@@ -223,7 +289,7 @@ impl XhtmlParser {
                 if let Some(id) = element.id {
                     self.push_anchor(id);
                 }
-                if let Some(name) = element.name
+                if let Some(name) = element.anchor_name
                     && !name.is_empty()
                 {
                     self.push_anchor(name);
@@ -264,6 +330,8 @@ impl XhtmlParser {
             | ElementKind::Paragraph
             | ElementKind::Heading(_)
             | ElementKind::ListItem
+            | ElementKind::Stylesheet
+            | ElementKind::StylesheetLink
             | ElementKind::Ignored => {}
         }
 
@@ -272,6 +340,10 @@ impl XhtmlParser {
 
     fn close_element(&mut self, name: &str) {
         let kind = ElementKind::from_name(name);
+        if kind == ElementKind::Stylesheet {
+            self.finish_stylesheet_capture();
+            return;
+        }
 
         if let Some(ignored_depth) = self.ignored_depth {
             if ignored_depth == self.depth {
@@ -289,6 +361,7 @@ impl XhtmlParser {
             self.finish_current();
 
             self.body_depth = None;
+            self.close_style_node();
 
             return;
         }
@@ -322,12 +395,23 @@ impl XhtmlParser {
             ElementKind::BlockBoundary => {
                 self.finish_implicit_block();
             }
-
             _ => {}
         }
+
+        self.close_style_node();
     }
 
     fn text(&mut self, text: &str, cdata: bool) {
+        if let Some(capture) = &mut self.stylesheet_capture {
+            if cdata {
+                capture.css.push_str(text);
+            } else {
+                capture.css.push_str(&decode_xml_value(text));
+            }
+
+            return;
+        }
+
         if self.body_depth.is_none() || self.ignored_depth.is_some() {
             return;
         }
@@ -346,16 +430,122 @@ impl XhtmlParser {
 
         let style = InlineStyle {
             bold: self.bold_depth > 0,
-
             italic: self.italic_depth > 0,
         };
 
         let link = self.active_link.as_ref().map(|link| link.target.clone());
 
+        let style_node = self
+            .current_style_node()
+            .expect("body text must have an active style node");
+
         self.current
             .as_mut()
             .expect("chapter block exists")
-            .push_text(&text, style, link);
+            .push_text(&text, style, link, style_node);
+    }
+
+    fn create_style_node(&mut self, element: &PendingElement, empty: bool) -> StyleNodeId {
+        let parent = self.style_stack.last().map(|node| node.id);
+
+        let classes = element
+            .classes
+            .as_deref()
+            .unwrap_or("")
+            .split_ascii_whitespace()
+            .map(String::from)
+            .collect();
+
+        let id = StyleNodeId::new(self.style_nodes.len());
+
+        self.style_nodes.push(StyleNode::new(
+            parent,
+            element.local_name.clone(),
+            element.id.clone(),
+            classes,
+            element.inline_style.clone(),
+        ));
+
+        if !empty {
+            self.style_stack.push(ActiveStyleNode {
+                depth: self.depth,
+                id,
+            });
+        }
+
+        id
+    }
+
+    fn current_style_node(&self) -> Option<StyleNodeId> {
+        self.style_stack.last().map(|node| node.id)
+    }
+
+    fn close_style_node(&mut self) {
+        if self
+            .style_stack
+            .last()
+            .is_some_and(|node| node.depth == self.depth)
+        {
+            self.style_stack.pop();
+        }
+    }
+
+    fn collect_stylesheet_link(&mut self, element: &PendingElement) -> Result<(), XhtmlError> {
+        let is_stylesheet = element
+            .rel
+            .as_deref()
+            .unwrap_or("")
+            .split_ascii_whitespace()
+            .any(|relation| relation.eq_ignore_ascii_case("stylesheet"));
+
+        if !is_stylesheet {
+            return Ok(());
+        }
+
+        let Some(href) = element.href.as_deref() else {
+            return Ok(());
+        };
+
+        let target = LinkTarget::resolve(&self.path, href).map_err(XhtmlError::Path)?;
+
+        let LinkTarget::Internal { path, .. } = target else {
+            // EPUB resources are local archive resources. We don't attempt network
+            // stylesheet loading from XHTML.
+            return Ok(());
+        };
+
+        if self.stylesheets.iter().any(|source| {
+            matches!(
+                source,
+                StylesheetSource::External(existing) if existing == &path
+            )
+        }) {
+            return Ok(());
+        }
+
+        self.stylesheets.push(StylesheetSource::External(path));
+
+        Ok(())
+    }
+
+    fn finish_stylesheet_capture(&mut self) {
+        let Some(capture) = self.stylesheet_capture.take() else {
+            return;
+        };
+
+        if capture.depth != self.depth {
+            self.stylesheet_capture = Some(capture);
+            return;
+        }
+
+        let css = capture.css.trim();
+
+        if css.is_empty() {
+            return;
+        }
+
+        self.stylesheets
+            .push(StylesheetSource::Embedded(String::from(css)));
     }
 
     fn push_anchor(&mut self, anchor: String) {
@@ -365,7 +555,6 @@ impl XhtmlParser {
 
         if self.current.is_none() {
             self.queue_anchor(anchor);
-
             return;
         }
 
@@ -407,7 +596,15 @@ impl XhtmlParser {
             return;
         }
 
-        self.current = Some(ChapterBlockBuilder::new(BlockKind::Paragraph, None));
+        let style_node = self
+            .current_style_node()
+            .expect("body content must have an active style node");
+
+        self.current = Some(ChapterBlockBuilder::new(
+            BlockKind::Paragraph,
+            None,
+            style_node,
+        ));
 
         self.flush_pending_anchors();
     }
@@ -443,6 +640,8 @@ impl XhtmlParser {
         Ok(Chapter {
             path: self.path,
             blocks: self.blocks,
+            style_nodes: self.style_nodes,
+            stylesheets: self.stylesheets,
         })
     }
 }
@@ -475,7 +674,6 @@ pub(crate) fn parse_xhtml(xml: &str, path: ArchivePath) -> Result<Chapter, Xhtml
                 ..
             } => {
                 parser.element_boundary(true)?;
-
                 parser.depth = parser.depth.saturating_sub(1);
             }
             Token::ElementEnd {
@@ -483,7 +681,6 @@ pub(crate) fn parse_xhtml(xml: &str, path: ArchivePath) -> Result<Chapter, Xhtml
                 ..
             } => {
                 parser.close_element(local.as_str());
-
                 parser.depth = parser.depth.saturating_sub(1);
             }
             _ => {}

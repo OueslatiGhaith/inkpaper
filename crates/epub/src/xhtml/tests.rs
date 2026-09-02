@@ -273,3 +273,100 @@ fn xhtml_collapses_whitespace_without_inserting_space_before_punctuation() {
         "Read this note. Then continue.",
     );
 }
+
+#[test]
+fn xhtml_preserves_stylesheets_and_element_style_context() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <link
+            rel="stylesheet"
+            href="../Styles/book.css"
+        />
+
+        <style>
+            p.lead {
+                text-align: center;
+            }
+
+            .accent {
+                font-style: italic;
+            }
+        </style>
+    </head>
+
+    <body class="book">
+        <p
+            id="intro"
+            class="lead centered"
+            style="margin-top: 1em"
+        >
+            Hello
+            <span
+                class="accent"
+                style="font-weight: bold"
+            >world</span>
+        </p>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+
+    assert_eq!(chapter.stylesheets().len(), 2);
+
+    assert_eq!(
+        chapter.stylesheets()[0].external_path().unwrap().as_str(),
+        "OPS/Styles/book.css",
+    );
+
+    let embedded = chapter.stylesheets()[1].embedded_css().unwrap();
+
+    assert!(embedded.contains("p.lead"));
+    assert!(embedded.contains(".accent"));
+
+    assert_eq!(chapter.blocks().len(), 1);
+
+    let block = &chapter.blocks()[0];
+    let paragraph = chapter.style_node(block.style_node()).unwrap();
+
+    assert_eq!(paragraph.element(), "p");
+    assert_eq!(paragraph.id(), Some("intro"));
+    assert!(paragraph.has_class("lead"));
+    assert!(paragraph.has_class("centered"));
+    assert_eq!(paragraph.inline_style(), Some("margin-top: 1em"));
+
+    let body = chapter
+        .style_node(
+            paragraph
+                .parent()
+                .expect("paragraph should have the body as its parent"),
+        )
+        .unwrap();
+
+    assert_eq!(body.element(), "body");
+    assert!(body.has_class("book"));
+
+    let world = block
+        .inlines()
+        .iter()
+        .find_map(|inline| {
+            let Inline::Text(text) = inline else {
+                return None;
+            };
+
+            if text.text() == "world" {
+                Some(text)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+
+    let span = chapter.style_node(world.style_node()).unwrap();
+
+    assert_eq!(span.element(), "span");
+    assert!(span.has_class("accent"));
+    assert_eq!(span.inline_style(), Some("font-weight: bold"));
+    assert_eq!(span.parent(), Some(block.style_node()));
+}
