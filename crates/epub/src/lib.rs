@@ -8,6 +8,7 @@ mod archive;
 mod container;
 mod css;
 mod error;
+mod image;
 mod navigation;
 mod package;
 mod path;
@@ -17,13 +18,14 @@ mod xml;
 
 pub use css::{ChapterStyles, ComputedStyle, FontStyle, FontWeight, TextAlign};
 pub use error::{ArchiveError, ContainerError, Error, NavigationError, PackageError, XhtmlError};
+pub use image::ImageDimensions;
 pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};
 pub use path::{ArchivePath, PathError};
 pub use source::{EpubSource, SliceSource, SliceSourceError};
 pub use xhtml::{
-    BlockKind, Chapter, ChapterBlock, Inline, InlineStyle, LinkTarget, StyleNode, StyleNodeId,
-    StylesheetSource, TextRun,
+    BlockKind, Chapter, ChapterBlock, ChapterImage, Inline, InlineStyle, LinkTarget, StyleNode,
+    StyleNodeId, StylesheetSource, TextRun,
 };
 
 use archive::Archive;
@@ -218,6 +220,28 @@ where
         }
 
         Ok(resolve_chapter_styles(chapter, &stylesheet))
+    }
+
+    pub async fn image_dimensions(
+        &mut self,
+        path: &ArchivePath,
+    ) -> Result<Option<ImageDimensions>, Error<S::Error>> {
+        let Some((path, media_type)) = self.package.manifest_item_by_path(path).map(|item| {
+            (
+                item.path().clone(),
+                alloc::string::String::from(item.media_type()),
+            )
+        }) else {
+            return Ok(None);
+        };
+
+        if !image::supports_dimensions(&media_type) {
+            return Ok(None);
+        }
+
+        let bytes = self.archive.read_entry(&path).await?;
+
+        Ok(image::dimensions(&media_type, &bytes))
     }
 }
 

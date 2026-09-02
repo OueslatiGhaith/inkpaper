@@ -2,7 +2,7 @@ use alloc::{string::String, vec::Vec};
 
 use xmlparser::{ElementEnd, Token, Tokenizer};
 
-use crate::{ArchivePath, XhtmlError, xml::decode_xml_value};
+use crate::{ArchivePath, XhtmlError, xhtml::ChapterImage, xml::decode_xml_value};
 
 use super::{
     BlockKind, Chapter, ChapterBlock, ChapterBlockBuilder, InlineStyle, LinkTarget, StyleNode,
@@ -18,6 +18,7 @@ enum ElementKind {
     Strong,
     Emphasis,
     Anchor,
+    Image,
     Break,
     Stylesheet,
     StylesheetLink,
@@ -46,6 +47,7 @@ impl ElementKind {
             "em" | "i" => Self::Emphasis,
 
             "a" => Self::Anchor,
+            "img" => Self::Image,
             "br" => Self::Break,
 
             "style" => Self::Stylesheet,
@@ -82,6 +84,9 @@ struct PendingElement {
     anchor_name: Option<String>,
     href: Option<String>,
     rel: Option<String>,
+
+    image_src: Option<String>,
+    image_alt: Option<String>,
 }
 
 impl PendingElement {
@@ -95,6 +100,8 @@ impl PendingElement {
             anchor_name: None,
             href: None,
             rel: None,
+            image_src: None,
+            image_alt: None,
         }
     }
 }
@@ -191,6 +198,13 @@ impl XhtmlParser {
             "rel" if element.kind == ElementKind::StylesheetLink => {
                 element.rel = Some(decode_xml_value(value));
             }
+            "src" if element.kind == ElementKind::Image => {
+                element.image_src = Some(decode_xml_value(value));
+            }
+            "alt" if element.kind == ElementKind::Image => {
+                element.image_alt = Some(decode_xml_value(value));
+            }
+
             _ => {}
         }
     }
@@ -304,6 +318,46 @@ impl XhtmlParser {
                     });
                 }
             }
+
+            ElementKind::Image => {
+                if let Some(id) = element.id {
+                    self.push_anchor(id);
+                }
+
+                let Some(src) = element.image_src else {
+                    self.push_image_alt(element.image_alt, style_node);
+
+                    return Ok(());
+                };
+
+                let target = LinkTarget::resolve(&self.path, &src).map_err(XhtmlError::Path)?;
+
+                match target {
+                    LinkTarget::Internal { path, .. } => {
+                        self.ensure_implicit_block();
+
+                        let link = self.active_link.as_ref().map(|link| link.target.clone());
+                        let alt = element.image_alt.filter(|alt| !alt.is_empty());
+
+                        self.current
+                            .as_mut()
+                            .expect("chapter block exists")
+                            .push_image(ChapterImage {
+                                path,
+                                alt,
+                                style_node,
+                                link,
+                            });
+                    }
+
+                    LinkTarget::External(_) => {
+                        // InkPaper does not fetch remote EPUB resources. Preserve useful
+                        // alternative text instead.
+                        self.push_image_alt(element.image_alt, style_node);
+                    }
+                }
+            }
+
             ElementKind::Break => {
                 if let Some(id) = element.id {
                     self.push_anchor(id);
@@ -589,6 +643,26 @@ impl XhtmlParser {
         for anchor in anchors {
             block.push_anchor(anchor);
         }
+    }
+
+    fn push_image_alt(&mut self, alt: Option<String>, style_node: StyleNodeId) {
+        let Some(alt) = alt.filter(|alt| !alt.is_empty()) else {
+            return;
+        };
+
+        self.ensure_implicit_block();
+
+        let style = InlineStyle {
+            bold: self.bold_depth > 0,
+            italic: self.italic_depth > 0,
+        };
+
+        let link = self.active_link.as_ref().map(|link| link.target.clone());
+
+        self.current
+            .as_mut()
+            .expect("chapter block exists")
+            .push_text(&alt, style, link, style_node);
     }
 
     fn ensure_implicit_block(&mut self) {

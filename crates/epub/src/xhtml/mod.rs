@@ -72,6 +72,7 @@ pub enum BlockKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inline {
     Text(TextRun),
+    Image(ChapterImage),
     Break,
     Anchor(String),
 }
@@ -91,6 +92,32 @@ impl TextRun {
 
     pub const fn style(&self) -> InlineStyle {
         self.style
+    }
+
+    pub const fn style_node(&self) -> StyleNodeId {
+        self.style_node
+    }
+
+    pub const fn link(&self) -> Option<&LinkTarget> {
+        self.link.as_ref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChapterImage {
+    path: ArchivePath,
+    alt: Option<String>,
+    style_node: StyleNodeId,
+    link: Option<LinkTarget>,
+}
+
+impl ChapterImage {
+    pub fn path(&self) -> &ArchivePath {
+        &self.path
+    }
+
+    pub fn alt(&self) -> Option<&str> {
+        self.alt.as_deref()
     }
 
     pub const fn style_node(&self) -> StyleNodeId {
@@ -249,6 +276,16 @@ impl ChapterBlockBuilder {
         self.inlines.push(Inline::Break);
     }
 
+    fn push_image(&mut self, image: ChapterImage) {
+        if let Some((space_style, space_link, space_style_node)) = self.pending_space.take()
+            && self.can_precede_collapsed_space()
+        {
+            self.append_text(" ", space_style, space_link, space_style_node);
+        }
+
+        self.inlines.push(Inline::Image(image));
+    }
+
     fn push_text(
         &mut self,
         text: &str,
@@ -336,6 +373,7 @@ impl ChapterBlockBuilder {
         for inline in self.inlines.iter().rev() {
             match inline {
                 Inline::Text(text) => return !text.text.is_empty(),
+                Inline::Image(_) => return true,
                 Inline::Break => return false,
                 Inline::Anchor(_) => {}
             }

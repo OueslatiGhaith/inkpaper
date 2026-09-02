@@ -5,6 +5,11 @@ use miniz_oxide::deflate::compress_to_vec;
 const STORED: u16 = 0;
 const DEFLATED: u16 = 8;
 
+const TEST_JPEG: &[u8] = &[
+    0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x20, 0x00, 0x40, 0x03, 0x01, 0x11, 0x00, 0x02,
+    0x11, 0x00, 0x03, 0x11, 0x00,
+];
+
 struct TestEntry<'a> {
     name: &'a str,
     data: &'a [u8],
@@ -81,7 +86,7 @@ fn reads_declared_manifest_and_spine_resources() {
         .unwrap()
         .unwrap();
 
-    assert_eq!(cover, &[1, 2, 3, 4]);
+    assert_eq!(cover, TEST_JPEG);
     assert!(
         future::block_on(epub.read_manifest_resource("does-not-exist"))
             .unwrap()
@@ -172,6 +177,30 @@ fn loads_and_resolves_external_chapter_styles() {
     // the embedded stylesheet occurs after the external stylesheet and has equal
     // specificity, so source order wins.
     assert_eq!(style.text_align(), TextAlign::Right);
+}
+
+#[test]
+fn probes_manifest_image_dimensions_without_decoding_pixels() {
+    let bytes = build_test_epub(DEFLATED);
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let cover = ArchivePath::new("OPS/Images/cover.jpg").unwrap();
+
+    let dimensions = future::block_on(epub.image_dimensions(&cover))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(dimensions.width(), 64);
+    assert_eq!(dimensions.height(), 32);
+
+    let chapter = ArchivePath::new("OPS/Text/chapter1.xhtml").unwrap();
+
+    assert!(
+        future::block_on(epub.image_dimensions(&chapter))
+            .unwrap()
+            .is_none(),
+    );
 }
 
 fn build_test_epub(xml_compression: u16) -> std::vec::Vec<u8> {
@@ -272,7 +301,7 @@ fn build_test_epub(xml_compression: u16) -> std::vec::Vec<u8> {
         },
         TestEntry {
             name: "OPS/Images/cover.jpg",
-            data: &[1, 2, 3, 4],
+            data: TEST_JPEG,
             compression: STORED,
         },
         TestEntry {

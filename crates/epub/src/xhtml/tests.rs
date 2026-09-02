@@ -8,6 +8,11 @@ fn visible_text(block: &ChapterBlock) -> String {
     for inline in block.inlines() {
         match inline {
             Inline::Text(text) => output.push_str(text.text()),
+            Inline::Image(image) => {
+                if let Some(alt) = image.alt() {
+                    output.push_str(alt);
+                }
+            }
             Inline::Break => output.push('\n'),
             Inline::Anchor(_) => {}
         }
@@ -369,4 +374,74 @@ fn xhtml_preserves_stylesheets_and_element_style_context() {
     assert!(span.has_class("accent"));
     assert_eq!(span.inline_style(), Some("font-weight: bold"));
     assert_eq!(span.parent(), Some(block.style_node()));
+}
+
+#[test]
+fn xhtml_preserves_lazy_images_links_alt_text_and_style_context() {
+    const XHTML: &str = r##"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <body>
+        <p>
+            Before
+            <a href="#full-size">
+                <img
+                    id="cover"
+                    class="cover"
+                    src="../Images/cover.jpg"
+                    alt="Cover art"
+                />
+            </a>
+            after
+        </p>
+
+        <p>
+            <img
+                src="https://example.com/remote.jpg"
+                alt="Remote image"
+            />
+        </p>
+    </body>
+</html>
+"##;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+
+    assert_eq!(chapter.blocks().len(), 2);
+
+    let image = chapter.blocks()[0]
+        .inlines()
+        .iter()
+        .find_map(|inline| {
+            let Inline::Image(image) = inline else {
+                return None;
+            };
+
+            Some(image)
+        })
+        .unwrap();
+
+    assert_eq!(image.path().as_str(), "OPS/Images/cover.jpg");
+    assert_eq!(image.alt(), Some("Cover art"));
+
+    let link = image.link().unwrap();
+
+    assert_eq!(link.path().unwrap().as_str(), "OPS/Text/chapter.xhtml");
+    assert_eq!(link.fragment(), Some("full-size"));
+
+    let image_node = chapter.style_node(image.style_node()).unwrap();
+
+    assert_eq!(image_node.element(), "img");
+    assert_eq!(image_node.id(), Some("cover"));
+    assert!(image_node.has_class("cover"));
+
+    let parent = chapter.style_node(image_node.parent().unwrap()).unwrap();
+
+    assert_eq!(parent.element(), "a");
+    assert_eq!(visible_text(&chapter.blocks()[1]), "Remote image");
+    assert!(
+        chapter.blocks()[1]
+            .inlines()
+            .iter()
+            .all(|inline| { !matches!(inline, Inline::Image(_)) }),
+    );
 }
