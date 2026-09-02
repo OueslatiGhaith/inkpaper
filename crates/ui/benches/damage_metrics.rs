@@ -97,7 +97,7 @@ visual_traversal_nodes"
     );
 
     for &depth in NESTED_SCROLL_DEPTHS {
-        let (mut runtime, _, _) = setup(BenchScenario::NestedScrollFocus, depth);
+        let (mut runtime, _) = setup(BenchScenario::NestedScrollFocus, depth);
 
         runtime.reset_performance_metrics();
 
@@ -119,7 +119,7 @@ visual_traversal_nodes"
     }
 
     for &rows in SCROLL_LIST_SIZES {
-        let (mut runtime, _, _) = setup(BenchScenario::ScrollList, rows);
+        let (mut runtime, _) = setup(BenchScenario::ScrollList, rows);
 
         runtime.reset_performance_metrics();
 

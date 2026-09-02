@@ -53,15 +53,15 @@ fn press_and_release_on_same_element_dispatches_click() {
     let clicks = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let counter = runtime
-        .create({
+    runtime
+        .create_root({
             let clicks = clicks.clone();
 
             move |_| Counter { clicks }
         })
         .unwrap();
 
-    runtime.rebuild(counter).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -81,15 +81,15 @@ fn release_outside_pressed_element_does_not_dispatch_click() {
     let clicks = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let counter = runtime
-        .create({
+    runtime
+        .create_root({
             let clicks = clicks.clone();
 
             move |_| Counter { clicks }
         })
         .unwrap();
 
-    runtime.rebuild(counter).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -111,15 +111,15 @@ fn pointer_down_on_noninteractive_space_does_not_capture() {
     let clicks = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let counter = runtime
-        .create({
+    runtime
+        .create_root({
             let clicks = clicks.clone();
 
             move |_| Counter { clicks }
         })
         .unwrap();
 
-    runtime.rebuild(counter).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -181,8 +181,8 @@ fn deepest_topmost_clickable_element_wins() {
     let child_clicks = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let parent_clicks = parent_clicks.clone();
             let child_clicks = child_clicks.clone();
 
@@ -193,7 +193,7 @@ fn deepest_topmost_clickable_element_wins() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(120)), &TestTextMeasurer)
         .unwrap();
@@ -213,22 +213,22 @@ fn press_survives_rebuild_when_element_identity_is_stable() {
     let clicks = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let counter = runtime
-        .create({
+    runtime
+        .create_root({
             let clicks = clicks.clone();
 
             move |_| Counter { clicks }
         })
         .unwrap();
 
-    runtime.rebuild(counter).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(20), px(20),)));
 
-    runtime.rebuild(counter).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -315,8 +315,8 @@ fn focus_next_moves_through_clickable_elements() {
     let third = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let first = first.clone();
             let second = second.clone();
             let third = third.clone();
@@ -329,7 +329,7 @@ fn focus_next_moves_through_clickable_elements() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
@@ -356,8 +356,8 @@ fn focus_next_wraps_to_first_element() {
     let third = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let first = first.clone();
             let second = second.clone();
             let third = third.clone();
@@ -370,7 +370,7 @@ fn focus_next_wraps_to_first_element() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
@@ -392,8 +392,8 @@ fn focus_previous_wraps_to_last_element() {
     let third = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let first = first.clone();
             let second = second.clone();
             let third = third.clone();
@@ -406,7 +406,7 @@ fn focus_previous_wraps_to_last_element() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
@@ -425,8 +425,8 @@ fn focus_survives_rebuild_when_element_still_exists() {
     let third = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let first = first.clone();
             let second = second.clone();
             let third = third.clone();
@@ -439,7 +439,7 @@ fn focus_survives_rebuild_when_element_still_exists() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
@@ -447,7 +447,7 @@ fn focus_survives_rebuild_when_element_still_exists() {
     assert!(runtime.focus_next());
     assert!(runtime.focus_next());
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
@@ -465,8 +465,8 @@ fn focused_activation_uses_current_frame_listener() {
     let third = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let first = first.clone();
             let second = second.clone();
             let third = third.clone();
@@ -479,14 +479,14 @@ fn focused_activation_uses_current_frame_listener() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
@@ -502,8 +502,8 @@ fn successful_pointer_click_establishes_focus() {
     let third = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let first = first.clone();
             let second = second.clone();
             let third = third.clone();
@@ -516,7 +516,7 @@ fn successful_pointer_click_establishes_focus() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
@@ -566,14 +566,16 @@ fn focus_is_cleared_when_element_disappears() {
 
     let empty = runtime.create(|_| EmptyApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.set_root(app);
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
 
-    runtime.rebuild(empty).unwrap();
+    runtime.set_root(empty);
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
@@ -624,9 +626,9 @@ impl Render for FocusScrollApp {
 fn focus_navigation_scrolls_target_into_view() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| FocusScrollApp).unwrap();
+    runtime.create_root(|_| FocusScrollApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
         .unwrap();
@@ -716,9 +718,9 @@ impl Render for NestedFocusScrollApp {
 fn focus_scrolls_nested_containers_inside_out() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| NestedFocusScrollApp).unwrap();
+    runtime.create_root(|_| NestedFocusScrollApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(60)), &TestTextMeasurer)
         .unwrap();
@@ -779,9 +781,9 @@ impl Render for LayoutFocusScrollApp {
 fn focus_scroll_waits_for_layout_when_focus_changes_size() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| LayoutFocusScrollApp).unwrap();
+    runtime.create_root(|_| LayoutFocusScrollApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let measurer = TestTextMeasurer;
 
@@ -838,9 +840,9 @@ impl Render for ExplicitFocusApp {
 fn element_can_be_focusable_without_click_listener() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| ExplicitFocusApp).unwrap();
+    runtime.create_root(|_| ExplicitFocusApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -872,9 +874,9 @@ impl Render for ClickRemainsFocusableApp {
 fn click_listener_still_makes_element_focusable() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| ClickRemainsFocusableApp).unwrap();
+    runtime.create_root(|_| ClickRemainsFocusableApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -911,9 +913,9 @@ impl Render for GenericEventApp {
 fn arbitrary_event_can_be_bound_to_element() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| GenericEventApp).unwrap();
+    runtime.create_root(|_| GenericEventApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let root = runtime.root_node().unwrap();
     let element = runtime
@@ -960,9 +962,9 @@ impl Render for MultipleEventsApp {
 fn element_can_bind_multiple_event_types() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| MultipleEventsApp).unwrap();
+    runtime.create_root(|_| MultipleEventsApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let root = runtime.root_node().unwrap();
     let element = runtime
@@ -1003,9 +1005,9 @@ impl Render for DuplicateEventApp {
 fn element_can_bind_multiple_handlers_for_same_event() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| DuplicateEventApp).unwrap();
+    runtime.create_root(|_| DuplicateEventApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let root = runtime.root_node().unwrap();
     let element = runtime
@@ -1051,15 +1053,15 @@ fn dispatch_to_focused_invokes_matching_custom_event() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| FocusedDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1083,15 +1085,15 @@ fn dispatch_to_focused_ignores_unbound_event_type() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| FocusedDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1110,15 +1112,15 @@ fn dispatch_to_focused_without_focus_is_not_handled() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| FocusedDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(
         !runtime
@@ -1156,15 +1158,15 @@ fn dispatch_to_focused_invokes_all_matching_handlers_in_order() {
     let sequence = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let sequence = sequence.clone();
 
             move |_| MultipleDispatchApp { sequence }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
     assert!(
@@ -1215,8 +1217,8 @@ fn dispatch_to_focused_only_invokes_focused_element() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let first = first.clone();
             let second = second.clone();
 
@@ -1224,7 +1226,7 @@ fn dispatch_to_focused_only_invokes_focused_element() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
     assert!(
@@ -1277,15 +1279,15 @@ fn dispatch_at_invokes_matching_event_under_position() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| SpatialDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1304,15 +1306,15 @@ fn dispatch_at_outside_target_is_not_handled() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| SpatialDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1330,15 +1332,15 @@ fn dispatch_at_ignores_unbound_event_type() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| SpatialDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1389,8 +1391,8 @@ fn dispatch_at_prefers_topmost_matching_element() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let parent = parent.clone();
             let child = child.clone();
 
@@ -1398,7 +1400,7 @@ fn dispatch_at_prefers_topmost_matching_element() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1441,15 +1443,15 @@ fn dispatch_at_can_target_ancestor_when_child_has_no_matching_event() {
     let hits = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let hits = hits.clone();
 
             move |_| EventTypeSpatialApp { hits }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1489,15 +1491,15 @@ fn dispatch_at_respects_ancestor_clipping() {
     let hits = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let hits = hits.clone();
 
             move |_| ClippedSpatialApp { hits }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1521,15 +1523,15 @@ fn explicit_target_dispatches_custom_event() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| FocusedDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
 
@@ -1552,15 +1554,15 @@ fn event_target_survives_rebuild_when_identity_survives() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| FocusedDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
 
@@ -1568,7 +1570,7 @@ fn event_target_survives_rebuild_when_identity_survives() {
         .focused_target()
         .expect("focused element should have an event target");
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(
         runtime
@@ -1601,7 +1603,8 @@ fn event_target_becomes_stale_when_element_disappears() {
 
     let empty = runtime.create(|_| TargetEmptyApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.set_root(app);
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
 
@@ -1609,7 +1612,8 @@ fn event_target_becomes_stale_when_element_disappears() {
         .focused_target()
         .expect("focused element should have a target");
 
-    runtime.rebuild(empty).unwrap();
+    runtime.set_root(empty);
+    runtime.rebuild().unwrap();
 
     assert!(
         !runtime
@@ -1625,16 +1629,17 @@ fn stale_event_target_does_not_alias_reappearing_element() {
     let mut runtime = TestRuntime::default();
 
     let app = runtime
-        .create({
+        .create_root({
             let value = value.clone();
 
             move |_| FocusedDispatchApp { value }
         })
         .unwrap();
 
-    let empty = runtime.create(|_| TargetEmptyApp).unwrap();
+    let empty = runtime.create_root(|_| TargetEmptyApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.set_root(app);
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
 
@@ -1642,8 +1647,11 @@ fn stale_event_target_does_not_alias_reappearing_element() {
         .focused_target()
         .expect("focused element should have a target");
 
-    runtime.rebuild(empty).unwrap();
-    runtime.rebuild(app).unwrap();
+    runtime.set_root(empty);
+    runtime.rebuild().unwrap();
+
+    runtime.set_root(app);
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
 
@@ -1671,15 +1679,15 @@ fn target_at_returns_dispatchable_spatial_target() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| SpatialDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1701,15 +1709,15 @@ fn target_at_is_event_type_specific() {
     let value = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let value = value.clone();
 
             move |_| SpatialDispatchApp { value }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -1724,9 +1732,9 @@ fn target_at_is_event_type_specific() {
 fn direct_scroll_damages_only_scroll_viewport() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| FocusScrollApp).unwrap();
+    runtime.create_root(|_| FocusScrollApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
         .unwrap();
@@ -1750,9 +1758,9 @@ fn direct_scroll_damages_only_scroll_viewport() {
 fn nested_direct_scroll_damage_is_clipped_by_outer_viewport() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| NestedFocusScrollApp).unwrap();
+    runtime.create_root(|_| NestedFocusScrollApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(60)), &TestTextMeasurer)
         .unwrap();
@@ -1776,9 +1784,9 @@ fn nested_direct_scroll_damage_is_clipped_by_outer_viewport() {
 fn nested_focus_scroll_damage_collapses_to_outer_viewport() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| NestedFocusScrollApp).unwrap();
+    runtime.create_root(|_| NestedFocusScrollApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(60)), &TestTextMeasurer)
         .unwrap();
@@ -1836,15 +1844,15 @@ fn absolute_child_is_hittable_outside_unclipped_parent_bounds() {
     let clicks = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let clicks = clicks.clone();
 
             move |_| PositionedHitTestApp { clicks }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(80)), &TestTextMeasurer)
         .unwrap();
@@ -1890,15 +1898,15 @@ fn absolute_child_outside_clipping_parent_is_not_hittable() {
     let clicks = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let clicks = clicks.clone();
 
             move |_| ClippedPositionedHitTestApp { clicks }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(80)), &TestTextMeasurer)
         .unwrap();
@@ -1936,9 +1944,9 @@ impl Render for AbsoluteFocusScrollApp {
 fn focus_scrolls_nested_absolute_target_into_view() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| AbsoluteFocusScrollApp).unwrap();
+    runtime.create_root(|_| AbsoluteFocusScrollApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
         .unwrap();
@@ -1982,9 +1990,9 @@ impl Render for PositionedFocusDamageApp {
 fn positioned_element_damage_uses_final_visual_bounds() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| PositionedFocusDamageApp).unwrap();
+    runtime.create_root(|_| PositionedFocusDamageApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();

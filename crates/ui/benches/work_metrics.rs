@@ -35,11 +35,11 @@ nodes_painted"
 
     for &(scenario, sizes) in ALL_CASES {
         for &size in sizes {
-            let (mut runtime, app, mut painter) = setup(scenario, size);
+            let (mut runtime, mut painter) = setup(scenario, size);
 
             runtime.reset_performance_metrics();
 
-            runtime.rebuild(app).unwrap();
+            runtime.rebuild().unwrap();
 
             let rebuild = runtime.performance_metrics();
 

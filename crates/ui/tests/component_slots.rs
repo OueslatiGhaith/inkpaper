@@ -65,9 +65,9 @@ impl Render for App {
 fn component_can_require_typed_child_content() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.frame_node_count() >= 4);
     assert!(runtime.frame_text_bytes_used() > 0);
@@ -102,9 +102,9 @@ fn component_slot_accepts_render_once_content() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| BadgeApp).unwrap();
+    runtime.create_root(|_| BadgeApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.frame_node_count() >= 5);
     assert!(runtime.frame_text_bytes_used() > 0);
@@ -180,9 +180,9 @@ fn component_can_have_multiple_named_typed_slots() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| RowApp).unwrap();
+    runtime.create_root(|_| RowApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.frame_node_count() >= 5);
     assert!(runtime.frame_text_bytes_used() > 0);
@@ -203,9 +203,9 @@ fn named_slots_can_be_filled_in_either_order() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| ReverseSlotApp).unwrap();
+    runtime.create_root(|_| ReverseSlotApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.frame_node_count() >= 4);
     assert!(runtime.frame_text_bytes_used() > 0);

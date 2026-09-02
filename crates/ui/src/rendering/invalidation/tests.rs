@@ -55,9 +55,9 @@ impl Render for PaintFocusApp {
 fn color_only_focus_change_requires_paint_only() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| PaintFocusApp).unwrap();
+    runtime.create_root(|_| PaintFocusApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -70,9 +70,9 @@ fn color_only_focus_change_requires_paint_only() {
 fn moving_between_color_only_focus_styles_requires_paint_only() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| PaintFocusApp).unwrap();
+    runtime.create_root(|_| PaintFocusApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -118,9 +118,9 @@ impl Render for LayoutFocusApp {
 fn size_changing_focus_requires_layout() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| LayoutFocusApp).unwrap();
+    runtime.create_root(|_| LayoutFocusApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -137,9 +137,9 @@ fn size_changing_focus_requires_layout() {
 fn removing_layout_affecting_focus_still_requires_layout() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| LayoutFocusApp).unwrap();
+    runtime.create_root(|_| LayoutFocusApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -176,9 +176,9 @@ impl Render for PaintPressApp {
 fn color_only_pressed_style_requires_paint_only() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| PaintPressApp).unwrap();
+    runtime.create_root(|_| PaintPressApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -191,9 +191,9 @@ fn color_only_pressed_style_requires_paint_only() {
 fn releasing_color_only_pressed_style_requires_paint_only_without_notify() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| PaintPressApp).unwrap();
+    runtime.create_root(|_| PaintPressApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -233,9 +233,9 @@ impl Render for LayoutPressApp {
 fn size_changing_pressed_style_requires_layout() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| LayoutPressApp).unwrap();
+    runtime.create_root(|_| LayoutPressApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -266,9 +266,9 @@ impl Render for NoVisualFocusApp {
 fn focus_change_without_interaction_style_requires_no_visual_work() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| NoVisualFocusApp).unwrap();
+    runtime.create_root(|_| NoVisualFocusApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -308,15 +308,15 @@ fn application_notify_overrides_paint_invalidation_with_rebuild() {
     let clicks = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let clicks = clicks.clone();
 
             move |_| NotifyApp { clicks }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -362,9 +362,9 @@ fn focused_text_color_change_requires_paint_only() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -395,9 +395,9 @@ fn focused_font_change_requires_layout() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -428,9 +428,9 @@ fn focused_text_alignment_change_requires_paint_only() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -461,9 +461,9 @@ fn focused_text_wrap_change_requires_layout() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -572,9 +572,9 @@ fn full_damage_absorbs_partial_damage() {
 fn paint_invalidation_carries_damage() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| PaintFocusApp).unwrap();
+    runtime.create_root(|_| PaintFocusApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -603,9 +603,9 @@ fn paint_invalidation_carries_damage() {
 fn moving_focus_damages_old_and_new_elements() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| PaintFocusApp).unwrap();
+    runtime.create_root(|_| PaintFocusApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -639,9 +639,9 @@ fn moving_focus_damages_old_and_new_elements() {
 fn pressed_style_damages_only_pressed_element() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| PaintPressApp).unwrap();
+    runtime.create_root(|_| PaintPressApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
@@ -684,9 +684,9 @@ fn clip_change_keeps_previous_overflow_in_damage() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
@@ -815,9 +815,9 @@ fn merging_partial_paint_with_layout_promotes_damage_to_full() {
 fn consuming_partial_damage_records_damage_metrics() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| PaintFocusApp).unwrap();
+    runtime.create_root(|_| PaintFocusApp).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();

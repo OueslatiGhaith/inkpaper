@@ -4,7 +4,6 @@ use embedded_graphics::{
     mono_font::ascii::{FONT_6X10, FONT_10X20},
     pixelcolor::Rgb888,
 };
-use inkpaper_app::InkPaperApp;
 use inkpaper_ui::{
     RuntimeResources,
     backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
@@ -97,12 +96,11 @@ impl Presenter {
     pub fn render_initial(
         &mut self,
         runtime: &mut UiRuntime,
-        app: Entity<InkPaperApp>,
         frame: &mut [u8; FRAMEBUFFER_LEN],
     ) -> FrameUpdate {
         let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
 
-        let physical_damage = render_invalidation(runtime, app, frame, invalidation)
+        let physical_damage = render_invalidation(runtime, frame, invalidation)
             .expect("a full initial render must produce physical damage");
 
         FrameUpdate::new(RefreshRequest::Full, physical_damage)
@@ -111,7 +109,6 @@ impl Presenter {
     pub fn render_pending(
         &mut self,
         runtime: &mut UiRuntime,
-        app: Entity<InkPaperApp>,
         frame: &mut [u8; FRAMEBUFFER_LEN],
     ) -> Option<FrameUpdate> {
         let invalidation = runtime.take_render_invalidation();
@@ -119,7 +116,7 @@ impl Presenter {
             return None;
         }
 
-        let physical_damage = render_invalidation(runtime, app, frame, invalidation)?;
+        let physical_damage = render_invalidation(runtime, frame, invalidation)?;
 
         Some(FrameUpdate::new(RefreshRequest::Fast, physical_damage))
     }
@@ -127,7 +124,6 @@ impl Presenter {
 
 fn render_invalidation(
     runtime: &mut UiRuntime,
-    app: Entity<InkPaperApp>,
     frame: &mut [u8; FRAMEBUFFER_LEN],
     invalidation: RenderInvalidation,
 ) -> Option<Region> {
@@ -157,7 +153,7 @@ fn render_invalidation(
                     .expect("layout requires a mounted root");
             }
             Invalidation::Rebuild => {
-                runtime.rebuild(app).expect("UI rebuild capacity exceeded");
+                runtime.rebuild().expect("UI rebuild capacity exceeded");
                 runtime
                     .layout(DISPLAY_SIZE)
                     .expect("rebuilt UI must have a root");

@@ -230,21 +230,13 @@ fn paint_ui(
         .unwrap();
 }
 
-fn rebuild_ui(
-    runtime: &mut UiRuntime<'_>,
-    app: Entity<InkPaperApp>,
-    display: &mut SimulatorDisplay<Rgb888>,
-) {
-    runtime.rebuild(app).unwrap();
+fn rebuild_ui(runtime: &mut UiRuntime<'_>, display: &mut SimulatorDisplay<Rgb888>) {
+    runtime.rebuild().unwrap();
     layout_ui(runtime);
     paint_ui(runtime, display, DamageRegion::full());
 }
 
-fn update_ui(
-    runtime: &mut UiRuntime<'_>,
-    app: Entity<InkPaperApp>,
-    display: &mut SimulatorDisplay<Rgb888>,
-) {
+fn update_ui(runtime: &mut UiRuntime<'_>, display: &mut SimulatorDisplay<Rgb888>) {
     let invalidation = runtime.take_render_invalidation();
 
     match invalidation.kind() {
@@ -257,7 +249,7 @@ fn update_ui(
             paint_ui(runtime, display, invalidation.damage());
         }
         Invalidation::Rebuild => {
-            rebuild_ui(runtime, app, display);
+            rebuild_ui(runtime, display);
         }
     }
 }
@@ -299,11 +291,11 @@ fn main() {
     if let Some(cover) = cover_source {
         app_state = app_state.with_current_cover(cover);
     }
-    let app = runtime.create(move |_| app_state).unwrap();
+    let app = runtime.create_root(move |_| app_state).unwrap();
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, app, &mut display);
+    rebuild_ui(&mut runtime, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("InkPaper X4 Pro", &output_settings);
@@ -382,7 +374,7 @@ fn main() {
             }
         }
 
-        update_ui(&mut runtime, app, &mut display);
+        update_ui(&mut runtime, &mut display);
     }
 
     eprintln!(

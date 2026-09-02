@@ -14,16 +14,19 @@ use crate::{
     interaction::{input::ActivationState, scroll::ScrollStateTable},
     px,
     resources::RuntimeResources,
+    runtime::root::RuntimeRoot,
 };
 
 mod api;
 mod builder;
+mod root;
 
 pub use api::RuntimeApi;
 pub use builder::RuntimeBuilder;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameBuildError {
+    RootNotSet,
     Mount(MountError),
     Identity(IdentityError),
 }
@@ -59,9 +62,11 @@ pub struct Runtime<
     element_states: ElementStateTable<ELEMENT_STATES>,
     scroll_states: ScrollStateTable<ELEMENT_STATES>,
     resources: RESOURCES,
+
     notified: Cell<bool>,
     visual_invalidation: Cell<RenderInvalidation>,
     frame_generation: u32,
+    root_entity: Option<RuntimeRoot>,
     root: Option<NodeId>,
     activation: ActivationState,
     focused: Option<ElementStateId>,
@@ -95,6 +100,7 @@ where
             notified: Cell::new(false),
             visual_invalidation: Cell::new(RenderInvalidation::none()),
             frame_generation: 0,
+            root_entity: None,
             root: None,
             activation: ActivationState::default(),
             focused: None,
@@ -132,6 +138,30 @@ impl<
         )
     }
 
+    pub fn create_root<T>(
+        &mut self,
+        build: impl FnOnce(&mut Context<'_, T>) -> T,
+    ) -> Result<Entity<T>, EntityAllocError>
+    where
+        T: Render,
+    {
+        let entity = self.create(build)?;
+        self.set_root(entity);
+
+        Ok(entity)
+    }
+
+    pub fn set_root<T>(&mut self, root: Entity<T>)
+    where
+        T: Render,
+    {
+        self.root_entity = Some(RuntimeRoot::from_entity(root));
+
+        // changing the registered root requires a full rebuild, but keep the currently
+        // mounted frame alive until that rebuild occurs.
+        self.notified.set(true);
+    }
+
     pub fn update<T, R>(
         &self,
         entity: Entity<T>,
@@ -166,10 +196,9 @@ impl<
         self.frame_generation
     }
 
-    pub fn rebuild<T>(&mut self, root: Entity<T>) -> Result<(), FrameBuildError>
-    where
-        T: Render,
-    {
+    pub fn rebuild(&mut self) -> Result<(), FrameBuildError> {
+        let root_entity = self.root_entity.ok_or(FrameBuildError::RootNotSet)?;
+
         self.root = None;
         self.frame.clear();
 
@@ -181,7 +210,7 @@ impl<
         self.visual_invalidation.set(RenderInvalidation::none());
         let generation = self.next_frame_generation();
 
-        let result = self.build_frame(root, generation);
+        let result = self.build_frame(root_entity, generation);
 
         match result {
             Ok(root_node) => {
@@ -211,14 +240,11 @@ impl<
         }
     }
 
-    fn build_frame<T>(
+    fn build_frame(
         &mut self,
-        root: Entity<T>,
+        root: RuntimeRoot,
         generation: u32,
-    ) -> Result<NodeId, FrameBuildError>
-    where
-        T: Render,
-    {
+    ) -> Result<NodeId, FrameBuildError> {
         let root_node = self.frame.mount_and_expand(
             root,
             &self.entities,

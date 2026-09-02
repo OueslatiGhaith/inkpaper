@@ -239,8 +239,8 @@ fn entity_nodes_are_layout_transparent() {
     let measurer = TestTextMeasurer::new(8, 10);
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(App::new).unwrap();
-    runtime.rebuild(app).unwrap();
+    runtime.create_root(App::new).unwrap();
+    runtime.rebuild().unwrap();
 
     runtime
         .layout_with_measurer(Size::new(px(100), px(100)), &measurer)
@@ -707,9 +707,9 @@ fn vertical_scroll_moves_content_without_relayout() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let measurer = TestTextMeasurer::new(8, 10);
 
@@ -744,9 +744,9 @@ fn scroll_offset_is_clamped_to_content_extent() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer::new(8, 10))
         .unwrap();
@@ -775,9 +775,9 @@ fn scroll_offset_survives_rebuild() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let measurer = TestTextMeasurer::new(8, 10);
 
@@ -788,7 +788,7 @@ fn scroll_offset_survives_rebuild() {
     assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(20),),));
 
     runtime.take_invalidation();
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime
         .layout_with_measurer(Size::new(px(100), px(40)), &measurer)
         .unwrap();

@@ -26,7 +26,7 @@ draw_calls"
     );
 
     for &depth in NESTED_SCROLL_DEPTHS {
-        let (mut runtime, _, mut painter) = setup(BenchScenario::NestedScrollFocus, depth);
+        let (mut runtime, mut painter) = setup(BenchScenario::NestedScrollFocus, depth);
 
         assert!(
             runtime.focus_next(),
@@ -44,8 +44,7 @@ draw_calls"
         let metrics = runtime.performance_metrics();
 
         println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-            "focus_next",
+            "focus_next,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             BenchScenario::NestedScrollFocus.name(),
             depth,
             invalidation.damage().len(),
@@ -66,7 +65,7 @@ draw_calls"
     }
 
     for &rows in SCROLL_LIST_SIZES {
-        let (mut runtime, _, mut painter) = setup(BenchScenario::ScrollList, rows);
+        let (mut runtime, mut painter) = setup(BenchScenario::ScrollList, rows);
 
         assert!(
             runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(16),),),
@@ -84,8 +83,7 @@ draw_calls"
         let metrics = runtime.performance_metrics();
 
         println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-            "scroll_at",
+            "scroll_at,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             BenchScenario::ScrollList.name(),
             rows,
             invalidation.damage().len(),

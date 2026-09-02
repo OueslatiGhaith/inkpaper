@@ -50,13 +50,13 @@ impl Render for IdentityKinds {
 fn every_element_kind_can_receive_identity() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create(|_| IdentityKinds {
+    runtime
+        .create_root(|_| IdentityKinds {
             conditional_content: true,
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let mut targets = [None; 5];
 
@@ -105,15 +105,15 @@ fn reidentifying_wrapped_element_preserves_interactivity() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let activations = activations.clone();
 
             move |_| ReidentifiedApp { activations }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
     runtime.take_invalidation();

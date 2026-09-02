@@ -31,28 +31,28 @@ impl Render for ConditionalChildren {
 fn when_can_change_the_concrete_builder_type() {
     let mut without_footer = TestRuntime::default();
 
-    let app = without_footer
-        .create(|_| ConditionalChildren {
+    without_footer
+        .create_root(|_| ConditionalChildren {
             show_footer: false,
             highlighted: false,
         })
         .unwrap();
 
-    without_footer.rebuild(app).unwrap();
+    without_footer.rebuild().unwrap();
 
     let nodes_without_footer = without_footer.frame_node_count();
     let text_without_footer = without_footer.frame_text_bytes_used();
 
     let mut with_footer = TestRuntime::default();
 
-    let app = with_footer
-        .create(|_| ConditionalChildren {
+    with_footer
+        .create_root(|_| ConditionalChildren {
             show_footer: true,
             highlighted: true,
         })
         .unwrap();
 
-    with_footer.rebuild(app).unwrap();
+    with_footer.rebuild().unwrap();
 
     assert_eq!(with_footer.frame_node_count(), nodes_without_footer + 1);
     assert_eq!(
@@ -101,24 +101,24 @@ impl Render for OptionalContent {
 fn when_some_adds_content_only_for_some_values() {
     let mut without_message = TestRuntime::default();
 
-    let app = without_message
-        .create(|_| OptionalContent { message: None })
+    without_message
+        .create_root(|_| OptionalContent { message: None })
         .unwrap();
 
-    without_message.rebuild(app).unwrap();
+    without_message.rebuild().unwrap();
 
     let nodes_without_message = without_message.frame_node_count();
     let text_without_message = without_message.frame_text_bytes_used();
 
     let mut with_message = TestRuntime::default();
 
-    let app = with_message
-        .create(|_| OptionalContent {
+    with_message
+        .create_root(|_| OptionalContent {
             message: Some("Ready"),
         })
         .unwrap();
 
-    with_message.rebuild(app).unwrap();
+    with_message.rebuild().unwrap();
 
     assert_eq!(with_message.frame_node_count(), nodes_without_message + 1);
     assert_eq!(
@@ -177,8 +177,8 @@ fn conditional_composition_preserves_interaction_capabilities() {
     let activations = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let activations = activations.clone();
 
             move |_| InteractiveConditional {
@@ -188,7 +188,7 @@ fn conditional_composition_preserves_interaction_capabilities() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
     runtime.take_invalidation();

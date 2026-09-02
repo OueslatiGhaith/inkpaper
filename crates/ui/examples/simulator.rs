@@ -50,7 +50,6 @@ struct DemoImage;
 static DEMO_IMAGE: DemoImage = DemoImage;
 static DEMO_IMAGE_RESOURCE: EmbeddedGraphicsImage<'static, DemoImage> =
     EmbeddedGraphicsImage::new(&DEMO_IMAGE);
-type UiImages = ImageRegistry<'static, 1>;
 
 impl OriginDimensions for DemoImage {
     fn size(&self) -> EgSize {
@@ -1283,7 +1282,7 @@ fn to_ui_point(point: EgPoint) -> Point {
     Point::new(px(point.x), px(point.y))
 }
 
-fn update_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorDisplay<Rgb888>) {
+fn update_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
     let invalidation = runtime.take_render_invalidation();
     match invalidation.kind() {
         Invalidation::None => {}
@@ -1292,7 +1291,7 @@ fn update_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorD
             layout_ui(runtime);
             paint_ui(runtime, display, invalidation.damage());
         }
-        Invalidation::Rebuild => rebuild_ui(runtime, app, display),
+        Invalidation::Rebuild => rebuild_ui(runtime, display),
     }
 }
 
@@ -1314,8 +1313,8 @@ fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, dam
         .unwrap();
 }
 
-fn rebuild_ui(runtime: &mut UiRuntime, app: Entity<App>, display: &mut SimulatorDisplay<Rgb888>) {
-    runtime.rebuild(app).unwrap();
+fn rebuild_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
+    runtime.rebuild().unwrap();
     layout_ui(runtime);
     paint_ui(runtime, display, DamageRegion::full());
 }
@@ -1413,19 +1412,15 @@ fn main() {
     let mut runtime = UiRuntime::default();
 
     let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
-    let mut fonts = register_resources(&mut runtime, runtime_font);
 
-    let mut images = UiImages::default();
-    let demo_image = images
-        .register(&DEMO_IMAGE_RESOURCE)
-        .expect("demo image slot must fit");
+    let demo_image = register_resources(&mut runtime, runtime_font);
 
-    let app = runtime
-        .create(|cx| App::new(cx, text_demo_font, demo_image))
+    let _app = runtime
+        .create_root(|cx| App::new(cx, text_demo_font, demo_image))
         .unwrap();
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, app, &mut display);
+    rebuild_ui(&mut runtime, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
     let mut window = Window::new(
@@ -1476,6 +1471,6 @@ fn main() {
             }
         }
 
-        update_ui(&mut runtime, app, &mut display);
+        update_ui(&mut runtime, &mut display);
     }
 }

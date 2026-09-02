@@ -404,21 +404,18 @@ impl Element for NestedScrollFocus {
     }
 }
 
-pub fn setup(
-    scenario: BenchScenario,
-    size: usize,
-) -> (Box<BenchRuntime>, Entity<BenchApp>, BenchPainter) {
+pub fn setup(scenario: BenchScenario, size: usize) -> (Box<BenchRuntime>, BenchPainter) {
     let mut runtime = Box::new(BenchRuntime::default());
 
-    let app = runtime
-        .create(move |_| BenchApp { scenario, size })
+    runtime
+        .create_root(move |_| BenchApp { scenario, size })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let painter = BenchPainter::default();
 
     runtime.layout_with_measurer(VIEWPORT, &painter).unwrap();
 
-    (runtime, app, painter)
+    (runtime, painter)
 }

@@ -556,9 +556,9 @@ fn entity_canvas_can_draw_from_entity_state() {
 
     let mut runtime = TestRuntime::default();
 
-    let gauge = runtime.create(|_| Gauge { value: px(37) }).unwrap();
+    runtime.create_root(|_| Gauge { value: px(37) }).unwrap();
 
-    runtime.rebuild(gauge).unwrap();
+    runtime.rebuild().unwrap();
 
     let mut painter = RecordingPainter::default();
 
@@ -604,14 +604,14 @@ fn entity_canvas_callback_can_capture_render_data() {
 
     let mut runtime = TestRuntime::default();
 
-    let gauge = runtime
-        .create(|_| Gauge {
+    runtime
+        .create_root(|_| Gauge {
             value: px(25),
             inset: px(4),
         })
         .unwrap();
 
-    runtime.rebuild(gauge).unwrap();
+    runtime.rebuild().unwrap();
 
     let mut painter = RecordingPainter::default();
 
@@ -810,9 +810,9 @@ fn damage_paint_prunes_subtree_when_inherited_clip_misses_damage() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let mut painter = RecordingPainter::default();
 

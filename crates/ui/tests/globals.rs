@@ -40,15 +40,15 @@ fn persistent_component_can_read_global() {
 
     runtime.set_global(Theme { value: 42 }).unwrap();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let observed = observed.clone();
 
             move |_| ReadsTheme { observed }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert_eq!(observed.get(), 42,);
 }
@@ -87,15 +87,15 @@ fn render_once_component_can_read_global() {
 
     runtime.set_global(Theme { value: 61 }).unwrap();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let observed = observed.clone();
 
             move |_| RenderOnceApp { observed }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert_eq!(observed.get(), 61,);
 }
@@ -126,15 +126,15 @@ fn event_callback_can_read_global() {
 
     runtime.set_global(Theme { value: 73 }).unwrap();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let observed = observed.clone();
 
             move |_| CallbackApp { observed }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
 
@@ -229,9 +229,9 @@ fn global_capacity_is_independent_from_entity_capacity() {
      * If globals consumed entity slots, these two globals would have exhausted
      * a runtime configured with only one entity slot.
      */
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert_eq!(runtime.global_count(), 2,);
 

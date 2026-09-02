@@ -77,12 +77,12 @@ impl Render for App {
 fn performance_metrics_track_rebuild_layout_and_paint_work() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App).unwrap();
+    runtime.create_root(|_| App).unwrap();
 
     let painter = TestPainter;
 
     runtime.reset_performance_metrics();
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let rebuild = runtime.performance_metrics();
 
@@ -153,11 +153,11 @@ fn flex_layout_scans_siblings_once_per_container() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| FlexListApp).unwrap();
+    runtime.create_root(|_| FlexListApp).unwrap();
 
     let painter = TestPainter;
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime.reset_performance_metrics();
     runtime
         .layout_with_measurer(Size::new(px(320), px(64)), &painter)
@@ -175,11 +175,11 @@ fn flex_layout_work_is_linear_in_children() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| FlexListApp).unwrap();
+    runtime.create_root(|_| FlexListApp).unwrap();
 
     let painter = TestPainter;
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
     runtime.reset_performance_metrics();
     runtime
         .layout_with_measurer(Size::new(px(320), px(64)), &painter)

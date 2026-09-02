@@ -82,7 +82,7 @@ draw_calls"
         for &depth in ScrollDepth::ALL {
             // each sample receives a fresh Runtime, so the scroll delta is also
             // the absolute target offset from zero.
-            let (mut runtime, _, mut painter) = setup(BenchScenario::ScrollList, rows);
+            let (mut runtime, mut painter) = setup(BenchScenario::ScrollList, rows);
 
             let target = depth.target_offset(maximum);
 

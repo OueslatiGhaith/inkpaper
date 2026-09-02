@@ -106,16 +106,16 @@ impl Render for ListApp {
     }
 }
 
-fn setup(rows: usize) -> (BenchRuntime, Entity<ListApp>, NullPainter) {
+fn setup(rows: usize) -> (BenchRuntime, NullPainter) {
     let mut runtime = BenchRuntime::default();
 
-    let app = runtime.create(move |_| ListApp { rows }).unwrap();
-    runtime.rebuild(app).unwrap();
+    runtime.create_root(move |_| ListApp { rows }).unwrap();
+    runtime.rebuild().unwrap();
 
     let painter = NullPainter;
     runtime.layout_with_measurer(VIEWPORT, &painter).unwrap();
 
-    (runtime, app, painter)
+    (runtime, painter)
 }
 
 fn benchmark_rebuild(c: &mut Criterion) {
@@ -124,11 +124,11 @@ fn benchmark_rebuild(c: &mut Criterion) {
     for rows in [8usize, 32, 128, 512] {
         group.throughput(Throughput::Elements(rows as u64));
 
-        let (mut runtime, app, _) = setup(rows);
+        let (mut runtime, _) = setup(rows);
 
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |bencher, _| {
             bencher.iter(|| {
-                runtime.rebuild(black_box(app)).unwrap();
+                runtime.rebuild().unwrap();
 
                 black_box(runtime.frame_node_count());
             });
@@ -144,7 +144,7 @@ fn benchmark_layout(c: &mut Criterion) {
     for rows in [8usize, 32, 128, 512] {
         group.throughput(Throughput::Elements(rows as u64));
 
-        let (mut runtime, _, painter) = setup(rows);
+        let (mut runtime, painter) = setup(rows);
 
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |bencher, _| {
             bencher.iter(|| {
@@ -166,7 +166,7 @@ fn benchmark_paint(c: &mut Criterion) {
     for rows in [8usize, 32, 128, 512] {
         group.throughput(Throughput::Elements(rows as u64));
 
-        let (mut runtime, _, mut painter) = setup(rows);
+        let (mut runtime, mut painter) = setup(rows);
 
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |bencher, _| {
             bencher.iter(|| {
@@ -184,11 +184,11 @@ fn benchmark_full_frame(c: &mut Criterion) {
     for rows in [8usize, 32, 128, 512] {
         group.throughput(Throughput::Elements(rows as u64));
 
-        let (mut runtime, app, mut painter) = setup(rows);
+        let (mut runtime, mut painter) = setup(rows);
 
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |bencher, _| {
             bencher.iter(|| {
-                runtime.rebuild(black_box(app)).unwrap();
+                runtime.rebuild().unwrap();
 
                 runtime
                     .layout_with_measurer(black_box(VIEWPORT), black_box(&painter))

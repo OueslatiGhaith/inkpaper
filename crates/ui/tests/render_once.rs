@@ -90,9 +90,9 @@ impl Render for App {
 fn render_once_component_can_be_used_as_a_child() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime.create(|_| App::new()).unwrap();
+    runtime.create_root(|_| App::new()).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.frame_node_count() > 1);
     assert!(runtime.frame_text_bytes_used() > 0);
@@ -109,9 +109,9 @@ fn render_once_component_can_borrow_from_persistent_component() {
         FontId::DEFAULT,
     );
 
-    let app = runtime.create(|_| App::new()).unwrap();
+    runtime.create_root(|_| App::new()).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 
@@ -142,9 +142,9 @@ fn render_once_components_can_nest_other_render_once_components() {
         FontId::DEFAULT,
     );
 
-    let app = runtime.create(|_| App::new()).unwrap();
+    runtime.create_root(|_| App::new()).unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 

@@ -100,8 +100,8 @@ fn render_once_component_can_receive_external_identity_and_activation() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let first_activations = first_activations.clone();
             let second_activations = second_activations.clone();
 
@@ -112,7 +112,7 @@ fn render_once_component_can_receive_external_identity_and_activation() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
     assert_eq!(runtime.take_invalidation(), Invalidation::Paint);
@@ -144,8 +144,8 @@ fn component_event_target_survives_rebuild() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let first_activations = first_activations.clone();
             let second_activations = second_activations.clone();
 
@@ -156,7 +156,7 @@ fn component_event_target_survives_rebuild() {
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
 
@@ -164,7 +164,7 @@ fn component_event_target_survives_rebuild() {
         .focused_target()
         .expect("first component should have a stable event target");
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.dispatch_to(target, &ActivateEvent).unwrap());
 

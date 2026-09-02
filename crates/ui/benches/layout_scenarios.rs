@@ -18,7 +18,7 @@ fn benchmark_layout_scenarios(criterion: &mut Criterion) {
         for &size in sizes {
             group.throughput(Throughput::Elements(size as u64));
 
-            let (mut runtime, _, painter) = setup(scenario, size);
+            let (mut runtime, painter) = setup(scenario, size);
 
             group.bench_with_input(BenchmarkId::from_parameter(size), &size, |bencher, _| {
                 bencher.iter(|| {
@@ -41,7 +41,7 @@ fn benchmark_paint_scenario(criterion: &mut Criterion, scenario: BenchScenario, 
     for &size in sizes {
         group.throughput(Throughput::Elements(size as u64));
 
-        let (mut runtime, _, mut painter) = setup(scenario, size);
+        let (mut runtime, mut painter) = setup(scenario, size);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |bencher, _| {
             bencher.iter(|| {
@@ -61,7 +61,7 @@ fn benchmark_focus_scroll_into_view(criterion: &mut Criterion) {
     for &depth in NESTED_SCROLL_DEPTHS {
         group.throughput(Throughput::Elements(depth as u64));
 
-        let (mut runtime, _, _) = setup(BenchScenario::NestedScrollFocus, depth);
+        let (mut runtime, _) = setup(BenchScenario::NestedScrollFocus, depth);
 
         // establish focus and the final scroll offsets before timing.
         //
@@ -94,11 +94,11 @@ fn benchmark_mixed_full_frame(criterion: &mut Criterion) {
     for &size in MIXED_SCREEN_SIZES {
         group.throughput(Throughput::Elements(size as u64));
 
-        let (mut runtime, app, mut painter) = setup(BenchScenario::MixedScreen, size);
+        let (mut runtime, mut painter) = setup(BenchScenario::MixedScreen, size);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |bencher, _| {
             bencher.iter(|| {
-                runtime.rebuild(black_box(app)).unwrap();
+                runtime.rebuild().unwrap();
 
                 black_box(
                     runtime
@@ -124,7 +124,7 @@ fn benchmark_scroll_hit_test(criterion: &mut Criterion) {
     for &size in SCROLL_LIST_SIZES {
         group.throughput(Throughput::Elements(size as u64));
 
-        let (mut runtime, _, _) = setup(BenchScenario::ScrollList, size);
+        let (mut runtime, _) = setup(BenchScenario::ScrollList, size);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |bencher, _| {
             bencher.iter(|| {

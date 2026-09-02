@@ -183,11 +183,13 @@ async fn main(spawner: Spawner) -> ! {
     runtime.set_global(Theme::EINK).unwrap();
 
     let model = demo_model();
-    let app = runtime.create(move |_| InkPaperApp::new(model)).unwrap();
+    let app = runtime
+        .create_root(move |_| InkPaperApp::new(model))
+        .unwrap();
     let mut presenter = Presenter::new(runtime);
 
     debug!("building UI frame...");
-    let update = presenter.render_initial(runtime, app, frame);
+    let update = presenter.render_initial(runtime, frame);
     let damage = update.physical_damage();
     defmt::debug!(
         "initial damage x={} y={} width={} height={}",
@@ -329,7 +331,7 @@ async fn main(spawner: Spawner) -> ! {
             stay_alive().await;
         }
 
-        let Some(update) = presenter.render_pending(runtime, app, frame) else {
+        let Some(update) = presenter.render_pending(runtime, frame) else {
             continue;
         };
 

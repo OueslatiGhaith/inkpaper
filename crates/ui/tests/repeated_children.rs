@@ -32,18 +32,18 @@ impl Render for ArrayChildren {
 fn children_mounts_every_item_from_an_array() {
     let mut empty_runtime = TestRuntime::default();
 
-    let empty = empty_runtime.create(|_| EmptyChildren).unwrap();
+    empty_runtime.create_root(|_| EmptyChildren).unwrap();
 
-    empty_runtime.rebuild(empty).unwrap();
+    empty_runtime.rebuild().unwrap();
 
     let empty_nodes = empty_runtime.frame_node_count();
     let empty_text = empty_runtime.frame_text_bytes_used();
 
     let mut list_runtime = TestRuntime::default();
 
-    let list = list_runtime.create(|_| ArrayChildren).unwrap();
+    list_runtime.create_root(|_| ArrayChildren).unwrap();
 
-    list_runtime.rebuild(list).unwrap();
+    list_runtime.rebuild().unwrap();
 
     assert_eq!(list_runtime.frame_node_count(), empty_nodes + 3,);
 
@@ -80,13 +80,13 @@ impl Render for BorrowedIterator {
 fn children_accepts_borrowed_iterators_of_render_once_components() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create(|_| BorrowedIterator {
+    runtime
+        .create_root(|_| BorrowedIterator {
             labels: ["Wi-Fi", "Bluetooth", "Display"],
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert_eq!(
         runtime.frame_text_bytes_used(),
@@ -119,15 +119,15 @@ impl Render for WithoutEmptyIterator {
 fn empty_children_iterator_adds_no_placeholder_node() {
     let mut with_empty = TestRuntime::default();
 
-    let app = with_empty.create(|_| EmptyIterator).unwrap();
+    with_empty.create_root(|_| EmptyIterator).unwrap();
 
-    with_empty.rebuild(app).unwrap();
+    with_empty.rebuild().unwrap();
 
     let mut without_empty = TestRuntime::default();
 
-    let app = without_empty.create(|_| WithoutEmptyIterator).unwrap();
+    without_empty.create_root(|_| WithoutEmptyIterator).unwrap();
 
-    without_empty.rebuild(app).unwrap();
+    without_empty.rebuild().unwrap();
 
     assert_eq!(
         with_empty.frame_node_count(),
@@ -170,15 +170,15 @@ fn children_composes_through_identity_and_event_wrappers() {
 
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create({
+    runtime
+        .create_root({
             let activations = activations.clone();
 
             move |_| InteractiveList { activations }
         })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert!(runtime.focus_next());
     runtime.take_invalidation();
@@ -206,11 +206,11 @@ impl Render for ConditionalList {
 fn children_composes_through_conditional_branches() {
     let mut runtime = TestRuntime::default();
 
-    let app = runtime
-        .create(|_| ConditionalList { highlighted: true })
+    runtime
+        .create_root(|_| ConditionalList { highlighted: true })
         .unwrap();
 
-    runtime.rebuild(app).unwrap();
+    runtime.rebuild().unwrap();
 
     assert_eq!(
         runtime.frame_text_bytes_used(),

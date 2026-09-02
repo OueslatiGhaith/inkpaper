@@ -748,7 +748,6 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
 fn embedded_graphics_backend_bilinear_sampling_blends_neighboring_pixels() {
     let image = FourColorImage;
 
-    let mut images = ImageRegistry::<1>::default();
     let mut resources = test_resources::<1>();
     let source = resources.register_image(&image).unwrap();
 

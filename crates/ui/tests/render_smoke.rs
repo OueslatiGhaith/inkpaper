@@ -42,8 +42,8 @@ fn full_runtime_can_render_to_simulator_display() {
         FontId::DEFAULT,
     );
 
-    let app = runtime.create(|_| App).unwrap();
-    runtime.rebuild(app).unwrap();
+    runtime.create_root(|_| App).unwrap();
+    runtime.rebuild().unwrap();
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 

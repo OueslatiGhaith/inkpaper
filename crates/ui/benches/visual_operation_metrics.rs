@@ -53,7 +53,7 @@ scroll_into_view_ancestor_visits"
     );
 
     for &depth in NESTED_SCROLL_DEPTHS {
-        let (mut runtime, _, _) = setup(BenchScenario::NestedScrollFocus, depth);
+        let (mut runtime, _) = setup(BenchScenario::NestedScrollFocus, depth);
 
         let node_count = runtime.frame_node_count();
 
@@ -76,7 +76,7 @@ scroll_into_view_ancestor_visits"
     let position = Point::new(px(8), px(8));
 
     for &rows in SCROLL_LIST_SIZES {
-        let (mut runtime, _, _) = setup(BenchScenario::ScrollList, rows);
+        let (mut runtime, _) = setup(BenchScenario::ScrollList, rows);
 
         let node_count = runtime.frame_node_count();
 
