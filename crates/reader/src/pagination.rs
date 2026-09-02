@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
 
 use inkpaper_epub::{
-    BlockKind, BookLocation, Chapter, ChapterBlock, ChapterStyles, ComputedStyle, ContentOffset,
-    Inline, SpineIndex, StyleNodeId, TextRun,
+    BlockKind, BookLocation, Chapter, ChapterBlock, ChapterImage, ChapterStyles, ComputedStyle,
+    ContentOffset, ImageDimensions, Inline, SpineIndex, StyleNodeId, TextRun,
 };
 
-use crate::{ReaderSettings, TextMeasurer, TextStyle, Viewport};
+use crate::{ImageMeasurer, ReaderSettings, TextMeasurer, TextStyle, Viewport};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PageRange {
@@ -55,7 +55,7 @@ pub fn paginate_chapter<M>(
     measurer: &mut M,
 ) -> Pagination
 where
-    M: TextMeasurer,
+    M: TextMeasurer + ImageMeasurer,
 {
     Paginator::new(chapter, styles, spine, viewport, settings, measurer).paginate()
 }
@@ -84,7 +84,7 @@ struct Paginator<'a, M> {
 
 impl<'a, M> Paginator<'a, M>
 where
-    M: TextMeasurer,
+    M: TextMeasurer + ImageMeasurer,
 {
     fn new(
         chapter: &'a Chapter,
@@ -136,9 +136,7 @@ where
                 BookLocation::new(self.spine, end),
             ));
         } else if self.page_start < end {
-            // this can happen when only hidden text follows the last visible page. Hidden
-            // content still contributes to the canonical content offset, so extend
-            // the last page's range rather than creating an empty visual page.
+            // hidden trailing content advances the canonical location without creating visual layout.
             if let Some(last) = self.pages.last_mut() {
                 last.end = BookLocation::new(self.spine, end);
             }
@@ -157,15 +155,14 @@ where
                 Inline::Text(text) => {
                     self.layout_text(block.kind(), text);
                 }
+                Inline::Image(image) => {
+                    self.layout_image(image);
+                }
                 Inline::Break => {
                     if !block_style.hidden() {
                         self.layout_break(block.kind(), block_style);
                     }
                 }
-                // images deliberately do not affect pagination yet. Their canonical text offset
-                // is already zero, and image measurement will be added through
-                // a separate reader measurement path.
-                Inline::Image(_) => {}
                 Inline::Anchor(_) => {}
             }
         }
@@ -190,6 +187,35 @@ where
         );
 
         self.layout_text_content(run.text(), style);
+    }
+
+    fn layout_image(&mut self, image: &ChapterImage) {
+        let computed = self.computed_style(image.style_node());
+
+        if computed.hidden() {
+            return;
+        }
+
+        self.flush_line();
+
+        let Some(intrinsic) = self.measurer.image_dimensions(image) else {
+            return;
+        };
+        let Some(layout) = fit_image_dimensions(intrinsic, self.viewport) else {
+            return;
+        };
+
+        let height = layout.height();
+
+        if self.used_height > 0 && self.used_height.saturating_add(height) > self.viewport.height()
+        {
+            // images consume no ContentOffset. This may intentionally produce a zero-length
+            // PageRange for an image-only page.
+            self.push_page(self.cursor);
+        }
+
+        self.used_height = self.used_height.saturating_add(height);
+        self.block_laid_out = true;
     }
 
     fn layout_text_content(&mut self, text: &str, style: TextStyle) {
@@ -424,6 +450,39 @@ where
 
         scalar_boundary(text, from)
     }
+}
+
+fn fit_image_dimensions(intrinsic: ImageDimensions, viewport: Viewport) -> Option<ImageDimensions> {
+    let mut width = intrinsic.width();
+    let mut height = intrinsic.height();
+
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    // never upscale. First fit width.
+    if width > viewport.width() {
+        height = scale_dimension(height, viewport.width(), width);
+        width = viewport.width();
+    }
+
+    // very tall images must still fit on one reader page.
+    if height > viewport.height() {
+        width = scale_dimension(width, viewport.height(), height);
+        height = viewport.height();
+    }
+
+    Some(ImageDimensions::new(width.max(1), height.max(1)))
+}
+
+fn scale_dimension(value: u32, numerator: u32, denominator: u32) -> u32 {
+    if denominator == 0 {
+        return 0;
+    }
+
+    let scaled = u64::from(value).saturating_mul(u64::from(numerator)) / u64::from(denominator);
+
+    u32::try_from(scaled).unwrap_or(u32::MAX).max(1)
 }
 
 fn scalar_boundary(text: &str, from: usize) -> Option<usize> {

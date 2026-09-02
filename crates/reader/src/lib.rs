@@ -5,7 +5,7 @@ extern crate alloc;
 mod metrics;
 mod pagination;
 
-pub use metrics::{TextMeasurer, TextStyle};
+pub use metrics::{ImageMeasurer, TextMeasurer, TextStyle};
 pub use pagination::{PageRange, Pagination, paginate_chapter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

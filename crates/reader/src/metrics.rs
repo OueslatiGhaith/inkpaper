@@ -1,4 +1,4 @@
-use inkpaper_epub::{BlockKind, FontStyle, FontWeight};
+use inkpaper_epub::{BlockKind, ChapterImage, FontStyle, FontWeight, ImageDimensions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextStyle {
@@ -47,6 +47,12 @@ pub trait TextMeasurer {
 
     fn next_boundary(&mut self, text: &str, from: usize, _style: TextStyle) -> Option<usize> {
         scalar_boundary(text, from)
+    }
+}
+
+pub trait ImageMeasurer {
+    fn image_dimensions(&mut self, _image: &ChapterImage) -> Option<ImageDimensions> {
+        None
     }
 }
 

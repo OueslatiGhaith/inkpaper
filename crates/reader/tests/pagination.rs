@@ -1,8 +1,16 @@
 use futures_lite::future;
-use inkpaper_epub::{BookLocation, ContentOffset, Epub, SliceSource, SpineIndex};
-use inkpaper_reader::{ReaderSettings, TextMeasurer, TextStyle, Viewport, paginate_chapter};
+use inkpaper_epub::{
+    BookLocation, ChapterImage, ContentOffset, Epub, ImageDimensions, Inline, SliceSource,
+    SpineIndex,
+};
+use inkpaper_reader::{
+    ImageMeasurer, ReaderSettings, TextMeasurer, TextStyle, Viewport, paginate_chapter,
+};
 
-struct MonoMeasurer;
+#[derive(Default)]
+struct MonoMeasurer {
+    image_dimensions: Option<ImageDimensions>,
+}
 
 impl TextMeasurer for MonoMeasurer {
     fn measure_text(&mut self, text: &str, _style: TextStyle) -> u32 {
@@ -13,6 +21,17 @@ impl TextMeasurer for MonoMeasurer {
         1
     }
 }
+
+impl ImageMeasurer for MonoMeasurer {
+    fn image_dimensions(&mut self, _image: &ChapterImage) -> Option<ImageDimensions> {
+        self.image_dimensions
+    }
+}
+
+const TEST_JPEG: &[u8] = &[
+    0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x20, 0x00, 0x40, 0x03, 0x01, 0x11, 0x00, 0x02,
+    0x11, 0x00, 0x03, 0x11, 0x00,
+];
 
 #[test]
 fn pagination_produces_stable_content_ranges() {
@@ -28,7 +47,7 @@ fn pagination_produces_stable_content_ranges() {
 
     assert_eq!(chapter.content_len(), ContentOffset::new(18));
 
-    let mut measurer = MonoMeasurer;
+    let mut measurer = MonoMeasurer::default();
 
     let pagination = paginate_chapter(
         &chapter,
@@ -68,7 +87,7 @@ fn repagination_changes_page_count_not_canonical_content_extent() {
 
     let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
 
-    let mut measurer = MonoMeasurer;
+    let mut measurer = MonoMeasurer::default();
 
     let narrow = paginate_chapter(
         &chapter,
@@ -124,7 +143,7 @@ fn hidden_css_text_keeps_its_content_offsets_without_using_layout_space() {
 
     assert!(content_end > ContentOffset::new(7));
 
-    let mut measurer = MonoMeasurer;
+    let mut measurer = MonoMeasurer::default();
 
     let pagination = paginate_chapter(
         &chapter,
@@ -137,6 +156,135 @@ fn hidden_css_text_keeps_its_content_offsets_without_using_layout_space() {
 
     assert_eq!(pagination.len(), 1);
     assert_eq!(pagination.pages()[0].end().offset(), content_end);
+}
+
+#[test]
+fn image_can_occupy_a_page_without_advancing_content_location() {
+    let bytes = build_test_epub(
+        r#"
+<p>one</p>
+<p>
+    <img
+        src="../Images/picture.jpg"
+        alt="Picture"
+    />
+</p>
+<p>two</p>
+"#,
+    );
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let image = chapter
+        .blocks()
+        .iter()
+        .flat_map(|block| block.inlines())
+        .find_map(|inline| {
+            let Inline::Image(image) = inline else {
+                return None;
+            };
+
+            Some(image)
+        })
+        .unwrap();
+
+    let dimensions = future::block_on(epub.image_dimensions(image.path()))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(dimensions.width(), 64);
+    assert_eq!(dimensions.height(), 32);
+    assert_eq!(chapter.content_len(), ContentOffset::new(6));
+
+    let mut measurer = MonoMeasurer {
+        image_dimensions: Some(dimensions),
+    };
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(10, 3).unwrap(),
+        ReaderSettings::new(16, 0).unwrap(),
+        &mut measurer,
+    );
+
+    assert_eq!(pagination.len(), 3);
+
+    assert_eq!(
+        pagination.pages()[0],
+        inkpaper_reader::PageRange::new(
+            BookLocation::new(SpineIndex::ZERO, ContentOffset::ZERO),
+            BookLocation::new(SpineIndex::ZERO, ContentOffset::new(3)),
+        ),
+    );
+    // the image occupies the entire second page but contributes no visible-text ContentOffset.
+    assert_eq!(
+        pagination.pages()[1],
+        inkpaper_reader::PageRange::new(
+            BookLocation::new(SpineIndex::ZERO, ContentOffset::new(3)),
+            BookLocation::new(SpineIndex::ZERO, ContentOffset::new(3)),
+        ),
+    );
+    assert_eq!(
+        pagination.pages()[2],
+        inkpaper_reader::PageRange::new(
+            BookLocation::new(SpineIndex::ZERO, ContentOffset::new(3)),
+            BookLocation::new(SpineIndex::ZERO, ContentOffset::new(6)),
+        ),
+    );
+}
+
+#[test]
+fn hidden_image_does_not_consume_page_space() {
+    let bytes = build_test_epub(
+        r#"
+<p>one</p>
+<p>
+    <img
+        src="../Images/picture.jpg"
+        style="display: none"
+    />
+</p>
+<p>two</p>
+"#,
+    );
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let mut measurer = MonoMeasurer {
+        image_dimensions: Some(ImageDimensions::new(64, 32)),
+    };
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(10, 2).unwrap(),
+        ReaderSettings::new(16, 0).unwrap(),
+        &mut measurer,
+    );
+
+    assert_eq!(pagination.len(), 1);
+    assert_eq!(
+        pagination.pages()[0],
+        inkpaper_reader::PageRange::new(
+            BookLocation::new(SpineIndex::ZERO, ContentOffset::ZERO),
+            BookLocation::new(SpineIndex::ZERO, ContentOffset::new(6)),
+        ),
+    );
 }
 
 fn build_test_epub(body: &str) -> Vec<u8> {
@@ -181,6 +329,12 @@ fn build_test_epub(body: &str) -> Vec<u8> {
             href="Text/chapter.xhtml"
             media-type="application/xhtml+xml"
         />
+
+        <item
+            id="picture"
+            href="Images/picture.jpg"
+            media-type="image/jpeg"
+        />
     </manifest>
 
     <spine>
@@ -194,6 +348,7 @@ fn build_test_epub(body: &str) -> Vec<u8> {
         ("META-INF/container.xml", CONTAINER.as_bytes()),
         ("OPS/package.opf", PACKAGE.as_bytes()),
         ("OPS/Text/chapter.xhtml", chapter.as_bytes()),
+        ("OPS/Images/picture.jpg", TEST_JPEG),
     ])
 }
 
