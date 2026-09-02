@@ -11,11 +11,11 @@ use embedded_graphics::{
 };
 
 use crate::{
-    BoxPaint, CanvasPainter, Color, DamageRegion, FontFace, FontId, FontResources, GlyphCacheError,
-    ImageId, ImagePaint, ImageRegistry, ImageResource, ImageSource, Painter, Point, Rect,
-    ResolvedTextStyle, ShapeError, Size,
+    BoxPaint, CanvasPainter, Color, DamageRegion, GlyphCacheError, ImagePaint, ImageSource,
+    Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError, Size,
     backend::embedded_graphics::{image::draw_image_to, text::draw_text_to},
     px,
+    resources::RuntimeResources,
 };
 
 mod canvas;
@@ -38,64 +38,21 @@ pub enum EmbeddedGraphicsError<E> {
     Shape(ShapeError),
 }
 
-pub struct EmbeddedGraphicsPainter<
-    'target,
-    'resources,
-    'font,
-    'image,
-    D,
-    const FONTS: usize,
-    const GLYPH_SLOTS: usize,
-    const GLYPH_BYTES: usize,
-    const IMAGES: usize,
-> where
-    D: EgDrawTarget,
-{
-    target: &'target mut D,
-    font_resources: &'resources mut FontResources<'font, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
-    images: ImageRegistry<'image, IMAGES>,
-    coverage_mode: CoverageMode<D>,
-}
-
-impl<
-    'target,
-    'resources,
-    'font,
-    'image,
-    D,
-    const FONTS: usize,
-    const GLYPH_SLOTS: usize,
-    const GLYPH_BYTES: usize,
-    const IMAGES: usize,
->
-    EmbeddedGraphicsPainter<
-        'target,
-        'resources,
-        'font,
-        'image,
-        D,
-        FONTS,
-        GLYPH_SLOTS,
-        GLYPH_BYTES,
-        IMAGES,
-    >
+pub struct EmbeddedGraphicsPainter<'target, D>
 where
     D: EgDrawTarget,
 {
-    pub fn new(
-        target: &'target mut D,
-        font_resources: &'resources mut FontResources<'font, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
-        images: ImageRegistry<'image, IMAGES>,
-    ) -> Self {
-        assert!(
-            !font_resources.is_empty(),
-            "at least one font must be registered",
-        );
+    target: &'target mut D,
+    coverage_mode: CoverageMode<D>,
+}
 
+impl<'target, D> EmbeddedGraphicsPainter<'target, D>
+where
+    D: EgDrawTarget,
+{
+    pub fn new(target: &'target mut D) -> Self {
         Self {
             target,
-            font_resources,
-            images,
             coverage_mode: CoverageMode::BinaryThreshold,
         }
     }
@@ -107,16 +64,6 @@ where
 
     pub fn target_mut(&mut self) -> &mut D {
         self.target
-    }
-
-    fn resolve_font(&self, font: FontId) -> (FontId, &'font dyn FontFace) {
-        self.font_resources
-            .resolve(font)
-            .expect("EmbeddedGraphicsPainter requires a default font")
-    }
-
-    fn resolve_image(&self, id: ImageId) -> Option<&'image dyn ImageResource> {
-        self.images.get(id)
     }
 
     pub fn clear_damage(&mut self, damage: DamageRegion, color: Color) -> Result<(), D::Error>
@@ -159,8 +106,7 @@ where
     }
 }
 
-impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
-    Painter for EmbeddedGraphicsPainter<'_, '_, '_, '_, D, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>
+impl<D> Painter for EmbeddedGraphicsPainter<'_, D>
 where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,
@@ -184,78 +130,6 @@ where
         };
 
         result.map_err(EmbeddedGraphicsError::Target)
-    }
-
-    fn draw_text(
-        &mut self,
-        text: &str,
-        bounds: Rect,
-        style: ResolvedTextStyle,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
-            return Ok(());
-        }
-
-        let Some(text_clip) = (match clip {
-            Some(clip) => clip.intersection(bounds),
-            None => Some(bounds),
-        }) else {
-            return Ok(());
-        };
-
-        let (font_id, font) = self.resolve_font(style.font);
-        // snapshot only the borrowed font references.
-        // the shaper reas this while the visitor is free to mutate the glyph bitmap
-        // cache in FontResources
-        let registry = self.font_resources.registry();
-
-        draw_text_to(
-            self.target,
-            text,
-            bounds,
-            text_clip,
-            &registry,
-            self.font_resources,
-            font_id,
-            font,
-            style,
-            self.coverage_mode,
-        )
-    }
-
-    fn draw_image(
-        &mut self,
-        source: ImageSource,
-        bounds: Rect,
-        paint: ImagePaint,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
-            return Ok(());
-        }
-
-        let Some(image) = self.resolve_image(source.id()) else {
-            debug_assert!(false, "image {:?} is not registered", source.id());
-            return Ok(());
-        };
-
-        debug_assert_eq!(
-            image.size(),
-            source.size(),
-            "registered image size differs from ImageSource size for {:?}",
-            source.id()
-        );
-
-        let Some(image_clip) = (match clip {
-            Some(clip) => clip.intersection(bounds),
-            None => Some(bounds),
-        }) else {
-            return Ok(());
-        };
-
-        draw_image_to(self.target, image, bounds, paint, Some(image_clip))
-            .map_err(EmbeddedGraphicsError::Target)
     }
 
     fn draw_canvas(
@@ -286,6 +160,88 @@ where
 
         canvas_painter
             .finish()
+            .map_err(EmbeddedGraphicsError::Target)
+    }
+}
+
+impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
+    ResourcePainter<RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
+    for EmbeddedGraphicsPainter<'_, D>
+where
+    D: EgDrawTarget,
+    D::Color: From<EgRgb888>,
+{
+    fn draw_text(
+        &mut self,
+        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
+            return Ok(());
+        }
+
+        let Some(text_clip) = (match clip {
+            Some(clip) => clip.intersection(bounds),
+            None => Some(bounds),
+        }) else {
+            return Ok(());
+        };
+
+        let (font_id, font) = resources
+            .resolve_font(style.font)
+            .expect("EmbeddedGraphicsPainter requires a default font");
+
+        let registry = resources.font_registry();
+
+        draw_text_to(
+            self.target,
+            text,
+            bounds,
+            text_clip,
+            &registry,
+            resources,
+            font_id,
+            font,
+            style,
+            self.coverage_mode,
+        )
+    }
+
+    fn draw_image(
+        &mut self,
+        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+        source: ImageSource,
+        bounds: Rect,
+        paint: ImagePaint,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
+            return Ok(());
+        }
+
+        let Some(image) = resources.image(source.id()) else {
+            debug_assert!(false, "image {:?} is not registered", source.id());
+            return Ok(());
+        };
+
+        debug_assert_eq!(
+            image.size(),
+            source.size(),
+            "registered image size differs from ImageSource size for {:?}",
+            source.id(),
+        );
+
+        let Some(image_clip) = (match clip {
+            Some(clip) => clip.intersection(bounds),
+            None => Some(bounds),
+        }) else {
+            return Ok(());
+        };
+
+        draw_image_to(self.target, image, bounds, paint, Some(image_clip))
             .map_err(EmbeddedGraphicsError::Target)
     }
 }

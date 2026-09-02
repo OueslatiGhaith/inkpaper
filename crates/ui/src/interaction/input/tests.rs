@@ -1,4 +1,3 @@
-
 use core::cell::Cell;
 use std::rc::Rc;
 
@@ -64,7 +63,7 @@ fn press_and_release_on_same_element_dispatches_click() {
 
     runtime.rebuild(counter).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(20), px(20),)));
@@ -92,7 +91,7 @@ fn release_outside_pressed_element_does_not_dispatch_click() {
 
     runtime.rebuild(counter).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(20), px(20),)));
@@ -122,7 +121,7 @@ fn pointer_down_on_noninteractive_space_does_not_capture() {
 
     runtime.rebuild(counter).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(!runtime.begin_activation_at(Point::new(px(150), px(80),)));
@@ -196,7 +195,7 @@ fn deepest_topmost_clickable_element_wins() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(120)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(120)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(20), px(20),)));
@@ -224,14 +223,14 @@ fn press_survives_rebuild_when_element_identity_is_stable() {
 
     runtime.rebuild(counter).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(20), px(20),)));
 
     runtime.rebuild(counter).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(
@@ -332,7 +331,7 @@ fn focus_next_moves_through_clickable_elements() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -373,7 +372,7 @@ fn focus_next_wraps_to_first_element() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -409,7 +408,7 @@ fn focus_previous_wraps_to_last_element() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_previous());
@@ -442,7 +441,7 @@ fn focus_survives_rebuild_when_element_still_exists() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -450,7 +449,7 @@ fn focus_survives_rebuild_when_element_still_exists() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.activate_focused().unwrap());
@@ -482,14 +481,14 @@ fn focused_activation_uses_current_frame_listener() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.activate_focused().unwrap());
@@ -519,7 +518,7 @@ fn successful_pointer_click_establishes_focus() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(10), px(55),)));
@@ -569,14 +568,14 @@ fn focus_is_cleared_when_element_disappears() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
 
     runtime.rebuild(empty).unwrap();
     runtime
-        .layout(Size::new(px(200), px(200)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(200)), &TestTextMeasurer)
         .unwrap();
 
     assert!(!runtime.activate_focused().unwrap());
@@ -629,7 +628,7 @@ fn focus_navigation_scrolls_target_into_view() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(40)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
         .unwrap();
 
     let root = runtime.root_node().unwrap();
@@ -721,7 +720,7 @@ fn focus_scrolls_nested_containers_inside_out() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(60)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(60)), &TestTextMeasurer)
         .unwrap();
 
     let root = runtime.root_node().unwrap();
@@ -787,7 +786,7 @@ fn focus_scroll_waits_for_layout_when_focus_changes_size() {
     let measurer = TestTextMeasurer;
 
     runtime
-        .layout(Size::new(px(100), px(40)), &measurer)
+        .layout_with_measurer(Size::new(px(100), px(40)), &measurer)
         .unwrap();
 
     let root = runtime.root_node().unwrap();
@@ -809,7 +808,7 @@ fn focus_scroll_waits_for_layout_when_focus_changes_size() {
 
     runtime.take_invalidation();
     runtime
-        .layout(Size::new(px(100), px(40)), &measurer)
+        .layout_with_measurer(Size::new(px(100), px(40)), &measurer)
         .unwrap();
 
     // second item was 10px tall, but focus changed it to 30px. After layout
@@ -843,7 +842,7 @@ fn element_can_be_focusable_without_click_listener() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -877,7 +876,7 @@ fn click_listener_still_makes_element_focusable() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -1062,7 +1061,7 @@ fn dispatch_to_focused_invokes_matching_custom_event() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -1094,7 +1093,7 @@ fn dispatch_to_focused_ignores_unbound_event_type() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -1288,7 +1287,7 @@ fn dispatch_at_invokes_matching_event_under_position() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(
@@ -1315,7 +1314,7 @@ fn dispatch_at_outside_target_is_not_handled() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(
@@ -1341,7 +1340,7 @@ fn dispatch_at_ignores_unbound_event_type() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(
@@ -1401,7 +1400,7 @@ fn dispatch_at_prefers_topmost_matching_element() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(
@@ -1452,7 +1451,7 @@ fn dispatch_at_can_target_ancestor_when_child_has_no_matching_event() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(
@@ -1500,7 +1499,7 @@ fn dispatch_at_respects_ancestor_clipping() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(
@@ -1682,7 +1681,7 @@ fn target_at_returns_dispatchable_spatial_target() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     let target = runtime
@@ -1712,7 +1711,7 @@ fn target_at_is_event_type_specific() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     let position = Point::new(px(20), px(20));
@@ -1729,7 +1728,7 @@ fn direct_scroll_damages_only_scroll_viewport() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(40)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(10),),));
@@ -1755,7 +1754,7 @@ fn nested_direct_scroll_damage_is_clipped_by_outer_viewport() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(60)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(60)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.scroll_at(Point::new(px(10), px(35),), Offset::new(px(0), px(10),),));
@@ -1781,7 +1780,7 @@ fn nested_focus_scroll_damage_collapses_to_outer_viewport() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(60)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(60)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -1847,7 +1846,7 @@ fn absolute_child_is_hittable_outside_unclipped_parent_bounds() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(80)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(80)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(55), px(15)),));
@@ -1901,7 +1900,7 @@ fn absolute_child_outside_clipping_parent_is_not_hittable() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(80)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(80)), &TestTextMeasurer)
         .unwrap();
 
     assert!(!runtime.begin_activation_at(Point::new(px(55), px(15)),));
@@ -1941,7 +1940,7 @@ fn focus_scrolls_nested_absolute_target_into_view() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(40)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
         .unwrap();
 
     let root = runtime.root_node().unwrap();
@@ -1987,7 +1986,7 @@ fn positioned_element_damage_uses_final_visual_bounds() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());

@@ -1,4 +1,3 @@
-
 use core::cell::Cell;
 use std::rc::Rc;
 
@@ -60,7 +59,7 @@ fn color_only_focus_change_requires_paint_only() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -75,7 +74,7 @@ fn moving_between_color_only_focus_styles_requires_paint_only() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -123,7 +122,7 @@ fn size_changing_focus_requires_layout() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -142,7 +141,7 @@ fn removing_layout_affecting_focus_still_requires_layout() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -181,7 +180,7 @@ fn color_only_pressed_style_requires_paint_only() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(10), px(10),)));
@@ -196,7 +195,7 @@ fn releasing_color_only_pressed_style_requires_paint_only_without_notify() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(10), px(10),)));
@@ -238,7 +237,7 @@ fn size_changing_pressed_style_requires_layout() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(10), px(10),)));
@@ -271,7 +270,7 @@ fn focus_change_without_interaction_style_requires_no_visual_work() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -319,7 +318,7 @@ fn application_notify_overrides_paint_invalidation_with_rebuild() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(10), px(10),),));
@@ -367,7 +366,7 @@ fn focused_text_color_change_requires_paint_only() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -400,7 +399,7 @@ fn focused_font_change_requires_layout() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -433,7 +432,7 @@ fn focused_text_alignment_change_requires_paint_only() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -466,7 +465,7 @@ fn focused_text_wrap_change_requires_layout() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -577,7 +576,7 @@ fn paint_invalidation_carries_damage() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -608,7 +607,7 @@ fn moving_focus_damages_old_and_new_elements() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -644,7 +643,7 @@ fn pressed_style_damages_only_pressed_element() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.begin_activation_at(Point::new(px(10), px(10),),));
@@ -690,7 +689,7 @@ fn clip_change_keeps_previous_overflow_in_damage() {
     runtime.rebuild(app).unwrap();
 
     runtime
-        .layout(Size::new(px(100), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &TestTextMeasurer)
         .unwrap();
 
     assert!(runtime.focus_next());
@@ -820,7 +819,7 @@ fn consuming_partial_damage_records_damage_metrics() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
         .unwrap();
     runtime.reset_performance_metrics();
 

@@ -31,8 +31,20 @@ impl Painter for TestPainter {
         Ok(())
     }
 
+    fn draw_canvas(
+        &mut self,
+        _: Rect,
+        _: Option<Rect>,
+        _: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+impl ResourcePainter for TestPainter {
     fn draw_text(
         &mut self,
+        _: &mut (),
         _: &str,
         _: Rect,
         _: ResolvedTextStyle,
@@ -43,19 +55,11 @@ impl Painter for TestPainter {
 
     fn draw_image(
         &mut self,
+        _: &mut (),
         _: ImageSource,
         _: Rect,
-        _: ImageFit,
+        _: ImagePaint,
         _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn draw_canvas(
-        &mut self,
-        _: Rect,
-        _: Option<Rect>,
-        _: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -87,7 +91,7 @@ fn performance_metrics_track_rebuild_layout_and_paint_work() {
 
     runtime.reset_performance_metrics();
     runtime
-        .layout(Size::new(px(100), px(40)), &painter)
+        .layout_with_measurer(Size::new(px(100), px(40)), &painter)
         .unwrap();
 
     let layout = runtime.performance_metrics();
@@ -156,7 +160,7 @@ fn flex_layout_scans_siblings_once_per_container() {
     runtime.rebuild(app).unwrap();
     runtime.reset_performance_metrics();
     runtime
-        .layout(Size::new(px(320), px(64)), &painter)
+        .layout_with_measurer(Size::new(px(320), px(64)), &painter)
         .unwrap();
 
     let metrics = runtime.performance_metrics();
@@ -178,7 +182,7 @@ fn flex_layout_work_is_linear_in_children() {
     runtime.rebuild(app).unwrap();
     runtime.reset_performance_metrics();
     runtime
-        .layout(Size::new(px(320), px(64)), &painter)
+        .layout_with_measurer(Size::new(px(320), px(64)), &painter)
         .unwrap();
 
     let metrics = runtime.performance_metrics();

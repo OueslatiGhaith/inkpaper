@@ -4,15 +4,16 @@ use core::{any::TypeId, cell::Cell};
 use crate::PerformanceMetrics;
 use crate::{
     ActivateEvent, Context, DamageRegion, Entity, EntityAccessError, EntityAllocError, EntityArena,
-    EventTarget, FrameArena, Invalidation, Listener, MountError, NodeId, Offset, Painter, Point,
-    Render, RenderInvalidation, Size, TextMeasurer,
+    EventTarget, FontFace, FontId, FontRegistryError, FrameArena, ImageRegistryError,
+    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, Painter, Point,
+    Render, RenderInvalidation, ResourcePainter, Size, TextMeasurer,
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     entity::create_entity,
     global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
-    interaction::input::ActivationState,
-    interaction::scroll::ScrollStateTable,
+    interaction::{input::ActivationState, scroll::ScrollStateTable},
     px,
+    resources::RuntimeResources,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub struct Runtime<
     const ELEMENT_STATES: usize,
     const GLOBAL_BYTES: usize = 0,
     const GLOBAL_SLOTS: usize = 0,
+    RESOURCES = (),
 > {
     entities: EntityArena<ENTITY_BYTES, ENTITY_SLOTS>,
     globals: GlobalArena<GLOBAL_BYTES, GLOBAL_SLOTS>,
@@ -50,6 +52,7 @@ pub struct Runtime<
     frame: FrameArena<FRAME_NODES, FRAME_TEXT_BYTES>,
     element_states: ElementStateTable<ELEMENT_STATES>,
     scroll_states: ScrollStateTable<ELEMENT_STATES>,
+    resources: RESOURCES,
     notified: Cell<bool>,
     visual_invalidation: Cell<RenderInvalidation>,
     frame_generation: u32,
@@ -69,7 +72,10 @@ impl<
     const ST: usize,
     const GB: usize,
     const GS: usize,
-> Default for Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS>
+    RESOURCES,
+> Default for Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>
+where
+    RESOURCES: Default,
 {
     fn default() -> Self {
         Self {
@@ -79,6 +85,7 @@ impl<
             frame: FrameArena::default(),
             element_states: ElementStateTable::default(),
             scroll_states: ScrollStateTable::default(),
+            resources: RESOURCES::default(),
             notified: Cell::new(false),
             visual_invalidation: Cell::new(RenderInvalidation::none()),
             frame_generation: 0,
@@ -100,7 +107,8 @@ impl<
     const ST: usize,
     const GB: usize,
     const GS: usize,
-> Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS>
+    RESOURCES,
+> Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>
 {
     pub fn create<T>(
         &self,
@@ -260,7 +268,11 @@ impl<
         )
     }
 
-    pub fn layout(&mut self, viewport: Size, text_measurer: &dyn TextMeasurer) -> Option<Size> {
+    pub fn layout_with_measurer(
+        &mut self,
+        viewport: Size,
+        text_measurer: &dyn TextMeasurer,
+    ) -> Option<Size> {
         let root = self.root?;
         let size = self.frame.layout(root, viewport, text_measurer);
         self.frame.clamp_scroll_offset(&mut self.scroll_states);
@@ -273,27 +285,32 @@ impl<
         Some(size)
     }
 
-    pub fn paint<P>(&self, painter: &mut P) -> Result<Option<()>, P::Error>
+    pub fn paint<P>(&mut self, painter: &mut P) -> Result<Option<()>, P::Error>
     where
-        P: Painter,
+        P: ResourcePainter<RESOURCES>,
     {
         let Some(root) = self.root else {
             return Ok(None);
         };
 
-        self.frame
-            .paint_with_runtime(root, &self.entities, &self.callbacks, painter)?;
+        self.frame.paint_with_runtime(
+            root,
+            &self.entities,
+            &self.callbacks,
+            &mut self.resources,
+            painter,
+        )?;
 
         Ok(Some(()))
     }
 
     pub fn paint_with_damage<P>(
-        &self,
+        &mut self,
         damage: DamageRegion,
         painter: &mut P,
     ) -> Result<Option<()>, P::Error>
     where
-        P: Painter,
+        P: ResourcePainter<RESOURCES>,
     {
         let Some(root) = self.root else {
             return Ok(None);
@@ -303,6 +320,7 @@ impl<
             root,
             &self.entities,
             &self.callbacks,
+            &mut self.resources,
             damage,
             painter,
         )?;
@@ -887,5 +905,91 @@ impl<
 
     pub const fn global_byte_capacity(&self) -> usize {
         self.globals.byte_capacity()
+    }
+}
+
+impl<
+    const EB: usize,
+    const ES: usize,
+    const CB: usize,
+    const CS: usize,
+    const FN: usize,
+    const FT: usize,
+    const ST: usize,
+    const GB: usize,
+    const GS: usize,
+    RESOURCES,
+> Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>
+where
+    RESOURCES: TextMeasurer,
+{
+    pub fn layout(&mut self, viewport: Size) -> Option<Size> {
+        let root = self.root?;
+        let size = self.frame.layout(root, viewport, &self.resources);
+
+        self.frame.clamp_scroll_offset(&mut self.scroll_states);
+
+        if let Some(element) = self.pending_scroll_into_view.take() {
+            self.frame
+                .scroll_element_into_view(root, element, &mut self.scroll_states);
+        }
+
+        Some(size)
+    }
+}
+
+impl<
+    'resource,
+    const EB: usize,
+    const ES: usize,
+    const CB: usize,
+    const CS: usize,
+    const FN: usize,
+    const FT: usize,
+    const ST: usize,
+    const GB: usize,
+    const GS: usize,
+    const FONTS: usize,
+    const GLYPH_SLOTS: usize,
+    const GLYPH_BYTES: usize,
+    const IMAGES: usize,
+>
+    Runtime<
+        EB,
+        ES,
+        CB,
+        CS,
+        FN,
+        FT,
+        ST,
+        GB,
+        GS,
+        RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+    >
+{
+    pub fn register_font(
+        &mut self,
+        font: &'resource dyn FontFace,
+    ) -> Result<FontId, FontRegistryError> {
+        self.resources.register_font(font)
+    }
+
+    pub fn register_image(
+        &mut self,
+        image: &'resource dyn ImageResource,
+    ) -> Result<ImageSource, ImageRegistryError> {
+        self.resources.register_image(image)
+    }
+
+    pub fn clear_glyph_cache(&mut self) {
+        self.resources.clear_glyph_cache();
+    }
+
+    pub const fn glyph_cache_capacity_bytes(&self) -> usize {
+        self.resources.glyph_cache_capacity_bytes()
+    }
+
+    pub const fn glyph_cache_used_bytes(&self) -> usize {
+        self.resources.glyph_cache_used_bytes()
     }
 }

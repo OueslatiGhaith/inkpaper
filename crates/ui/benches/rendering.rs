@@ -41,26 +41,6 @@ impl Painter for NullPainter {
         Ok(())
     }
 
-    fn draw_text(
-        &mut self,
-        _: &str,
-        _: Rect,
-        _: ResolvedTextStyle,
-        _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn draw_image(
-        &mut self,
-        _: ImageSource,
-        _: Rect,
-        _: ImagePaint,
-        _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     fn draw_canvas(
         &mut self,
         bounds: Rect,
@@ -74,6 +54,30 @@ impl Painter for NullPainter {
             &mut canvas,
         );
 
+        Ok(())
+    }
+}
+
+impl ResourcePainter for NullPainter {
+    fn draw_text(
+        &mut self,
+        _: &mut (),
+        _: &str,
+        _: Rect,
+        _: ResolvedTextStyle,
+        _: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_image(
+        &mut self,
+        _: &mut (),
+        _: ImageSource,
+        _: Rect,
+        _: ImagePaint,
+        _: Option<Rect>,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -109,7 +113,7 @@ fn setup(rows: usize) -> (BenchRuntime, Entity<ListApp>, NullPainter) {
     runtime.rebuild(app).unwrap();
 
     let painter = NullPainter;
-    runtime.layout(VIEWPORT, &painter).unwrap();
+    runtime.layout_with_measurer(VIEWPORT, &painter).unwrap();
 
     (runtime, app, painter)
 }
@@ -146,7 +150,7 @@ fn benchmark_layout(c: &mut Criterion) {
             bencher.iter(|| {
                 black_box(
                     runtime
-                        .layout(black_box(VIEWPORT), black_box(&painter))
+                        .layout_with_measurer(black_box(VIEWPORT), black_box(&painter))
                         .unwrap(),
                 );
             });
@@ -162,7 +166,7 @@ fn benchmark_paint(c: &mut Criterion) {
     for rows in [8usize, 32, 128, 512] {
         group.throughput(Throughput::Elements(rows as u64));
 
-        let (runtime, _, mut painter) = setup(rows);
+        let (mut runtime, _, mut painter) = setup(rows);
 
         group.bench_with_input(BenchmarkId::from_parameter(rows), &rows, |bencher, _| {
             bencher.iter(|| {
@@ -187,7 +191,7 @@ fn benchmark_full_frame(c: &mut Criterion) {
                 runtime.rebuild(black_box(app)).unwrap();
 
                 runtime
-                    .layout(black_box(VIEWPORT), black_box(&painter))
+                    .layout_with_measurer(black_box(VIEWPORT), black_box(&painter))
                     .unwrap();
 
                 runtime.paint(black_box(&mut painter)).unwrap();

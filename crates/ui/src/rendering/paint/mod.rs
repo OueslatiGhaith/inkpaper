@@ -1,7 +1,7 @@
 use crate::{
     Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImagePaint, ImageSource,
-    NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, TextMeasurer,
-    callback::CallbackStore, count_metric, entity::EntityStore, flow_axis, visual::VisualNode,
+    NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, callback::CallbackStore,
+    count_metric, entity::EntityStore, flow_axis, visual::VisualNode,
 };
 
 #[cfg(test)]
@@ -20,29 +20,13 @@ pub struct BoxPaint {
     pub radius: Pixels,
 }
 
-pub trait Painter: TextMeasurer {
+pub trait Painter {
     type Error;
 
     fn draw_box(
         &mut self,
         bounds: Rect,
         paint: BoxPaint,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error>;
-
-    fn draw_text(
-        &mut self,
-        text: &str,
-        bounds: Rect,
-        style: ResolvedTextStyle,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error>;
-
-    fn draw_image(
-        &mut self,
-        source: ImageSource,
-        bounds: Rect,
-        paint: ImagePaint,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error>;
 
@@ -54,6 +38,26 @@ pub trait Painter: TextMeasurer {
     ) -> Result<(), Self::Error>;
 }
 
+pub trait ResourcePainter<R: ?Sized = ()>: Painter {
+    fn draw_text(
+        &mut self,
+        resources: &mut R,
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error>;
+
+    fn draw_image(
+        &mut self,
+        resources: &mut R,
+        source: ImageSource,
+        bounds: Rect,
+        paint: ImagePaint,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error>;
+}
+
 #[derive(Clone, Copy)]
 struct PaintRuntime<'a> {
     entities: &'a dyn EntityStore,
@@ -61,16 +65,17 @@ struct PaintRuntime<'a> {
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
-    fn paint_node<P>(
+    fn paint_node<R: ?Sized, P>(
         &self,
         node_id: NodeId,
         bounds: Rect,
         clip: Option<Rect>,
         runtime: Option<PaintRuntime<'_>>,
+        resources: &mut R,
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
-        P: Painter,
+        P: ResourcePainter<R>,
     {
         let node = self.node(node_id);
         match node.kind {
@@ -95,9 +100,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     clip,
                 )
             }
-            NodeKind::Text { text } => {
-                painter.draw_text(self.text(text), bounds, node.effective_text_style, clip)
-            }
+
+            NodeKind::Text { text } => painter.draw_text(
+                resources,
+                self.text(text),
+                bounds,
+                node.effective_text_style,
+                clip,
+            ),
+
             NodeKind::Canvas { draw, .. } => {
                 let mut invoke =
                     |local_bounds: Rect, canvas_painter: &mut dyn CanvasPainter| match draw {
@@ -129,21 +140,22 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             }
 
             NodeKind::Image { source, style } => {
-                painter.draw_image(source, bounds, style.paint, clip)
+                painter.draw_image(resources, source, bounds, style.paint, clip)
             }
             NodeKind::Entity { .. } => Ok(()),
         }
     }
 
-    fn paint_visual_node<P>(
+    fn paint_visual_node<R: ?Sized, P>(
         &self,
         visual: VisualNode,
         damage: DamageRegion,
         runtime: Option<PaintRuntime<'_>>,
+        resources: &mut R,
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
-        P: Painter,
+        P: ResourcePainter<R>,
     {
         count_metric!(self, visual_nodes_visited);
         if !visual.is_visible() {
@@ -162,7 +174,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         // invocation using the visual traversal's normal clip
         if damage.is_full() {
             count_metric!(self, nodes_painted);
-            return self.paint_node(node_id, bounds, visual.clip(), runtime, painter);
+            return self.paint_node(node_id, bounds, visual.clip(), runtime, resources, painter);
         }
 
         debug_assert!(
@@ -191,7 +203,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 painted = true;
             }
             count_metric!(self, damage_clip_paints);
-            self.paint_node(node_id, bounds, Some(clip), runtime, painter)?;
+            self.paint_node(node_id, bounds, Some(clip), runtime, resources, painter)?;
         }
 
         if !painted {
@@ -312,15 +324,16 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.direct_child_for_mount_index(parent, low)
     }
 
-    fn paint_internal<P>(
+    fn paint_internal<R: ?Sized, P>(
         &self,
         root: NodeId,
         runtime: Option<PaintRuntime<'_>>,
         damage: DamageRegion,
+        resources: &mut R,
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
-        P: Painter,
+        P: ResourcePainter<R>,
     {
         // empty damage should cost literally nothing: not even a visual-tree traversal
         if damage.is_none() {
@@ -406,9 +419,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 }
             }
 
-            // pruning only changes future traversal.
-            // the currently yielded node is still painted or culled normally
-            self.paint_visual_node(visual, damage, runtime, painter)?;
+            self.paint_visual_node(visual, damage, runtime, resources, painter)?;
         }
 
         Ok(())
@@ -416,9 +427,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
     pub fn paint<P>(&self, root: NodeId, painter: &mut P) -> Result<(), P::Error>
     where
-        P: Painter,
+        P: ResourcePainter,
     {
-        self.paint_internal(root, None, DamageRegion::full(), painter)
+        let mut resources = ();
+        self.paint_internal(root, None, DamageRegion::full(), &mut resources, painter)
     }
 
     pub fn paint_with_damage<P>(
@@ -428,46 +440,55 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
-        P: Painter,
+        P: ResourcePainter,
     {
-        self.paint_internal(root, None, damage, painter)
+        let mut resources = ();
+        self.paint_internal(root, None, damage, &mut resources, painter)
     }
 
-    pub(crate) fn paint_with_runtime<P>(
+    pub(crate) fn paint_with_runtime<R: ?Sized, P>(
         &self,
         root: NodeId,
         entities: &dyn EntityStore,
         callbacks: &dyn CallbackStore,
+        resources: &mut R,
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
-        P: Painter,
+        P: ResourcePainter<R>,
     {
         let runtime = PaintRuntime {
             entities,
             callbacks,
         };
 
-        self.paint_internal(root, Some(runtime), DamageRegion::full(), painter)
+        self.paint_internal(
+            root,
+            Some(runtime),
+            DamageRegion::full(),
+            resources,
+            painter,
+        )
     }
 
-    pub(crate) fn paint_with_runtime_and_damage<P>(
+    pub(crate) fn paint_with_runtime_and_damage<R: ?Sized, P>(
         &self,
         root: NodeId,
         entities: &dyn EntityStore,
         callbacks: &dyn CallbackStore,
+        resources: &mut R,
         damage: DamageRegion,
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
-        P: Painter,
+        P: ResourcePainter<R>,
     {
         let runtime = PaintRuntime {
             entities,
             callbacks,
         };
 
-        self.paint_internal(root, Some(runtime), damage, painter)
+        self.paint_internal(root, Some(runtime), damage, resources, painter)
     }
 
     fn ordered_sibling_tail_starts_after_damage(

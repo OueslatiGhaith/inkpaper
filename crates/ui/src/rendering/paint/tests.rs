@@ -101,8 +101,30 @@ impl Painter for RecordingPainter {
         Ok(())
     }
 
+    fn draw_canvas(
+        &mut self,
+        bounds: Rect,
+        clip: Option<Rect>,
+        draw: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
+    ) -> Result<(), Self::Error> {
+        self.commands.push(Command::Canvas { bounds, clip });
+
+        let local_bounds = Rect::new(Point::ZERO, Size::new(bounds.width(), bounds.height()));
+
+        let mut painter = RecordingCanvasPainter {
+            commands: &mut self.canvas_commands,
+        };
+
+        draw(local_bounds, &mut painter);
+
+        Ok(())
+    }
+}
+
+impl ResourcePainter for RecordingPainter {
     fn draw_text(
         &mut self,
+        _: &mut (),
         text: &str,
         bounds: Rect,
         style: ResolvedTextStyle,
@@ -120,6 +142,7 @@ impl Painter for RecordingPainter {
 
     fn draw_image(
         &mut self,
+        _: &mut (),
         source: ImageSource,
         bounds: Rect,
         paint: ImagePaint,
@@ -131,25 +154,6 @@ impl Painter for RecordingPainter {
             paint,
             clip,
         });
-
-        Ok(())
-    }
-
-    fn draw_canvas(
-        &mut self,
-        bounds: Rect,
-        clip: Option<Rect>,
-        draw: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
-    ) -> Result<(), Self::Error> {
-        self.commands.push(Command::Canvas { bounds, clip });
-
-        let local_bounds = Rect::new(Point::ZERO, Size::new(bounds.width(), bounds.height()));
-
-        let mut painter = RecordingCanvasPainter {
-            commands: &mut self.canvas_commands,
-        };
-
-        draw(local_bounds, &mut painter);
 
         Ok(())
     }
@@ -558,7 +562,7 @@ fn entity_canvas_can_draw_from_entity_state() {
 
     let mut painter = RecordingPainter::default();
 
-    runtime.layout(Size::new(px(100), px(20)), &painter);
+    runtime.layout_with_measurer(Size::new(px(100), px(20)), &painter);
     runtime.paint(&mut painter).unwrap();
 
     assert_eq!(
@@ -611,7 +615,7 @@ fn entity_canvas_callback_can_capture_render_data() {
 
     let mut painter = RecordingPainter::default();
 
-    runtime.layout(Size::new(px(100), px(20)), &painter);
+    runtime.layout_with_measurer(Size::new(px(100), px(20)), &painter);
     runtime.paint(&mut painter).unwrap();
 
     assert_eq!(
@@ -813,7 +817,7 @@ fn damage_paint_prunes_subtree_when_inherited_clip_misses_damage() {
     let mut painter = RecordingPainter::default();
 
     runtime
-        .layout(Size::new(px(100), px(100)), &painter)
+        .layout_with_measurer(Size::new(px(100), px(100)), &painter)
         .unwrap();
 
     // Damage lies outside the 40px-wide overflow

@@ -1,4 +1,3 @@
-
 use core::cell::Cell;
 
 use crate::*;
@@ -244,7 +243,7 @@ fn entity_nodes_are_layout_transparent() {
     runtime.rebuild(app).unwrap();
 
     runtime
-        .layout(Size::new(px(100), px(100)), &measurer)
+        .layout_with_measurer(Size::new(px(100), px(100)), &measurer)
         .unwrap();
 
     let root = runtime.root_node().unwrap();
@@ -715,7 +714,7 @@ fn vertical_scroll_moves_content_without_relayout() {
     let measurer = TestTextMeasurer::new(8, 10);
 
     runtime
-        .layout(Size::new(px(100), px(60)), &measurer)
+        .layout_with_measurer(Size::new(px(100), px(60)), &measurer)
         .unwrap();
 
     let before = runtime.frame().node_count();
@@ -749,7 +748,7 @@ fn scroll_offset_is_clamped_to_content_extent() {
 
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(40)), &TestTextMeasurer::new(8, 10))
+        .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer::new(8, 10))
         .unwrap();
 
     assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(1_000),),));
@@ -783,7 +782,7 @@ fn scroll_offset_survives_rebuild() {
     let measurer = TestTextMeasurer::new(8, 10);
 
     runtime
-        .layout(Size::new(px(100), px(40)), &measurer)
+        .layout_with_measurer(Size::new(px(100), px(40)), &measurer)
         .unwrap();
 
     assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(20),),));
@@ -791,7 +790,7 @@ fn scroll_offset_survives_rebuild() {
     runtime.take_invalidation();
     runtime.rebuild(app).unwrap();
     runtime
-        .layout(Size::new(px(100), px(40)), &measurer)
+        .layout_with_measurer(Size::new(px(100), px(40)), &measurer)
         .unwrap();
 
     assert!(runtime.scroll_at(Point::new(px(10), px(10),), Offset::new(px(0), px(-1),),));

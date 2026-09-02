@@ -118,28 +118,6 @@ impl Painter for BenchPainter {
         Ok(())
     }
 
-    fn draw_text(
-        &mut self,
-        _: &str,
-        _: Rect,
-        _: ResolvedTextStyle,
-        _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.record_draw();
-        Ok(())
-    }
-
-    fn draw_image(
-        &mut self,
-        _: ImageSource,
-        _: Rect,
-        _: ImagePaint,
-        _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.record_draw();
-        Ok(())
-    }
-
     fn draw_canvas(
         &mut self,
         bounds: Rect,
@@ -155,6 +133,32 @@ impl Painter for BenchPainter {
             &mut painter,
         );
 
+        Ok(())
+    }
+}
+
+impl ResourcePainter for BenchPainter {
+    fn draw_text(
+        &mut self,
+        _: &mut (),
+        _: &str,
+        _: Rect,
+        _: ResolvedTextStyle,
+        _: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        self.record_draw();
+        Ok(())
+    }
+
+    fn draw_image(
+        &mut self,
+        _: &mut (),
+        _: ImageSource,
+        _: Rect,
+        _: ImagePaint,
+        _: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        self.record_draw();
         Ok(())
     }
 }
@@ -414,7 +418,7 @@ pub fn setup(
 
     let painter = BenchPainter::default();
 
-    runtime.layout(VIEWPORT, &painter).unwrap();
+    runtime.layout_with_measurer(VIEWPORT, &painter).unwrap();
 
     (runtime, app, painter)
 }

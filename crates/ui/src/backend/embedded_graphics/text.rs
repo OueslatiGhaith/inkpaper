@@ -1,74 +1,15 @@
 use embedded_graphics::{pixelcolor::Rgb888 as EgRgb888, prelude::DrawTarget as EgDrawTarget};
 
 use crate::{
-    FontFace, FontId, FontRegistry, FontResources, LineHeight, Pixels, Point, Rect,
-    ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, Size, TextAlign,
-    TextDirection, TextMeasurer, px,
+    FontFace, FontId, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedTextStyle, ShapeState,
+    ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection, px,
+    resources::RuntimeResources,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
 
-use super::{
-    CoverageMode, EmbeddedGraphicsError, EmbeddedGraphicsPainter, coverage::draw_coverage_bitmap,
-    to_rgb888,
-};
+use super::{CoverageMode, EmbeddedGraphicsError, coverage::draw_coverage_bitmap, to_rgb888};
 
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
-
-impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
-    TextMeasurer
-    for EmbeddedGraphicsPainter<'_, '_, '_, '_, D, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>
-where
-    D: EgDrawTarget,
-{
-    fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size {
-        if text.is_empty() {
-            return Size::ZERO;
-        }
-
-        let (font_id, font) = self.resolve_font(style.font);
-
-        let registry = self.font_resources.registry();
-        let shaper = SimpleShaper::new();
-
-        let size_px = font_size_px(style);
-        let glyph_height = font.metrics(size_px).line_height();
-
-        let line_advance = text_line_advance(font, size_px, style);
-
-        let mut longest_line = Pixels::ZERO;
-        let mut line_count = 0i32;
-
-        for_each_visible_text_line_with_boundaries(
-            text,
-            style.wrap,
-            max_size.width,
-            style.max_lines,
-            style.overflow,
-            |line, from| shaper.next_cluster_boundary(&registry, font_id, size_px, line, from),
-            |line| measure_shaped_line(&registry, font_id, size_px, line),
-            |line| measure_shaped_line_with_ellipsis(&registry, font_id, size_px, line),
-            |line| {
-                longest_line = longest_line.max(line.width);
-
-                line_count = line_count.saturating_add(1);
-            },
-        );
-
-        if line_count == 0 {
-            return Size::ZERO;
-        }
-
-        let height =
-            glyph_height.saturating_add(line_advance.saturating_mul(line_count.saturating_sub(1)));
-
-        Size::new(
-            longest_line
-                .non_negative()
-                .min(max_size.width.non_negative()),
-            height.non_negative().min(max_size.height.non_negative()),
-        )
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_text_to<
@@ -76,13 +17,14 @@ pub(super) fn draw_text_to<
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
+    const IMAGES: usize,
 >(
     target: &mut D,
     text: &str,
     bounds: Rect,
     clip: Rect,
     registry: &FontRegistry<'_, FONTS>,
-    font_resources: &mut FontResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
+    resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
     font_id: FontId,
     font: &dyn FontFace,
     style: ResolvedTextStyle,
@@ -182,7 +124,7 @@ where
 
             if let Err(draw_error) = draw_shaped_run(
                 target,
-                font_resources,
+                resources,
                 size_px,
                 &run,
                 baseline,
@@ -206,9 +148,15 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_shaped_run<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize>(
+fn draw_shaped_run<
+    D,
+    const FONTS: usize,
+    const GLYPH_SLOTS: usize,
+    const GLYPH_BYTES: usize,
+    const IMAGES: usize,
+>(
     target: &mut D,
-    font_resources: &mut FontResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
+    resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
     size_px: u16,
     run: &ShapedRun<'_>,
     baseline: Pixels,
@@ -222,7 +170,7 @@ where
     D::Color: From<EgRgb888>,
 {
     for shaped in run.glyphs().iter().copied() {
-        let bitmap = font_resources
+        let bitmap = resources
             .glyph_bitmap(shaped.font(), shaped.glyph(), size_px)
             .map_err(EmbeddedGraphicsError::Font)?;
 

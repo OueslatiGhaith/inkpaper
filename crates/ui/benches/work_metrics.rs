@@ -45,7 +45,7 @@ nodes_painted"
 
             runtime.reset_performance_metrics();
 
-            runtime.layout(VIEWPORT, &painter).unwrap();
+            runtime.layout_with_measurer(VIEWPORT, &painter).unwrap();
 
             let layout = runtime.performance_metrics();
 

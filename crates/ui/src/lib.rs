@@ -20,6 +20,7 @@ mod interaction;
 mod layout;
 mod metrics;
 mod rendering;
+mod resources;
 mod runtime;
 mod style;
 mod text_layout;
@@ -40,6 +41,7 @@ pub use interaction::*;
 pub use layout::*;
 pub use metrics::*;
 pub use rendering::*;
+pub use resources::*;
 pub use runtime::*;
 pub use style::*;
 pub use text_shaping::*;
@@ -55,8 +57,8 @@ pub mod prelude {
         Image, ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint, ImagePosition,
         ImageRegistry, ImageRegistryError, ImageResource, ImageSampling, ImageSource, IntoElement,
         Invalidation, LineHeight, Listener, Offset, OnEvent, ParentElement, Pixels, Point, Rect,
-        Render, RenderInvalidation, RenderOnce, Runtime, Size, StatefulInteractiveElementExt,
-        Style, Styled, TextAlign, TextMaxLines, TextOverflow, TextStyled, TextWrap, canvas, div,
-        image, px, text,
+        Render, RenderInvalidation, RenderOnce, ResourcePainter, Runtime, Size,
+        StatefulInteractiveElementExt, Style, Styled, TextAlign, TextMaxLines, TextOverflow,
+        TextStyled, TextWrap, canvas, div, image, px, text,
     };
 }

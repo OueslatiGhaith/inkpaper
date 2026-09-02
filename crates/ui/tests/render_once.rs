@@ -4,6 +4,7 @@ use embedded_graphics::{
 use embedded_graphics_simulator::SimulatorDisplay;
 use heapless::String;
 use inkpaper_ui::{
+    RuntimeResources,
     backend::{EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
@@ -11,6 +12,7 @@ use inkpaper_ui::{
 const DISPLAY_WIDTH: u32 = 128;
 const DISPLAY_HEIGHT: u32 = 64;
 
+type TestResources = RuntimeResources<'static, 1, 64, 4096, 0>;
 type TestRuntime = Runtime<
     4096, // entity bytes
     1,    // entity slots
@@ -19,6 +21,9 @@ type TestRuntime = Runtime<
     64,   // frame nodes
     1024, // frame text bytes
     32,   // element states
+    0,
+    0,
+    TestResources,
 >;
 
 struct Badge<'a> {
@@ -95,18 +100,14 @@ fn render_once_component_can_be_used_as_a_child() {
 
 static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 
-fn test_font_resources() -> FontResources<'static, 1, 64, 4096> {
-    let mut resources = FontResources::default();
-
-    let id = resources.register(&TEST_FONT_FACE).unwrap();
-    assert_eq!(id, FontId::DEFAULT,);
-
-    resources
-}
-
 #[test]
 fn render_once_component_can_borrow_from_persistent_component() {
     let mut runtime = TestRuntime::default();
+
+    assert_eq!(
+        runtime.register_font(&TEST_FONT_FACE).unwrap(),
+        FontId::DEFAULT,
+    );
 
     let app = runtime.create(|_| App::new()).unwrap();
 
@@ -114,28 +115,32 @@ fn render_once_component_can_borrow_from_persistent_component() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 
-    let mut fonts = test_font_resources();
-    let mut painter =
-        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
-
-    let size = runtime.layout(
-        Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32)),
-        &painter,
-    );
+    let size = runtime.layout(Size::new(
+        px(DISPLAY_WIDTH as i32),
+        px(DISPLAY_HEIGHT as i32),
+    ));
 
     assert_eq!(
         size,
         Some(Size::new(
             px(DISPLAY_WIDTH as i32),
             px(DISPLAY_HEIGHT as i32),
-        ))
+        )),
     );
-    assert_eq!(runtime.paint(&mut painter).unwrap(), Some(()));
+
+    let mut painter = EmbeddedGraphicsPainter::new(&mut display);
+
+    assert_eq!(runtime.paint(&mut painter).unwrap(), Some(()),);
 }
 
 #[test]
 fn render_once_components_can_nest_other_render_once_components() {
     let mut runtime = TestRuntime::default();
+
+    assert_eq!(
+        runtime.register_font(&TEST_FONT_FACE).unwrap(),
+        FontId::DEFAULT,
+    );
 
     let app = runtime.create(|_| App::new()).unwrap();
 
@@ -143,18 +148,16 @@ fn render_once_components_can_nest_other_render_once_components() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
 
-    let mut fonts = test_font_resources();
-    let mut painter =
-        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
-
     runtime
-        .layout(
-            Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32)),
-            &painter,
-        )
+        .layout(Size::new(
+            px(DISPLAY_WIDTH as i32),
+            px(DISPLAY_HEIGHT as i32),
+        ))
         .unwrap();
+
+    let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
     runtime.paint(&mut painter).unwrap().unwrap();
 
-    assert!(runtime.frame_node_count() >= 4);
+    assert!(runtime.frame_node_count() >= 4,);
 }

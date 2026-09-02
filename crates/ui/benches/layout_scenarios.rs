@@ -24,7 +24,7 @@ fn benchmark_layout_scenarios(criterion: &mut Criterion) {
                 bencher.iter(|| {
                     black_box(
                         runtime
-                            .layout(black_box(VIEWPORT), black_box(&painter))
+                            .layout_with_measurer(black_box(VIEWPORT), black_box(&painter))
                             .unwrap(),
                     );
                 });
@@ -41,7 +41,7 @@ fn benchmark_paint_scenario(criterion: &mut Criterion, scenario: BenchScenario, 
     for &size in sizes {
         group.throughput(Throughput::Elements(size as u64));
 
-        let (runtime, _, mut painter) = setup(scenario, size);
+        let (mut runtime, _, mut painter) = setup(scenario, size);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |bencher, _| {
             bencher.iter(|| {
@@ -102,7 +102,7 @@ fn benchmark_mixed_full_frame(criterion: &mut Criterion) {
 
                 black_box(
                     runtime
-                        .layout(black_box(VIEWPORT), black_box(&painter))
+                        .layout_with_measurer(black_box(VIEWPORT), black_box(&painter))
                         .unwrap(),
                 );
 

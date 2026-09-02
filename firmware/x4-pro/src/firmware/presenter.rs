@@ -6,6 +6,7 @@ use embedded_graphics::{
 };
 use inkpaper_app::InkPaperApp;
 use inkpaper_ui::{
+    RuntimeResources,
     backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
@@ -23,8 +24,8 @@ static HEADING_FONT: MonoFontFace = MonoFontFace::ascii(&FONT_10X20);
 
 const UI_GLYPH_CACHE_BYTES: usize = 8 * 1024;
 const UI_GLYPH_CACHE_SLOTS: usize = 64;
-pub(crate) type UiFontResources =
-    FontResources<'static, 2, UI_GLYPH_CACHE_SLOTS, UI_GLYPH_CACHE_BYTES>;
+
+type UiResources = RuntimeResources<'static, 2, UI_GLYPH_CACHE_SLOTS, UI_GLYPH_CACHE_BYTES, 0>;
 
 pub type UiRuntime = Runtime<
     4_096, // entity bytes
@@ -36,6 +37,7 @@ pub type UiRuntime = Runtime<
     32,    // persistent element states
     256,   // global bytes
     4,     // global slots
+    UiResources,
 >;
 
 #[derive(Debug, Format, Clone, Copy, PartialEq, Eq)]
@@ -74,21 +76,22 @@ impl FrameUpdate {
     }
 }
 
-pub struct Presenter<'resources> {
-    fonts: &'resources mut UiFontResources,
-}
+pub struct Presenter;
 
-impl<'resources> Presenter<'resources> {
-    pub fn new(fonts: &'resources mut UiFontResources) -> Self {
-        let body = fonts.register(&BODY_FONT).expect("body font slot must fit");
-        let heading = fonts
-            .register(&HEADING_FONT)
+impl Presenter {
+    pub fn new(runtime: &mut UiRuntime) -> Self {
+        let body = runtime
+            .register_font(&BODY_FONT)
+            .expect("body font slot must fit");
+
+        let heading = runtime
+            .register_font(&HEADING_FONT)
             .expect("heading font slot must fit");
 
         defmt::assert_eq!(body, FontId::DEFAULT);
         defmt::assert_eq!(heading, FontId::new(1));
 
-        Self { fonts }
+        Self
     }
 
     pub fn render_initial(
@@ -99,9 +102,8 @@ impl<'resources> Presenter<'resources> {
     ) -> FrameUpdate {
         let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
 
-        let physical_damage =
-            render_invalidation(runtime, app, frame, &mut self.fonts, invalidation)
-                .expect("a full initial render must produce physical damage");
+        let physical_damage = render_invalidation(runtime, app, frame, invalidation)
+            .expect("a full initial render must produce physical damage");
 
         FrameUpdate::new(RefreshRequest::Full, physical_damage)
     }
@@ -117,8 +119,7 @@ impl<'resources> Presenter<'resources> {
             return None;
         }
 
-        let physical_damage =
-            render_invalidation(runtime, app, frame, &mut self.fonts, invalidation)?;
+        let physical_damage = render_invalidation(runtime, app, frame, invalidation)?;
 
         Some(FrameUpdate::new(RefreshRequest::Fast, physical_damage))
     }
@@ -128,7 +129,6 @@ fn render_invalidation(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
     frame: &mut [u8; FRAMEBUFFER_LEN],
-    fonts: &mut UiFontResources,
     invalidation: RenderInvalidation,
 ) -> Option<Region> {
     if invalidation.is_none() {
@@ -142,23 +142,24 @@ fn render_invalidation(
 
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
     {
-        let mut painter =
-            EmbeddedGraphicsPainter::new(&mut display, fonts, ImageRegistry::<0>::default())
-                .with_coverage_mode(CoverageMode::AlphaBlend {
-                    read_pixel: read_framebuffer_pixel,
-                });
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display).with_coverage_mode(
+            CoverageMode::AlphaBlend {
+                read_pixel: read_framebuffer_pixel,
+            },
+        );
+
         match invalidation.kind() {
             Invalidation::None => return None,
             Invalidation::Paint => {}
             Invalidation::Layout => {
                 runtime
-                    .layout(DISPLAY_SIZE, &painter)
+                    .layout(DISPLAY_SIZE)
                     .expect("layout requires a mounted root");
             }
             Invalidation::Rebuild => {
                 runtime.rebuild(app).expect("UI rebuild capacity exceeded");
                 runtime
-                    .layout(DISPLAY_SIZE, &painter)
+                    .layout(DISPLAY_SIZE)
                     .expect("rebuilt UI must have a root");
             }
         }

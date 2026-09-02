@@ -21,10 +21,10 @@ use crate::{
 const TEST_GLYPH_CACHE_BYTES: usize = 4096;
 static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 
-fn test_font_resources() -> FontResources<'static, 1, 64, TEST_GLYPH_CACHE_BYTES> {
-    let mut resources = FontResources::default();
-
-    let id = resources.register(&TEST_FONT_FACE).unwrap();
+fn test_resources<'resource, const IMAGES: usize>()
+-> RuntimeResources<'resource, 1, 64, TEST_GLYPH_CACHE_BYTES, IMAGES> {
+    let mut resources = RuntimeResources::default();
+    let id = resources.register_font(&TEST_FONT_FACE).unwrap();
 
     assert_eq!(id, FontId::DEFAULT);
 
@@ -36,9 +36,7 @@ fn embedded_graphics_backend_rasterizes_box() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter =
-            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_box(
@@ -57,24 +55,20 @@ fn embedded_graphics_backend_rasterizes_box() {
     }
 
     assert_eq!(
-        display.get_pixel(EgPoint::new(0, 0,)),
-        Some(Rgb888::new(255, 0, 0,))
+        display.get_pixel(EgPoint::new(0, 0)),
+        Some(Rgb888::new(255, 0, 0))
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(5, 5,)),
-        Some(Rgb888::new(0, 0, 255,))
+        display.get_pixel(EgPoint::new(5, 5)),
+        Some(Rgb888::new(0, 0, 255))
     );
 }
 
 #[test]
 fn text_measurement_wraps_at_word_boundaries() {
-    let mut display = MockDisplay::<Rgb888>::new();
+    let resources = test_resources::<0>();
 
-    let mut fonts = test_font_resources();
-    let painter =
-        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
-
-    let size = painter.measure_text(
+    let size = resources.measure_text(
         "hello world",
         ResolvedTextStyle {
             wrap: TextWrap::Word,
@@ -83,18 +77,14 @@ fn text_measurement_wraps_at_word_boundaries() {
         Size::new(px(30), px(100)),
     );
 
-    assert_eq!(size, Size::new(px(30), px(20),));
+    assert_eq!(size, Size::new(px(30), px(20)));
 }
 
 #[test]
 fn custom_line_height_affects_multiline_measurement() {
-    let mut display = MockDisplay::<Rgb888>::new();
+    let resources = test_resources::<0>();
 
-    let mut fonts = test_font_resources();
-    let painter =
-        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
-
-    let size = painter.measure_text(
+    let size = resources.measure_text(
         "first\nsecond",
         ResolvedTextStyle {
             line_height: LineHeight::Pixels(px(15)),
@@ -131,13 +121,9 @@ fn centered_text_line_is_offset_inside_bounds() {
 
 #[test]
 fn max_lines_limits_measured_height() {
-    let mut display = MockDisplay::<Rgb888>::new();
+    let resources = test_resources::<0>();
 
-    let mut fonts = test_font_resources();
-    let painter =
-        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
-
-    let size = painter.measure_text(
+    let size = resources.measure_text(
         "hello world again",
         ResolvedTextStyle {
             wrap: TextWrap::Word,
@@ -152,13 +138,9 @@ fn max_lines_limits_measured_height() {
 
 #[test]
 fn ellipsis_respects_available_width() {
-    let mut display = MockDisplay::<Rgb888>::new();
+    let resources = test_resources::<0>();
 
-    let mut fonts = test_font_resources();
-    let painter =
-        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
-
-    let size = painter.measure_text(
+    let size = resources.measure_text(
         "abcdefghij",
         ResolvedTextStyle {
             overflow: TextOverflow::Ellipsis,
@@ -167,18 +149,14 @@ fn ellipsis_respects_available_width() {
         Size::new(px(30), px(100)),
     );
 
-    assert_eq!(size, Size::new(px(30), px(10),));
+    assert_eq!(size, Size::new(px(30), px(10)));
 }
 
 #[test]
 fn wrapped_text_can_be_clamped_with_ellipsis() {
-    let mut display = MockDisplay::<Rgb888>::new();
+    let resources = test_resources::<0>();
 
-    let mut fonts = test_font_resources();
-    let painter =
-        EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
-
-    let size = painter.measure_text(
+    let size = resources.measure_text(
         "hello world again",
         ResolvedTextStyle {
             wrap: TextWrap::Word,
@@ -189,7 +167,7 @@ fn wrapped_text_can_be_clamped_with_ellipsis() {
         Size::new(px(30), px(100)),
     );
 
-    assert_eq!(size, Size::new(px(30), px(10),));
+    assert_eq!(size, Size::new(px(30), px(10)));
 }
 
 struct SolidTestImage {
@@ -287,17 +265,17 @@ fn embedded_graphics_backend_draws_registered_image() {
     };
 
     let image = EmbeddedGraphicsImage::new(&bitmap);
-    let mut images = ImageRegistry::<1>::default();
-    let source = images.register(&image).unwrap();
+    let mut resources = test_resources::<1>();
+    let source = resources.register_image(&image).unwrap();
 
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_image(
+                &mut resources,
                 source,
                 Rect::new(Point::new(px(2), px(3)), source.size()),
                 ImagePaint::default(),
@@ -325,17 +303,17 @@ fn embedded_graphics_backend_clips_image_to_layout_bounds() {
     };
 
     let image = EmbeddedGraphicsImage::new(&bitmap);
-    let mut images = ImageRegistry::<1>::default();
-    let source = images.register(&image).unwrap();
+    let mut resources = test_resources::<1>();
+    let source = resources.register_image(&image).unwrap();
 
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_image(
+                &mut resources,
                 source,
                 Rect::new(Point::new(px(10), px(10)), Size::new(px(2), px(2))),
                 ImagePaint::default(),
@@ -364,17 +342,17 @@ fn embedded_graphics_backend_combines_image_bounds_with_ancestor_clip() {
     };
 
     let image = EmbeddedGraphicsImage::new(&bitmap);
-    let mut images = ImageRegistry::<1>::default();
-    let source = images.register(&image).unwrap();
+    let mut resources = test_resources::<1>();
+    let source = resources.register_image(&image).unwrap();
 
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_image(
+                &mut resources,
                 source,
                 Rect::new(Point::new(px(4), px(4)), source.size()),
                 ImagePaint::default(),
@@ -403,17 +381,17 @@ fn embedded_graphics_backend_scales_image_with_contain() {
     };
 
     let image = EmbeddedGraphicsImage::new(&bitmap);
-    let mut images = ImageRegistry::<1>::default();
-    let source = images.register(&image).unwrap();
+    let mut resources = test_resources::<1>();
+    let source = resources.register_image(&image).unwrap();
 
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_image(
+                &mut resources,
                 source,
                 Rect::new(Point::ZERO, Size::new(px(8), px(8))),
                 ImagePaint {
@@ -455,9 +433,7 @@ fn embedded_graphics_backend_draws_canvas_at_visual_origin() {
     display.set_allow_overdraw(true);
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter =
-            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_canvas(
@@ -469,18 +445,18 @@ fn embedded_graphics_backend_draws_canvas_at_visual_origin() {
     }
 
     assert_eq!(
-        display.get_pixel(EgPoint::new(10, 20,)),
-        Some(Rgb888::new(255, 0, 0,))
+        display.get_pixel(EgPoint::new(10, 20)),
+        Some(Rgb888::new(255, 0, 0))
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(12, 22,)),
-        Some(Rgb888::new(0, 0, 255,))
+        display.get_pixel(EgPoint::new(12, 22)),
+        Some(Rgb888::new(0, 0, 255))
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(17, 25,)),
-        Some(Rgb888::new(255, 0, 0,))
+        display.get_pixel(EgPoint::new(17, 25)),
+        Some(Rgb888::new(255, 0, 0))
     );
-    assert_eq!(display.get_pixel(EgPoint::new(9, 20,)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(9, 20)), None);
 }
 
 #[test]
@@ -488,9 +464,7 @@ fn embedded_graphics_backend_clips_custom_drawing_to_canvas_bounds() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter =
-            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_canvas(
@@ -502,15 +476,15 @@ fn embedded_graphics_backend_clips_custom_drawing_to_canvas_bounds() {
     }
 
     assert_eq!(
-        display.get_pixel(EgPoint::new(5, 5,)),
-        Some(Rgb888::new(0, 255, 0,))
+        display.get_pixel(EgPoint::new(5, 5)),
+        Some(Rgb888::new(0, 255, 0))
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(8, 8,)),
-        Some(Rgb888::new(0, 255, 0,))
+        display.get_pixel(EgPoint::new(8, 8)),
+        Some(Rgb888::new(0, 255, 0))
     );
-    assert_eq!(display.get_pixel(EgPoint::new(4, 5,)), None);
-    assert_eq!(display.get_pixel(EgPoint::new(9, 5,)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(4, 5)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(9, 5)), None);
 }
 
 #[test]
@@ -518,9 +492,7 @@ fn embedded_graphics_backend_combines_canvas_and_ancestor_clipping() {
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter =
-            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_canvas(
@@ -532,15 +504,15 @@ fn embedded_graphics_backend_combines_canvas_and_ancestor_clipping() {
     }
 
     assert_eq!(
-        display.get_pixel(EgPoint::new(8, 8,)),
-        Some(Rgb888::new(0, 255, 0,))
+        display.get_pixel(EgPoint::new(8, 8)),
+        Some(Rgb888::new(0, 255, 0))
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(10, 10,)),
-        Some(Rgb888::new(0, 255, 0,))
+        display.get_pixel(EgPoint::new(10, 10)),
+        Some(Rgb888::new(0, 255, 0))
     );
-    assert_eq!(display.get_pixel(EgPoint::new(7, 8,)), None);
-    assert_eq!(display.get_pixel(EgPoint::new(11, 8,)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(7, 8)), None);
+    assert_eq!(display.get_pixel(EgPoint::new(11, 8)), None);
 }
 
 #[test]
@@ -557,9 +529,7 @@ fn embedded_graphics_backend_clears_only_partial_damage() {
         .unwrap();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter =
-            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .clear_damage(
@@ -574,13 +544,13 @@ fn embedded_graphics_backend_clears_only_partial_damage() {
 
     // inside damage was restored to the clear color.
     assert_eq!(
-        display.get_pixel(EgPoint::new(2, 2),),
-        Some(Rgb888::new(0, 0, 0),),
+        display.get_pixel(EgPoint::new(2, 2)),
+        Some(Rgb888::new(0, 0, 0)),
     );
     // pixels outside damage were untouched.
     assert_eq!(
-        display.get_pixel(EgPoint::new(8, 8),),
-        Some(Rgb888::new(255, 0, 0),),
+        display.get_pixel(EgPoint::new(8, 8)),
+        Some(Rgb888::new(255, 0, 0)),
     );
 }
 
@@ -598,9 +568,7 @@ fn embedded_graphics_backend_full_damage_clears_target() {
         .unwrap();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter =
-            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .clear_damage(DamageRegion::full(), Color::BLUE)
@@ -608,41 +576,41 @@ fn embedded_graphics_backend_full_damage_clears_target() {
     }
 
     assert_eq!(
-        display.get_pixel(EgPoint::new(2, 2),),
-        Some(Rgb888::new(0, 0, 255),),
+        display.get_pixel(EgPoint::new(2, 2)),
+        Some(Rgb888::new(0, 0, 255)),
     );
     assert_eq!(
-        display.get_pixel(EgPoint::new(8, 8),),
-        Some(Rgb888::new(0, 0, 255),),
+        display.get_pixel(EgPoint::new(8, 8)),
+        Some(Rgb888::new(0, 0, 255)),
     );
 }
 
 #[test]
 fn embedded_graphics_backend_draws_text_through_font_resources() {
     let mut display = MockDisplay::<Rgb888>::new();
-    let mut fonts = test_font_resources();
 
     {
-        let mut painter =
-            EmbeddedGraphicsPainter::new(&mut display, &mut fonts, ImageRegistry::<0>::default());
+        let mut resources = test_resources::<0>();
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_text(
+                &mut resources,
                 "A",
                 Rect::new(Point::ZERO, Size::new(px(20), px(20))),
                 ResolvedTextStyle::default(),
                 None,
             )
             .unwrap();
-    }
 
-    assert!(fonts.glyph_cache_used_bytes() > 0,);
+        assert!(resources.glyph_cache_used_bytes() > 0);
+    }
 
     let has_black_pixel = (0..10).any(|y| {
         (0..6).any(|x| display.get_pixel(EgPoint::new(x, y)) == Some(Rgb888::new(0, 0, 0)))
     });
 
-    assert!(has_black_pixel,);
+    assert!(has_black_pixel);
 }
 
 #[test]
@@ -650,8 +618,8 @@ fn alpha_blending_preserves_coverage_endpoints() {
     let black = Rgb888::new(0, 0, 0);
     let white = Rgb888::new(255, 255, 255);
 
-    assert_eq!(alpha_blend_rgb888(black, white, 0,), white,);
-    assert_eq!(alpha_blend_rgb888(black, white, 255,), black,);
+    assert_eq!(alpha_blend_rgb888(black, white, 0), white);
+    assert_eq!(alpha_blend_rgb888(black, white, 255), black);
 }
 
 #[test]
@@ -660,8 +628,8 @@ fn alpha_blending_produces_intermediate_gray() {
     let white = Rgb888::new(255, 255, 255);
 
     assert_eq!(
-        alpha_blend_rgb888(black, white, 128,),
-        Rgb888::new(127, 127, 127,),
+        alpha_blend_rgb888(black, white, 128),
+        Rgb888::new(127, 127, 127),
     );
 }
 
@@ -676,7 +644,7 @@ fn ordered_dither_half_coverage_draws_half_of_matrix() {
         }
     }
 
-    assert_eq!(drawn, 8,);
+    assert_eq!(drawn, 8);
 }
 
 #[test]
@@ -686,7 +654,7 @@ fn ordered_dither_is_stable_in_absolute_coordinates() {
             let first = ordered_dither_accepts(93, EgPoint::new(x, y));
             let repeated = ordered_dither_accepts(93, EgPoint::new(x + 4, y + 4));
 
-            assert_eq!(first, repeated,);
+            assert_eq!(first, repeated);
         }
     }
 }
@@ -696,7 +664,7 @@ fn rtl_start_and_end_alignment_are_mirrored() {
     let bounds = Rect::new(Point::new(px(10), px(5)), Size::new(px(100), px(20)));
 
     assert_eq!(
-        aligned_line_x(bounds, px(40), TextAlign::Start, TextDirection::RightToLeft,),
+        aligned_line_x(bounds, px(40), TextAlign::Start, TextDirection::RightToLeft),
         px(70),
     );
     assert_eq!(
@@ -709,7 +677,7 @@ fn rtl_start_and_end_alignment_are_mirrored() {
         px(40),
     );
     assert_eq!(
-        aligned_line_x(bounds, px(40), TextAlign::End, TextDirection::RightToLeft,),
+        aligned_line_x(bounds, px(40), TextAlign::End, TextDirection::RightToLeft),
         px(10),
     );
 }
@@ -718,20 +686,19 @@ fn rtl_start_and_end_alignment_are_mirrored() {
 fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
     let image = HorizontalStripImage;
 
-    let mut images = ImageRegistry::<1>::default();
-    let source = images.register(&image).unwrap();
+    let mut resources = test_resources::<1>();
+    let source = resources.register_image(&image).unwrap();
 
     let bounds = Rect::new(Point::ZERO, Size::new(px(2), px(2)));
 
     let mut left_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-
-        let mut painter = EmbeddedGraphicsPainter::new(&mut left_display, &mut fonts, images);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut left_display);
 
         painter
             .draw_image(
+                &mut resources,
                 source,
                 bounds,
                 ImagePaint {
@@ -748,12 +715,11 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
     let mut right_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-
-        let mut painter = EmbeddedGraphicsPainter::new(&mut right_display, &mut fonts, images);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut right_display);
 
         painter
             .draw_image(
+                &mut resources,
                 source,
                 bounds,
                 ImagePaint {
@@ -783,16 +749,17 @@ fn embedded_graphics_backend_bilinear_sampling_blends_neighboring_pixels() {
     let image = FourColorImage;
 
     let mut images = ImageRegistry::<1>::default();
-    let source = images.register(&image).unwrap();
+    let mut resources = test_resources::<1>();
+    let source = resources.register_image(&image).unwrap();
 
     let mut display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter = EmbeddedGraphicsPainter::new(&mut display, &mut fonts, images);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
         painter
             .draw_image(
+                &mut resources,
                 source,
                 Rect::new(Point::ZERO, Size::new(px(3), px(3))),
                 ImagePaint {
@@ -823,11 +790,6 @@ fn embedded_graphics_backend_bilinear_sampling_blends_neighboring_pixels() {
 
 #[test]
 fn embedded_graphics_backend_bilinear_sampling_is_stable_when_clipped() {
-    let image = FourColorImage;
-
-    let mut images = ImageRegistry::<1>::default();
-    let source = images.register(&image).unwrap();
-
     let bounds = Rect::new(Point::ZERO, Size::new(px(5), px(5)));
 
     let paint = ImagePaint {
@@ -838,11 +800,16 @@ fn embedded_graphics_backend_bilinear_sampling_is_stable_when_clipped() {
 
     let mut full_display = MockDisplay::<Rgb888>::new();
 
-    {
-        let mut fonts = test_font_resources();
-        let mut painter = EmbeddedGraphicsPainter::new(&mut full_display, &mut fonts, images);
+    let image = FourColorImage;
+    let mut resources = test_resources::<1>();
+    let source = resources.register_image(&image).unwrap();
 
-        painter.draw_image(source, bounds, paint, None).unwrap();
+    {
+        let mut painter = EmbeddedGraphicsPainter::new(&mut full_display);
+
+        painter
+            .draw_image(&mut resources, source, bounds, paint, None)
+            .unwrap();
     }
 
     let clip = Rect::new(Point::new(px(1), px(1)), Size::new(px(3), px(3)));
@@ -850,11 +817,10 @@ fn embedded_graphics_backend_bilinear_sampling_is_stable_when_clipped() {
     let mut clipped_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-        let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display, &mut fonts, images);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display);
 
         painter
-            .draw_image(source, bounds, paint, Some(clip))
+            .draw_image(&mut resources, source, bounds, paint, Some(clip))
             .unwrap();
     }
 
@@ -878,9 +844,9 @@ fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
 
     let image = EmbeddedGraphicsImage::new(&bitmap);
 
-    let mut images = ImageRegistry::<1>::default();
+    let mut resources = test_resources::<1>();
 
-    let source = images.register(&image).unwrap();
+    let source = resources.register_image(&image).unwrap();
 
     let bounds = Rect::new(Point::ZERO, Size::new(px(8), px(8)));
 
@@ -894,11 +860,11 @@ fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
     let mut full_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
+        let mut painter = EmbeddedGraphicsPainter::new(&mut full_display);
 
-        let mut painter = EmbeddedGraphicsPainter::new(&mut full_display, &mut fonts, images);
-
-        painter.draw_image(source, bounds, paint, None).unwrap();
+        painter
+            .draw_image(&mut resources, source, bounds, paint, None)
+            .unwrap();
     }
 
     let clip = Rect::new(Point::new(px(1), px(2)), Size::new(px(4), px(4)));
@@ -906,12 +872,10 @@ fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
     let mut clipped_display = MockDisplay::<Rgb888>::new();
 
     {
-        let mut fonts = test_font_resources();
-
-        let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display, &mut fonts, images);
+        let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display);
 
         painter
-            .draw_image(source, bounds, paint, Some(clip))
+            .draw_image(&mut resources, source, bounds, paint, Some(clip))
             .unwrap();
     }
 
@@ -921,7 +885,7 @@ fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
 
             let clipped = clipped_display.get_pixel(EgPoint::new(x, y));
 
-            assert_eq!(clipped, full, "clipped dither differs at ({x}, {y})",);
+            assert_eq!(clipped, full, "clipped dither differs at ({x}, {y})");
 
             assert!(
                 matches!(clipped, Some(Rgb888::BLACK | Rgb888::WHITE)),

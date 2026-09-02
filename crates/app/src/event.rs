@@ -139,8 +139,9 @@ impl InkPaperApp {
         const ST: usize,
         const GB: usize,
         const GS: usize,
+        RESOURCES,
     >(
-        runtime: &mut Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS>,
+        runtime: &mut Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>,
         app: Entity<Self>,
         event: AppEvent,
     ) -> PlatformAction {

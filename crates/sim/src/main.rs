@@ -17,7 +17,7 @@ use inkpaper_app::{
     theme::Theme,
 };
 use inkpaper_ui::{
-    FontData, FontFace, TtfFont,
+    FontData, FontFace, RuntimeResources, TtfFont,
     backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
@@ -43,11 +43,10 @@ static BODY_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_6X10);
 static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_10X20);
 
 const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
-type UiFonts = FontResources<'static, 2, 128, UI_GLYPH_CACHE_BYTES>;
 
-type UiImages<'image> = ImageRegistry<'image, 1>;
+type UiResources<'resource> = RuntimeResources<'resource, 2, 128, UI_GLYPH_CACHE_BYTES, 1>;
 
-type UiRuntime = Runtime<
+type UiRuntime<'resource> = Runtime<
     16_384, // entity bytes
     32,     // entity slots
     8_192,  // callback bytes
@@ -57,6 +56,7 @@ type UiRuntime = Runtime<
     256,    // persistent element states
     2_048,  // global btes
     8,      //global slots
+    UiResources<'resource>,
 >;
 
 fn demo_model() -> AppModel {
@@ -102,12 +102,10 @@ fn demo_model() -> AppModel {
     model
 }
 
-fn make_fonts(runtime_font: Option<&'static dyn FontFace>) -> UiFonts {
-    let mut fonts = FontResources::default();
-
+fn register_fonts(runtime: &mut UiRuntime<'_>, runtime_font: Option<&'static dyn FontFace>) {
     if let Some(runtime_font) = runtime_font {
-        let id = fonts
-            .register(runtime_font)
+        let id = runtime
+            .register_font(runtime_font)
             .expect("runtime font slot must fit");
 
         assert_eq!(id, FontId::DEFAULT,);
@@ -116,13 +114,15 @@ fn make_fonts(runtime_font: Option<&'static dyn FontFace>) -> UiFonts {
         // existing app code that asks for FontId(1) will use the registry's default
         // font fallback. That avoids caching the same scalable face twice under
         // different FontIds
-        return fonts;
+        return;
     }
 
-    assert_eq!(fonts.register(&BODY_FONT).unwrap(), FontId::DEFAULT);
-    assert_eq!(fonts.register(&HEADING_FONT).unwrap(), FontId::new(1));
+    assert_eq!(runtime.register_font(&BODY_FONT).unwrap(), FontId::DEFAULT,);
 
-    fonts
+    assert_eq!(
+        runtime.register_font(&HEADING_FONT).unwrap(),
+        FontId::new(1),
+    );
 }
 
 fn runtime_font_path(path: Option<&Path>) -> Option<&'static TtfFont<'static>> {
@@ -211,17 +211,15 @@ fn read_simulator_pixel(display: &SimulatorDisplay<Rgb888>, point: EgPoint) -> O
 }
 
 fn paint_ui(
-    runtime: &mut UiRuntime,
+    runtime: &mut UiRuntime<'_>,
     display: &mut SimulatorDisplay<Rgb888>,
-    fonts: &mut UiFonts,
-    images: UiImages<'_>,
     damage: DamageRegion,
 ) {
     if damage.is_none() {
         return;
     }
 
-    let mut painter = EmbeddedGraphicsPainter::new(display, fonts, images)
+    let mut painter = EmbeddedGraphicsPainter::new(display)
         .with_coverage_mode(CoverageMode::alpha_blend(read_simulator_pixel));
 
     painter.clear_damage(damage, Color::WHITE).unwrap();
@@ -233,22 +231,18 @@ fn paint_ui(
 }
 
 fn rebuild_ui(
-    runtime: &mut UiRuntime,
+    runtime: &mut UiRuntime<'_>,
     app: Entity<InkPaperApp>,
-    fonts: &mut UiFonts,
-    images: UiImages<'_>,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
     runtime.rebuild(app).unwrap();
-    layout_ui(runtime, fonts, images, display);
-    paint_ui(runtime, display, fonts, images, DamageRegion::full());
+    layout_ui(runtime);
+    paint_ui(runtime, display, DamageRegion::full());
 }
 
 fn update_ui(
-    runtime: &mut UiRuntime,
+    runtime: &mut UiRuntime<'_>,
     app: Entity<InkPaperApp>,
-    fonts: &mut UiFonts,
-    images: UiImages<'_>,
     display: &mut SimulatorDisplay<Rgb888>,
 ) {
     let invalidation = runtime.take_render_invalidation();
@@ -256,27 +250,20 @@ fn update_ui(
     match invalidation.kind() {
         Invalidation::None => {}
         Invalidation::Paint => {
-            paint_ui(runtime, display, fonts, images, invalidation.damage());
+            paint_ui(runtime, display, invalidation.damage());
         }
         Invalidation::Layout => {
-            layout_ui(runtime, fonts, images, display);
-            paint_ui(runtime, display, fonts, images, invalidation.damage());
+            layout_ui(runtime);
+            paint_ui(runtime, display, invalidation.damage());
         }
         Invalidation::Rebuild => {
-            rebuild_ui(runtime, app, fonts, images, display);
+            rebuild_ui(runtime, app, display);
         }
     }
 }
 
-fn layout_ui(
-    runtime: &mut UiRuntime,
-    fonts: &mut UiFonts,
-    images: UiImages<'_>,
-    display: &mut SimulatorDisplay<Rgb888>,
-) {
-    let painter = EmbeddedGraphicsPainter::new(display, fonts, images);
-
-    runtime.layout(DISPLAY_SIZE, &painter).unwrap();
+fn layout_ui(runtime: &mut UiRuntime<'_>) {
+    runtime.layout(DISPLAY_SIZE).unwrap();
 }
 
 fn main() {
@@ -287,16 +274,15 @@ fn main() {
 
     let runtime_font = runtime_font_path(args.font.as_deref());
     let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
-    let mut fonts = make_fonts(runtime_font);
+    register_fonts(&mut runtime, runtime_font);
 
     let cover_image = args.cover.as_deref().map(|path| {
         HostImage::open(path)
             .unwrap_or_else(|error| panic!("failed to load cover {}: {error}", path.display()))
     });
-    let mut images = UiImages::default();
     let cover_source = cover_image.as_ref().map(|cover| {
-        images
-            .register(cover)
+        runtime
+            .register_image(cover)
             .expect("simulator cover image must fit registry")
     });
     if let (Some(path), Some(source)) = (args.cover.as_deref(), cover_source) {
@@ -317,7 +303,7 @@ fn main() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, app, &mut fonts, images, &mut display);
+    rebuild_ui(&mut runtime, app, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("InkPaper X4 Pro", &output_settings);
@@ -396,12 +382,12 @@ fn main() {
             }
         }
 
-        update_ui(&mut runtime, app, &mut fonts, images, &mut display);
+        update_ui(&mut runtime, app, &mut display);
     }
 
     eprintln!(
         "glyph cache at exit: {} / {} bytes",
-        fonts.glyph_cache_used_bytes(),
-        fonts.glyph_cache_capacity_bytes(),
+        runtime.glyph_cache_used_bytes(),
+        runtime.glyph_cache_capacity_bytes(),
     );
 }

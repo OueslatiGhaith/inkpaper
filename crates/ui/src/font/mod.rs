@@ -1,15 +1,21 @@
 use crate::{Offset, Pixels, px};
 
+mod cache;
+mod measure;
+mod registry;
+mod resources;
+
 #[cfg(feature = "ttf")]
 pub mod ttf;
 
-mod cache;
-mod registry;
-mod resources;
 #[cfg(test)]
 mod tests;
 
 pub use cache::{GlyphBitmap, GlyphCache, GlyphCacheError};
+pub(crate) use measure::{
+    SHAPED_LINE_GLYPH_CAPACITY, font_size_px, measure_shaped_line,
+    measure_shaped_line_with_ellipsis, text_line_advance,
+};
 pub use registry::{FontRegistry, FontRegistryError, ResolvedGlyph};
 pub use resources::FontResources;
 

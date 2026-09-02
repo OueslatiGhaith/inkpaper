@@ -198,8 +198,20 @@ impl Painter for RecordingPainter {
         Ok(())
     }
 
+    fn draw_canvas(
+        &mut self,
+        _: Rect,
+        _: Option<Rect>,
+        _: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+impl ResourcePainter for RecordingPainter {
     fn draw_text(
         &mut self,
+        _: &mut (),
         text: &str,
         bounds: Rect,
         style: ResolvedTextStyle,
@@ -217,9 +229,10 @@ impl Painter for RecordingPainter {
 
     fn draw_image(
         &mut self,
+        _: &mut (),
         source: ImageSource,
         bounds: Rect,
-        _paint: ImagePaint,
+        _: ImagePaint,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
         self.commands.push(Command::Image {
@@ -228,15 +241,6 @@ impl Painter for RecordingPainter {
             clip,
         });
 
-        Ok(())
-    }
-
-    fn draw_canvas(
-        &mut self,
-        _: Rect,
-        _: Option<Rect>,
-        _: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
-    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
