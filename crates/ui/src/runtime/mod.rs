@@ -5,8 +5,8 @@ use crate::PerformanceMetrics;
 use crate::{
     ActivateEvent, Context, DamageRegion, Entity, EntityAccessError, EntityAllocError, EntityArena,
     EventTarget, FontFace, FontId, FontRegistryError, FrameArena, ImageRegistryError,
-    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, Point, Render,
-    RenderInvalidation, ResourcePainter, Size, TextMeasurer,
+    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintReport,
+    Point, Render, RenderInvalidation, ResourcePainter, Size, TextMeasurer,
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     entity::create_entity,
@@ -317,7 +317,7 @@ impl<
         Some(size)
     }
 
-    pub fn paint<P>(&mut self, painter: &mut P) -> Result<Option<()>, P::Error>
+    pub fn paint<P>(&mut self, painter: &mut P) -> Result<Option<PaintReport>, P::Error>
     where
         P: ResourcePainter<RESOURCES>,
     {
@@ -325,7 +325,7 @@ impl<
             return Ok(None);
         };
 
-        self.frame.paint_with_runtime(
+        let report = self.frame.paint_with_runtime(
             root,
             &self.entities,
             &self.callbacks,
@@ -333,14 +333,14 @@ impl<
             painter,
         )?;
 
-        Ok(Some(()))
+        Ok(Some(report))
     }
 
     pub fn paint_with_damage<P>(
         &mut self,
         damage: DamageRegion,
         painter: &mut P,
-    ) -> Result<Option<()>, P::Error>
+    ) -> Result<Option<PaintReport>, P::Error>
     where
         P: ResourcePainter<RESOURCES>,
     {
@@ -348,7 +348,7 @@ impl<
             return Ok(None);
         };
 
-        self.frame.paint_with_runtime_and_damage(
+        let report = self.frame.paint_with_runtime_and_damage(
             root,
             &self.entities,
             &self.callbacks,
@@ -357,7 +357,7 @@ impl<
             painter,
         )?;
 
-        Ok(Some(()))
+        Ok(Some(report))
     }
 
     fn reconcile_interaction_state(&mut self) {

@@ -65,17 +65,29 @@ pub enum RefreshRequest {
     Fast,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RenderedFrame {
+    physical_damage: Region,
+    paint_report: PaintReport,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameUpdate {
     refresh: RefreshRequest,
     physical_damage: Region,
+    paint_report: PaintReport,
 }
 
 impl FrameUpdate {
-    pub const fn new(refresh: RefreshRequest, physical_damage: Region) -> Self {
+    pub const fn new(
+        refresh: RefreshRequest,
+        physical_damage: Region,
+        paint_report: PaintReport,
+    ) -> Self {
         Self {
             refresh,
             physical_damage,
+            paint_report,
         }
     }
 
@@ -85,6 +97,10 @@ impl FrameUpdate {
 
     pub const fn physical_damage(self) -> Region {
         self.physical_damage
+    }
+
+    pub const fn paint_report(self) -> PaintReport {
+        self.paint_report
     }
 
     pub const fn is_full_damage(self) -> bool {
@@ -120,10 +136,14 @@ impl Presenter {
     ) -> FrameUpdate {
         let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
 
-        let physical_damage = render_invalidation(runtime, frame, invalidation)
+        let rendered = render_invalidation(runtime, frame, invalidation)
             .expect("a full initial render must produce physical damage");
 
-        FrameUpdate::new(RefreshRequest::Full, physical_damage)
+        FrameUpdate::new(
+            RefreshRequest::Full,
+            rendered.physical_damage,
+            rendered.paint_report,
+        )
     }
 
     pub fn render_pending(
@@ -136,9 +156,13 @@ impl Presenter {
             return None;
         }
 
-        let physical_damage = render_invalidation(runtime, frame, invalidation)?;
+        let rendered = render_invalidation(runtime, frame, invalidation)?;
 
-        Some(FrameUpdate::new(RefreshRequest::Fast, physical_damage))
+        Some(FrameUpdate::new(
+            RefreshRequest::Fast,
+            rendered.physical_damage,
+            rendered.paint_report,
+        ))
     }
 }
 
@@ -146,7 +170,7 @@ fn render_invalidation(
     runtime: &mut UiRuntime,
     frame: &mut [u8; FRAMEBUFFER_LEN],
     invalidation: RenderInvalidation,
-) -> Option<Region> {
+) -> Option<RenderedFrame> {
     if invalidation.is_none() {
         return None;
     }
@@ -157,7 +181,8 @@ fn render_invalidation(
     }
 
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
-    {
+
+    let paint_report = {
         let mut painter = EmbeddedGraphicsPainter::new(&mut display).with_coverage_mode(
             CoverageMode::AlphaBlend {
                 read_pixel: read_framebuffer_pixel,
@@ -184,10 +209,15 @@ fn render_invalidation(
         runtime
             .paint_with_damage(damage, &mut painter)
             .unwrap()
-            .expect("painting requires a mounted root");
-    }
+            .expect("painting requires a mounted root")
+    };
 
-    physical_damage(&display, damage)
+    let physical_damage = physical_damage(&display, damage)?;
+
+    Some(RenderedFrame {
+        physical_damage,
+        paint_report,
+    })
 }
 
 fn normalize_damage(damage: DamageRegion) -> DamageRegion {

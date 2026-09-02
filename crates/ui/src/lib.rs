@@ -56,7 +56,7 @@ pub mod prelude {
         FrameBuildError, Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError,
         IdentifiableElementExt, Image, ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint,
         ImagePosition, ImageRegistry, ImageRegistryError, ImageResource, ImageSampling,
-        ImageSource, IntoElement, Invalidation, LineHeight, Listener, Offset, OnEvent,
+        ImageSource, IntoElement, Invalidation, LineHeight, Listener, Offset, OnEvent, PaintReport,
         ParentElement, Pixels, Point, Rect, Render, RenderInvalidation, RenderOnce,
         RenderRuntimeApi, ResourcePainter, Runtime, RuntimeApi, RuntimeBuilder, Size,
         StatefulInteractiveElementExt, Style, Styled, TextAlign, TextMaxLines, TextOverflow,

@@ -1,5 +1,5 @@
 use crate::{
-    Context, DamageRegion, Entity, EntityAccessError, FrameBuildError, Offset, Point,
+    Context, DamageRegion, Entity, EntityAccessError, FrameBuildError, Offset, PaintReport, Point,
     RenderInvalidation, ResourcePainter, Runtime, Size, TextMeasurer,
     callback::ListenerInvokeError,
 };
@@ -50,7 +50,7 @@ pub trait RenderRuntimeApi {
         &mut self,
         damage: DamageRegion,
         painter: &mut P,
-    ) -> Result<Option<()>, P::Error>
+    ) -> Result<Option<PaintReport>, P::Error>
     where
         P: ResourcePainter<Self::Resources>;
 }
@@ -146,7 +146,7 @@ where
         &mut self,
         damage: DamageRegion,
         painter: &mut P,
-    ) -> Result<Option<()>, P::Error>
+    ) -> Result<Option<PaintReport>, P::Error>
     where
         P: ResourcePainter<Self::Resources>,
     {

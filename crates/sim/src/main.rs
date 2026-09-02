@@ -186,7 +186,7 @@ where
     painter.clear_damage(damage, Color::WHITE).unwrap();
 
     match runtime.paint_with_damage(damage, &mut painter) {
-        Ok(Some(())) => {}
+        Ok(Some(_)) => {}
         Ok(None) => panic!("painting requires a mounted root"),
         Err(_) => panic!("UI painting failed"),
     }

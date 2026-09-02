@@ -1,7 +1,7 @@
 use crate::{
-    Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImagePaint, ImageSource,
-    NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, callback::CallbackStore,
-    count_metric, entity::EntityStore, flow_axis, visual::VisualNode,
+    Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImageColorMode, ImagePaint,
+    ImageSource, NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle,
+    callback::CallbackStore, count_metric, entity::EntityStore, flow_axis, visual::VisualNode,
 };
 
 #[cfg(test)]
@@ -18,6 +18,85 @@ pub struct BoxPaint {
     pub background: Option<Color>,
     pub border: Option<BorderPaint>,
     pub radius: Pixels,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PaintedContent {
+    text: bool,
+    graphics: bool,
+    monochrome_images: bool,
+    continuous_tone_images: bool,
+}
+
+impl PaintedContent {
+    pub const fn has_text(self) -> bool {
+        self.text
+    }
+
+    pub const fn has_graphics(self) -> bool {
+        self.graphics
+    }
+
+    pub const fn has_images(self) -> bool {
+        self.monochrome_images || self.continuous_tone_images
+    }
+
+    pub const fn has_monochrome_images(self) -> bool {
+        self.monochrome_images
+    }
+
+    pub const fn has_continuous_tone_images(self) -> bool {
+        self.continuous_tone_images
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PaintReport {
+    damage: DamageRegion,
+    content: PaintedContent,
+}
+
+impl PaintReport {
+    pub const fn new(damage: DamageRegion) -> Self {
+        Self {
+            damage,
+            content: PaintedContent {
+                text: false,
+                graphics: false,
+                monochrome_images: false,
+                continuous_tone_images: false,
+            },
+        }
+    }
+
+    pub const fn damage(self) -> DamageRegion {
+        self.damage
+    }
+
+    pub const fn content(self) -> PaintedContent {
+        self.content
+    }
+
+    fn mark_text(&mut self) {
+        self.content.text = true;
+    }
+
+    fn mark_graphics(&mut self) {
+        self.content.graphics = true;
+    }
+
+    fn mark_image(&mut self, mode: ImageColorMode) {
+        match mode {
+            ImageColorMode::Monochrome => {
+                self.content.monochrome_images = true;
+            }
+            ImageColorMode::Color | ImageColorMode::Grayscale => {
+                self.content.continuous_tone_images = true;
+            }
+        }
+    }
 }
 
 pub trait Painter {
@@ -65,6 +144,7 @@ struct PaintRuntime<'a> {
 }
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
+    #[allow(clippy::too_many_arguments)]
     fn paint_node<R: ?Sized, P>(
         &self,
         node_id: NodeId,
@@ -72,6 +152,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         clip: Option<Rect>,
         runtime: Option<PaintRuntime<'_>>,
         resources: &mut R,
+        report: &mut PaintReport,
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
@@ -90,29 +171,40 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     _ => None,
                 };
 
-                painter.draw_box(
-                    bounds,
-                    BoxPaint {
-                        background: style.background,
-                        border,
-                        radius: style.border_radius,
-                    },
-                    clip,
-                )
+                let paint = BoxPaint {
+                    background: style.background,
+                    border,
+                    radius: style.border_radius,
+                };
+
+                painter.draw_box(bounds, paint, clip)?;
+
+                if paint.background.is_some() || paint.border.is_some() {
+                    report.mark_graphics();
+                }
+
+                Ok(())
             }
 
-            NodeKind::Text { text } => painter.draw_text(
-                resources,
-                self.text(text),
-                bounds,
-                node.effective_text_style,
-                clip,
-            ),
+            NodeKind::Text { text } => {
+                let text = self.text(text);
+
+                painter.draw_text(resources, text, bounds, node.effective_text_style, clip)?;
+
+                if !text.is_empty() {
+                    report.mark_text();
+                }
+
+                Ok(())
+            }
 
             NodeKind::Canvas { draw, .. } => {
                 let mut invoke =
                     |local_bounds: Rect, canvas_painter: &mut dyn CanvasPainter| match draw {
-                        CanvasDraw::Static(draw) => draw(local_bounds, canvas_painter),
+                        CanvasDraw::Static(draw) => {
+                            draw(local_bounds, canvas_painter);
+                        }
+
                         CanvasDraw::Entity(callback) => {
                             let Some(runtime) = runtime else {
                                 debug_assert!(
@@ -136,12 +228,23 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                         }
                     };
 
-                painter.draw_canvas(bounds, clip, &mut invoke)
+                painter.draw_canvas(bounds, clip, &mut invoke)?;
+
+                // vanvas drawing is opaque to the frame traversal.
+                // conservatively classify a painted canvas as graphics.
+                report.mark_graphics();
+
+                Ok(())
             }
 
             NodeKind::Image { source, style } => {
-                painter.draw_image(resources, source, bounds, style.paint, clip)
+                painter.draw_image(resources, source, bounds, style.paint, clip)?;
+
+                report.mark_image(style.paint.color_mode);
+
+                Ok(())
             }
+
             NodeKind::Entity { .. } => Ok(()),
         }
     }
@@ -152,6 +255,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         damage: DamageRegion,
         runtime: Option<PaintRuntime<'_>>,
         resources: &mut R,
+        report: &mut PaintReport,
         painter: &mut P,
     ) -> Result<(), P::Error>
     where
@@ -174,7 +278,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         // invocation using the visual traversal's normal clip
         if damage.is_full() {
             count_metric!(self, nodes_painted);
-            return self.paint_node(node_id, bounds, visual.clip(), runtime, resources, painter);
+            return self.paint_node(
+                node_id,
+                bounds,
+                visual.clip(),
+                runtime,
+                resources,
+                report,
+                painter,
+            );
         }
 
         debug_assert!(
@@ -203,7 +315,16 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 painted = true;
             }
             count_metric!(self, damage_clip_paints);
-            self.paint_node(node_id, bounds, Some(clip), runtime, resources, painter)?;
+
+            self.paint_node(
+                node_id,
+                bounds,
+                Some(clip),
+                runtime,
+                resources,
+                report,
+                painter,
+            )?;
         }
 
         if !painted {
@@ -331,13 +452,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         damage: DamageRegion,
         resources: &mut R,
         painter: &mut P,
-    ) -> Result<(), P::Error>
+    ) -> Result<PaintReport, P::Error>
     where
         P: ResourcePainter<R>,
     {
+        let mut report = PaintReport::new(damage);
+
         // empty damage should cost literally nothing: not even a visual-tree traversal
         if damage.is_none() {
-            return Ok(());
+            return Ok(report);
         }
 
         // full painting never needs any of the partial damage pruning machinery.
@@ -419,13 +542,13 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 }
             }
 
-            self.paint_visual_node(visual, damage, runtime, resources, painter)?;
+            self.paint_visual_node(visual, damage, runtime, resources, &mut report, painter)?;
         }
 
-        Ok(())
+        Ok(report)
     }
 
-    pub fn paint<P>(&self, root: NodeId, painter: &mut P) -> Result<(), P::Error>
+    pub fn paint<P>(&self, root: NodeId, painter: &mut P) -> Result<PaintReport, P::Error>
     where
         P: ResourcePainter,
     {
@@ -438,7 +561,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         root: NodeId,
         damage: DamageRegion,
         painter: &mut P,
-    ) -> Result<(), P::Error>
+    ) -> Result<PaintReport, P::Error>
     where
         P: ResourcePainter,
     {
@@ -453,7 +576,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         callbacks: &dyn CallbackStore,
         resources: &mut R,
         painter: &mut P,
-    ) -> Result<(), P::Error>
+    ) -> Result<PaintReport, P::Error>
     where
         P: ResourcePainter<R>,
     {
@@ -479,7 +602,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         resources: &mut R,
         damage: DamageRegion,
         painter: &mut P,
-    ) -> Result<(), P::Error>
+    ) -> Result<PaintReport, P::Error>
     where
         P: ResourcePainter<R>,
     {

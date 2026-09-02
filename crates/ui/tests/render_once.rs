@@ -130,7 +130,7 @@ fn render_once_component_can_borrow_from_persistent_component() {
 
     let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-    assert_eq!(runtime.paint(&mut painter).unwrap(), Some(()),);
+    assert!(runtime.paint(&mut painter).unwrap().is_some());
 }
 
 #[test]
@@ -159,5 +159,5 @@ fn render_once_components_can_nest_other_render_once_components() {
 
     runtime.paint(&mut painter).unwrap().unwrap();
 
-    assert!(runtime.frame_node_count() >= 4,);
+    assert!(runtime.frame_node_count() >= 4);
 }

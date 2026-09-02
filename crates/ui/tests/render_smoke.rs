@@ -45,6 +45,7 @@ fn full_runtime_can_render_to_simulator_display() {
     );
 
     runtime.create_root(|_| App).unwrap();
+
     runtime.rebuild().unwrap();
 
     let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
@@ -64,9 +65,11 @@ fn full_runtime_can_render_to_simulator_display() {
 
     let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-    let painted = runtime.paint(&mut painter).unwrap();
+    let report = runtime.paint(&mut painter).unwrap().unwrap();
 
-    assert_eq!(painted, Some(()));
+    assert_eq!(report.damage(), DamageRegion::full());
+    assert!(report.content().has_text());
+    assert!(report.content().has_graphics());
     assert!(runtime.frame_node_count() > 0);
     assert!(runtime.frame_text_bytes_used() > 0);
 }
