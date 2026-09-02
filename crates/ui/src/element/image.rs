@@ -33,6 +33,14 @@ pub enum ImageSampling {
     #[default]
     Nearest,
     Bilinear,
+    /// exact box-area averaging for image minification
+    ///
+    /// each destination pixel is the weighted average of the surrounding pixel areas
+    /// covered by its source-space footprint
+    ///
+    /// if either destination axis magnifes the source, area sampling falls back to
+    /// bilinear interpolation
+    Area,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

@@ -257,6 +257,26 @@ impl ImageResource for HorizontalStripImage {
     }
 }
 
+struct GradientImage;
+
+impl ImageResource for GradientImage {
+    fn size(&self) -> Size {
+        Size::new(px(8), px(8))
+    }
+
+    fn pixel(&self, x: u32, y: u32) -> Option<Color> {
+        if x >= 8 || y >= 8 {
+            return None;
+        }
+
+        let red = u8::try_from(x.saturating_mul(31)).unwrap_or(u8::MAX);
+        let green = u8::try_from(y.saturating_mul(31)).unwrap_or(u8::MAX);
+        let blue = u8::try_from(x.saturating_add(y).saturating_mul(15)).unwrap_or(u8::MAX);
+
+        Some(Color::rgb(red, green, blue))
+    }
+}
+
 #[test]
 fn embedded_graphics_backend_draws_registered_image() {
     let bitmap = SolidTestImage {
@@ -889,6 +909,55 @@ fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
             assert!(
                 matches!(clipped, Some(Rgb888::BLACK | Rgb888::WHITE)),
                 "monochrome rendering emitted a non-binary pixel",
+            );
+        }
+    }
+}
+
+#[test]
+fn embedded_graphics_backend_area_sampling_is_stable_when_clipped() {
+    let image = GradientImage;
+
+    let mut resources = test_resources::<1>();
+
+    let source = resources.register_image(&image).unwrap();
+
+    let bounds = Rect::new(Point::ZERO, Size::new(px(4), px(4)));
+
+    let paint = ImagePaint {
+        fit: ImageFit::Fill,
+        sampling: ImageSampling::Area,
+        ..ImagePaint::default()
+    };
+
+    let mut full_display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut painter = EmbeddedGraphicsPainter::new(&mut full_display);
+
+        painter
+            .draw_image(&mut resources, source, bounds, paint, None)
+            .unwrap();
+    }
+
+    let clip = Rect::new(Point::new(px(1), px(1)), Size::new(px(2), px(2)));
+
+    let mut clipped_display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display);
+
+        painter
+            .draw_image(&mut resources, source, bounds, paint, Some(clip))
+            .unwrap();
+    }
+
+    for y in 1..3 {
+        for x in 1..3 {
+            assert_eq!(
+                clipped_display.get_pixel(EgPoint::new(x, y,),),
+                full_display.get_pixel(EgPoint::new(x, y,),),
+                "clipped area sample differs at ({x}, {y})",
             );
         }
     }
