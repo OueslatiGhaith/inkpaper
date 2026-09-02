@@ -21,22 +21,42 @@ const DISPLAY_BOUNDS: Rect = Rect::new(Point::ZERO, DISPLAY_SIZE);
 static BODY_FONT: MonoFontFace = MonoFontFace::ascii(&FONT_6X10);
 static HEADING_FONT: MonoFontFace = MonoFontFace::ascii(&FONT_10X20);
 
-const UI_GLYPH_CACHE_BYTES: usize = 8 * 1024;
-const UI_GLYPH_CACHE_SLOTS: usize = 64;
+const UI_ENTITY_BYTES: usize = 4_096;
+const UI_ENTITY_SLOTS: usize = 8;
 
-type UiResources = RuntimeResources<'static, 2, UI_GLYPH_CACHE_SLOTS, UI_GLYPH_CACHE_BYTES, 0>;
+const UI_CALLBACK_BYTES: usize = 2_048;
+const UI_CALLBACK_SLOTS: usize = 16;
+
+const UI_FRAME_NODES: usize = 96;
+const UI_FRAME_TEXT_BYTES: usize = 2_048;
+
+const UI_ELEMENT_STATES: usize = 32;
+
+const UI_GLOBAL_BYTES: usize = 256;
+const UI_GLOBAL_SLOTS: usize = 4;
+
+const UI_FONT_SLOTS: usize = 2;
+const UI_GLYPH_CACHE_SLOTS: usize = 64;
+const UI_GLYPH_CACHE_BYTES: usize = 8 * 1024;
+const UI_IMAGE_SLOTS: usize = 0;
 
 pub type UiRuntime = Runtime<
-    4_096, // entity bytes
-    8,     // entity slots
-    2_048, // callback bytes
-    16,    // callback slots
-    96,    // frame nodes
-    2_048, // frame text bytes
-    32,    // persistent element states
-    256,   // global bytes
-    4,     // global slots
-    UiResources,
+    UI_ENTITY_BYTES,
+    UI_ENTITY_SLOTS,
+    UI_CALLBACK_BYTES,
+    UI_CALLBACK_SLOTS,
+    UI_FRAME_NODES,
+    UI_FRAME_TEXT_BYTES,
+    UI_ELEMENT_STATES,
+    UI_GLOBAL_BYTES,
+    UI_GLOBAL_SLOTS,
+    RuntimeResources<
+        'static,
+        UI_FONT_SLOTS,
+        UI_GLYPH_CACHE_SLOTS,
+        UI_GLYPH_CACHE_BYTES,
+        UI_IMAGE_SLOTS,
+    >,
 >;
 
 #[derive(Debug, Format, Clone, Copy, PartialEq, Eq)]

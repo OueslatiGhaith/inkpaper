@@ -17,7 +17,7 @@ use inkpaper_app::{
     theme::Theme,
 };
 use inkpaper_ui::{
-    FontData, FontFace, RuntimeResources, TtfFont,
+    FontData, FontFace, TtfFont,
     backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
@@ -41,23 +41,6 @@ static RUNTIME_FONT: StaticCell<TtfFont> = StaticCell::new();
 
 static BODY_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_6X10);
 static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_10X20);
-
-const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
-
-type UiResources<'resource> = RuntimeResources<'resource, 2, 128, UI_GLYPH_CACHE_BYTES, 1>;
-
-type UiRuntime<'resource> = Runtime<
-    16_384, // entity bytes
-    32,     // entity slots
-    8_192,  // callback bytes
-    64,     // callback slots
-    512,    // frame nodes
-    8_192,  // frame text bytes
-    256,    // persistent element states
-    2_048,  // global btes
-    8,      //global slots
-    UiResources<'resource>,
->;
 
 fn demo_model() -> AppModel {
     let current_book = BookSummary::try_new("The Left Hand of Darkness", "Ursula K. Le Guin", 68)
@@ -102,29 +85,6 @@ fn demo_model() -> AppModel {
     model
 }
 
-fn register_fonts(runtime: &mut UiRuntime<'_>, runtime_font: Option<&'static dyn FontFace>) {
-    if let Some(runtime_font) = runtime_font {
-        let id = runtime
-            .register_font(runtime_font)
-            .expect("runtime font slot must fit");
-
-        assert_eq!(id, FontId::DEFAULT,);
-
-        // register only one copy.
-        // existing app code that asks for FontId(1) will use the registry's default
-        // font fallback. That avoids caching the same scalable face twice under
-        // different FontIds
-        return;
-    }
-
-    assert_eq!(runtime.register_font(&BODY_FONT).unwrap(), FontId::DEFAULT,);
-
-    assert_eq!(
-        runtime.register_font(&HEADING_FONT).unwrap(),
-        FontId::new(1),
-    );
-}
-
 fn runtime_font_path(path: Option<&Path>) -> Option<&'static TtfFont<'static>> {
     let path = path?;
 
@@ -138,7 +98,7 @@ fn runtime_font_path(path: Option<&Path>) -> Option<&'static TtfFont<'static>> {
 
     let font = RUNTIME_FONT.init(font);
 
-    eprintln!("runtime font: {} ({} bytes)", path.display(), data.len(),);
+    eprintln!("runtime font: {} ({} bytes)", path.display(), data.len());
 
     Some(font)
 }
@@ -210,11 +170,12 @@ fn read_simulator_pixel(display: &SimulatorDisplay<Rgb888>, point: EgPoint) -> O
     Some(display.get_pixel(point))
 }
 
-fn paint_ui(
-    runtime: &mut UiRuntime<'_>,
-    display: &mut SimulatorDisplay<Rgb888>,
-    damage: DamageRegion,
-) {
+fn paint_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion)
+where
+    R: RenderRuntimeApi,
+    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
+        ResourcePainter<R::Resources>,
+{
     if damage.is_none() {
         return;
     }
@@ -224,19 +185,30 @@ fn paint_ui(
 
     painter.clear_damage(damage, Color::WHITE).unwrap();
 
-    runtime
-        .paint_with_damage(damage, &mut painter)
-        .unwrap()
-        .unwrap();
+    match runtime.paint_with_damage(damage, &mut painter) {
+        Ok(Some(())) => {}
+        Ok(None) => panic!("painting requires a mounted root"),
+        Err(_) => panic!("UI painting failed"),
+    }
 }
 
-fn rebuild_ui(runtime: &mut UiRuntime<'_>, display: &mut SimulatorDisplay<Rgb888>) {
+fn rebuild_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
+where
+    R: RenderRuntimeApi,
+    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
+        ResourcePainter<R::Resources>,
+{
     runtime.rebuild().unwrap();
     layout_ui(runtime);
     paint_ui(runtime, display, DamageRegion::full());
 }
 
-fn update_ui(runtime: &mut UiRuntime<'_>, display: &mut SimulatorDisplay<Rgb888>) {
+fn update_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
+where
+    R: RenderRuntimeApi,
+    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
+        ResourcePainter<R::Resources>,
+{
     let invalidation = runtime.take_render_invalidation();
 
     match invalidation.kind() {
@@ -254,19 +226,37 @@ fn update_ui(runtime: &mut UiRuntime<'_>, display: &mut SimulatorDisplay<Rgb888>
     }
 }
 
-fn layout_ui(runtime: &mut UiRuntime<'_>) {
+fn layout_ui(runtime: &mut impl RenderRuntimeApi) {
     runtime.layout(DISPLAY_SIZE).unwrap();
 }
 
 fn main() {
     let args = SimulatorArgs::parse();
 
-    let mut runtime = UiRuntime::default();
+    let mut runtime = RuntimeBuilder::default()
+        .entities::<16_384, 32>()
+        .callbacks::<8_192, 64>()
+        .frame::<512, 8_192>()
+        .element_states::<256>()
+        .globals::<2_048, 8>()
+        .render_resources::<2, 128, { 16 * 1024 }, 1>()
+        .build();
     runtime.set_global(Theme::EINK).unwrap();
 
     let runtime_font = runtime_font_path(args.font.as_deref());
     let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
-    register_fonts(&mut runtime, runtime_font);
+    if let Some(runtime_font) = runtime_font {
+        let id = runtime
+            .register_font(runtime_font)
+            .expect("runtime font slot must fit");
+        assert_eq!(id, FontId::DEFAULT);
+    } else {
+        assert_eq!(runtime.register_font(&BODY_FONT).unwrap(), FontId::DEFAULT);
+        assert_eq!(
+            runtime.register_font(&HEADING_FONT).unwrap(),
+            FontId::new(1),
+        );
+    }
 
     let cover_image = args.cover.as_deref().map(|path| {
         HostImage::open(path)

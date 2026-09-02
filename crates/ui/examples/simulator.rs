@@ -15,7 +15,7 @@ use embedded_graphics_simulator::{
 };
 use heapless::String;
 use inkpaper_ui::{
-    DamageRegion, FontData, FontFace, Offset, RuntimeResources, TtfFont,
+    DamageRegion, FontData, FontFace, Offset, TtfFont,
     backend::{EmbeddedGraphicsImage, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
@@ -24,22 +24,6 @@ const DISPLAY_WIDTH: u32 = 320;
 const DISPLAY_HEIGHT: u32 = 240;
 const DISPLAY_SIZE_EG: EgSize = EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT);
 const DISPLAY_SIZE: Size = Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32));
-
-const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
-type UiResources = RuntimeResources<'static, 3, 128, UI_GLYPH_CACHE_BYTES, 1>;
-
-type UiRuntime = Runtime<
-    16_384, // entity bytes
-    32,     // entity slots
-    8_192,  // callback bytes
-    64,     // callback slots
-    256,    // frame nodes
-    4_096,  // frame text bytes
-    128,    // persistent element states
-    0,
-    0,
-    UiResources,
->;
 
 static BODY_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::new(&FONT_10X20);
@@ -1282,7 +1266,12 @@ fn to_ui_point(point: EgPoint) -> Point {
     Point::new(px(point.x), px(point.y))
 }
 
-fn update_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
+fn update_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
+where
+    R: RenderRuntimeApi,
+    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
+        ResourcePainter<R::Resources>,
+{
     let invalidation = runtime.take_render_invalidation();
     match invalidation.kind() {
         Invalidation::None => {}
@@ -1295,31 +1284,41 @@ fn update_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
     }
 }
 
-fn layout_ui(runtime: &mut UiRuntime) {
+fn layout_ui(runtime: &mut impl RenderRuntimeApi) {
     runtime.layout(DISPLAY_SIZE).unwrap();
 }
 
-fn paint_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion) {
+fn paint_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion)
+where
+    R: RenderRuntimeApi,
+    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
+        ResourcePainter<R::Resources>,
+{
     if damage.is_none() {
         return;
     }
 
     let mut painter = EmbeddedGraphicsPainter::new(display);
 
-    painter.clear_damage(damage, Color::BLACK).unwrap();
-    runtime
-        .paint_with_damage(damage, &mut painter)
-        .unwrap()
-        .unwrap();
+    match runtime.paint_with_damage(damage, &mut painter) {
+        Ok(Some(())) => {}
+        Ok(None) => panic!("painting requires a mounted root"),
+        Err(_) => panic!("UI painting failed"),
+    }
 }
 
-fn rebuild_ui(runtime: &mut UiRuntime, display: &mut SimulatorDisplay<Rgb888>) {
+fn rebuild_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
+where
+    R: RenderRuntimeApi,
+    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
+        ResourcePainter<R::Resources>,
+{
     runtime.rebuild().unwrap();
     layout_ui(runtime);
     paint_ui(runtime, display, DamageRegion::full());
 }
 
-fn handle_key_down(runtime: &mut UiRuntime, keycode: Keycode) {
+fn handle_key_down(runtime: &mut impl RuntimeApi, keycode: Keycode) {
     match keycode {
         Keycode::Down | Keycode::Right | Keycode::Tab => {
             runtime.focus_next();
@@ -1338,7 +1337,7 @@ fn handle_key_down(runtime: &mut UiRuntime, keycode: Keycode) {
     };
 }
 
-fn handle_key_up(runtime: &mut UiRuntime, keycode: Keycode) {
+fn handle_key_up(runtime: &mut impl RuntimeApi, keycode: Keycode) {
     match keycode {
         Keycode::Return | Keycode::Space => {
             runtime.complete_focused_activation().unwrap();
@@ -1385,37 +1384,41 @@ fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
     Some(font)
 }
 
-fn register_resources(
-    runtime: &mut UiRuntime,
-    runtime_font: Option<&'static dyn FontFace>,
-) -> ImageSource {
-    assert_eq!(runtime.register_font(&BODY_FONT).unwrap(), FontId::DEFAULT,);
+fn main() {
+    let runtime_font = runtime_font_from_args();
+    let text_demo_font = runtime_font.map(|_| FontId::new(2));
 
+    let mut runtime = RuntimeBuilder::default()
+        .entities::<16_384, 32>()
+        .callbacks::<8_192, 64>()
+        .frame::<512, 8_192>()
+        .element_states::<256>()
+        .globals::<2_048, 8>()
+        .render_resources::<2, 128, { 16 * 1024 }, 1>()
+        .build();
+
+    let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
+
+    assert_eq!(runtime.register_font(&BODY_FONT).unwrap(), FontId::DEFAULT);
     assert_eq!(
         runtime.register_font(&HEADING_FONT).unwrap(),
         FontId::new(1),
     );
 
     if let Some(runtime_font) = runtime_font {
-        assert_eq!(runtime.register_font(runtime_font).unwrap(), FontId::new(2),);
+        assert_eq!(
+            runtime
+                .register_font(runtime_font as &'static dyn FontFace,)
+                .unwrap(),
+            FontId::new(2),
+        );
     }
 
-    runtime
+    let demo_image = runtime
         .register_image(&DEMO_IMAGE_RESOURCE)
-        .expect("demo image slot must fit")
-}
+        .expect("demo image slot must fit");
 
-fn main() {
-    let runtime_font = runtime_font_from_args();
-    let text_demo_font = runtime_font.map(|_| FontId::new(2));
-
-    let mut runtime = UiRuntime::default();
-
-    let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
-
-    let demo_image = register_resources(&mut runtime, runtime_font);
-
-    let _app = runtime
+    runtime
         .create_root(|cx| App::new(cx, text_demo_font, demo_image))
         .unwrap();
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);

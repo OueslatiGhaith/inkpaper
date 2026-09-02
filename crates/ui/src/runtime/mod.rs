@@ -21,7 +21,7 @@ mod api;
 mod builder;
 mod root;
 
-pub use api::RuntimeApi;
+pub use api::{RenderRuntimeApi, RuntimeApi};
 pub use builder::RuntimeBuilder;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
