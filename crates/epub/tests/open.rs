@@ -1,4 +1,4 @@
-use epub::{Epub, SliceSource};
+use epub::{ArchivePath, Epub, SliceSource};
 use futures_lite::future;
 use miniz_oxide::deflate::compress_to_vec;
 
@@ -27,35 +27,81 @@ fn opens_epub_metadata_manifest_and_spine() {
         let epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
         let package = epub.package();
 
-        assert_eq!(package.path().as_str(), "OPS/package.opf",);
-        assert_eq!(package.version(), Some("3.0"),);
-        assert_eq!(package.unique_identifier(), Some("book-id"),);
-        assert_eq!(epub.metadata().title(), Some("Fish & Chips — EPUB Test",),);
+        assert_eq!(package.path().as_str(), "OPS/package.opf");
+        assert_eq!(package.version(), Some("3.0"));
+        assert_eq!(package.unique_identifier(), Some("book-id"));
+        assert_eq!(epub.metadata().title(), Some("Fish & Chips — EPUB Test"));
         assert_eq!(
             epub.metadata().creators(),
-            &[std::string::String::from("Alice & Bob",),],
+            &[std::string::String::from("Alice & Bob"),],
         );
-        assert_eq!(epub.metadata().language(), Some("en"),);
-        assert_eq!(epub.metadata().identifier(), Some("urn:uuid:test-book",),);
+        assert_eq!(epub.metadata().language(), Some("en"));
+        assert_eq!(epub.metadata().identifier(), Some("urn:uuid:test-book"));
 
         let chapter = package.manifest_item("chapter-1").unwrap();
 
-        assert_eq!(chapter.href(), "Text/./chapter1.xhtml",);
-        assert_eq!(chapter.path().as_str(), "OPS/Text/chapter1.xhtml",);
-        assert_eq!(chapter.media_type(), "application/xhtml+xml",);
+        assert_eq!(chapter.href(), "Text/./chapter1.xhtml");
+        assert_eq!(chapter.path().as_str(), "OPS/Text/chapter1.xhtml");
+        assert_eq!(chapter.media_type(), "application/xhtml+xml");
 
         let cover = package.manifest_item("cover-image").unwrap();
 
-        assert_eq!(cover.path().as_str(), "OPS/Images/cover.jpg",);
-        assert!(cover.has_property("cover-image",),);
-        assert_eq!(epub.spine().toc(), Some("ncx"),);
-        assert_eq!(epub.spine().items().len(), 2,);
-        assert_eq!(epub.spine().items()[0].idref(), "chapter-1",);
-        assert!(epub.spine().items()[0].linear(),);
-        assert_eq!(epub.spine().items()[1].idref(), "chapter-2",);
-        assert!(!epub.spine().items()[1].linear(),);
-        assert_eq!(package.spine_manifest_item(0,).unwrap().id(), "chapter-1",);
+        assert_eq!(cover.path().as_str(), "OPS/Images/cover.jpg");
+        assert!(cover.has_property("cover-image"));
+        assert_eq!(epub.spine().toc(), Some("ncx"));
+        assert_eq!(epub.spine().items().len(), 2);
+        assert_eq!(epub.spine().items()[0].idref(), "chapter-1");
+        assert!(epub.spine().items()[0].linear());
+        assert_eq!(epub.spine().items()[1].idref(), "chapter-2");
+        assert!(!epub.spine().items()[1].linear());
+        assert_eq!(package.spine_manifest_item(0).unwrap().id(), "chapter-1");
     }
+}
+
+#[test]
+fn reads_declared_manifest_and_spine_resources() {
+    let bytes = build_test_epub(DEFLATED);
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter_one = future::block_on(epub.read_manifest_resource("chapter-1"))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(chapter_one, b"<html><body><p>One</p></body></html>");
+
+    let chapter_two = future::block_on(epub.read_spine_resource(1))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(chapter_two, b"<html><body><p>Two</p></body></html>");
+
+    let cover_path = ArchivePath::new("OPS/Images/cover.jpg").unwrap();
+    let cover = future::block_on(epub.read_resource(&cover_path))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(cover, &[1, 2, 3, 4]);
+    assert!(
+        future::block_on(epub.read_manifest_resource("does-not-exist"))
+            .unwrap()
+            .is_none(),
+    );
+    assert!(
+        future::block_on(epub.read_spine_resource(99))
+            .unwrap()
+            .is_none(),
+    );
+
+    let mimetype = ArchivePath::new("mimetype").unwrap();
+
+    // `mimetype` exists in the ZIP, but it is not an OPF manifest resource. The public
+    // resource API must not expose arbitrary archive entries.
+    assert!(
+        future::block_on(epub.read_resource(&mimetype))
+            .unwrap()
+            .is_none(),
+    );
 }
 
 fn build_test_epub(xml_compression: u16) -> std::vec::Vec<u8> {

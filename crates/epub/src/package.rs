@@ -141,6 +141,10 @@ impl Package {
         self.manifest.iter().find(|item| item.id == id)
     }
 
+    pub fn manifest_item_by_path(&self, path: &ArchivePath) -> Option<&ManifestItem> {
+        self.manifest.iter().find(|item| item.path() == path)
+    }
+
     pub fn spine_manifest_item(&self, index: usize) -> Option<&ManifestItem> {
         let spine = self.spine.items.get(index)?;
 
@@ -331,7 +335,6 @@ impl PackageParser {
                     None => StartTag::Other,
                 }
             }
-
             _ => StartTag::Other,
         };
     }

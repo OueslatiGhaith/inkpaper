@@ -2,6 +2,8 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
+
 mod archive;
 mod container;
 mod error;
@@ -85,6 +87,53 @@ where
         .map_err(Error::Navigation)?;
 
         Ok(Some(navigation))
+    }
+
+    pub async fn read_resource(
+        &mut self,
+        path: &ArchivePath,
+    ) -> Result<Option<Vec<u8>>, Error<S::Error>> {
+        if self.package.manifest_item_by_path(path).is_none() {
+            return Ok(None);
+        }
+
+        let bytes = self.archive.read_entry(path).await?;
+
+        Ok(Some(bytes))
+    }
+
+    pub async fn read_manifest_resource(
+        &mut self,
+        id: &str,
+    ) -> Result<Option<Vec<u8>>, Error<S::Error>> {
+        let Some(path) = self
+            .package
+            .manifest_item(id)
+            .map(|item| item.path().clone())
+        else {
+            return Ok(None);
+        };
+
+        let bytes = self.archive.read_entry(&path).await?;
+
+        Ok(Some(bytes))
+    }
+
+    pub async fn read_spine_resource(
+        &mut self,
+        index: usize,
+    ) -> Result<Option<Vec<u8>>, Error<S::Error>> {
+        let Some(path) = self
+            .package
+            .spine_manifest_item(index)
+            .map(|item| item.path().clone())
+        else {
+            return Ok(None);
+        };
+
+        let bytes = self.archive.read_entry(&path).await?;
+
+        Ok(Some(bytes))
     }
 
     pub fn into_source(self) -> S {
