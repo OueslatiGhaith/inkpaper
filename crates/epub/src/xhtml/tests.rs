@@ -445,3 +445,18 @@ fn xhtml_preserves_lazy_images_links_alt_text_and_style_context() {
             .all(|inline| { !matches!(inline, Inline::Image(_)) }),
     );
 }
+
+#[test]
+fn xhtml_content_offsets_survive_markup_images_and_breaks() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml"><body><p>é🙂<a id="middle"></a><strong>漢</strong><br/><img src="../Images/cover.jpg" alt="Cover"/>z</p></body></html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+
+    assert_eq!(chapter.anchor_offset("middle"), Some(ContentOffset::new(2)));
+    assert_eq!(chapter.content_len(), ContentOffset::new(4));
+    assert!(chapter.contains_offset(ContentOffset::ZERO));
+    assert!(chapter.contains_offset(ContentOffset::new(4)));
+    assert!(!chapter.contains_offset(ContentOffset::new(5)));
+}

@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
-use crate::{ArchivePath, PathError};
+use crate::{ArchivePath, PathError, location::ContentOffset};
 
 mod parser;
 mod style_context;
@@ -38,6 +38,40 @@ impl Chapter {
 
     pub fn stylesheets(&self) -> &[StylesheetSource] {
         &self.stylesheets
+    }
+
+    pub fn content_len(&self) -> ContentOffset {
+        let mut offset = ContentOffset::ZERO;
+
+        for block in &self.blocks {
+            for inline in block.inlines() {
+                if let Inline::Text(text) = inline {
+                    offset = offset.advance_text(text.text());
+                }
+            }
+        }
+
+        offset
+    }
+
+    pub fn anchor_offset(&self, anchor: &str) -> Option<ContentOffset> {
+        let mut offset = ContentOffset::ZERO;
+
+        for block in &self.blocks {
+            for inline in block.inlines() {
+                match inline {
+                    Inline::Text(text) => offset = offset.advance_text(text.text()),
+                    Inline::Anchor(candidate) if candidate == anchor => return Some(offset),
+                    Inline::Image(_) | Inline::Break | Inline::Anchor(_) => {}
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn contains_offset(&self, offset: ContentOffset) -> bool {
+        offset <= self.content_len()
     }
 }
 

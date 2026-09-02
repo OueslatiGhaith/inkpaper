@@ -1,4 +1,7 @@
-use epub::{ArchivePath, BlockKind, Epub, FontStyle, FontWeight, Inline, SliceSource, TextAlign};
+use epub::{
+    ArchivePath, BlockKind, BookLocation, ContentOffset, Epub, FontStyle, FontWeight, Inline,
+    SliceSource, SpineIndex, TextAlign,
+};
 use futures_lite::future;
 use miniz_oxide::deflate::compress_to_vec;
 
@@ -201,6 +204,25 @@ fn probes_manifest_image_dimensions_without_decoding_pixels() {
             .unwrap()
             .is_none(),
     );
+}
+
+#[test]
+fn builds_stable_location_from_spine_and_normalized_content_offset() {
+    let bytes = build_test_epub(DEFLATED);
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(chapter.content_len(), ContentOffset::new(3));
+
+    let location = BookLocation::new(SpineIndex::new(0), ContentOffset::new(2));
+
+    assert_eq!(location.spine(), SpineIndex::new(0));
+    assert_eq!(location.offset(), ContentOffset::new(2));
+    assert!(chapter.contains_offset(location.offset()));
 }
 
 fn build_test_epub(xml_compression: u16) -> std::vec::Vec<u8> {
