@@ -1,39 +1,24 @@
 use alloc::vec::Vec;
+use core::mem;
 
 use inkpaper_epub::{
     BlockKind, BookLocation, Chapter, ChapterBlock, ChapterImage, ChapterStyles, ComputedStyle,
-    ContentOffset, ImageDimensions, Inline, SpineIndex, StyleNodeId, TextRun,
+    ContentOffset, ImageDimensions, Inline, LinkTarget, SpineIndex, StyleNodeId, TextAlign,
+    TextRun,
 };
 
-use crate::{ImageMeasurer, ReaderSettings, TextMeasurer, TextStyle, Viewport};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PageRange {
-    start: BookLocation,
-    end: BookLocation,
-}
-
-impl PageRange {
-    pub const fn new(start: BookLocation, end: BookLocation) -> Self {
-        Self { start, end }
-    }
-
-    pub const fn start(self) -> BookLocation {
-        self.start
-    }
-
-    pub const fn end(self) -> BookLocation {
-        self.end
-    }
-}
+use crate::{
+    ImageFragment, ImageMeasurer, Page, PageItem, PageRange, ReaderSettings, Rect, TextFragment,
+    TextMeasurer, TextStyle, Viewport,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Pagination {
-    pages: Vec<PageRange>,
+pub struct Pagination<'a> {
+    pages: Vec<Page<'a>>,
 }
 
-impl Pagination {
-    pub fn pages(&self) -> &[PageRange] {
+impl<'a> Pagination<'a> {
+    pub fn pages(&self) -> &[Page<'a>] {
         &self.pages
     }
 
@@ -46,29 +31,38 @@ impl Pagination {
     }
 }
 
-pub fn paginate_chapter<M>(
-    chapter: &Chapter,
+pub fn paginate_chapter<'a, M>(
+    chapter: &'a Chapter,
     styles: &ChapterStyles,
     spine: SpineIndex,
     viewport: Viewport,
     settings: ReaderSettings,
     measurer: &mut M,
-) -> Pagination
+) -> Pagination<'a>
 where
     M: TextMeasurer + ImageMeasurer,
 {
     Paginator::new(chapter, styles, spine, viewport, settings, measurer).paginate()
 }
 
-struct Paginator<'a, M> {
-    chapter: &'a Chapter,
-    styles: &'a ChapterStyles,
+struct PendingText<'a> {
+    text: &'a str,
+    style: TextStyle,
+    link: Option<&'a LinkTarget>,
+    x: u32,
+    width: u32,
+}
+
+struct Paginator<'chapter, 'context, M> {
+    chapter: &'chapter Chapter,
+    styles: &'context ChapterStyles,
     spine: SpineIndex,
     viewport: Viewport,
     settings: ReaderSettings,
-    measurer: &'a mut M,
+    measurer: &'context mut M,
 
-    pages: Vec<PageRange>,
+    pages: Vec<Page<'chapter>>,
+    page_items: Vec<PageItem<'chapter>>,
 
     page_start: ContentOffset,
     cursor: ContentOffset,
@@ -78,21 +72,23 @@ struct Paginator<'a, M> {
     line_start: ContentOffset,
     line_width: u32,
     line_height: u32,
+    line_align: TextAlign,
+    line_items: Vec<PendingText<'chapter>>,
 
     block_laid_out: bool,
 }
 
-impl<'a, M> Paginator<'a, M>
+impl<'chapter, 'context, M> Paginator<'chapter, 'context, M>
 where
     M: TextMeasurer + ImageMeasurer,
 {
     fn new(
-        chapter: &'a Chapter,
-        styles: &'a ChapterStyles,
+        chapter: &'chapter Chapter,
+        styles: &'context ChapterStyles,
         spine: SpineIndex,
         viewport: Viewport,
         settings: ReaderSettings,
-        measurer: &'a mut M,
+        measurer: &'context mut M,
     ) -> Self {
         Self {
             chapter,
@@ -102,6 +98,7 @@ where
             settings,
             measurer,
             pages: Vec::new(),
+            page_items: Vec::new(),
             page_start: ContentOffset::ZERO,
             cursor: ContentOffset::ZERO,
             used_height: 0,
@@ -109,11 +106,13 @@ where
             line_start: ContentOffset::ZERO,
             line_width: 0,
             line_height: 0,
+            line_align: TextAlign::Start,
+            line_items: Vec::new(),
             block_laid_out: false,
         }
     }
 
-    fn paginate(mut self) -> Pagination {
+    fn paginate(mut self) -> Pagination<'chapter> {
         for (index, block) in self.chapter.blocks().iter().enumerate() {
             self.layout_block(block);
 
@@ -131,21 +130,24 @@ where
         if self.used_height > 0 {
             self.push_page(end);
         } else if self.pages.is_empty() {
-            self.pages.push(PageRange::new(
-                BookLocation::new(self.spine, ContentOffset::ZERO),
-                BookLocation::new(self.spine, end),
+            self.pages.push(Page::new(
+                PageRange::new(
+                    BookLocation::new(self.spine, ContentOffset::ZERO),
+                    BookLocation::new(self.spine, end),
+                ),
+                mem::take(&mut self.page_items),
             ));
         } else if self.page_start < end {
             // hidden trailing content advances the canonical location without creating visual layout.
             if let Some(last) = self.pages.last_mut() {
-                last.end = BookLocation::new(self.spine, end);
+                last.set_end(BookLocation::new(self.spine, end));
             }
         }
 
         Pagination { pages: self.pages }
     }
 
-    fn layout_block(&mut self, block: &ChapterBlock) {
+    fn layout_block(&mut self, block: &'chapter ChapterBlock) {
         self.block_laid_out = false;
 
         let block_style = self.computed_style(block.style_node());
@@ -170,7 +172,7 @@ where
         self.flush_line();
     }
 
-    fn layout_text(&mut self, block_kind: BlockKind, run: &TextRun) {
+    fn layout_text(&mut self, block_kind: BlockKind, run: &'chapter TextRun) {
         let computed = self.computed_style(run.style_node());
 
         if computed.hidden() {
@@ -186,10 +188,10 @@ where
             computed.font_style(),
         );
 
-        self.layout_text_content(run.text(), style);
+        self.layout_text_content(run.text(), style, run.link(), computed.text_align());
     }
 
-    fn layout_image(&mut self, image: &ChapterImage) {
+    fn layout_image(&mut self, image: &'chapter ChapterImage) {
         let computed = self.computed_style(image.style_node());
 
         if computed.hidden() {
@@ -214,11 +216,23 @@ where
             self.push_page(self.cursor);
         }
 
+        let x = alignment_offset(computed.text_align(), self.viewport.width(), layout.width());
+
+        let bounds = Rect::new(x, self.used_height, layout.width(), height);
+
+        self.page_items
+            .push(PageItem::Image(ImageFragment::new(image, bounds)));
         self.used_height = self.used_height.saturating_add(height);
         self.block_laid_out = true;
     }
 
-    fn layout_text_content(&mut self, text: &str, style: TextStyle) {
+    fn layout_text_content(
+        &mut self,
+        text: &'chapter str,
+        style: TextStyle,
+        link: Option<&'chapter LinkTarget>,
+        align: TextAlign,
+    ) {
         let mut start = 0usize;
 
         while start < text.len() {
@@ -243,16 +257,22 @@ where
             let segment = &text[start..end];
 
             if whitespace {
-                self.layout_whitespace(segment, style);
+                self.layout_whitespace(segment, style, link, align);
             } else {
-                self.layout_word(segment, style);
+                self.layout_word(segment, style, link, align);
             }
 
             start = end;
         }
     }
 
-    fn layout_whitespace(&mut self, whitespace: &str, style: TextStyle) {
+    fn layout_whitespace(
+        &mut self,
+        whitespace: &'chapter str,
+        style: TextStyle,
+        link: Option<&'chapter LinkTarget>,
+        align: TextAlign,
+    ) {
         if !self.line_active {
             self.cursor = self.cursor.advance_text(whitespace);
 
@@ -269,12 +289,16 @@ where
             return;
         }
 
-        self.line_width = self.line_width.saturating_add(width);
-        self.line_height = self.line_height.max(self.measured_line_height(style));
-        self.cursor = self.cursor.advance_text(whitespace);
+        self.add_text_piece(whitespace, width, style, link, align);
     }
 
-    fn layout_word(&mut self, word: &str, style: TextStyle) {
+    fn layout_word(
+        &mut self,
+        word: &'chapter str,
+        style: TextStyle,
+        link: Option<&'chapter LinkTarget>,
+        align: TextAlign,
+    ) {
         let width = self.measurer.measure_text(word, style);
 
         if self.line_active && self.line_width.saturating_add(width) > self.viewport.width() {
@@ -282,15 +306,21 @@ where
         }
 
         if width <= self.viewport.width() {
-            self.add_text_piece(word, width, style);
+            self.add_text_piece(word, width, style, link, align);
 
             return;
         }
 
-        self.layout_oversized_word(word, style);
+        self.layout_oversized_word(word, style, link, align);
     }
 
-    fn layout_oversized_word(&mut self, word: &str, style: TextStyle) {
+    fn layout_oversized_word(
+        &mut self,
+        word: &'chapter str,
+        style: TextStyle,
+        link: Option<&'chapter LinkTarget>,
+        align: TextAlign,
+    ) {
         let mut start = 0usize;
 
         while start < word.len() {
@@ -334,7 +364,7 @@ where
 
             let piece = &word[start..end];
 
-            self.add_text_piece(piece, width, style);
+            self.add_text_piece(piece, width, style, link, align);
 
             start = end;
 
@@ -344,7 +374,14 @@ where
         }
     }
 
-    fn add_text_piece(&mut self, text: &str, width: u32, style: TextStyle) {
+    fn add_text_piece(
+        &mut self,
+        text: &'chapter str,
+        width: u32,
+        style: TextStyle,
+        link: Option<&'chapter LinkTarget>,
+        align: TextAlign,
+    ) {
         if text.is_empty() {
             return;
         }
@@ -352,7 +389,16 @@ where
         if !self.line_active {
             self.line_active = true;
             self.line_start = self.cursor;
+            self.line_align = align;
         }
+
+        self.line_items.push(PendingText {
+            text,
+            style,
+            link,
+            x: self.line_width,
+            width,
+        });
 
         self.line_width = self.line_width.saturating_add(width);
         self.line_height = self.line_height.max(self.measured_line_height(style));
@@ -375,6 +421,7 @@ where
 
         self.line_active = true;
         self.line_start = self.cursor;
+        self.line_align = computed.text_align();
         self.line_height = self.measured_line_height(style);
         self.block_laid_out = true;
 
@@ -393,11 +440,25 @@ where
             self.push_page(self.line_start);
         }
 
+        let y = self.used_height;
+
+        let offset = alignment_offset(self.line_align, self.viewport.width(), self.line_width);
+
+        for item in mem::take(&mut self.line_items) {
+            self.page_items.push(PageItem::Text(TextFragment::new(
+                item.text,
+                Rect::new(offset.saturating_add(item.x), y, item.width, height),
+                item.style,
+                item.link,
+            )));
+        }
+
         self.used_height = self.used_height.saturating_add(height);
         self.line_active = false;
         self.line_start = self.cursor;
         self.line_width = 0;
         self.line_height = 0;
+        self.line_align = TextAlign::Start;
     }
 
     fn add_block_spacing(&mut self) {
@@ -420,10 +481,13 @@ where
     }
 
     fn push_page(&mut self, end: ContentOffset) {
-        self.pages.push(PageRange::new(
+        let range = PageRange::new(
             BookLocation::new(self.spine, self.page_start),
             BookLocation::new(self.spine, end),
-        ));
+        );
+
+        self.pages
+            .push(Page::new(range, mem::take(&mut self.page_items)));
 
         self.page_start = end;
         self.used_height = 0;
@@ -449,6 +513,16 @@ where
         }
 
         scalar_boundary(text, from)
+    }
+}
+
+fn alignment_offset(align: TextAlign, container_width: u32, content_width: u32) -> u32 {
+    let remaining = container_width.saturating_sub(content_width);
+
+    match align {
+        TextAlign::Center => remaining / 2,
+        TextAlign::End | TextAlign::Right => remaining,
+        TextAlign::Start | TextAlign::Left | TextAlign::Justify => 0,
     }
 }
 

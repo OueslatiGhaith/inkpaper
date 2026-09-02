@@ -3,10 +3,12 @@
 extern crate alloc;
 
 mod metrics;
+mod page;
 mod pagination;
 
 pub use metrics::{ImageMeasurer, TextMeasurer, TextStyle};
-pub use pagination::{PageRange, Pagination, paginate_chapter};
+pub use page::{ImageFragment, Page, PageItem, PageRange, Rect, TextFragment};
+pub use pagination::{Pagination, paginate_chapter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Viewport {

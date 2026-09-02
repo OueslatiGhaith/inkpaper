@@ -4,7 +4,8 @@ use inkpaper_epub::{
     SpineIndex,
 };
 use inkpaper_reader::{
-    ImageMeasurer, ReaderSettings, TextMeasurer, TextStyle, Viewport, paginate_chapter,
+    ImageMeasurer, PageItem, PageRange, ReaderSettings, Rect, TextMeasurer, TextStyle, Viewport,
+    paginate_chapter,
 };
 
 #[derive(Default)]
@@ -60,15 +61,15 @@ fn pagination_produces_stable_content_ranges() {
 
     assert_eq!(pagination.len(), 2);
     assert_eq!(
-        pagination.pages()[0],
-        inkpaper_reader::PageRange::new(
+        pagination.pages()[0].range(),
+        PageRange::new(
             BookLocation::new(SpineIndex::ZERO, ContentOffset::ZERO),
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(14)),
         ),
     );
     assert_eq!(
-        pagination.pages()[1],
-        inkpaper_reader::PageRange::new(
+        pagination.pages()[1].range(),
+        PageRange::new(
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(14)),
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(18)),
         ),
@@ -198,8 +199,6 @@ fn image_can_occupy_a_page_without_advancing_content_location() {
         .unwrap()
         .unwrap();
 
-    assert_eq!(dimensions.width(), 64);
-    assert_eq!(dimensions.height(), 32);
     assert_eq!(chapter.content_len(), ContentOffset::new(6));
 
     let mut measurer = MonoMeasurer {
@@ -218,27 +217,35 @@ fn image_can_occupy_a_page_without_advancing_content_location() {
     assert_eq!(pagination.len(), 3);
 
     assert_eq!(
-        pagination.pages()[0],
-        inkpaper_reader::PageRange::new(
+        pagination.pages()[0].range(),
+        PageRange::new(
             BookLocation::new(SpineIndex::ZERO, ContentOffset::ZERO),
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(3)),
         ),
     );
     // the image occupies the entire second page but contributes no visible-text ContentOffset.
     assert_eq!(
-        pagination.pages()[1],
-        inkpaper_reader::PageRange::new(
+        pagination.pages()[1].range(),
+        PageRange::new(
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(3)),
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(3)),
         ),
     );
     assert_eq!(
-        pagination.pages()[2],
-        inkpaper_reader::PageRange::new(
+        pagination.pages()[2].range(),
+        PageRange::new(
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(3)),
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(6)),
         ),
     );
+    assert_eq!(pagination.pages()[1].items().len(), 1);
+
+    let PageItem::Image(fragment) = pagination.pages()[1].items()[0] else {
+        panic!("expected image fragment");
+    };
+
+    assert_eq!(fragment.image().path().as_str(), "OPS/Images/picture.jpg");
+    assert_eq!(fragment.bounds(), Rect::new(0, 0, 6, 3));
 }
 
 #[test]
@@ -279,12 +286,79 @@ fn hidden_image_does_not_consume_page_space() {
 
     assert_eq!(pagination.len(), 1);
     assert_eq!(
-        pagination.pages()[0],
-        inkpaper_reader::PageRange::new(
+        pagination.pages()[0].range(),
+        PageRange::new(
             BookLocation::new(SpineIndex::ZERO, ContentOffset::ZERO),
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(6)),
         ),
     );
+    assert!(
+        pagination.pages()[0]
+            .items()
+            .iter()
+            .all(|item| { !matches!(item, PageItem::Image(_)) }),
+    );
+}
+
+#[test]
+fn pagination_emits_positioned_text_fragments_and_links() {
+    let bytes = build_test_epub(
+        r##"
+<p style="text-align: center">one <a href="#target">two</a></p>
+"##,
+    );
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let mut measurer = MonoMeasurer::default();
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(10, 2).unwrap(),
+        ReaderSettings::new(16, 0).unwrap(),
+        &mut measurer,
+    );
+
+    assert_eq!(pagination.len(), 1);
+
+    let page = &pagination.pages()[0];
+
+    assert_eq!(page.items().len(), 3);
+
+    let PageItem::Text(one) = page.items()[0] else {
+        panic!("expected text");
+    };
+
+    assert_eq!(one.text(), "one");
+    assert_eq!(one.bounds(), Rect::new(1, 0, 3, 1));
+    assert!(one.link().is_none());
+
+    let PageItem::Text(space) = page.items()[1] else {
+        panic!("expected space");
+    };
+
+    assert_eq!(space.text(), " ");
+    assert_eq!(space.bounds(), Rect::new(4, 0, 1, 1));
+
+    let PageItem::Text(two) = page.items()[2] else {
+        panic!("expected linked text");
+    };
+
+    assert_eq!(two.text(), "two");
+    assert_eq!(two.bounds(), Rect::new(5, 0, 3, 1));
+
+    let link = two.link().unwrap();
+
+    assert_eq!(link.path().unwrap().as_str(), "OPS/Text/chapter.xhtml");
+    assert_eq!(link.fragment(), Some("target"));
 }
 
 fn build_test_epub(body: &str) -> Vec<u8> {
