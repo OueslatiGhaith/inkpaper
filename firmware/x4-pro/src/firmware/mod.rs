@@ -50,6 +50,7 @@ mod power;
 mod power_button;
 mod presenter;
 mod probe;
+mod refresh_policy;
 mod rtc;
 mod sleep_pins;
 mod storage;

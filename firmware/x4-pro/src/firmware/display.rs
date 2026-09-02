@@ -6,7 +6,7 @@ use uc8179::{RefreshMode as Uc8179RefreshMode, Uc8179, X4_PRO_800X480 as UC8179_
 use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC8279_X4_PRO};
 use xteink_display_probe::Controller;
 
-use crate::firmware::presenter::{FrameUpdate, RefreshRequest};
+use crate::firmware::{presenter::FrameUpdate, refresh_policy::RefreshRequest};
 
 #[derive(Debug, Format)]
 pub enum Error<E> {

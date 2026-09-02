@@ -1,4 +1,3 @@
-use defmt::Format;
 use embedded_graphics::{
     geometry::Point as EgPoint,
     mono_font::ascii::{FONT_6X10, FONT_10X20},
@@ -10,9 +9,12 @@ use inkpaper_ui::{
     prelude::*,
 };
 
-use crate::firmware::framebuffer::{
-    FRAMEBUFFER_LEN, Framebuffer, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation, PHYSICAL_HEIGHT,
-    PHYSICAL_WIDTH, Region,
+use crate::firmware::{
+    framebuffer::{
+        FRAMEBUFFER_LEN, Framebuffer, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation, PHYSICAL_HEIGHT,
+        PHYSICAL_WIDTH, Region,
+    },
+    refresh_policy::{RefreshContext, RefreshPolicy, RefreshRequest},
 };
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
@@ -58,12 +60,6 @@ pub type UiRuntime = Runtime<
         UI_IMAGE_SLOTS,
     >,
 >;
-
-#[derive(Debug, Format, Clone, Copy, PartialEq, Eq)]
-pub enum RefreshRequest {
-    Full,
-    Fast,
-}
 
 #[derive(Debug, Clone, Copy)]
 struct RenderedFrame {
@@ -111,7 +107,9 @@ impl FrameUpdate {
     }
 }
 
-pub struct Presenter;
+pub struct Presenter {
+    refresh_policy: RefreshPolicy,
+}
 
 impl Presenter {
     pub fn new(runtime: &mut UiRuntime) -> Self {
@@ -126,7 +124,9 @@ impl Presenter {
         defmt::assert_eq!(body, FontId::DEFAULT);
         defmt::assert_eq!(heading, FontId::new(1));
 
-        Self
+        Self {
+            refresh_policy: RefreshPolicy::default(),
+        }
     }
 
     pub fn render_initial(
@@ -138,6 +138,10 @@ impl Presenter {
 
         let rendered = render_invalidation(runtime, frame, invalidation)
             .expect("a full initial render must produce physical damage");
+
+        // initial presentation is explicitly full regardless of policy.
+        // reset history so subsequent updates begin from a clean panel
+        self.refresh_policy.record_full_refresh();
 
         FrameUpdate::new(
             RefreshRequest::Full,
@@ -157,9 +161,10 @@ impl Presenter {
         }
 
         let rendered = render_invalidation(runtime, frame, invalidation)?;
+        let refresh = self.refresh_policy.select(refresh_context(rendered));
 
         Some(FrameUpdate::new(
-            RefreshRequest::Fast,
+            refresh,
             rendered.physical_damage,
             rendered.paint_report,
         ))
@@ -269,4 +274,21 @@ fn ui_rect_to_region(rect: Rect) -> Option<Region> {
 
 fn read_framebuffer_pixel(framebuffer: &Framebuffer<'_>, point: EgPoint) -> Option<Rgb888> {
     framebuffer.get_pixel(point)
+}
+
+fn refresh_context(rendered: RenderedFrame) -> RefreshContext {
+    let damage = rendered.physical_damage;
+
+    let damaged_pixels = u32::from(damage.width).saturating_mul(u32::from(damage.height));
+
+    RefreshContext::new(
+        rendered.paint_report.damage().is_full(),
+        rendered.paint_report.content().has_continuous_tone_images(),
+        damaged_pixels,
+        physical_display_pixels(),
+    )
+}
+
+const fn physical_display_pixels() -> u32 {
+    (PHYSICAL_WIDTH as u32) * (PHYSICAL_HEIGHT as u32)
 }
