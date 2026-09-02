@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 
 mod archive;
 mod container;
+mod css;
 mod error;
 mod navigation;
 mod package;
@@ -14,6 +15,7 @@ mod source;
 mod xhtml;
 mod xml;
 
+pub use css::{ChapterStyles, ComputedStyle, FontStyle, FontWeight, TextAlign};
 pub use error::{ArchiveError, ContainerError, Error, NavigationError, PackageError, XhtmlError};
 pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};
@@ -26,10 +28,10 @@ pub use xhtml::{
 
 use archive::Archive;
 use container::parse_container;
+use css::{Stylesheet, resolve_chapter_styles};
 use navigation::{parse_nav, parse_ncx};
 use package::parse_package;
-
-use crate::xhtml::parse_xhtml;
+use xhtml::parse_xhtml;
 
 #[derive(Debug, Clone, Copy)]
 enum NavigationFormat {
@@ -184,6 +186,38 @@ where
         };
 
         self.load_chapter(&path).await
+    }
+
+    pub async fn load_chapter_styles(
+        &mut self,
+        chapter: &Chapter,
+    ) -> Result<ChapterStyles, Error<S::Error>> {
+        let mut stylesheet = Stylesheet::default();
+
+        for source in chapter.stylesheets() {
+            match source {
+                StylesheetSource::Embedded(css) => {
+                    stylesheet.push(css);
+                }
+                StylesheetSource::External(path) => {
+                    let declared_css = self
+                        .package
+                        .manifest_item_by_path(path)
+                        .is_some_and(|item| item.media_type() == "text/css");
+
+                    if !declared_css {
+                        continue;
+                    }
+
+                    let bytes = self.archive.read_entry(path).await?;
+                    let css = core::str::from_utf8(&bytes).map_err(Error::Utf8)?;
+
+                    stylesheet.push(css);
+                }
+            }
+        }
+
+        Ok(resolve_chapter_styles(chapter, &stylesheet))
     }
 }
 

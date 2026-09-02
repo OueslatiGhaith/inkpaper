@@ -1,4 +1,4 @@
-use epub::{ArchivePath, BlockKind, Epub, Inline, SliceSource};
+use epub::{ArchivePath, BlockKind, Epub, FontStyle, FontWeight, Inline, SliceSource, TextAlign};
 use futures_lite::future;
 use miniz_oxide::deflate::compress_to_vec;
 
@@ -137,6 +137,43 @@ fn loads_spine_xhtml_as_normalized_chapter() {
     );
 }
 
+#[test]
+fn loads_and_resolves_external_chapter_styles() {
+    let bytes = build_styled_test_epub();
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let text = chapter.blocks()[0]
+        .inlines()
+        .iter()
+        .find_map(|inline| {
+            let Inline::Text(text) = inline else {
+                return None;
+            };
+
+            if text.text() == "One" {
+                Some(text)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+
+    let style = styles.style(text.style_node()).unwrap();
+
+    assert_eq!(style.font_weight(), FontWeight::Bold);
+    assert_eq!(style.font_style(), FontStyle::Italic);
+    // the embedded stylesheet occurs after the external stylesheet and has equal
+    // specificity, so source order wins.
+    assert_eq!(style.text_align(), TextAlign::Right);
+}
+
 fn build_test_epub(xml_compression: u16) -> std::vec::Vec<u8> {
     const CONTAINER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <container
@@ -241,6 +278,109 @@ fn build_test_epub(xml_compression: u16) -> std::vec::Vec<u8> {
         TestEntry {
             name: "OPS/toc.ncx",
             data: b"<ncx/>",
+            compression: DEFLATED,
+        },
+    ])
+}
+
+fn build_styled_test_epub() -> std::vec::Vec<u8> {
+    const CONTAINER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<container
+    xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+>
+    <rootfiles>
+        <rootfile
+            full-path="OPS/package.opf"
+            media-type="application/oebps-package+xml"
+        />
+    </rootfiles>
+</container>
+"#;
+
+    const PACKAGE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package
+    xmlns="http://www.idpf.org/2007/opf"
+    version="3.0"
+>
+    <metadata
+        xmlns:dc="http://purl.org/dc/elements/1.1/"
+    >
+        <dc:title>Styled EPUB</dc:title>
+    </metadata>
+
+    <manifest>
+        <item
+            id="chapter"
+            href="Text/chapter.xhtml"
+            media-type="application/xhtml+xml"
+        />
+
+        <item
+            id="style"
+            href="Styles/book.css"
+            media-type="text/css"
+        />
+    </manifest>
+
+    <spine>
+        <itemref idref="chapter"/>
+    </spine>
+</package>
+"#;
+
+    const CHAPTER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <link
+            rel="stylesheet"
+            href="../Styles/book.css"
+        />
+
+        <style>
+            .lead {
+                text-align: right;
+            }
+        </style>
+    </head>
+
+    <body>
+        <p class="lead">One</p>
+    </body>
+</html>
+"#;
+
+    const CSS: &str = r#"
+.lead {
+    font-weight: bold;
+    font-style: italic;
+    text-align: center;
+}
+"#;
+
+    build_zip(&[
+        TestEntry {
+            name: "mimetype",
+            data: b"application/epub+zip",
+            compression: STORED,
+        },
+        TestEntry {
+            name: "META-INF/container.xml",
+            data: CONTAINER.as_bytes(),
+            compression: DEFLATED,
+        },
+        TestEntry {
+            name: "OPS/package.opf",
+            data: PACKAGE.as_bytes(),
+            compression: DEFLATED,
+        },
+        TestEntry {
+            name: "OPS/Text/chapter.xhtml",
+            data: CHAPTER.as_bytes(),
+            compression: DEFLATED,
+        },
+        TestEntry {
+            name: "OPS/Styles/book.css",
+            data: CSS.as_bytes(),
             compression: DEFLATED,
         },
     ])
