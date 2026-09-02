@@ -5,8 +5,8 @@ use crate::PerformanceMetrics;
 use crate::{
     ActivateEvent, Context, DamageRegion, Entity, EntityAccessError, EntityAllocError, EntityArena,
     EventTarget, FontFace, FontId, FontRegistryError, FrameArena, ImageRegistryError,
-    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, Painter, Point,
-    Render, RenderInvalidation, ResourcePainter, Size, TextMeasurer,
+    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, Point, Render,
+    RenderInvalidation, ResourcePainter, Size, TextMeasurer,
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     entity::create_entity,
@@ -16,7 +16,10 @@ use crate::{
     resources::RuntimeResources,
 };
 
+mod api;
 mod builder;
+
+pub use api::RuntimeApi;
 pub use builder::RuntimeBuilder;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

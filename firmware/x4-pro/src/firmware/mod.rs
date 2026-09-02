@@ -364,7 +364,7 @@ async fn stay_alive() -> ! {
 }
 
 fn handle_input_event(
-    runtime: &mut UiRuntime,
+    runtime: &mut impl RuntimeApi,
     app: Entity<InkPaperApp>,
     event: InputEvent,
 ) -> InputAction {
@@ -377,7 +377,7 @@ fn handle_input_event(
 }
 
 fn apply_battery_reading(
-    runtime: &mut UiRuntime,
+    runtime: &mut impl RuntimeApi,
     app: Entity<InkPaperApp>,
     reading: BatteryReading,
 ) {
@@ -393,7 +393,7 @@ fn apply_battery_reading(
     defmt::debug_assert_eq!(action, PlatformAction::None,);
 }
 
-fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: RtcState) {
+fn apply_rtc_state(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>, state: RtcState) {
     let state = match state {
         RtcState::Invalid => AppClockState::Unavailable,
         RtcState::Valid(datetime) => {

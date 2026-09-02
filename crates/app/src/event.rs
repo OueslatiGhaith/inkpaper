@@ -1,4 +1,4 @@
-use inkpaper_ui::{Entity, Offset, Point, Runtime, px};
+use inkpaper_ui::{Entity, Offset, Point, RuntimeApi, px};
 
 use crate::{InkPaperApp, Route, clock::TimeOfDay};
 
@@ -129,19 +129,8 @@ pub enum PlatformAction {
 }
 
 impl InkPaperApp {
-    pub fn handle_event<
-        const EB: usize,
-        const ES: usize,
-        const CB: usize,
-        const CS: usize,
-        const FN: usize,
-        const FT: usize,
-        const ST: usize,
-        const GB: usize,
-        const GS: usize,
-        RESOURCES,
-    >(
-        runtime: &mut Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>,
+    pub fn handle_event(
+        runtime: &mut impl RuntimeApi,
         app: Entity<Self>,
         event: AppEvent,
     ) -> PlatformAction {

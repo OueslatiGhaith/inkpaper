@@ -191,7 +191,7 @@ fn key_event(keycode: Keycode, edge: AppButtonEdge) -> Option<AppEvent> {
 }
 
 fn handle_app_event(
-    runtime: &mut UiRuntime,
+    runtime: &mut impl RuntimeApi,
     app: Entity<InkPaperApp>,
     event: AppEvent,
 ) -> PlatformAction {

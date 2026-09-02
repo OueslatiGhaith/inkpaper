@@ -57,8 +57,8 @@ pub mod prelude {
         Image, ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint, ImagePosition,
         ImageRegistry, ImageRegistryError, ImageResource, ImageSampling, ImageSource, IntoElement,
         Invalidation, LineHeight, Listener, Offset, OnEvent, ParentElement, Pixels, Point, Rect,
-        Render, RenderInvalidation, RenderOnce, ResourcePainter, Runtime, RuntimeBuilder, Size,
-        StatefulInteractiveElementExt, Style, Styled, TextAlign, TextMaxLines, TextOverflow,
-        TextStyled, TextWrap, canvas, div, image, px, text,
+        Render, RenderInvalidation, RenderOnce, ResourcePainter, Runtime, RuntimeApi,
+        RuntimeBuilder, Size, StatefulInteractiveElementExt, Style, Styled, TextAlign,
+        TextMaxLines, TextOverflow, TextStyled, TextWrap, canvas, div, image, px, text,
     };
 }
