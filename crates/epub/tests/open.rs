@@ -1,8 +1,8 @@
-use epub::{
+use futures_lite::future;
+use inkpaper_epub::{
     ArchivePath, BlockKind, BookLocation, ContentOffset, Epub, FontStyle, FontWeight, Inline,
     SliceSource, SpineIndex, TextAlign,
 };
-use futures_lite::future;
 use miniz_oxide::deflate::compress_to_vec;
 
 const STORED: u16 = 0;

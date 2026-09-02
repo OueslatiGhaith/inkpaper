@@ -1,5 +1,5 @@
 [package]
-name = "epub"
+name = "inkpaper-epub"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,4 +8,4 @@ miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-a
 xmlparser = { version = "0.13.6", default-features = false }
 
 [dev-dependencies]
-futures-lite = "2.6.1"
+futures-lite = { workspace = true }

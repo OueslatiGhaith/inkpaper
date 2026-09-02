@@ -1,5 +1,5 @@
-use epub::{Epub, SliceSource};
 use futures_lite::future;
+use inkpaper_epub::{Epub, SliceSource};
 
 struct TestEntry<'a> {
     name: &'a str,

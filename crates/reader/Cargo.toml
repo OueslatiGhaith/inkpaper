@@ -1,0 +1,10 @@
+[package]
+name = "inkpaper-reader"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+inkpaper-epub = { path = "../epub" }
+
+[dev-dependencies]
+futures-lite = { workspace = true }

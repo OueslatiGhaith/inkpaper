@@ -1004,15 +1004,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "epub"
-version = "0.1.0"
-dependencies = [
- "futures-lite",
- "miniz_oxide 0.9.1",
- "xmlparser",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1683,6 +1674,23 @@ dependencies = [
  "defmt 1.1.1",
  "heapless 0.9.3",
  "inkpaper-ui",
+]
+
+[[package]]
+name = "inkpaper-epub"
+version = "0.1.0"
+dependencies = [
+ "futures-lite",
+ "miniz_oxide 0.9.1",
+ "xmlparser",
+]
+
+[[package]]
+name = "inkpaper-reader"
+version = "0.1.0"
+dependencies = [
+ "futures-lite",
+ "inkpaper-epub",
 ]
 
 [[package]]
