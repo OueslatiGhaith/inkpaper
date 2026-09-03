@@ -1701,8 +1701,11 @@ dependencies = [
  "clap",
  "embedded-graphics",
  "embedded-graphics-simulator",
+ "futures-lite",
  "image",
  "inkpaper-app",
+ "inkpaper-epub",
+ "inkpaper-reader",
  "inkpaper-ui",
  "static_cell",
 ]

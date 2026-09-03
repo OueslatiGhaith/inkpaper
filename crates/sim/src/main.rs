@@ -17,16 +17,18 @@ use inkpaper_app::{
     theme::Theme,
 };
 use inkpaper_ui::{
-    FontData, FontFace, TtfFont,
+    FontData, FontFace, FontRegistry, TtfFont,
     backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
 use static_cell::StaticCell;
 
-use crate::{args::SimulatorArgs, host_image::HostImage};
+use crate::{args::SimulatorArgs, host_image::HostImage, reader_demo::load_reader_preview};
 
 mod args;
+mod host_epub;
 mod host_image;
+mod reader_demo;
 
 const DISPLAY_WIDTH: u32 = 480;
 const DISPLAY_HEIGHT: u32 = 800;
@@ -236,7 +238,7 @@ fn main() {
     let mut runtime = RuntimeBuilder::default()
         .entities::<16_384, 32>()
         .callbacks::<8_192, 64>()
-        .frame::<512, 8_192>()
+        .frame::<2_048, 32_768>()
         .element_states::<256>()
         .globals::<2_048, 8>()
         .render_resources::<2, 128, { 16 * 1024 }, 1>()
@@ -245,17 +247,103 @@ fn main() {
 
     let runtime_font = runtime_font_path(args.font.as_deref());
     let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
-    if let Some(runtime_font) = runtime_font {
-        let id = runtime
+
+    // reader pagination needs a FontRegistry independently of the runtime.
+    // register the exact same faces in the same order so FontIds are identical
+    // between pagination and painting.
+    let mut reader_fonts = FontRegistry::<2>::default();
+    let (reader_body_font, reader_heading_font) = if let Some(runtime_font) = runtime_font {
+        let runtime_id = runtime
             .register_font(runtime_font)
             .expect("runtime font slot must fit");
-        assert_eq!(id, FontId::DEFAULT);
+
+        let reader_id = reader_fonts
+            .register(runtime_font)
+            .expect("reader font slot must fit");
+
+        assert_eq!(runtime_id, reader_id);
+
+        (reader_id, reader_id)
     } else {
-        assert_eq!(runtime.register_font(&BODY_FONT).unwrap(), FontId::DEFAULT);
-        assert_eq!(
-            runtime.register_font(&HEADING_FONT).unwrap(),
-            FontId::new(1),
+        let runtime_body = runtime.register_font(&BODY_FONT).unwrap();
+        let reader_body = reader_fonts.register(&BODY_FONT).unwrap();
+
+        assert_eq!(runtime_body, reader_body);
+
+        let runtime_heading = runtime.register_font(&HEADING_FONT).unwrap();
+        let reader_heading = reader_fonts.register(&HEADING_FONT).unwrap();
+
+        assert_eq!(runtime_heading, reader_heading);
+
+        // FONT_6X10 is useful for the existing application simulator but is too small
+        // for a full-screen book preview. Use the readable 10x20 face for both reader
+        // body and headings when no TTF was supplied.
+        (reader_heading, reader_heading)
+    };
+
+    if let Some(epub_path) = args.epub.as_deref() {
+        let viewport = inkpaper_reader::Viewport::new(DISPLAY_WIDTH, DISPLAY_HEIGHT)
+            .expect("simulator display dimensions are non-zero");
+
+        let preview = load_reader_preview(
+            epub_path,
+            reader_fonts,
+            reader_body_font,
+            reader_heading_font,
+            viewport,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to open EPUB preview {}: {error:?}",
+                epub_path.display(),
+            )
+        });
+
+        eprintln!(
+            "showing reader spine={} page=1/{}",
+            preview.spine().get(),
+            preview.page_count(),
         );
+
+        runtime.create_root(move |_| preview).unwrap();
+
+        let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
+
+        rebuild_ui(&mut runtime, &mut display);
+
+        let output_settings = OutputSettingsBuilder::new().scale(1).build();
+
+        let file_name = epub_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("EPUB");
+
+        let title = format!("InkPaper EPUB — {file_name}");
+
+        let mut window = Window::new(&title, &output_settings);
+
+        'reader: loop {
+            window.update(&display);
+
+            for event in window.events() {
+                match event {
+                    SimulatorEvent::Quit => break 'reader,
+                    SimulatorEvent::KeyDown {
+                        keycode: Keycode::Escape,
+                        ..
+                    } => break 'reader,
+                    _ => {}
+                }
+            }
+        }
+
+        eprintln!(
+            "glyph cache at exit: {} / {} bytes",
+            runtime.glyph_cache_used_bytes(),
+            runtime.glyph_cache_capacity_bytes(),
+        );
+
+        return;
     }
 
     let cover_image = args.cover.as_deref().map(|path| {
