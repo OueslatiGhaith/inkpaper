@@ -1,6 +1,6 @@
 use inkpaper_reader::{
-    ImageFragment, Page, PageItem, Rect as ReaderRect, TextFragment, TextStyle as ReaderTextStyle,
-    Viewport,
+    ChapterImage, ImageDimensions, ImageFragment, Page, PageItem, Rect as ReaderRect, TextFragment,
+    TextStyle as ReaderTextStyle, Viewport,
 };
 use inkpaper_ui::{
     AppContext, Div, Element, FontId, ImageSource, IntoElement, MountCx, MountError, NodeId,
@@ -12,7 +12,11 @@ pub trait ReaderPageResources {
         FontId::DEFAULT
     }
 
-    fn image_source(&self, _image: ImageFragment<'_>) -> Option<ImageSource> {
+    fn image_dimensions(&self, _image: &ChapterImage) -> Option<ImageDimensions> {
+        None
+    }
+
+    fn image_source(&self, _image: &ChapterImage) -> Option<ImageSource> {
         None
     }
 }
@@ -113,7 +117,8 @@ where
 {
     let bounds = fragment.bounds();
     let container = positioned_box(bounds).overflow_hidden();
-    let Some(source) = resources.image_source(fragment) else {
+
+    let Some(source) = resources.image_source(fragment.image()) else {
         return container.mount(cx);
     };
 
