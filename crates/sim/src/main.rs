@@ -44,6 +44,8 @@ static RUNTIME_FONT: StaticCell<TtfFont> = StaticCell::new();
 static BODY_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_6X10);
 static HEADING_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_10X20);
 
+const READER_IMAGE_CAPACITY: usize = 16;
+
 fn demo_model() -> AppModel {
     let current_book = BookSummary::try_new("The Left Hand of Darkness", "Ursula K. Le Guin", 68)
         .expect("demo book metadata must fit");
@@ -235,14 +237,16 @@ fn layout_ui(runtime: &mut impl RenderRuntimeApi) {
 fn main() {
     let args = SimulatorArgs::parse();
 
-    let mut runtime = RuntimeBuilder::default()
-        .entities::<16_384, 32>()
-        .callbacks::<8_192, 64>()
-        .frame::<2_048, 32_768>()
-        .element_states::<256>()
-        .globals::<2_048, 8>()
-        .render_resources::<2, 128, { 16 * 1024 }, 1>()
-        .build();
+    let mut runtime = Box::new(
+        RuntimeBuilder::default()
+            .entities::<16_384, 32>()
+            .callbacks::<8_192, 64>()
+            .frame::<2_048, 32_768>()
+            .element_states::<256>()
+            .globals::<2_048, 8>()
+            .render_resources::<2, 128, { 16 * 1024 }, 1>()
+            .build(),
+    );
     runtime.set_global(Theme::EINK).unwrap();
 
     let runtime_font = runtime_font_path(args.font.as_deref());
@@ -285,7 +289,7 @@ fn main() {
         let viewport = inkpaper_reader::Viewport::new(DISPLAY_WIDTH, DISPLAY_HEIGHT)
             .expect("simulator display dimensions are non-zero");
 
-        let preview = load_reader_preview(
+        let (mut preview, reader_images) = load_reader_preview(
             epub_path,
             reader_fonts,
             reader_body_font,
@@ -299,6 +303,31 @@ fn main() {
             )
         });
 
+        assert!(
+            reader_images.len() <= READER_IMAGE_CAPACITY,
+            "reader page contains {} decoded images, but the simulator image registry holds only {}",
+            reader_images.len(),
+            READER_IMAGE_CAPACITY,
+        );
+
+        for decoded in &reader_images {
+            let source = runtime
+                .register_image(decoded.image())
+                .expect("reader page images must fit simulator image registry");
+
+            assert!(
+                preview.set_image_source(decoded.path(), source,),
+                "decoded reader image must have matching pagination metadata",
+            );
+
+            eprintln!(
+                "reader image: {} ({}x{})",
+                decoded.path().as_str(),
+                source.size().width.get(),
+                source.size().height.get(),
+            );
+        }
+
         eprintln!(
             "showing reader spine={} page=1/{}",
             preview.spine().get(),
@@ -309,7 +338,7 @@ fn main() {
 
         let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-        rebuild_ui(&mut runtime, &mut display);
+        rebuild_ui(runtime.as_mut(), &mut display);
 
         let output_settings = OutputSettingsBuilder::new().scale(1).build();
 
@@ -343,6 +372,11 @@ fn main() {
             runtime.glyph_cache_capacity_bytes(),
         );
 
+        // runtime owns references to the decoded HostImages through its ImageRegistry,
+        // so destroy the registry before destroying those images.
+        drop(runtime);
+        drop(reader_images);
+
         return;
     }
 
@@ -373,7 +407,7 @@ fn main() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, &mut display);
+    rebuild_ui(runtime.as_mut(), &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(1).build();
     let mut window = Window::new("InkPaper X4 Pro", &output_settings);
@@ -396,7 +430,7 @@ fn main() {
                 } => {
                     mouse_position = to_touch_position(point);
                     handle_app_event(
-                        &mut runtime,
+                        runtime.as_mut(),
                         app,
                         AppEvent::Input(AppInputEvent::Touch(AppTouchEvent::Down(mouse_position))),
                     )
@@ -407,7 +441,7 @@ fn main() {
                 } => {
                     mouse_position = to_touch_position(point);
                     handle_app_event(
-                        &mut runtime,
+                        runtime.as_mut(),
                         app,
                         AppEvent::Input(AppInputEvent::Touch(AppTouchEvent::Up(mouse_position))),
                     )
@@ -417,7 +451,7 @@ fn main() {
                     let delta_x = -scroll_delta.x.saturating_mul(SCROLL_STEP);
                     let delta_y = -scroll_delta.y.saturating_mul(SCROLL_STEP);
                     handle_app_event(
-                        &mut runtime,
+                        runtime.as_mut(),
                         app,
                         AppEvent::Input(AppInputEvent::Scroll(AppScrollEvent::new(
                             mouse_position,
@@ -431,12 +465,12 @@ fn main() {
                     repeat: false,
                     ..
                 } => match key_event(keycode, AppButtonEdge::Pressed) {
-                    Some(event) => handle_app_event(&mut runtime, app, event),
+                    Some(event) => handle_app_event(runtime.as_mut(), app, event),
                     None => PlatformAction::None,
                 },
                 SimulatorEvent::KeyUp { keycode, .. } => {
                     match key_event(keycode, AppButtonEdge::Released) {
-                        Some(event) => handle_app_event(&mut runtime, app, event),
+                        Some(event) => handle_app_event(runtime.as_mut(), app, event),
                         None => PlatformAction::None,
                     }
                 }
@@ -452,7 +486,7 @@ fn main() {
             }
         }
 
-        update_ui(&mut runtime, &mut display);
+        update_ui(runtime.as_mut(), &mut display);
     }
 
     eprintln!(

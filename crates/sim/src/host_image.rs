@@ -13,6 +13,12 @@ impl HostImage {
 
         Ok(Self { pixels })
     }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, image::ImageError> {
+        let pixels = image::load_from_memory(bytes)?.to_rgb8();
+
+        Ok(Self { pixels })
+    }
 }
 
 impl ImageResource for HostImage {
@@ -36,7 +42,9 @@ impl ImageResource for HostImage {
 
 #[cfg(test)]
 mod tests {
-    use image::Rgb;
+    use std::io::Cursor;
+
+    use image::{DynamicImage, ImageFormat, Rgb};
 
     use super::*;
 
@@ -53,5 +61,24 @@ mod tests {
         assert_eq!(image.pixel(1, 0), Some(Color::rgb(200, 210, 220)));
         assert_eq!(image.pixel(2, 0), None);
         assert_eq!(image.pixel(0, 1), None);
+    }
+
+    #[test]
+    fn host_image_decodes_png_bytes() {
+        let mut pixels = RgbImage::new(2, 1);
+        pixels.put_pixel(0, 0, Rgb([12, 34, 56]));
+        pixels.put_pixel(1, 0, Rgb([78, 90, 123]));
+
+        let mut encoded = Cursor::new(Vec::new());
+
+        DynamicImage::ImageRgb8(pixels)
+            .write_to(&mut encoded, ImageFormat::Png)
+            .unwrap();
+
+        let image = HostImage::decode(encoded.get_ref()).unwrap();
+
+        assert_eq!(image.size(), Size::new(px(2), px(1)));
+        assert_eq!(image.pixel(0, 0), Some(Color::rgb(12, 34, 56)));
+        assert_eq!(image.pixel(1, 0), Some(Color::rgb(78, 90, 123)));
     }
 }
