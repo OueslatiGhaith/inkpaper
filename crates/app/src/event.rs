@@ -139,10 +139,22 @@ impl InkPaperApp {
                 match input {
                     InputEvent::Button(event) => match (event.button(), event.edge()) {
                         (Button::Previous, ButtonEdge::Pressed) => {
-                            runtime.focus_previous();
+                            let consumed = runtime
+                                .update(app, |app, cx| app.turn_reader_previous(cx))
+                                .expect("InkPaper application entity must remain alive");
+
+                            if !consumed {
+                                runtime.focus_previous();
+                            }
                         }
                         (Button::Next, ButtonEdge::Pressed) => {
-                            runtime.focus_next();
+                            let consumed = runtime
+                                .update(app, |app, cx| app.turn_reader_next(cx))
+                                .expect("InkPaper application entity must remain alive");
+
+                            if !consumed {
+                                runtime.focus_next();
+                            }
                         }
                         (Button::Activate, ButtonEdge::Pressed) => {
                             runtime.begin_focused_activation();

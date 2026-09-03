@@ -6,7 +6,9 @@ mod metrics;
 mod page;
 mod pagination;
 
-pub use inkpaper_epub::{BlockKind, ChapterImage, FontStyle, FontWeight, ImageDimensions};
+pub use inkpaper_epub::{
+    BlockKind, ChapterImage, FontStyle, FontWeight, ImageDimensions, SpineIndex,
+};
 pub use metrics::{ImageMeasurer, TextMeasurer, TextStyle};
 pub use page::{ImageFragment, Page, PageItem, PageRange, Rect, TextFragment};
 pub use pagination::{Pagination, paginate_chapter};

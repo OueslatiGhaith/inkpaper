@@ -23,7 +23,7 @@ use inkpaper_ui::{
 };
 use static_cell::StaticCell;
 
-use crate::{args::SimulatorArgs, host_image::HostImage, reader_demo::load_reader_preview};
+use crate::{args::SimulatorArgs, host_image::HostImage, reader_demo::load_reader_session};
 
 mod args;
 mod host_epub;
@@ -244,7 +244,7 @@ fn main() {
             .frame::<2_048, 32_768>()
             .element_states::<256>()
             .globals::<2_048, 8>()
-            .render_resources::<2, 128, { 16 * 1024 }, 1>()
+            .render_resources::<2, 128, { 16 * 1024 }, READER_IMAGE_CAPACITY>()
             .build(),
     );
     runtime.set_global(Theme::EINK).unwrap();
@@ -285,23 +285,22 @@ fn main() {
         (reader_heading, reader_heading)
     };
 
-    if let Some(epub_path) = args.epub.as_deref() {
+    let mut reader_images = Vec::new();
+
+    let reader_session = if let Some(epub_path) = args.epub.as_deref() {
         let viewport = inkpaper_reader::Viewport::new(DISPLAY_WIDTH, DISPLAY_HEIGHT)
             .expect("simulator display dimensions are non-zero");
 
-        let (mut preview, reader_images) = load_reader_preview(
+        let (mut prepared, images) = load_reader_session(
             epub_path,
             reader_fonts,
             reader_body_font,
             reader_heading_font,
             viewport,
         )
-        .unwrap_or_else(|error| {
-            panic!(
-                "failed to open EPUB preview {}: {error:?}",
-                epub_path.display(),
-            )
-        });
+        .unwrap_or_else(|error| panic!("failed to open EPUB {}: {error:?}", epub_path.display()));
+
+        reader_images = images;
 
         assert!(
             reader_images.len() <= READER_IMAGE_CAPACITY,
@@ -316,7 +315,7 @@ fn main() {
                 .expect("reader page images must fit simulator image registry");
 
             assert!(
-                preview.set_image_source(decoded.path(), source,),
+                prepared.set_image_source(decoded.path(), source),
                 "decoded reader image must have matching pagination metadata",
             );
 
@@ -329,56 +328,15 @@ fn main() {
         }
 
         eprintln!(
-            "showing reader spine={} page=1/{}",
-            preview.spine().get(),
-            preview.page_count(),
+            "reader installed: spine={} pages={}",
+            prepared.spine().get(),
+            prepared.page_count(),
         );
 
-        runtime.create_root(move |_| preview).unwrap();
-
-        let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
-
-        rebuild_ui(runtime.as_mut(), &mut display);
-
-        let output_settings = OutputSettingsBuilder::new().scale(1).build();
-
-        let file_name = epub_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("EPUB");
-
-        let title = format!("InkPaper EPUB — {file_name}");
-
-        let mut window = Window::new(&title, &output_settings);
-
-        'reader: loop {
-            window.update(&display);
-
-            for event in window.events() {
-                match event {
-                    SimulatorEvent::Quit => break 'reader,
-                    SimulatorEvent::KeyDown {
-                        keycode: Keycode::Escape,
-                        ..
-                    } => break 'reader,
-                    _ => {}
-                }
-            }
-        }
-
-        eprintln!(
-            "glyph cache at exit: {} / {} bytes",
-            runtime.glyph_cache_used_bytes(),
-            runtime.glyph_cache_capacity_bytes(),
-        );
-
-        // runtime owns references to the decoded HostImages through its ImageRegistry,
-        // so destroy the registry before destroying those images.
-        drop(runtime);
-        drop(reader_images);
-
-        return;
-    }
+        Some(prepared.into_app_session())
+    } else {
+        None
+    };
 
     let cover_image = args.cover.as_deref().map(|path| {
         HostImage::open(path)
@@ -400,6 +358,10 @@ fn main() {
 
     let model = demo_model();
     let mut app_state = InkPaperApp::new(model);
+
+    if let Some(reader) = reader_session {
+        app_state = app_state.with_reader(reader);
+    }
     if let Some(cover) = cover_source {
         app_state = app_state.with_current_cover(cover);
     }
@@ -410,7 +372,16 @@ fn main() {
     rebuild_ui(runtime.as_mut(), &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(1).build();
-    let mut window = Window::new("InkPaper X4 Pro", &output_settings);
+
+    let window_title = args
+        .epub
+        .as_deref()
+        .and_then(|path| path.file_name())
+        .and_then(|name| name.to_str())
+        .map(|name| format!("InkPaper — {name}"))
+        .unwrap_or_else(|| String::from("InkPaper X4 Pro"));
+
+    let mut window = Window::new(&window_title, &output_settings);
 
     let mut mouse_position = AppTouchPosition::new(0, 0);
 
@@ -461,6 +432,15 @@ fn main() {
                     )
                 }
                 SimulatorEvent::KeyDown {
+                    keycode: Keycode::Escape,
+                    repeat: false,
+                    ..
+                } => handle_app_event(
+                    runtime.as_mut(),
+                    app,
+                    AppEvent::Input(AppInputEvent::Touch(AppTouchEvent::HomeTap)),
+                ),
+                SimulatorEvent::KeyDown {
                     keycode,
                     repeat: false,
                     ..
@@ -494,4 +474,10 @@ fn main() {
         runtime.glyph_cache_used_bytes(),
         runtime.glyph_cache_capacity_bytes(),
     );
+
+    // the runtime ImageRegistry borrows HostImages, so destroy the registry before
+    // destroying the backing host images.
+    drop(runtime);
+    drop(reader_images);
+    drop(cover_image);
 }

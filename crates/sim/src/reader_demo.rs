@@ -3,7 +3,7 @@ use std::{io, path::Path};
 use futures_lite::future;
 
 use inkpaper_app::reader::{
-    ReaderPageResources, ReaderPageView, UiReaderMeasureError, UiReaderMeasurer,
+    ReaderPageResources, ReaderSession, UiReaderMeasureError, UiReaderMeasurer,
 };
 
 use inkpaper_epub::{
@@ -15,7 +15,7 @@ use inkpaper_reader::{
     paginate_chapter,
 };
 
-use inkpaper_ui::{Context, FontId, FontRegistry, ImageSource, IntoElement, Render, ShapedGlyph};
+use inkpaper_ui::{FontId, FontRegistry, ImageSource, ShapedGlyph};
 
 use crate::{host_epub::HostFileSource, host_image::HostImage};
 
@@ -23,7 +23,7 @@ const READER_FONT_SIZE: u16 = 18;
 const READER_BLOCK_SPACING: u16 = 6;
 
 #[derive(Debug)]
-pub enum ReaderPreviewError {
+pub enum ReaderLoadError {
     Open(io::Error),
     Epub(EpubError<io::Error>),
     NoTextChapter,
@@ -110,14 +110,14 @@ impl ReaderPageResources for SimulatorReaderResources {
     }
 }
 
-pub struct ReaderPreview {
+pub struct PreparedReader {
     pagination: Pagination<'static>,
     viewport: Viewport,
     resources: SimulatorReaderResources,
     spine: SpineIndex,
 }
 
-impl ReaderPreview {
+impl PreparedReader {
     pub fn page_count(&self) -> usize {
         self.pagination.len()
     }
@@ -135,30 +135,32 @@ impl ReaderPreview {
 
         true
     }
-}
 
-impl Render for ReaderPreview {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-        let page = self
-            .pagination
-            .pages()
-            .first()
-            .expect("reader pagination always contains at least one page");
+    pub fn into_app_session(self) -> ReaderSession {
+        let viewport = self.viewport;
+        let spine = self.spine;
 
-        ReaderPageView::new(page, self.viewport, &self.resources)
+        // runtime application entities must be 'static, while Pagination deliberately
+        // borrows chapter content. The simulator opens one book for the lifetime of the
+        // process, so leaking this prepared backing store is appropriate here.
+        // the embedded platform will eventually own the corresponding long-lived reader
+        // session explicitly.
+        let prepared: &'static PreparedReader = Box::leak(Box::new(self));
+
+        ReaderSession::new(&prepared.pagination, viewport, &prepared.resources, spine)
     }
 }
 
-pub fn load_reader_preview<const FONTS: usize>(
+pub fn load_reader_session<const FONTS: usize>(
     path: &Path,
     fonts: FontRegistry<'static, FONTS>,
     body_font: FontId,
     heading_font: FontId,
     viewport: Viewport,
-) -> Result<(ReaderPreview, Vec<DecodedReaderImage>), ReaderPreviewError> {
-    let source = HostFileSource::open(path).map_err(ReaderPreviewError::Open)?;
+) -> Result<(PreparedReader, Vec<DecodedReaderImage>), ReaderLoadError> {
+    let source = HostFileSource::open(path).map_err(ReaderLoadError::Open)?;
 
-    let mut epub = future::block_on(Epub::open(source)).map_err(ReaderPreviewError::Epub)?;
+    let mut epub = future::block_on(Epub::open(source)).map_err(ReaderLoadError::Epub)?;
 
     eprintln!(
         "epub: {} title={}",
@@ -184,7 +186,7 @@ pub fn load_reader_preview<const FONTS: usize>(
         }
 
         let Some(chapter) =
-            future::block_on(epub.load_spine_chapter(index)).map_err(ReaderPreviewError::Epub)?
+            future::block_on(epub.load_spine_chapter(index)).map_err(ReaderLoadError::Epub)?
         else {
             continue;
         };
@@ -194,13 +196,14 @@ pub fn load_reader_preview<const FONTS: usize>(
         }
 
         selected = Some((index, chapter));
+
         break;
     }
 
-    let (spine_index, chapter) = selected.ok_or(ReaderPreviewError::NoTextChapter)?;
+    let (spine_index, chapter) = selected.ok_or(ReaderLoadError::NoTextChapter)?;
 
     let styles =
-        future::block_on(epub.load_chapter_styles(&chapter)).map_err(ReaderPreviewError::Epub)?;
+        future::block_on(epub.load_chapter_styles(&chapter)).map_err(ReaderLoadError::Epub)?;
 
     let scratch_len = shaping_scratch_len(&chapter);
 
@@ -212,15 +215,15 @@ pub fn load_reader_preview<const FONTS: usize>(
 
     load_image_metadata(&mut epub, &chapter, &mut resources)?;
 
-    // pagination deliberately borrows chapter content to avoid cloning every text/image
-    // reference. This leak is simulator-only.
+    // pagination borrows chapter strings and ChapterImages directly.
+    // the simulator book remains alive for the whole process.
     let chapter: &'static Chapter = Box::leak(Box::new(chapter));
 
     let spine =
-        SpineIndex::try_from_usize(spine_index).ok_or(ReaderPreviewError::SpineIndexOverflow)?;
+        SpineIndex::try_from_usize(spine_index).ok_or(ReaderLoadError::SpineIndexOverflow)?;
 
     let settings = ReaderSettings::new(READER_FONT_SIZE, READER_BLOCK_SPACING)
-        .expect("reader preview settings are statically valid");
+        .expect("reader simulator settings are statically valid");
 
     let mut scratch = vec![ShapedGlyph::EMPTY; scratch_len];
 
@@ -228,7 +231,7 @@ pub fn load_reader_preview<const FONTS: usize>(
         let mut measurer = UiReaderMeasurer::new(fonts, &resources, &mut scratch);
 
         paginate_chapter(chapter, &styles, spine, viewport, settings, &mut measurer)
-            .map_err(ReaderPreviewError::Measure)?
+            .map_err(ReaderLoadError::Measure)?
     };
 
     let first_page = pagination
@@ -239,7 +242,7 @@ pub fn load_reader_preview<const FONTS: usize>(
     let decoded_images = decode_page_images(&mut epub, first_page)?;
 
     eprintln!(
-        "reader preview: spine={} pages={} shaping_scratch={} glyphs page_images={}",
+        "reader: spine={} pages={} shaping_scratch={} glyphs first_page_images={}",
         spine.get(),
         pagination.len(),
         scratch_len,
@@ -247,7 +250,7 @@ pub fn load_reader_preview<const FONTS: usize>(
     );
 
     Ok((
-        ReaderPreview {
+        PreparedReader {
             pagination,
             viewport,
             resources,
@@ -261,7 +264,7 @@ fn load_image_metadata(
     epub: &mut Epub<HostFileSource>,
     chapter: &Chapter,
     resources: &mut SimulatorReaderResources,
-) -> Result<(), ReaderPreviewError> {
+) -> Result<(), ReaderLoadError> {
     let mut paths = Vec::new();
 
     for image in chapter
@@ -292,7 +295,7 @@ fn load_image_metadata(
 
     for path in paths {
         let Some(dimensions) =
-            future::block_on(epub.image_dimensions(&path)).map_err(ReaderPreviewError::Epub)?
+            future::block_on(epub.image_dimensions(&path)).map_err(ReaderLoadError::Epub)?
         else {
             continue;
         };
@@ -306,7 +309,7 @@ fn load_image_metadata(
 fn decode_page_images(
     epub: &mut Epub<HostFileSource>,
     page: &Page<'_>,
-) -> Result<Vec<DecodedReaderImage>, ReaderPreviewError> {
+) -> Result<Vec<DecodedReaderImage>, ReaderLoadError> {
     let mut images = Vec::new();
 
     for item in page.items() {
@@ -324,10 +327,10 @@ fn decode_page_images(
         }
 
         let bytes = future::block_on(epub.read_resource(path))
-            .map_err(ReaderPreviewError::Epub)?
-            .ok_or_else(|| ReaderPreviewError::MissingImageResource(path.clone()))?;
+            .map_err(ReaderLoadError::Epub)?
+            .ok_or_else(|| ReaderLoadError::MissingImageResource(path.clone()))?;
 
-        let image = HostImage::decode(&bytes).map_err(|error| ReaderPreviewError::ImageDecode {
+        let image = HostImage::decode(&bytes).map_err(|error| ReaderLoadError::ImageDecode {
             path: path.clone(),
             error,
         })?;
@@ -352,7 +355,6 @@ fn shaping_scratch_len(chapter: &Chapter) -> usize {
         .flat_map(|block| block.inlines())
         .filter_map(|inline| match inline {
             Inline::Text(run) => Some(run.text().len()),
-
             Inline::Image(_) | Inline::Break | Inline::Anchor(_) => None,
         })
         .max()
@@ -389,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn reader_preview_decodes_only_supported_image_formats() {
+    fn reader_decodes_only_supported_image_formats() {
         assert!(is_supported_reader_image("image/png"));
         assert!(is_supported_reader_image("image/jpeg"));
         assert!(is_supported_reader_image("image/jpg"));
