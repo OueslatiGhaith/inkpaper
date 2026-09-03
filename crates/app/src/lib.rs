@@ -5,6 +5,7 @@ pub mod clock;
 pub mod components;
 pub mod event;
 pub mod model;
+pub mod reader;
 pub mod screens;
 pub mod storage;
 pub mod theme;

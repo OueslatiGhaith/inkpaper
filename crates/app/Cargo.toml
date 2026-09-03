@@ -10,4 +10,5 @@ defmt = ["dep:defmt", "inkpaper-ui/defmt", "heapless/defmt"]
 [dependencies]
 defmt = { workspace = true, optional = true }
 heapless = { workspace = true }
+inkpaper-reader = { path = "../reader" }
 inkpaper-ui = { path = "../ui" }
