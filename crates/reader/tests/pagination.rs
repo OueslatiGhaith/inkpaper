@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use futures_lite::future;
 use inkpaper_epub::{
     BookLocation, ChapterImage, ContentOffset, Epub, ImageDimensions, Inline, SliceSource,
@@ -14,12 +16,14 @@ struct MonoMeasurer {
 }
 
 impl TextMeasurer for MonoMeasurer {
-    fn measure_text(&mut self, text: &str, _style: TextStyle) -> u32 {
-        text.chars().fold(0u32, |width, _| width.saturating_add(1))
+    type Error = Infallible;
+
+    fn measure_text(&mut self, text: &str, _style: TextStyle) -> Result<u32, Self::Error> {
+        Ok(text.chars().fold(0u32, |width, _| width.saturating_add(1)))
     }
 
-    fn line_height(&mut self, _style: TextStyle) -> u32 {
-        1
+    fn line_height(&mut self, _style: TextStyle) -> Result<u32, Self::Error> {
+        Ok(1)
     }
 }
 
@@ -57,7 +61,8 @@ fn pagination_produces_stable_content_ranges() {
         Viewport::new(7, 2).unwrap(),
         ReaderSettings::new(16, 0).unwrap(),
         &mut measurer,
-    );
+    )
+    .unwrap();
 
     assert_eq!(pagination.len(), 2);
     assert_eq!(
@@ -97,7 +102,8 @@ fn repagination_changes_page_count_not_canonical_content_extent() {
         Viewport::new(7, 2).unwrap(),
         ReaderSettings::new(16, 0).unwrap(),
         &mut measurer,
-    );
+    )
+    .unwrap();
 
     let wide = paginate_chapter(
         &chapter,
@@ -106,7 +112,8 @@ fn repagination_changes_page_count_not_canonical_content_extent() {
         Viewport::new(10, 2).unwrap(),
         ReaderSettings::new(16, 0).unwrap(),
         &mut measurer,
-    );
+    )
+    .unwrap();
 
     assert_eq!(narrow.len(), 2);
     assert_eq!(wide.len(), 1);
@@ -153,7 +160,8 @@ fn hidden_css_text_keeps_its_content_offsets_without_using_layout_space() {
         Viewport::new(20, 1).unwrap(),
         ReaderSettings::new(16, 0).unwrap(),
         &mut measurer,
-    );
+    )
+    .unwrap();
 
     assert_eq!(pagination.len(), 1);
     assert_eq!(pagination.pages()[0].end().offset(), content_end);
@@ -212,7 +220,8 @@ fn image_can_occupy_a_page_without_advancing_content_location() {
         Viewport::new(10, 3).unwrap(),
         ReaderSettings::new(16, 0).unwrap(),
         &mut measurer,
-    );
+    )
+    .unwrap();
 
     assert_eq!(pagination.len(), 3);
 
@@ -282,7 +291,8 @@ fn hidden_image_does_not_consume_page_space() {
         Viewport::new(10, 2).unwrap(),
         ReaderSettings::new(16, 0).unwrap(),
         &mut measurer,
-    );
+    )
+    .unwrap();
 
     assert_eq!(pagination.len(), 1);
     assert_eq!(
@@ -325,7 +335,8 @@ fn pagination_emits_positioned_text_fragments_and_links() {
         Viewport::new(10, 2).unwrap(),
         ReaderSettings::new(16, 0).unwrap(),
         &mut measurer,
-    );
+    )
+    .unwrap();
 
     assert_eq!(pagination.len(), 1);
 
@@ -359,6 +370,53 @@ fn pagination_emits_positioned_text_fragments_and_links() {
 
     assert_eq!(link.path().unwrap().as_str(), "OPS/Text/chapter.xhtml");
     assert_eq!(link.fragment(), Some("target"));
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestMeasurementError {
+    Text,
+}
+
+struct FailingMeasurer;
+
+impl TextMeasurer for FailingMeasurer {
+    type Error = TestMeasurementError;
+
+    fn measure_text(&mut self, _text: &str, _style: TextStyle) -> Result<u32, Self::Error> {
+        Err(TestMeasurementError::Text)
+    }
+
+    fn line_height(&mut self, _style: TextStyle) -> Result<u32, Self::Error> {
+        Ok(1)
+    }
+}
+
+impl ImageMeasurer for FailingMeasurer {}
+
+#[test]
+fn pagination_propagates_text_measurement_errors() {
+    let bytes = build_test_epub("<p>one two</p>");
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let mut measurer = FailingMeasurer;
+
+    let result = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(10, 2).unwrap(),
+        ReaderSettings::new(16, 0).unwrap(),
+        &mut measurer,
+    );
+
+    assert_eq!(result.unwrap_err(), TestMeasurementError::Text);
 }
 
 fn build_test_epub(body: &str) -> Vec<u8> {

@@ -41,12 +41,19 @@ impl TextStyle {
 }
 
 pub trait TextMeasurer {
-    fn measure_text(&mut self, text: &str, style: TextStyle) -> u32;
+    type Error;
 
-    fn line_height(&mut self, style: TextStyle) -> u32;
+    fn measure_text(&mut self, text: &str, style: TextStyle) -> Result<u32, Self::Error>;
 
-    fn next_boundary(&mut self, text: &str, from: usize, _style: TextStyle) -> Option<usize> {
-        scalar_boundary(text, from)
+    fn line_height(&mut self, style: TextStyle) -> Result<u32, Self::Error>;
+
+    fn next_boundary(
+        &mut self,
+        text: &str,
+        from: usize,
+        _style: TextStyle,
+    ) -> Result<Option<usize>, Self::Error> {
+        Ok(scalar_boundary(text, from))
     }
 }
 

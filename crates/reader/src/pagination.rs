@@ -38,7 +38,7 @@ pub fn paginate_chapter<'a, M>(
     viewport: Viewport,
     settings: ReaderSettings,
     measurer: &mut M,
-) -> Pagination<'a>
+) -> Result<Pagination<'a>, M::Error>
 where
     M: TextMeasurer + ImageMeasurer,
 {
@@ -112,9 +112,9 @@ where
         }
     }
 
-    fn paginate(mut self) -> Pagination<'chapter> {
+    fn paginate(mut self) -> Result<Pagination<'chapter>, M::Error> {
         for (index, block) in self.chapter.blocks().iter().enumerate() {
-            self.layout_block(block);
+            self.layout_block(block)?;
 
             if index + 1 < self.chapter.blocks().len() {
                 self.add_block_spacing();
@@ -125,7 +125,7 @@ where
 
         let end = self.chapter.content_len();
 
-        debug_assert_eq!(self.cursor, end,);
+        debug_assert_eq!(self.cursor, end);
 
         if self.used_height > 0 {
             self.push_page(end);
@@ -144,10 +144,10 @@ where
             }
         }
 
-        Pagination { pages: self.pages }
+        Ok(Pagination { pages: self.pages })
     }
 
-    fn layout_block(&mut self, block: &'chapter ChapterBlock) {
+    fn layout_block(&mut self, block: &'chapter ChapterBlock) -> Result<(), M::Error> {
         self.block_laid_out = false;
 
         let block_style = self.computed_style(block.style_node());
@@ -155,14 +155,14 @@ where
         for inline in block.inlines() {
             match inline {
                 Inline::Text(text) => {
-                    self.layout_text(block.kind(), text);
+                    self.layout_text(block.kind(), text)?;
                 }
                 Inline::Image(image) => {
                     self.layout_image(image);
                 }
                 Inline::Break => {
                     if !block_style.hidden() {
-                        self.layout_break(block.kind(), block_style);
+                        self.layout_break(block.kind(), block_style)?;
                     }
                 }
                 Inline::Anchor(_) => {}
@@ -170,15 +170,21 @@ where
         }
 
         self.flush_line();
+
+        Ok(())
     }
 
-    fn layout_text(&mut self, block_kind: BlockKind, run: &'chapter TextRun) {
+    fn layout_text(
+        &mut self,
+        block_kind: BlockKind,
+        run: &'chapter TextRun,
+    ) -> Result<(), M::Error> {
         let computed = self.computed_style(run.style_node());
 
         if computed.hidden() {
             self.cursor = self.cursor.advance_text(run.text());
 
-            return;
+            return Ok(());
         }
 
         let style = TextStyle::new(
@@ -188,7 +194,7 @@ where
             computed.font_style(),
         );
 
-        self.layout_text_content(run.text(), style, run.link(), computed.text_align());
+        self.layout_text_content(run.text(), style, run.link(), computed.text_align())
     }
 
     fn layout_image(&mut self, image: &'chapter ChapterImage) {
@@ -232,7 +238,7 @@ where
         style: TextStyle,
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
-    ) {
+    ) -> Result<(), M::Error> {
         let mut start = 0usize;
 
         while start < text.len() {
@@ -257,13 +263,15 @@ where
             let segment = &text[start..end];
 
             if whitespace {
-                self.layout_whitespace(segment, style, link, align);
+                self.layout_whitespace(segment, style, link, align)?;
             } else {
-                self.layout_word(segment, style, link, align);
+                self.layout_word(segment, style, link, align)?;
             }
 
             start = end;
         }
+
+        Ok(())
     }
 
     fn layout_whitespace(
@@ -272,24 +280,24 @@ where
         style: TextStyle,
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
-    ) {
+    ) -> Result<(), M::Error> {
         if !self.line_active {
             self.cursor = self.cursor.advance_text(whitespace);
 
-            return;
+            return Ok(());
         }
 
-        let width = self.measurer.measure_text(whitespace, style);
+        let width = self.measurer.measure_text(whitespace, style)?;
 
         if self.line_width.saturating_add(width) > self.viewport.width() {
             self.flush_line();
 
             self.cursor = self.cursor.advance_text(whitespace);
 
-            return;
+            return Ok(());
         }
 
-        self.add_text_piece(whitespace, width, style, link, align);
+        self.add_text_piece(whitespace, width, style, link, align)
     }
 
     fn layout_word(
@@ -298,20 +306,18 @@ where
         style: TextStyle,
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
-    ) {
-        let width = self.measurer.measure_text(word, style);
+    ) -> Result<(), M::Error> {
+        let width = self.measurer.measure_text(word, style)?;
 
         if self.line_active && self.line_width.saturating_add(width) > self.viewport.width() {
             self.flush_line();
         }
 
         if width <= self.viewport.width() {
-            self.add_text_piece(word, width, style, link, align);
-
-            return;
+            return self.add_text_piece(word, width, style, link, align);
         }
 
-        self.layout_oversized_word(word, style, link, align);
+        self.layout_oversized_word(word, style, link, align)
     }
 
     fn layout_oversized_word(
@@ -320,11 +326,11 @@ where
         style: TextStyle,
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
-    ) {
+    ) -> Result<(), M::Error> {
         let mut start = 0usize;
 
         while start < word.len() {
-            let Some(first_end) = self.next_boundary(word, start, style) else {
+            let Some(first_end) = self.next_boundary(word, start, style)? else {
                 break;
             };
 
@@ -335,7 +341,8 @@ where
 
             loop {
                 let candidate = &word[start..end];
-                let width = self.measurer.measure_text(candidate, style);
+
+                let width = self.measurer.measure_text(candidate, style)?;
 
                 if width <= available {
                     best = Some((end, width));
@@ -347,7 +354,7 @@ where
                     break;
                 }
 
-                let Some(next) = self.next_boundary(word, end, style) else {
+                let Some(next) = self.next_boundary(word, end, style)? else {
                     break;
                 };
 
@@ -358,13 +365,14 @@ where
                 Some(best) => best,
                 None => {
                     let candidate = &word[start..first_end];
-                    (first_end, self.measurer.measure_text(candidate, style))
+
+                    (first_end, self.measurer.measure_text(candidate, style)?)
                 }
             };
 
             let piece = &word[start..end];
 
-            self.add_text_piece(piece, width, style, link, align);
+            self.add_text_piece(piece, width, style, link, align)?;
 
             start = end;
 
@@ -372,6 +380,8 @@ where
                 self.flush_line();
             }
         }
+
+        Ok(())
     }
 
     fn add_text_piece(
@@ -381,9 +391,9 @@ where
         style: TextStyle,
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
-    ) {
+    ) -> Result<(), M::Error> {
         if text.is_empty() {
-            return;
+            return Ok(());
         }
 
         if !self.line_active {
@@ -391,6 +401,8 @@ where
             self.line_start = self.cursor;
             self.line_align = align;
         }
+
+        let height = self.measured_line_height(style)?;
 
         self.line_items.push(PendingText {
             text,
@@ -401,15 +413,22 @@ where
         });
 
         self.line_width = self.line_width.saturating_add(width);
-        self.line_height = self.line_height.max(self.measured_line_height(style));
+        self.line_height = self.line_height.max(height);
         self.cursor = self.cursor.advance_text(text);
         self.block_laid_out = true;
+
+        Ok(())
     }
 
-    fn layout_break(&mut self, block_kind: BlockKind, computed: ComputedStyle) {
+    fn layout_break(
+        &mut self,
+        block_kind: BlockKind,
+        computed: ComputedStyle,
+    ) -> Result<(), M::Error> {
         if self.line_active {
             self.flush_line();
-            return;
+
+            return Ok(());
         }
 
         let style = TextStyle::new(
@@ -422,10 +441,12 @@ where
         self.line_active = true;
         self.line_start = self.cursor;
         self.line_align = computed.text_align();
-        self.line_height = self.measured_line_height(style);
+        self.line_height = self.measured_line_height(style)?;
         self.block_laid_out = true;
 
         self.flush_line();
+
+        Ok(())
     }
 
     fn flush_line(&mut self) {
@@ -497,22 +518,27 @@ where
         self.styles.style(node).unwrap_or_default()
     }
 
-    fn measured_line_height(&mut self, style: TextStyle) -> u32 {
-        self.measurer.line_height(style).max(1)
+    fn measured_line_height(&mut self, style: TextStyle) -> Result<u32, M::Error> {
+        Ok(self.measurer.line_height(style)?.max(1))
     }
 
-    fn next_boundary(&mut self, text: &str, from: usize, style: TextStyle) -> Option<usize> {
-        let candidate = self.measurer.next_boundary(text, from, style);
+    fn next_boundary(
+        &mut self,
+        text: &str,
+        from: usize,
+        style: TextStyle,
+    ) -> Result<Option<usize>, M::Error> {
+        let candidate = self.measurer.next_boundary(text, from, style)?;
 
         if let Some(candidate) = candidate
             && candidate > from
             && candidate <= text.len()
             && text.is_char_boundary(candidate)
         {
-            return Some(candidate);
+            return Ok(Some(candidate));
         }
 
-        scalar_boundary(text, from)
+        Ok(scalar_boundary(text, from))
     }
 }
 
