@@ -164,7 +164,10 @@ impl InkPaperApp {
                                 .complete_focused_activation()
                                 .expect("focused activation callback must remain valid");
                         }
-                        (Button::Power, ButtonEdge::Pressed) => return PlatformAction::Suspend,
+                        (Button::Power, ButtonEdge::Pressed) => {
+                            runtime.cancel_activation();
+                            return PlatformAction::Suspend;
+                        }
                         (Button::Previous | Button::Next | Button::Power, ButtonEdge::Released) => {
                         }
                     },
@@ -177,6 +180,7 @@ impl InkPaperApp {
                             .expect("pointer activation callback must remain valid");
                     }
                     InputEvent::Touch(TouchEvent::HomeTap) => {
+                        runtime.cancel_activation();
                         runtime
                             .update(app, |app, cx| {
                                 app.navigate(Route::Home, cx);
