@@ -1,5 +1,5 @@
 use super::*;
-use crate::{BODY_FONT, load_requested_chapter};
+use crate::{BODY_FONT, host_image::HostImageSlot, load_requested_chapter, load_requested_page};
 use inkpaper_app::{
     AppEvent, AppModel, BookSummary, Button, ButtonEdge, ButtonEvent, InkPaperApp, InputEvent,
     PlatformAction, Route, TouchEvent, TouchPosition, theme::Theme,
@@ -473,4 +473,372 @@ impl inkpaper_ui::TextMeasurer for TestMeasurer {
     fn measure_text(&self, text: &str, _: inkpaper_ui::ResolvedTextStyle, _: Size) -> Size {
         Size::new(px(text.len() as i32 * 6), px(10))
     }
+}
+
+fn png(width: u32, height: u32, color: [u8; 3]) -> Vec<u8> {
+    let pixels = image::RgbImage::from_pixel(width, height, image::Rgb(color));
+    let mut output = std::io::Cursor::new(Vec::new());
+
+    image::DynamicImage::ImageRgb8(pixels)
+        .write_to(&mut output, image::ImageFormat::Png)
+        .unwrap();
+
+    output.into_inner()
+}
+
+fn illustrated_book(body: &str, next: &str, images: &[(&str, Vec<u8>)]) -> TestBook {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let path = std::env::temp_dir().join(format!(
+        "inkpaper-page-images-{}-{}.epub",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+
+    let container = br#"<container><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+
+    let mut manifest = String::new();
+
+    for (index, (name, _)) in images.iter().enumerate() {
+        manifest.push_str(&format!(
+            r#"<item id="image{index}" href="{name}" media-type="image/png"/>"#
+        ));
+    }
+
+    let package = format!(
+        r#"<package version="3.0" xmlns="http://www.idpf.org/2007/opf">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Images</dc:title></metadata>
+<manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/>
+<item id="b" href="b.xhtml" media-type="application/xhtml+xml"/>{manifest}</manifest>
+<spine><itemref idref="a"/><itemref idref="b"/></spine></package>"#
+    );
+
+    let a = format!("<html><body>{body}</body></html>");
+    let b = format!("<html><body>{next}</body></html>");
+
+    let mut entries: Vec<(&str, &[u8])> = vec![
+        ("mimetype", b"application/epub+zip"),
+        ("META-INF/container.xml", container),
+        ("book.opf", package.as_bytes()),
+        ("a.xhtml", a.as_bytes()),
+        ("b.xhtml", b.as_bytes()),
+    ];
+
+    entries.extend(images.iter().map(|(name, bytes)| (*name, bytes.as_slice())));
+
+    fs::write(&path, stored_zip(&entries)).unwrap();
+
+    TestBook(path)
+}
+
+fn page_request(
+    runtime: &mut TestRuntime,
+    app: Entity<InkPaperApp>,
+    button: Button,
+) -> inkpaper_app::reader::PageRequest {
+    let before = position(runtime, app);
+
+    let PlatformAction::LoadReaderPage(request) = press(runtime, app, button) else {
+        panic!("expected page image request");
+    };
+
+    assert_eq!(position(runtime, app), before);
+    assert_eq!(press(runtime, app, button), PlatformAction::None);
+
+    request
+}
+
+fn displayed_images(
+    runtime: &TestRuntime,
+    app: Entity<InkPaperApp>,
+) -> Vec<(ArchivePath, ImageSource)> {
+    runtime
+        .update(app, |app, _| {
+            let reader = app.reader().unwrap();
+
+            reader
+                .current_page()
+                .items()
+                .iter()
+                .filter_map(|item| {
+                    let PageItem::Image(fragment) = item else {
+                        return None;
+                    };
+
+                    Some((
+                        fragment.image().path().clone(),
+                        reader.resources().image_source(fragment.image()).unwrap(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap()
+}
+
+#[test]
+fn later_pages_and_chapters_reuse_slots_without_stale_mappings() {
+    use crate::{host_image::HostImageSlot, install_reader_images, load_requested_page};
+
+    let red = [200, 10, 20];
+    let blue = [10, 20, 200];
+
+    let book = illustrated_book(
+        r#"<p>start</p><img src="red.png"/><img src="blue.png"/><img src="red.png"/><p>end</p>"#,
+        r#"<img src="blue.png"/>"#,
+        &[
+            ("red.png", png(120, 60, red)),
+            ("blue.png", png(120, 60, blue)),
+        ],
+    );
+    let mut host = book.open();
+
+    let slots = [HostImageSlot::default()];
+    let mut registry = inkpaper_ui::ImageRegistry::<1>::default();
+
+    let ids = [registry.register(&slots[0]).unwrap().id()];
+    let (session, images) = host.load_first().unwrap().into_app_session(&ids).unwrap();
+
+    assert_eq!(session.page_count(), 5);
+
+    install_reader_images(&slots, images);
+
+    let (mut runtime, app) = app_with(session);
+
+    for (expected_page, color) in [(1, red), (2, blue), (3, red)] {
+        let request = page_request(&mut runtime, app, Button::Next);
+        load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+        assert_eq!(position(&runtime, app).1, expected_page);
+
+        let sources = displayed_images(&runtime, app);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].1.id(), ids[0]);
+        assert_eq!(
+            registry.get(ids[0]).unwrap().pixel(0, 0),
+            Some(inkpaper_ui::Color::rgb(color[0], color[1], color[2]))
+        );
+    }
+
+    // a text page and return to its still-resident image require no preparation.
+    assert_eq!(press(&mut runtime, app, Button::Next), PlatformAction::None);
+    assert_eq!(position(&runtime, app).1, 4);
+    assert_eq!(
+        press(&mut runtime, app, Button::Previous),
+        PlatformAction::None
+    );
+    assert_eq!(position(&runtime, app).1, 3);
+
+    let request = page_request(&mut runtime, app, Button::Previous);
+    load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+    assert_eq!(position(&runtime, app).1, 2);
+    assert_eq!(
+        registry.get(ids[0]).unwrap().pixel(0, 0),
+        Some(inkpaper_ui::Color::rgb(10, 20, 200))
+    );
+
+    let request = page_request(&mut runtime, app, Button::Next);
+    load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+    press(&mut runtime, app, Button::Next);
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Next);
+    load_requested_chapter(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+    assert_eq!(position(&runtime, app).0, 1);
+    assert_eq!(displayed_images(&runtime, app)[0].0.as_str(), "blue.png");
+    assert_eq!(
+        registry.get(ids[0]).unwrap().pixel(0, 0),
+        Some(inkpaper_ui::Color::rgb(10, 20, 200))
+    );
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Previous);
+    load_requested_chapter(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+    assert_eq!(position(&runtime, app).1, 4);
+
+    let request = page_request(&mut runtime, app, Button::Previous);
+    load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+    assert_eq!(displayed_images(&runtime, app)[0].0.as_str(), "red.png");
+    assert_eq!(registry.len(), 1);
+}
+
+#[test]
+fn repeated_images_on_one_page_use_one_slot_and_decode_once() {
+    let book = illustrated_book(
+        r#"<img src="large.png"/><img src="small.png"/><img src="small.png"/>"#,
+        "<p>end</p>",
+        &[
+            ("large.png", png(120, 60, [1, 2, 3])),
+            ("small.png", png(2, 1, [4, 5, 6])),
+        ],
+    );
+    let mut host = book.open();
+
+    let slots = [HostImageSlot::default()];
+    let ids = [ImageId::new(0)];
+
+    let (session, images) = host.load_first().unwrap().into_app_session(&ids).unwrap();
+    crate::install_reader_images(&slots, images);
+
+    let (mut runtime, app) = app_with(session);
+
+    let request = page_request(&mut runtime, app, Button::Next);
+
+    let count = runtime
+        .update(app, |app, _| {
+            let page = app.reader().unwrap().page_for_request(request).unwrap();
+            host.load_page(page, &ids).unwrap().1.len()
+        })
+        .unwrap();
+
+    assert_eq!(count, 1);
+
+    load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+    let images = displayed_images(&runtime, app);
+
+    assert_eq!(images.len(), 2);
+    assert_eq!(images[0].1, images[1].1);
+}
+
+#[test]
+fn decode_and_capacity_failures_preserve_page_pixels_and_allow_retry() {
+    use crate::{host_image::HostImageSlot, load_requested_page};
+
+    for capacity_failure in [false, true] {
+        let mut bad = png(2, 1, [4, 5, 6]);
+        bad.truncate(24); // valid dimensions, incomplete pixel data.
+
+        let body = if capacity_failure {
+            r#"<img src="large.png"/><img src="small.png"/><img src="bad.png"/>"#
+        } else {
+            r#"<img src="large.png"/><img src="bad.png"/>"#
+        };
+
+        let book = illustrated_book(
+            body,
+            "<p>end</p>",
+            &[
+                ("large.png", png(120, 60, [1, 2, 3])),
+                ("small.png", png(2, 1, [7, 8, 9])),
+                ("bad.png", bad),
+            ],
+        );
+
+        let mut host = book.open();
+
+        let slots = [HostImageSlot::default()];
+        let ids = [ImageId::new(0)];
+
+        let (session, images) = host.load_first().unwrap().into_app_session(&ids).unwrap();
+        crate::install_reader_images(&slots, images);
+
+        let (mut runtime, app) = app_with(session);
+        let before = displayed_images(&runtime, app);
+
+        for _ in 0..2 {
+            let request = page_request(&mut runtime, app, Button::Next);
+
+            runtime
+                .update(app, |app, _| {
+                    let page = app.reader().unwrap().page_for_request(request).unwrap();
+                    let error = host.load_page(page, &ids).err().unwrap();
+
+                    if capacity_failure {
+                        assert!(matches!(
+                            error,
+                            ReaderLoadError::TooManyImages {
+                                count: 2,
+                                capacity: 1
+                            }
+                        ));
+                    } else {
+                        assert!(matches!(error, ReaderLoadError::ImageDecode { .. }));
+                    }
+                })
+                .unwrap();
+
+            load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+            assert_eq!(position(&runtime, app).1, 0);
+            assert_eq!(displayed_images(&runtime, app), before);
+            assert_eq!(slots[0].pixel(0, 0), Some(inkpaper_ui::Color::rgb(1, 2, 3)));
+        }
+    }
+}
+
+struct ChangedFontResources(Box<dyn ReaderPageResources>);
+
+impl ReaderPageResources for ChangedFontResources {
+    fn font_for(&self, _: ReaderTextStyle) -> FontId {
+        FontId::new(99)
+    }
+
+    fn image_source(&self, image: &inkpaper_reader::ChapterImage) -> Option<ImageSource> {
+        self.0.image_source(image)
+    }
+}
+
+#[test]
+fn invalid_page_resources_and_home_cancellation_leave_current_images_intact() {
+    use crate::{host_image::HostImageSlot, load_requested_page};
+
+    let book = illustrated_book(
+        r#"<img src="large.png"/><img src="small.png"/><p>end</p>"#,
+        "<p>next</p>",
+        &[
+            ("large.png", png(120, 60, [1, 2, 3])),
+            ("small.png", png(120, 60, [4, 5, 6])),
+        ],
+    );
+    let mut host = book.open();
+
+    let slots = [HostImageSlot::default()];
+    let ids = [ImageId::new(0)];
+
+    let (session, images) = host.load_first().unwrap().into_app_session(&ids).unwrap();
+    crate::install_reader_images(&slots, images);
+
+    let (mut runtime, app) = app_with(session);
+
+    for wrong_font in [false, true] {
+        let request = page_request(&mut runtime, app, Button::Next);
+
+        runtime
+            .update(app, |app, cx| {
+                let resources: Box<dyn ReaderPageResources> = if wrong_font {
+                    let page = app.reader().unwrap().page_for_request(request).unwrap();
+                    Box::new(ChangedFontResources(host.load_page(page, &ids).unwrap().0))
+                } else {
+                    Box::new(())
+                };
+                assert!(!app.complete_reader_page(request, Some(resources), cx));
+            })
+            .unwrap();
+
+        assert_eq!(position(&runtime, app).1, 0);
+    }
+
+    let request = page_request(&mut runtime, app, Button::Next);
+
+    InkPaperApp::handle_event(
+        &mut runtime,
+        app,
+        AppEvent::Input(InputEvent::Touch(TouchEvent::HomeTap)),
+    );
+    load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+    assert_eq!(position(&runtime, app).1, 0);
+    assert_eq!(slots[0].pixel(0, 0), Some(inkpaper_ui::Color::rgb(1, 2, 3)));
+
+    runtime
+        .update(app, |app, cx| app.navigate(Route::Reader, cx))
+        .unwrap();
+
+    let request = page_request(&mut runtime, app, Button::Next);
+    load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+    assert_eq!(position(&runtime, app).1, 1);
 }

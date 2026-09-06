@@ -14,7 +14,8 @@ use inkpaper_app::{
     AppEvent, AppModel, BookSummary, Button as AppButton, ButtonEdge as AppButtonEdge,
     ButtonEvent as AppButtonEvent, InkPaperApp, InputEvent as AppInputEvent, PlatformAction,
     ScrollEvent as AppScrollEvent, TouchEvent as AppTouchEvent, TouchPosition as AppTouchPosition,
-    reader::ChapterRequest, theme::Theme,
+    reader::{ChapterRequest, PageRequest},
+    theme::Theme,
 };
 use inkpaper_reader::Viewport;
 use inkpaper_ui::{
@@ -190,6 +191,57 @@ fn load_requested_chapter<const FONTS: usize>(
     }
 }
 
+fn load_requested_page<const FONTS: usize>(
+    runtime: &mut impl RuntimeApi,
+    app: Entity<InkPaperApp>,
+    host: Option<&mut HostReader<FONTS>>,
+    request: PageRequest,
+    slots: &[HostImageSlot],
+    ids: &[ImageId],
+) {
+    let prepared = runtime
+        .update(app, |app, _| {
+            let Some(page) = app
+                .reader()
+                .and_then(|reader| reader.page_for_request(request))
+            else {
+                return Ok(None);
+            };
+            match host {
+                Some(host) => host.load_page(page, ids).map(Some),
+                None => Ok(None),
+            }
+        })
+        .expect("InkPaper application entity must remain alive");
+
+    match prepared {
+        Ok(Some((resources, images))) => {
+            runtime.cancel_activation();
+
+            let accepted = runtime
+                .update(app, |app, cx| {
+                    app.complete_reader_page(request, Some(resources), cx)
+                })
+                .expect("InkPaper application entity must remain alive");
+
+            if accepted {
+                install_reader_images(slots, images);
+            }
+        }
+        result => {
+            if let Err(error) = result {
+                eprintln!("reader page image load failed: {error:?}");
+            }
+
+            runtime
+                .update(app, |app, cx| {
+                    app.complete_reader_page(request, None, cx);
+                })
+                .expect("InkPaper application entity must remain alive");
+        }
+    }
+}
+
 fn to_touch_position(point: EgPoint) -> AppTouchPosition {
     let x = point.x.clamp(0, DISPLAY_WIDTH as i32 - 1);
     let y = point.y.clamp(0, DISPLAY_HEIGHT as i32 - 1);
@@ -316,7 +368,7 @@ fn main() {
     let runtime_font = runtime_font_path(args.font.as_deref());
     let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
 
-    // register identical faces in identical order for pagination and painting.
+    // keep font IDs identical between pagination and painting.
     let mut reader_fonts = FontRegistry::<2>::default();
     let (reader_body_font, reader_heading_font) = if let Some(runtime_font) = runtime_font {
         let runtime_id = runtime
@@ -361,16 +413,20 @@ fn main() {
         for slot in &reader_slots {
             reader_image_ids.push(runtime.register_image(slot).unwrap().id());
         }
+
         let (session, images) = host
             .load_first()
             .and_then(|prepared| prepared.into_app_session(&reader_image_ids))
             .unwrap_or_else(|error| panic!("failed to prepare EPUB: {error:?}"));
+
         install_reader_images(&reader_slots, images);
+
         eprintln!(
             "reader installed: spine={} pages={}",
             session.spine().get(),
             session.page_count()
         );
+
         session
     });
 
@@ -497,6 +553,16 @@ fn main() {
                 PlatformAction::None => {}
                 PlatformAction::LoadReaderChapter(request) => {
                     load_requested_chapter(
+                        runtime.as_mut(),
+                        app,
+                        host_reader.as_mut(),
+                        request,
+                        &reader_slots,
+                        &reader_image_ids,
+                    );
+                }
+                PlatformAction::LoadReaderPage(request) => {
+                    load_requested_page(
                         runtime.as_mut(),
                         app,
                         host_reader.as_mut(),

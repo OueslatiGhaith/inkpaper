@@ -298,6 +298,49 @@ impl<const FONTS: usize> HostReader<FONTS> {
             images,
         }))
     }
+
+    pub fn load_page(
+        &mut self,
+        page: &Page<'_>,
+        slots: &[ImageId],
+    ) -> Result<(Box<dyn ReaderPageResources>, Vec<DecodedReaderImage>), ReaderLoadError> {
+        let mut paths = Vec::new();
+
+        for item in page.items() {
+            let PageItem::Image(fragment) = item else {
+                continue;
+            };
+
+            let path = fragment.image().path();
+
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+
+        if paths.len() > slots.len() {
+            return Err(ReaderLoadError::TooManyImages {
+                count: paths.len(),
+                capacity: slots.len(),
+            });
+        }
+
+        let images = decode_page_images(&mut self.epub, page)?;
+        // this fresh map contains only images backed by the incoming slot contents.
+        let mut resources = SimulatorReaderResources::new(self.body_font, self.heading_font);
+
+        for (decoded, id) in images.iter().zip(slots) {
+            let size = decoded.image().size();
+
+            resources.images.push(SimulatorReaderImage {
+                path: decoded.path().clone(),
+                dimensions: ImageDimensions::new(size.width.get() as u32, size.height.get() as u32),
+                source: Some(ImageSource::new(*id, size)),
+            });
+        }
+
+        Ok((Box::new(resources), images))
+    }
 }
 
 fn load_image_metadata(

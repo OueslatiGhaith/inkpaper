@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use inkpaper_reader::{Page, Pagination, SpineIndex, Viewport};
+use inkpaper_reader::{Page, PageItem, Pagination, SpineIndex, Viewport};
 
 use super::ReaderPageResources;
 
@@ -28,13 +28,40 @@ impl defmt::Format for ChapterRequest {
     }
 }
 
+/// page indices are local to the current pagination, not persisted book positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageRequest {
+    pub spine: SpineIndex,
+    pub from: usize,
+    pub to: usize,
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for PageRequest {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(
+            fmt,
+            "PageRequest {{ spine: {}, from: {}, to: {} }}",
+            self.spine.get(),
+            self.from,
+            self.to
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingRequest {
+    Chapter(ChapterDirection),
+    Page(PageRequest),
+}
+
 pub struct ReaderSession {
     pagination: Pagination<'static>,
     viewport: Viewport,
     resources: Box<dyn ReaderPageResources>,
     spine: SpineIndex,
     page_index: usize,
-    requested: Option<ChapterDirection>,
+    requested: Option<PendingRequest>,
     request_sent: bool,
 }
 
@@ -92,13 +119,11 @@ impl ReaderSession {
             return false;
         }
         if self.page_index == 0 {
-            self.requested = Some(ChapterDirection::Previous);
+            self.requested = Some(PendingRequest::Chapter(ChapterDirection::Previous));
             return false;
         }
 
-        self.page_index -= 1;
-
-        true
+        self.turn_to(self.page_index - 1)
     }
 
     pub fn next_page(&mut self) -> bool {
@@ -106,11 +131,99 @@ impl ReaderSession {
             return false;
         }
         if self.page_index + 1 == self.pagination.len() {
-            self.requested = Some(ChapterDirection::Next);
+            self.requested = Some(PendingRequest::Chapter(ChapterDirection::Next));
             return false;
         }
 
-        self.page_index += 1;
+        self.turn_to(self.page_index + 1)
+    }
+
+    fn turn_to(&mut self, to: usize) -> bool {
+        let page = &self.pagination.pages()[to];
+        let needs_images = page.items().iter().any(|item| match item {
+            PageItem::Image(fragment) => self.resources.image_source(fragment.image()).is_none(),
+            PageItem::Text(_) => false,
+        });
+
+        if needs_images {
+            self.requested = Some(PendingRequest::Page(PageRequest {
+                spine: self.spine,
+                from: self.page_index,
+                to,
+            }));
+
+            return false;
+        }
+
+        self.page_index = to;
+
+        true
+    }
+
+    pub(crate) fn take_page_request(&mut self) -> Option<PageRequest> {
+        if self.request_sent {
+            return None;
+        }
+        let PendingRequest::Page(request) = self.requested? else {
+            return None;
+        };
+
+        self.request_sent = true;
+
+        Some(request)
+    }
+
+    pub fn page_for_request(&self, request: PageRequest) -> Option<&Page<'static>> {
+        if !self.request_sent
+            || self.requested != Some(PendingRequest::Page(request))
+            || request.spine != self.spine
+            || request.from != self.page_index
+        {
+            return None;
+        }
+
+        self.pagination.pages().get(request.to)
+    }
+
+    pub(crate) fn complete_page_request(
+        &mut self,
+        request: PageRequest,
+        resources: Option<Box<dyn ReaderPageResources>>,
+    ) -> bool {
+        let Some(page) = self.page_for_request(request) else {
+            return false;
+        };
+
+        let valid = resources.as_ref().is_some_and(|resources| {
+            let images_ready = page.items().iter().all(|item| match item {
+                PageItem::Image(fragment) => resources.image_source(fragment.image()).is_some(),
+                PageItem::Text(_) => true,
+            });
+
+            let fonts_unchanged = self
+                .pagination
+                .pages()
+                .iter()
+                .flat_map(|page| page.items())
+                .all(|item| match item {
+                    PageItem::Text(fragment) => {
+                        resources.font_for(fragment.style())
+                            == self.resources.font_for(fragment.style())
+                    }
+                    PageItem::Image(_) => true,
+                });
+
+            images_ready && fonts_unchanged
+        });
+
+        self.cancel_request();
+
+        if !valid {
+            return false;
+        }
+
+        self.resources = resources.expect("validated page resources must be present");
+        self.page_index = request.to;
 
         true
     }
@@ -120,7 +233,10 @@ impl ReaderSession {
             return None;
         }
 
-        let direction = self.requested?;
+        let PendingRequest::Chapter(direction) = self.requested? else {
+            return None;
+        };
+
         self.request_sent = true;
 
         Some(ChapterRequest {
@@ -129,7 +245,7 @@ impl ReaderSession {
         })
     }
 
-    pub(crate) fn cancel_chapter_request(&mut self) {
+    pub(crate) fn cancel_request(&mut self) {
         self.requested = None;
         self.request_sent = false;
     }
@@ -141,12 +257,12 @@ impl ReaderSession {
     ) -> bool {
         if !self.request_sent
             || request.from != self.spine
-            || self.requested != Some(request.direction)
+            || self.requested != Some(PendingRequest::Chapter(request.direction))
         {
             return false;
         }
 
-        self.cancel_chapter_request();
+        self.cancel_request();
 
         let Some(mut replacement) = replacement else {
             return false;

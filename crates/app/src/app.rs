@@ -1,9 +1,10 @@
+use alloc::boxed::Box;
 use inkpaper_ui::prelude::*;
 
 use crate::{
     AppModel,
     components::{BottomNav, TopBar},
-    reader::{ChapterRequest, ReaderSession},
+    reader::{ChapterRequest, PageRequest, ReaderPageResources, ReaderSession},
     screens::{HomeScreen, LibraryScreen, PlaceholderScreen, ReaderScreen},
     theme::Theme,
 };
@@ -126,6 +127,13 @@ impl InkPaperApp {
         self.reader.as_mut()?.take_chapter_request()
     }
 
+    pub(crate) fn take_reader_page_request(&mut self) -> Option<PageRequest> {
+        if self.route != Route::Reader {
+            return None;
+        }
+        self.reader.as_mut()?.take_page_request()
+    }
+
     /// complete each platform request before processing the next input event.
     ///
     /// pass `None` at the book boundary or when loading failed
@@ -150,11 +158,35 @@ impl InkPaperApp {
         changed
     }
 
+    /// complete synchronously before the next input event or repaint
+    ///
+    /// `None` releases a failed request without changing the current page
+    pub fn complete_reader_page(
+        &mut self,
+        request: PageRequest,
+        resources: Option<Box<dyn ReaderPageResources>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.route != Route::Reader {
+            return false;
+        }
+        let Some(reader) = self.reader.as_mut() else {
+            return false;
+        };
+
+        let changed = reader.complete_page_request(request, resources);
+        if changed {
+            cx.notify();
+        }
+
+        changed
+    }
+
     pub fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         if route != Route::Reader
             && let Some(reader) = self.reader.as_mut()
         {
-            reader.cancel_chapter_request();
+            reader.cancel_request();
         }
         if route == Route::Reader && self.reader.is_none() {
             return;

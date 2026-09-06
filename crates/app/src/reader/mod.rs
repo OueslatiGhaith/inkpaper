@@ -4,4 +4,4 @@ mod session;
 
 pub use measure::{UiReaderMeasureError, UiReaderMeasurer};
 pub use render::{ReaderPageResources, ReaderPageView};
-pub use session::{ChapterDirection, ChapterRequest, ReaderSession};
+pub use session::{ChapterDirection, ChapterRequest, PageRequest, ReaderSession};
