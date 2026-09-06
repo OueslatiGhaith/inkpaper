@@ -1,6 +1,6 @@
 use inkpaper_ui::{Entity, Offset, Point, RuntimeApi, px};
 
-use crate::{InkPaperApp, Route, clock::TimeOfDay};
+use crate::{InkPaperApp, Route, clock::TimeOfDay, reader::ChapterRequest};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -126,6 +126,7 @@ pub enum AppEvent {
 pub enum PlatformAction {
     None,
     Suspend,
+    LoadReaderChapter(ChapterRequest),
 }
 
 impl InkPaperApp {
@@ -195,7 +196,10 @@ impl InkPaperApp {
                     }
                 }
 
-                PlatformAction::None
+                runtime
+                    .update(app, |app, _| app.take_reader_chapter_request())
+                    .expect("InkPaper application entity must remain alive")
+                    .map_or(PlatformAction::None, PlatformAction::LoadReaderChapter)
             }
             AppEvent::BatteryPercent(percent) => {
                 let percent = percent.min(100);

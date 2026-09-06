@@ -376,6 +376,16 @@ fn handle_input_event(
     match action {
         PlatformAction::None => InputAction::Continue,
         PlatformAction::Suspend => InputAction::Sleep,
+        PlatformAction::LoadReaderChapter(request) => {
+            // TODO: the x4 has no epub file service yet. Release the pending request
+            runtime
+                .update(app, |app, cx| {
+                    app.complete_reader_chapter(request, None, cx)
+                })
+                .expect("InkPaper application entity must remain alive");
+
+            InputAction::Continue
+        }
     }
 }
 

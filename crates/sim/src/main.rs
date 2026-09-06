@@ -14,8 +14,9 @@ use inkpaper_app::{
     AppEvent, AppModel, BookSummary, Button as AppButton, ButtonEdge as AppButtonEdge,
     ButtonEvent as AppButtonEvent, InkPaperApp, InputEvent as AppInputEvent, PlatformAction,
     ScrollEvent as AppScrollEvent, TouchEvent as AppTouchEvent, TouchPosition as AppTouchPosition,
-    theme::Theme,
+    reader::ChapterRequest, theme::Theme,
 };
+use inkpaper_reader::Viewport;
 use inkpaper_ui::{
     FontData, FontFace, FontRegistry, TtfFont,
     backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
@@ -23,7 +24,11 @@ use inkpaper_ui::{
 };
 use static_cell::StaticCell;
 
-use crate::{args::SimulatorArgs, host_image::HostImage, reader_demo::load_reader_session};
+use crate::{
+    args::SimulatorArgs,
+    host_image::{HostImage, HostImageSlot},
+    reader_demo::{DecodedReaderImage, HostReader},
+};
 
 mod args;
 mod host_epub;
@@ -127,6 +132,62 @@ fn load_font_data(path: &Path) -> FontData<'static> {
         .unwrap_or_else(|error| panic!("failed to read font {}: {error}", path.display()));
 
     FontData::new(&storage[..file_len])
+}
+
+fn install_reader_images(slots: &[HostImageSlot], images: Vec<DecodedReaderImage>) {
+    assert!(images.len() <= slots.len());
+
+    let mut images = images.into_iter();
+    for slot in slots {
+        slot.replace(images.next().map(DecodedReaderImage::into_image));
+    }
+}
+
+fn load_requested_chapter<const FONTS: usize>(
+    runtime: &mut impl RuntimeApi,
+    app: Entity<InkPaperApp>,
+    host: Option<&mut HostReader<FONTS>>,
+    request: ChapterRequest,
+    slots: &[HostImageSlot],
+    ids: &[ImageId],
+) {
+    let prepared = match host {
+        Some(host) => host.load_adjacent(request).and_then(|prepared| {
+            prepared
+                .map(|prepared| prepared.into_app_session(ids))
+                .transpose()
+        }),
+        None => Ok(None),
+    };
+
+    match prepared {
+        Ok(Some((session, images))) => {
+            let spine = session.spine();
+            runtime.cancel_activation();
+
+            let accepted = runtime
+                .update(app, |app, cx| {
+                    app.complete_reader_chapter(request, Some(session), cx)
+                })
+                .expect("InkPaper application entity must remain alive");
+
+            if accepted {
+                install_reader_images(slots, images);
+                eprintln!("reader: entered spine={}", spine.get());
+            }
+        }
+        result => {
+            if let Err(error) = result {
+                eprintln!("reader chapter load failed: {error:?}");
+            }
+
+            runtime
+                .update(app, |app, cx| {
+                    app.complete_reader_chapter(request, None, cx);
+                })
+                .expect("InkPaper application entity must remain alive");
+        }
+    }
 }
 
 fn to_touch_position(point: EgPoint) -> AppTouchPosition {
@@ -237,6 +298,9 @@ fn layout_ui(runtime: &mut impl RenderRuntimeApi) {
 fn main() {
     let args = SimulatorArgs::parse();
 
+    let reader_slots: [HostImageSlot; READER_IMAGE_CAPACITY] =
+        std::array::from_fn(|_| HostImageSlot::default());
+
     let mut runtime = Box::new(
         RuntimeBuilder::default()
             .entities::<16_384, 32>()
@@ -252,9 +316,7 @@ fn main() {
     let runtime_font = runtime_font_path(args.font.as_deref());
     let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
 
-    // reader pagination needs a FontRegistry independently of the runtime.
-    // register the exact same faces in the same order so FontIds are identical
-    // between pagination and painting.
+    // register identical faces in identical order for pagination and painting.
     let mut reader_fonts = FontRegistry::<2>::default();
     let (reader_body_font, reader_heading_font) = if let Some(runtime_font) = runtime_font {
         let runtime_id = runtime
@@ -279,64 +341,38 @@ fn main() {
 
         assert_eq!(runtime_heading, reader_heading);
 
-        // FONT_6X10 is useful for the existing application simulator but is too small
-        // for a full-screen book preview. Use the readable 10x20 face for both reader
-        // body and headings when no TTF was supplied.
+        // use the readable 10x20 face for reader text when no TTF was supplied.
         (reader_heading, reader_heading)
     };
 
-    let mut reader_images = Vec::new();
-
-    let reader_session = if let Some(epub_path) = args.epub.as_deref() {
-        let viewport = inkpaper_reader::Viewport::new(DISPLAY_WIDTH, DISPLAY_HEIGHT)
-            .expect("simulator display dimensions are non-zero");
-
-        let (mut prepared, images) = load_reader_session(
-            epub_path,
+    let mut host_reader = args.epub.as_deref().map(|path| {
+        HostReader::open(
+            path,
             reader_fonts,
             reader_body_font,
             reader_heading_font,
-            viewport,
+            Viewport::new(DISPLAY_WIDTH, DISPLAY_HEIGHT).unwrap(),
         )
-        .unwrap_or_else(|error| panic!("failed to open EPUB {}: {error:?}", epub_path.display()));
+        .unwrap_or_else(|error| panic!("failed to open EPUB {}: {error:?}", path.display()))
+    });
 
-        reader_images = images;
-
-        assert!(
-            reader_images.len() <= READER_IMAGE_CAPACITY,
-            "reader page contains {} decoded images, but the simulator image registry holds only {}",
-            reader_images.len(),
-            READER_IMAGE_CAPACITY,
-        );
-
-        for decoded in &reader_images {
-            let source = runtime
-                .register_image(decoded.image())
-                .expect("reader page images must fit simulator image registry");
-
-            assert!(
-                prepared.set_image_source(decoded.path(), source),
-                "decoded reader image must have matching pagination metadata",
-            );
-
-            eprintln!(
-                "reader image: {} ({}x{})",
-                decoded.path().as_str(),
-                source.size().width.get(),
-                source.size().height.get(),
-            );
+    let mut reader_image_ids = Vec::new();
+    let reader_session = host_reader.as_mut().map(|host| {
+        for slot in &reader_slots {
+            reader_image_ids.push(runtime.register_image(slot).unwrap().id());
         }
-
+        let (session, images) = host
+            .load_first()
+            .and_then(|prepared| prepared.into_app_session(&reader_image_ids))
+            .unwrap_or_else(|error| panic!("failed to prepare EPUB: {error:?}"));
+        install_reader_images(&reader_slots, images);
         eprintln!(
             "reader installed: spine={} pages={}",
-            prepared.spine().get(),
-            prepared.page_count(),
+            session.spine().get(),
+            session.page_count()
         );
-
-        Some(prepared.into_app_session())
-    } else {
-        None
-    };
+        session
+    });
 
     let cover_image = args.cover.as_deref().map(|path| {
         HostImage::open(path)
@@ -459,14 +495,25 @@ fn main() {
 
             match action {
                 PlatformAction::None => {}
+                PlatformAction::LoadReaderChapter(request) => {
+                    load_requested_chapter(
+                        runtime.as_mut(),
+                        app,
+                        host_reader.as_mut(),
+                        request,
+                        &reader_slots,
+                        &reader_image_ids,
+                    );
+                }
                 PlatformAction::Suspend => {
                     // the real X4 platform performs its complete deep-sleep sequence.
                     break 'running;
                 }
             }
-        }
 
-        update_ui(runtime.as_mut(), &mut display);
+            // later events must hit the newly installed page or route.
+            update_ui(runtime.as_mut(), &mut display);
+        }
     }
 
     eprintln!(
@@ -475,9 +522,8 @@ fn main() {
         runtime.glyph_cache_capacity_bytes(),
     );
 
-    // the runtime ImageRegistry borrows HostImages, so destroy the registry before
-    // destroying the backing host images.
+    // destroy the registry before its borrowed image slots and cover.
     drop(runtime);
-    drop(reader_images);
+    drop(reader_slots);
     drop(cover_image);
 }

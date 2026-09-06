@@ -29,6 +29,15 @@ impl<'a> Pagination<'a> {
     pub fn is_empty(&self) -> bool {
         self.pages.is_empty()
     }
+
+    /// detatches this chapter's pages from their borrowed EPUB content.
+    ///
+    /// allocation happens here, before the pages enter the rendering path
+    pub fn into_owned(self) -> Pagination<'static> {
+        Pagination {
+            pages: self.pages.into_iter().map(Page::into_owned).collect(),
+        }
+    }
 }
 
 pub fn paginate_chapter<'a, M>(

@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 use crate::{
     AppModel,
     components::{BottomNav, TopBar},
-    reader::ReaderSession,
+    reader::{ChapterRequest, ReaderSession},
     screens::{HomeScreen, LibraryScreen, PlaceholderScreen, ReaderScreen},
     theme::Theme,
 };
@@ -118,7 +118,44 @@ impl InkPaperApp {
         true
     }
 
+    pub(crate) fn take_reader_chapter_request(&mut self) -> Option<ChapterRequest> {
+        if self.route != Route::Reader {
+            return None;
+        }
+
+        self.reader.as_mut()?.take_chapter_request()
+    }
+
+    /// complete each platform request before processing the next input event.
+    ///
+    /// pass `None` at the book boundary or when loading failed
+    pub fn complete_reader_chapter(
+        &mut self,
+        request: ChapterRequest,
+        replacement: Option<ReaderSession>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(reader) = self.reader.as_mut() else {
+            return false;
+        };
+        if self.route != Route::Reader {
+            return false;
+        }
+
+        let changed = reader.complete_chapeter_request(request, replacement);
+        if changed {
+            cx.notify();
+        }
+
+        changed
+    }
+
     pub fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
+        if route != Route::Reader
+            && let Some(reader) = self.reader.as_mut()
+        {
+            reader.cancel_chapter_request();
+        }
         if route == Route::Reader && self.reader.is_none() {
             return;
         }

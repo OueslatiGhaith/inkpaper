@@ -53,7 +53,6 @@ where
             .page
             .items()
             .iter()
-            .copied()
             .map(move |item| ReaderPageItem { item, resources });
 
         div()
@@ -66,7 +65,7 @@ where
 }
 
 struct ReaderPageItem<'resource, 'chapter, R: ?Sized> {
-    item: PageItem<'chapter>,
+    item: &'resource PageItem<'chapter>,
     resources: &'resource R,
 }
 
@@ -77,14 +76,13 @@ where
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
         match self.item {
             PageItem::Text(fragment) => mount_text_fragment(fragment, self.resources, cx),
-
             PageItem::Image(fragment) => mount_image_fragment(fragment, self.resources, cx),
         }
     }
 }
 
 fn mount_text_fragment<R>(
-    fragment: TextFragment<'_>,
+    fragment: &TextFragment<'_>,
     resources: &R,
     cx: &mut MountCx<'_>,
 ) -> Result<NodeId, MountError>
@@ -108,7 +106,7 @@ where
 }
 
 fn mount_image_fragment<R>(
-    fragment: ImageFragment<'_>,
+    fragment: &ImageFragment<'_>,
     resources: &R,
     cx: &mut MountCx<'_>,
 ) -> Result<NodeId, MountError>

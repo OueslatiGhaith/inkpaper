@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{borrow::Cow, vec::Vec};
 
 use inkpaper_epub::{BookLocation, ChapterImage, LinkTarget};
 
@@ -59,12 +59,12 @@ impl PageRange {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextFragment<'a> {
-    text: &'a str,
+    text: Cow<'a, str>,
     bounds: Rect,
     style: TextStyle,
-    link: Option<&'a LinkTarget>,
+    link: Option<Cow<'a, LinkTarget>>,
 }
 
 impl<'a> TextFragment<'a> {
@@ -75,15 +75,18 @@ impl<'a> TextFragment<'a> {
         link: Option<&'a LinkTarget>,
     ) -> Self {
         Self {
-            text,
+            text: Cow::Borrowed(text),
             bounds,
             style,
-            link,
+            link: match link {
+                Some(link) => Some(Cow::Borrowed(link)),
+                None => None,
+            },
         }
     }
 
-    pub const fn text(&self) -> &'a str {
-        self.text
+    pub fn text(&self) -> &str {
+        &self.text
     }
 
     pub const fn bounds(&self) -> Rect {
@@ -94,24 +97,43 @@ impl<'a> TextFragment<'a> {
         self.style
     }
 
-    pub const fn link(&self) -> Option<&'a LinkTarget> {
-        self.link
+    pub fn link(&self) -> Option<&LinkTarget> {
+        self.link.as_deref()
+    }
+
+    pub fn into_owned(self) -> TextFragment<'static> {
+        TextFragment {
+            text: Cow::Owned(self.text.into_owned()),
+            bounds: self.bounds,
+            style: self.style,
+            link: self.link.map(|link| Cow::Owned(link.into_owned())),
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageFragment<'a> {
-    image: &'a ChapterImage,
+    image: Cow<'a, ChapterImage>,
     bounds: Rect,
 }
 
 impl<'a> ImageFragment<'a> {
     pub(crate) const fn new(image: &'a ChapterImage, bounds: Rect) -> Self {
-        Self { image, bounds }
+        Self {
+            image: Cow::Borrowed(image),
+            bounds,
+        }
     }
 
-    pub const fn image(&self) -> &'a ChapterImage {
-        self.image
+    pub fn image(&self) -> &ChapterImage {
+        &self.image
+    }
+
+    pub fn into_owned(self) -> ImageFragment<'static> {
+        ImageFragment {
+            image: Cow::Owned(self.image.into_owned()),
+            bounds: self.bounds,
+        }
     }
 
     pub const fn bounds(&self) -> Rect {
@@ -119,7 +141,7 @@ impl<'a> ImageFragment<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageItem<'a> {
     Text(TextFragment<'a>),
     Image(ImageFragment<'a>),
@@ -130,6 +152,13 @@ impl PageItem<'_> {
         match self {
             Self::Text(fragment) => fragment.bounds(),
             Self::Image(fragment) => fragment.bounds(),
+        }
+    }
+
+    pub fn into_owned(self) -> PageItem<'static> {
+        match self {
+            Self::Text(fragment) => PageItem::Text(fragment.into_owned()),
+            Self::Image(fragment) => PageItem::Image(fragment.into_owned()),
         }
     }
 }
@@ -163,5 +192,12 @@ impl<'a> Page<'a> {
 
     pub(crate) fn set_end(&mut self, end: BookLocation) {
         self.range = PageRange::new(self.range.start(), end);
+    }
+
+    pub fn into_owned(self) -> Page<'static> {
+        Page {
+            range: self.range,
+            items: self.items.into_iter().map(PageItem::into_owned).collect(),
+        }
     }
 }

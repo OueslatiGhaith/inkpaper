@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{cell::RefCell, path::Path};
 
 use image::RgbImage;
 use inkpaper_ui::{Color, ImageResource, Size, px};
@@ -37,6 +37,31 @@ impl ImageResource for HostImage {
         let pixel = self.pixels.get_pixel(x, y);
 
         Some(Color::rgb(pixel[0], pixel[1], pixel[2]))
+    }
+}
+
+/// a stable registry entry whose host-owned pixels can be replaced between frames.
+#[derive(Default)]
+pub struct HostImageSlot {
+    image: RefCell<Option<HostImage>>,
+}
+
+impl HostImageSlot {
+    pub fn replace(&self, image: Option<HostImage>) {
+        *self.image.borrow_mut() = image;
+    }
+}
+
+impl ImageResource for HostImageSlot {
+    fn size(&self) -> Size {
+        self.image
+            .borrow()
+            .as_ref()
+            .map_or(Size::new(px(1), px(1)), ImageResource::size)
+    }
+
+    fn pixel(&self, x: u32, y: u32) -> Option<Color> {
+        self.image.borrow().as_ref()?.pixel(x, y)
     }
 }
 
@@ -80,5 +105,38 @@ mod tests {
         assert_eq!(image.size(), Size::new(px(2), px(1)));
         assert_eq!(image.pixel(0, 0), Some(Color::rgb(12, 34, 56)));
         assert_eq!(image.pixel(1, 0), Some(Color::rgb(78, 90, 123)));
+    }
+
+    #[test]
+    fn image_slot_reuses_registry_entry_and_releases_previous_pixels() {
+        let slot = HostImageSlot::default();
+        let mut registry = inkpaper_ui::ImageRegistry::<1>::default();
+        let id = registry.register(&slot).unwrap().id();
+
+        slot.replace(Some(HostImage {
+            pixels: RgbImage::from_pixel(2, 1, Rgb([10, 20, 30])),
+        }));
+
+        assert_eq!(registry.get(id).unwrap().size(), Size::new(px(2), px(1)));
+        assert_eq!(
+            registry.get(id).unwrap().pixel(1, 0),
+            Some(Color::rgb(10, 20, 30))
+        );
+
+        slot.replace(Some(HostImage {
+            pixels: RgbImage::from_pixel(1, 3, Rgb([40, 50, 60])),
+        }));
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.get(id).unwrap().size(), Size::new(px(1), px(3)));
+        assert_eq!(
+            registry.get(id).unwrap().pixel(0, 2),
+            Some(Color::rgb(40, 50, 60))
+        );
+        assert_eq!(registry.get(id).unwrap().pixel(1, 0), None);
+
+        slot.replace(None);
+
+        assert_eq!(registry.get(id).unwrap().pixel(0, 0), None);
     }
 }

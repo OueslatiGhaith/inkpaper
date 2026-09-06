@@ -172,12 +172,7 @@ fn image_can_occupy_a_page_without_advancing_content_location() {
     let bytes = build_test_epub(
         r#"
 <p>one</p>
-<p>
-    <img
-        src="../Images/picture.jpg"
-        alt="Picture"
-    />
-</p>
+<p><img src="../Images/picture.jpg"/></p>
 <p>two</p>
 "#,
     );
@@ -232,7 +227,7 @@ fn image_can_occupy_a_page_without_advancing_content_location() {
             BookLocation::new(SpineIndex::ZERO, ContentOffset::new(3)),
         ),
     );
-    // the image occupies the entire second page but contributes no visible-text ContentOffset.
+
     assert_eq!(
         pagination.pages()[1].range(),
         PageRange::new(
@@ -249,7 +244,7 @@ fn image_can_occupy_a_page_without_advancing_content_location() {
     );
     assert_eq!(pagination.pages()[1].items().len(), 1);
 
-    let PageItem::Image(fragment) = pagination.pages()[1].items()[0] else {
+    let PageItem::Image(fragment) = &pagination.pages()[1].items()[0] else {
         panic!("expected image fragment");
     };
 
@@ -344,7 +339,7 @@ fn pagination_emits_positioned_text_fragments_and_links() {
 
     assert_eq!(page.items().len(), 3);
 
-    let PageItem::Text(one) = page.items()[0] else {
+    let PageItem::Text(one) = &page.items()[0] else {
         panic!("expected text");
     };
 
@@ -352,14 +347,14 @@ fn pagination_emits_positioned_text_fragments_and_links() {
     assert_eq!(one.bounds(), Rect::new(1, 0, 3, 1));
     assert!(one.link().is_none());
 
-    let PageItem::Text(space) = page.items()[1] else {
+    let PageItem::Text(space) = &page.items()[1] else {
         panic!("expected space");
     };
 
     assert_eq!(space.text(), " ");
     assert_eq!(space.bounds(), Rect::new(4, 0, 1, 1));
 
-    let PageItem::Text(two) = page.items()[2] else {
+    let PageItem::Text(two) = &page.items()[2] else {
         panic!("expected linked text");
     };
 
@@ -568,4 +563,66 @@ fn push_u16(output: &mut Vec<u8>, value: u16) {
 
 fn push_u32(output: &mut Vec<u8>, value: u32) {
     output.extend_from_slice(&value.to_le_bytes());
+}
+
+#[test]
+fn owned_pagination_keeps_text_links_images_and_ranges_after_chapter_drop() {
+    let owned = {
+        let bytes = build_test_epub(
+            r##"<p><a href="#target">hello</a></p><p><img src="../Images/picture.jpg" alt="Picture"/></p>"##,
+        );
+
+        let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+        let chapter = future::block_on(epub.load_spine_chapter(0))
+            .unwrap()
+            .unwrap();
+
+        let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+        let mut measurer = MonoMeasurer {
+            image_dimensions: Some(ImageDimensions::new(6, 3)),
+        };
+
+        let borrowed = paginate_chapter(
+            &chapter,
+            &styles,
+            SpineIndex::new(7),
+            Viewport::new(10, 6).unwrap(),
+            ReaderSettings::new(16, 0).unwrap(),
+            &mut measurer,
+        )
+        .unwrap();
+
+        let owned = borrowed.clone().into_owned();
+
+        assert_eq!(owned, borrowed);
+
+        owned
+    };
+
+    assert_eq!(owned.pages()[0].start().spine(), SpineIndex::new(7));
+
+    let mut items = owned.pages().iter().flat_map(|page| page.items());
+
+    let text = items
+        .clone()
+        .find_map(|item| match item {
+            PageItem::Text(text) => Some(text),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_eq!(text.text(), "hello");
+    assert_eq!(text.link().unwrap().fragment(), Some("target"));
+
+    let image = items
+        .find_map(|item| match item {
+            PageItem::Image(image) => Some(image),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_eq!(image.image().path().as_str(), "OPS/Images/picture.jpg");
+    assert_eq!(image.image().alt(), Some("Picture"));
 }
