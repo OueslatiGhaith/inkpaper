@@ -2,7 +2,7 @@ use alloc::{borrow::Cow, vec::Vec};
 
 use inkpaper_epub::{BookLocation, ChapterImage, LinkTarget};
 
-use crate::metrics::TextStyle;
+use crate::{ReadingPosition, metrics::TextStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
@@ -165,38 +165,58 @@ impl PageItem<'_> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page<'a> {
-    range: PageRange,
+    position: ReadingPosition,
+    end_position: ReadingPosition,
     items: Vec<PageItem<'a>>,
 }
 
 impl<'a> Page<'a> {
-    pub(crate) fn new(range: PageRange, items: Vec<PageItem<'a>>) -> Self {
-        Self { range, items }
+    pub(crate) fn new(
+        position: ReadingPosition,
+        end_position: ReadingPosition,
+        items: Vec<PageItem<'a>>,
+    ) -> Self {
+        Self {
+            position,
+            end_position,
+            items,
+        }
     }
 
     pub const fn range(&self) -> PageRange {
-        self.range
+        PageRange::new(self.start(), self.end())
     }
 
     pub const fn start(&self) -> BookLocation {
-        self.range.start()
+        self.position.location()
     }
 
     pub const fn end(&self) -> BookLocation {
-        self.range.end()
+        self.end_position.location()
+    }
+
+    /// the start of this page, including its position among non-text content
+    pub const fn position(&self) -> ReadingPosition {
+        self.position
+    }
+
+    /// the exclusive end of the flow assigned to this page
+    pub const fn end_position(&self) -> ReadingPosition {
+        self.end_position
     }
 
     pub fn items(&self) -> &[PageItem<'a>] {
         &self.items
     }
 
-    pub(crate) fn set_end(&mut self, end: BookLocation) {
-        self.range = PageRange::new(self.range.start(), end);
+    pub(crate) fn set_end(&mut self, end: ReadingPosition) {
+        self.end_position = end;
     }
 
     pub fn into_owned(self) -> Page<'static> {
         Page {
-            range: self.range,
+            position: self.position,
+            end_position: self.end_position,
             items: self.items.into_iter().map(PageItem::into_owned).collect(),
         }
     }

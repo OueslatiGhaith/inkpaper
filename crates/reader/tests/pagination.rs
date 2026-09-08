@@ -626,3 +626,154 @@ fn owned_pagination_keeps_text_links_images_and_ranges_after_chapter_drop() {
     assert_eq!(image.image().path().as_str(), "OPS/Images/picture.jpg");
     assert_eq!(image.image().alt(), Some("Picture"));
 }
+
+fn paginate_positions(body: &str, width: u32, height: u32) -> inkpaper_reader::Pagination<'static> {
+    let bytes = build_test_epub(body);
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let mut measurer = MonoMeasurer {
+        image_dimensions: Some(ImageDimensions::new(4, 2)),
+    };
+
+    paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::new(3),
+        Viewport::new(width, height).unwrap(),
+        ReaderSettings::new(16, 0).unwrap(),
+        &mut measurer,
+    )
+    .unwrap()
+    .into_owned()
+}
+
+#[test]
+fn repeated_image_pages_have_distinct_positions_that_survive_repagination() {
+    let body = r#"<p><img src="../Images/picture.jpg"/><img src="../Images/picture.jpg"/><img src="../Images/picture.jpg"/></p>"#;
+    let separate = paginate_positions(body, 4, 2);
+    let combined = paginate_positions(body, 4, 4);
+
+    assert_eq!(separate.len(), 3);
+    assert_eq!(combined.len(), 2);
+
+    for (index, page) in separate.pages().iter().enumerate() {
+        assert_eq!(page.start().offset(), ContentOffset::ZERO);
+        assert_eq!(page.end().offset(), ContentOffset::ZERO);
+        assert_eq!(page.position().non_text(), index as u64);
+        assert_eq!(separate.page_at_position(page.position()), Some(index));
+        assert_eq!(combined.page_at_position(page.position()), Some(index / 2));
+    }
+}
+
+#[test]
+fn text_positions_restore_inside_reflowed_pages_and_count_unicode_scalars() {
+    let body = "<p>é🙂漢字é🙂漢字</p>";
+    let narrow = paginate_positions(body, 2, 1);
+    let wide = paginate_positions(body, 4, 1);
+
+    assert_eq!(narrow.len(), 4);
+    assert_eq!(wide.len(), 2);
+
+    for (index, page) in narrow.pages().iter().enumerate() {
+        assert_eq!(
+            page.position().location().offset(),
+            ContentOffset::new(index as u64 * 2)
+        );
+        assert_eq!(page.position().non_text(), 0);
+        assert_eq!(narrow.page_at_position(page.position()), Some(index));
+        assert_eq!(wide.page_at_position(page.position()), Some(index / 2));
+    }
+}
+
+#[test]
+fn text_after_an_image_at_the_same_text_offset_has_its_own_position() {
+    let pagination = paginate_positions(r#"<p><img src="../Images/picture.jpg"/>abcd</p>"#, 4, 2);
+    assert_eq!(pagination.len(), 2);
+
+    let image = &pagination.pages()[0];
+    let text = &pagination.pages()[1];
+
+    assert_eq!(image.start(), text.start());
+    assert_eq!(image.position().non_text(), 0);
+    assert_eq!(text.position().non_text(), 1);
+    assert_eq!(pagination.page_at_position(image.position()), Some(0));
+    assert_eq!(pagination.page_at_position(text.position()), Some(1));
+}
+
+#[test]
+fn explicit_break_pages_have_distinct_positions() {
+    let pagination = paginate_positions("<p><br/><br/><br/>abcd</p>", 4, 1);
+    assert_eq!(pagination.len(), 4);
+
+    for (index, page) in pagination.pages().iter().enumerate() {
+        assert_eq!(page.position().non_text(), index as u64);
+        assert_eq!(pagination.page_at_position(page.position()), Some(index));
+    }
+}
+
+#[test]
+fn hidden_and_unmeasurable_images_do_not_change_following_flow_coordinates() {
+    let body = r#"<p><img style="display:none" src="../Images/picture.jpg"/><br style="display:none"/>abcd<img src="../Images/picture.jpg"/>efgh</p>"#;
+    let bytes = build_test_epub(body);
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let mut positions = Vec::new();
+
+    for dimensions in [None, Some(ImageDimensions::new(4, 2))] {
+        let mut measurer = MonoMeasurer {
+            image_dimensions: dimensions,
+        };
+        let pagination = paginate_chapter(
+            &chapter,
+            &styles,
+            SpineIndex::new(3),
+            Viewport::new(4, 1).unwrap(),
+            ReaderSettings::new(16, 0).unwrap(),
+            &mut measurer,
+        )
+        .unwrap();
+
+        let last = pagination.pages().last().unwrap();
+        assert_eq!(last.end_position().non_text(), 3);
+        positions.push(last.position());
+    }
+
+    assert_eq!(positions[0], positions[1]);
+    assert_eq!(positions[0].non_text(), 3);
+    assert_eq!(positions[0].location().offset(), ContentOffset::new(4));
+}
+
+#[test]
+fn position_lookup_rejects_other_chapters_and_the_exclusive_end() {
+    use inkpaper_reader::ReadingPosition;
+
+    let pagination = paginate_positions("<p>abcd</p>", 2, 1);
+    let first = pagination.pages()[0].position();
+
+    for spine in [SpineIndex::new(2), SpineIndex::new(4)] {
+        let other = ReadingPosition::new(BookLocation::new(spine, first.location().offset()), 0);
+        assert_eq!(pagination.page_at_position(other), None);
+    }
+
+    assert_eq!(
+        pagination.page_at_position(pagination.pages()[1].end_position()),
+        None
+    );
+    assert_eq!(
+        pagination.page_at_position(ReadingPosition::new(
+            BookLocation::new(SpineIndex::new(3), ContentOffset::new(99)),
+            0,
+        )),
+        None
+    );
+
+    let empty = paginate_positions("<p></p>", 2, 1);
+    assert_eq!(empty.len(), 1);
+    assert_eq!(empty.page_at_position(empty.pages()[0].position()), Some(0));
+}

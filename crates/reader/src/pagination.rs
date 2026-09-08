@@ -8,8 +8,8 @@ use inkpaper_epub::{
 };
 
 use crate::{
-    ImageFragment, ImageMeasurer, Page, PageItem, PageRange, ReaderSettings, Rect, TextFragment,
-    TextMeasurer, TextStyle, Viewport,
+    ImageFragment, ImageMeasurer, Page, PageItem, PageRange, ReaderSettings, ReadingPosition, Rect,
+    TextFragment, TextMeasurer, TextStyle, Viewport,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +38,25 @@ impl<'a> Pagination<'a> {
             pages: self.pages.into_iter().map(Page::into_owned).collect(),
         }
     }
+
+    /// finds the page containing a position from the same book and chapter.
+    ///
+    /// repagination may move the position within a page. Chapter ends are exclusive.
+    /// Positions outside this chapter return `None`
+    pub fn page_at_position(&self, position: ReadingPosition) -> Option<usize> {
+        let index = self
+            .pages
+            .partition_point(|page| page.position() <= position)
+            .checked_sub(1)?;
+        let page = &self.pages[index];
+
+        // empty chapters still have a single page that can be reopened
+        (position < page.end_position()
+            || (self.pages.len() == 1
+                && position == page.position()
+                && page.position() == page.end_position()))
+        .then_some(index)
+    }
 }
 
 pub fn paginate_chapter<'a, M>(
@@ -65,7 +84,6 @@ struct PendingText<'a> {
 struct Paginator<'chapter, 'context, M> {
     chapter: &'chapter Chapter,
     styles: &'context ChapterStyles,
-    spine: SpineIndex,
     viewport: Viewport,
     settings: ReaderSettings,
     measurer: &'context mut M,
@@ -73,12 +91,12 @@ struct Paginator<'chapter, 'context, M> {
     pages: Vec<Page<'chapter>>,
     page_items: Vec<PageItem<'chapter>>,
 
-    page_start: ContentOffset,
-    cursor: ContentOffset,
+    page_start: ReadingPosition,
+    cursor: ReadingPosition,
     used_height: u32,
 
     line_active: bool,
-    line_start: ContentOffset,
+    line_start: ReadingPosition,
     line_width: u32,
     line_height: u32,
     line_align: TextAlign,
@@ -99,20 +117,21 @@ where
         settings: ReaderSettings,
         measurer: &'context mut M,
     ) -> Self {
+        let start = ReadingPosition::new(BookLocation::new(spine, ContentOffset::ZERO), 0);
+
         Self {
             chapter,
             styles,
-            spine,
             viewport,
             settings,
             measurer,
             pages: Vec::new(),
             page_items: Vec::new(),
-            page_start: ContentOffset::ZERO,
-            cursor: ContentOffset::ZERO,
+            page_start: start,
+            cursor: start,
             used_height: 0,
             line_active: false,
-            line_start: ContentOffset::ZERO,
+            line_start: start,
             line_width: 0,
             line_height: 0,
             line_align: TextAlign::Start,
@@ -132,24 +151,22 @@ where
 
         self.flush_line();
 
-        let end = self.chapter.content_len();
+        let end = self.cursor;
 
-        debug_assert_eq!(self.cursor, end);
+        debug_assert_eq!(end.location().offset(), self.chapter.content_len());
 
         if self.used_height > 0 {
             self.push_page(end);
         } else if self.pages.is_empty() {
             self.pages.push(Page::new(
-                PageRange::new(
-                    BookLocation::new(self.spine, ContentOffset::ZERO),
-                    BookLocation::new(self.spine, end),
-                ),
+                self.page_start,
+                end,
                 mem::take(&mut self.page_items),
             ));
         } else if self.page_start < end {
             // hidden trailing content advances the canonical location without creating visual layout.
             if let Some(last) = self.pages.last_mut() {
-                last.set_end(BookLocation::new(self.spine, end));
+                last.set_end(end);
             }
         }
 
@@ -168,11 +185,13 @@ where
                 }
                 Inline::Image(image) => {
                     self.layout_image(image);
+                    self.cursor = self.cursor.advance_non_text();
                 }
                 Inline::Break => {
                     if !block_style.hidden() {
                         self.layout_break(block.kind(), block_style)?;
                     }
+                    self.cursor = self.cursor.advance_non_text();
                 }
                 Inline::Anchor(_) => {}
             }
@@ -510,14 +529,12 @@ where
         self.used_height = self.used_height.saturating_add(spacing);
     }
 
-    fn push_page(&mut self, end: ContentOffset) {
-        let range = PageRange::new(
-            BookLocation::new(self.spine, self.page_start),
-            BookLocation::new(self.spine, end),
-        );
-
-        self.pages
-            .push(Page::new(range, mem::take(&mut self.page_items)));
+    fn push_page(&mut self, end: ReadingPosition) {
+        self.pages.push(Page::new(
+            self.page_start,
+            end,
+            mem::take(&mut self.page_items),
+        ));
 
         self.page_start = end;
         self.used_height = 0;

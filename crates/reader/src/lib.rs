@@ -5,6 +5,7 @@ extern crate alloc;
 mod metrics;
 mod page;
 mod pagination;
+mod position;
 
 pub use inkpaper_epub::{
     BlockKind, ChapterImage, FontStyle, FontWeight, ImageDimensions, SpineIndex,
@@ -12,6 +13,7 @@ pub use inkpaper_epub::{
 pub use metrics::{ImageMeasurer, TextMeasurer, TextStyle};
 pub use page::{ImageFragment, Page, PageItem, PageRange, Rect, TextFragment};
 pub use pagination::{Pagination, paginate_chapter};
+pub use position::ReadingPosition;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Viewport {
