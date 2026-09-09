@@ -11,6 +11,15 @@ use heapless::Vec;
 
 use crate::align_up;
 
+#[cfg(feature = "alloc")]
+mod allocated;
+
+#[cfg(feature = "alloc")]
+pub(crate) use allocated::GlobalArena;
+#[cfg(not(feature = "alloc"))]
+pub(crate) type GlobalArena<const BYTES: usize, const SLOTS: usize> =
+    FixedGlobalArena<BYTES, SLOTS>;
+
 /// marker trait for application-wide immutable values
 ///
 /// globals are intended for configuration and application-wide resources such as themes,
@@ -31,8 +40,13 @@ pub enum GlobalAccessError {
 pub enum GlobalSetError {
     SlotsFull,
     StorageFull,
-    UnsupportedAlignment { requested: usize, supported: usize },
+    UnsupportedAlignment {
+        requested: usize,
+        supported: usize,
+    },
     BorrowConflict,
+    #[cfg(feature = "alloc")]
+    AllocationFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,14 +94,14 @@ pub(crate) trait GlobalStore {
 }
 
 /// fixed-capacity storage for application globals
-pub(crate) struct GlobalArena<const BYTES: usize, const SLOTS: usize> {
+pub(crate) struct FixedGlobalArena<const BYTES: usize, const SLOTS: usize> {
     storage: UnsafeCell<GlobalStorage<BYTES>>,
     entries: Vec<GlobalMeta, SLOTS>,
     borrows: [Cell<GlobalBorrowState>; SLOTS],
     cursor: usize,
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Default for GlobalArena<BYTES, SLOTS> {
+impl<const BYTES: usize, const SLOTS: usize> Default for FixedGlobalArena<BYTES, SLOTS> {
     fn default() -> Self {
         Self {
             storage: UnsafeCell::new(GlobalStorage::default()),
@@ -98,7 +112,7 @@ impl<const BYTES: usize, const SLOTS: usize> Default for GlobalArena<BYTES, SLOT
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> GlobalArena<BYTES, SLOTS> {
+impl<const BYTES: usize, const SLOTS: usize> FixedGlobalArena<BYTES, SLOTS> {
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
@@ -234,7 +248,7 @@ impl<const BYTES: usize, const SLOTS: usize> GlobalArena<BYTES, SLOTS> {
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> GlobalStore for GlobalArena<BYTES, SLOTS> {
+impl<const BYTES: usize, const SLOTS: usize> GlobalStore for FixedGlobalArena<BYTES, SLOTS> {
     fn acquire(
         &self,
         type_id: TypeId,
@@ -272,7 +286,7 @@ impl<const BYTES: usize, const SLOTS: usize> GlobalStore for GlobalArena<BYTES, 
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Drop for GlobalArena<BYTES, SLOTS> {
+impl<const BYTES: usize, const SLOTS: usize> Drop for FixedGlobalArena<BYTES, SLOTS> {
     fn drop(&mut self) {
         let storage_ptr = self.storage_ptr();
 

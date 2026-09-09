@@ -239,6 +239,7 @@ fn global_capacity_is_independent_from_entity_capacity() {
 }
 
 #[test]
+#[cfg(not(feature = "alloc"))]
 fn global_slot_capacity_is_enforced() {
     type OneGlobalRuntime = Runtime<1024, 4, 1024, 8, 32, 256, 8, 128, 1>;
 
@@ -253,6 +254,7 @@ fn global_slot_capacity_is_enforced() {
 }
 
 #[test]
+#[cfg(not(feature = "alloc"))]
 fn global_byte_capacity_is_enforced() {
     #[derive(Debug)]
     struct LargeGlobal {

@@ -229,6 +229,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "alloc"))]
     fn builder_configures_global_capacities() {
         let runtime = RuntimeBuilder::default()
             .entities::<256, 4>()

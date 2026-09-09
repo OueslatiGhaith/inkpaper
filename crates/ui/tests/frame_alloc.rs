@@ -5,6 +5,8 @@ use std::{
     alloc::{GlobalAlloc, Layout, System},
     cell::Cell,
     convert::Infallible,
+    panic::{AssertUnwindSafe, catch_unwind},
+    rc::Rc,
 };
 
 std::thread_local! {
@@ -380,8 +382,6 @@ fn entity_allocation_failures_do_not_run_constructors_and_allow_retry() {
 
 #[test]
 fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-
     let runtime = Runtime::<0, 1, 0, 0, 0, 0, 0>::default();
 
     let parent = runtime
@@ -439,8 +439,6 @@ fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
 
 #[test]
 fn callback_allocation_failures_drop_captures_and_allow_listener_and_canvas_retry() {
-    use std::rc::Rc;
-
     struct Capture(Rc<Cell<usize>>);
 
     impl Drop for Capture {
@@ -501,4 +499,164 @@ fn callback_allocation_failures_drop_captures_and_allow_listener_and_canvas_retr
             assert_eq!(drops.get(), 2);
         }
     }
+}
+
+#[test]
+fn globals_grow_without_moving_values_and_support_aligned_zsts() {
+    #[repr(align(64))]
+    struct Value<const N: usize>(u32);
+    impl<const N: usize> Global for Value<N> {}
+
+    #[repr(align(128))]
+    struct Empty;
+    impl Global for Empty {}
+
+    let mut runtime = RuntimeBuilder::default()
+        .entities::<0, 0>()
+        .callbacks::<0, 0>()
+        .frame::<0, 0>()
+        .element_states::<0>()
+        .globals::<1, 1>()
+        .build();
+
+    assert_eq!(runtime.global_capacity(), 0);
+    assert_eq!(runtime.global_byte_capacity(), 0);
+
+    runtime.set_global(Value::<0>(42)).unwrap();
+    let address = {
+        let value = runtime.global::<Value<0>>();
+        (&*value) as *const Value<0> as usize
+    };
+
+    runtime.set_global(Value::<1>(1)).unwrap();
+    runtime.set_global(Value::<2>(2)).unwrap();
+    runtime.set_global(Value::<3>(3)).unwrap();
+    runtime.set_global(Value::<4>(4)).unwrap();
+    runtime.set_global(Empty).unwrap();
+
+    assert_eq!(runtime.global_count(), 6);
+    assert!(runtime.global_capacity() >= 6);
+    assert_eq!(runtime.global_bytes_used(), 5 * size_of::<Value<0>>() + 1);
+    assert_eq!(runtime.global_byte_capacity(), runtime.global_bytes_used());
+    assert_eq!(
+        (&*runtime.global::<Value<0>>()) as *const Value<0> as usize,
+        address
+    );
+    assert_eq!(address % 64, 0);
+    assert_eq!(
+        (&*runtime.global::<Empty>()) as *const Empty as usize % 128,
+        0
+    );
+    assert_eq!(runtime.global::<Value<0>>().0, 42);
+    assert_eq!(runtime.global::<Value<4>>().0, 4);
+}
+
+#[test]
+fn global_allocation_failures_drop_inputs_and_allow_retry() {
+    struct Value(Rc<Cell<usize>>);
+    impl Global for Value {}
+
+    impl Drop for Value {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    struct Other;
+    impl Global for Other {}
+
+    // Fail the slot allocation, then the payload allocation.
+    for after in 0..2 {
+        let mut runtime = Runtime::<0, 0, 0, 0, 0, 0, 0>::default();
+        let drops = Rc::new(Cell::new(0));
+        let value = Value(drops.clone());
+
+        assert_eq!(
+            failing_allocation(after, || runtime.set_global(value)),
+            Err(GlobalSetError::AllocationFailed),
+        );
+        assert_eq!(drops.get(), 1);
+        assert_eq!(runtime.global_count(), 0);
+        assert_eq!(runtime.global_bytes_used(), 0);
+        assert!(!runtime.has_global::<Value>());
+
+        runtime.set_global(Value(drops.clone())).unwrap();
+        let bytes = runtime.global_bytes_used();
+
+        assert_eq!(
+            failing_allocation(0, || runtime.set_global(Other)),
+            Err(GlobalSetError::AllocationFailed),
+        );
+        assert_eq!(runtime.global_count(), 1);
+        assert_eq!(runtime.global_bytes_used(), bytes);
+        assert_eq!(runtime.global::<Value>().0.get(), 1);
+
+        drop(runtime);
+        assert_eq!(drops.get(), 2);
+    }
+}
+
+#[test]
+fn global_access_and_replacement_do_not_allocate() {
+    struct Value(u32);
+    impl Global for Value {}
+
+    let mut runtime = Runtime::<0, 0, 0, 0, 0, 0, 0>::default();
+    runtime.set_global(Value(1)).unwrap();
+    let bytes = runtime.global_bytes_used();
+
+    assert_eq!(
+        allocations_during(|| {
+            failing_allocation(0, || runtime.set_global(Value(2))).unwrap();
+            assert_eq!(runtime.global::<Value>().0, 2);
+            runtime.global_mut::<Value>().0 = 3;
+            assert_eq!(runtime.global::<Value>().0, 3);
+        }),
+        0
+    );
+    assert_eq!(runtime.global_count(), 1);
+    assert_eq!(runtime.global_bytes_used(), bytes);
+}
+
+#[test]
+fn global_replacement_survives_a_panicking_destructor() {
+    struct Value {
+        panic_on_drop: bool,
+        drops: Rc<Cell<usize>>,
+    }
+    impl Global for Value {}
+
+    impl Drop for Value {
+        fn drop(&mut self) {
+            self.drops.set(self.drops.get() + 1);
+            assert!(!self.panic_on_drop, "old global destructor");
+        }
+    }
+
+    let drops = Rc::new(Cell::new(0));
+    let mut runtime = Runtime::<0, 0, 0, 0, 0, 0, 0>::default();
+
+    runtime
+        .set_global(Value {
+            panic_on_drop: true,
+            drops: drops.clone(),
+        })
+        .unwrap();
+
+    assert!(
+        catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime
+                .set_global(Value {
+                    panic_on_drop: false,
+                    drops: drops.clone(),
+                })
+                .unwrap();
+        }))
+        .is_err()
+    );
+    assert_eq!(drops.get(), 1);
+    assert!(!runtime.global::<Value>().panic_on_drop);
+
+    drop(runtime);
+    assert_eq!(drops.get(), 2);
 }
