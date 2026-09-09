@@ -379,16 +379,24 @@ fn handle_input_event(
         PlatformAction::LoadReaderPage(request) => {
             runtime
                 .update(app, |app, cx| {
-                    app.complete_reader_page(request, None, cx);
+                    app.complete_reader_page(
+                        request,
+                        inkpaper_app::reader::PageLoadOutcome::Failed,
+                        cx,
+                    );
                 })
                 .expect("InkPaper application entity must remain alive");
             InputAction::Continue
         }
         PlatformAction::LoadReaderChapter(request) => {
-            // TODO: the x4 has no epub file service yet. Release the pending request
+            // TODO: the X4 EPUB file service is not available yet.
             runtime
                 .update(app, |app, cx| {
-                    app.complete_reader_chapter(request, None, cx)
+                    app.complete_reader_chapter(
+                        request,
+                        inkpaper_app::reader::ChapterLoadOutcome::Failed,
+                        cx,
+                    )
                 })
                 .expect("InkPaper application entity must remain alive");
 

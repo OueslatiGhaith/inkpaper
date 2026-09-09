@@ -1,6 +1,9 @@
 use inkpaper_ui::prelude::*;
 
-use crate::reader::{ReaderPageView, ReaderSession};
+use crate::{
+    reader::{ReaderPageView, ReaderSession},
+    theme::Theme,
+};
 
 pub struct ReaderScreen<'a> {
     session: &'a ReaderSession,
@@ -23,7 +26,9 @@ impl<'a> ReaderScreen<'a> {
 }
 
 impl RenderOnce for ReaderScreen<'_> {
-    fn render(self, _cx: &AppContext<'_>) -> impl IntoElement {
+    fn render(self, cx: &AppContext<'_>) -> impl IntoElement {
+        let theme = *cx.global::<Theme>();
+
         div()
             .relative()
             .w_full()
@@ -57,5 +62,19 @@ impl RenderOnce for ReaderScreen<'_> {
                             .on_activate(self.next),
                     ),
             )
+            .when_some(self.session.notice(), |root, notice| {
+                root.child(
+                    div()
+                        .absolute()
+                        .left(px(12))
+                        .right(px(12))
+                        .bottom(px(12))
+                        .p(px(12))
+                        .border(px(2))
+                        .border_color(theme.ink)
+                        .bg(theme.paper)
+                        .child(text(notice.message()).wrap().text_color(theme.ink)),
+                )
+            })
     }
 }

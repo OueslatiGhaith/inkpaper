@@ -49,6 +49,37 @@ impl defmt::Format for PageRequest {
     }
 }
 
+pub enum ChapterLoadOutcome {
+    Ready(ReaderSession),
+    Boundary,
+    Failed,
+}
+
+pub enum PageLoadOutcome {
+    Ready(Box<dyn ReaderPageResources>),
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ReaderNotice {
+    BeginningOfBook,
+    EndOfBook,
+    ChapterLoadFailed,
+    PageLoadFailed,
+}
+
+impl ReaderNotice {
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::BeginningOfBook => "Beginning of book",
+            Self::EndOfBook => "End of book",
+            Self::ChapterLoadFailed => "Could not load chapter. Try again.",
+            Self::PageLoadFailed => "Could not load page. Try again.",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingRequest {
     Chapter(ChapterDirection),
@@ -63,6 +94,7 @@ pub struct ReaderSession {
     page_index: usize,
     requested: Option<PendingRequest>,
     request_sent: bool,
+    notice: Option<ReaderNotice>,
 }
 
 impl ReaderSession {
@@ -80,6 +112,7 @@ impl ReaderSession {
             page_index: 0,
             requested: None,
             request_sent: false,
+            notice: None,
         })
     }
 
@@ -105,6 +138,14 @@ impl ReaderSession {
 
     pub fn page_count(&self) -> usize {
         self.pagination.len()
+    }
+
+    pub const fn notice(&self) -> Option<ReaderNotice> {
+        self.notice
+    }
+
+    pub(crate) fn clear_notice(&mut self) {
+        self.notice = None;
     }
 
     pub fn current_page(&self) -> &Page<'static> {
@@ -156,6 +197,7 @@ impl ReaderSession {
         }
 
         self.page_index = to;
+        self.clear_notice();
 
         true
     }
@@ -188,42 +230,44 @@ impl ReaderSession {
     pub(crate) fn complete_page_request(
         &mut self,
         request: PageRequest,
-        resources: Option<Box<dyn ReaderPageResources>>,
+        outcome: PageLoadOutcome,
     ) -> bool {
         let Some(page) = self.page_for_request(request) else {
             return false;
         };
+        let PageLoadOutcome::Ready(resources) = outcome else {
+            self.cancel_request();
+            self.notice = Some(ReaderNotice::PageLoadFailed);
+            return false;
+        };
 
-        let valid = resources.as_ref().is_some_and(|resources| {
-            let images_ready = page.items().iter().all(|item| match item {
-                PageItem::Image(fragment) => resources.image_source(fragment.image()).is_some(),
-                PageItem::Text(_) => true,
-            });
-
-            let fonts_unchanged = self
-                .pagination
-                .pages()
-                .iter()
-                .flat_map(|page| page.items())
-                .all(|item| match item {
-                    PageItem::Text(fragment) => {
-                        resources.font_for(fragment.style())
-                            == self.resources.font_for(fragment.style())
-                    }
-                    PageItem::Image(_) => true,
-                });
-
-            images_ready && fonts_unchanged
+        let images_ready = page.items().iter().all(|item| match item {
+            PageItem::Image(fragment) => resources.image_source(fragment.image()).is_some(),
+            PageItem::Text(_) => true,
         });
+        let fonts_unchanged = self
+            .pagination
+            .pages()
+            .iter()
+            .flat_map(|page| page.items())
+            .all(|item| match item {
+                PageItem::Text(fragment) => {
+                    resources.font_for(fragment.style())
+                        == self.resources.font_for(fragment.style())
+                }
+                PageItem::Image(_) => true,
+            });
 
         self.cancel_request();
 
-        if !valid {
+        if !images_ready || !fonts_unchanged {
+            self.notice = Some(ReaderNotice::PageLoadFailed);
             return false;
         }
 
-        self.resources = resources.expect("validated page resources must be present");
+        self.resources = resources;
         self.page_index = request.to;
+        self.clear_notice();
 
         true
     }
@@ -250,10 +294,10 @@ impl ReaderSession {
         self.request_sent = false;
     }
 
-    pub(crate) fn complete_chapeter_request(
+    pub(crate) fn complete_chapter_request(
         &mut self,
         request: ChapterRequest,
-        replacement: Option<Self>,
+        outcome: ChapterLoadOutcome,
     ) -> bool {
         if !self.request_sent
             || request.from != self.spine
@@ -264,8 +308,19 @@ impl ReaderSession {
 
         self.cancel_request();
 
-        let Some(mut replacement) = replacement else {
-            return false;
+        let mut replacement = match outcome {
+            ChapterLoadOutcome::Ready(replacement) => replacement,
+            ChapterLoadOutcome::Boundary => {
+                self.notice = Some(match request.direction {
+                    ChapterDirection::Previous => ReaderNotice::BeginningOfBook,
+                    ChapterDirection::Next => ReaderNotice::EndOfBook,
+                });
+                return false;
+            }
+            ChapterLoadOutcome::Failed => {
+                self.notice = Some(ReaderNotice::ChapterLoadFailed);
+                return false;
+            }
         };
 
         let valid = match request.direction {
@@ -274,12 +329,33 @@ impl ReaderSession {
         };
 
         if !valid || replacement.viewport != self.viewport {
+            self.notice = Some(ReaderNotice::ChapterLoadFailed);
             return false;
         }
-        if request.direction == ChapterDirection::Previous {
-            replacement.page_index = replacement.page_count() - 1;
+
+        replacement.page_index = match request.direction {
+            ChapterDirection::Previous => replacement.page_count() - 1,
+            ChapterDirection::Next => 0,
+        };
+
+        if replacement
+            .current_page()
+            .items()
+            .iter()
+            .any(|item| match item {
+                PageItem::Image(fragment) => replacement
+                    .resources
+                    .image_source(fragment.image())
+                    .is_none(),
+                PageItem::Text(_) => false,
+            })
+        {
+            self.notice = Some(ReaderNotice::ChapterLoadFailed);
+            return false;
         }
 
+        replacement.cancel_request();
+        replacement.clear_notice();
         *self = replacement;
 
         true

@@ -2,7 +2,9 @@ use super::*;
 use crate::{BODY_FONT, host_image::HostImageSlot, load_requested_chapter, load_requested_page};
 use inkpaper_app::{
     AppEvent, AppModel, BookSummary, Button, ButtonEdge, ButtonEvent, InkPaperApp, InputEvent,
-    PlatformAction, Route, TouchEvent, TouchPosition, theme::Theme,
+    PlatformAction, Route, TouchEvent, TouchPosition,
+    reader::{ChapterLoadOutcome, PageLoadOutcome, ReaderNotice},
+    theme::Theme,
 };
 use inkpaper_epub::{FontStyle, FontWeight};
 use inkpaper_ui::{Entity, Runtime, Size, px};
@@ -814,7 +816,8 @@ fn invalid_page_resources_and_home_cancellation_leave_current_images_intact() {
                 } else {
                     Box::new(())
                 };
-                assert!(!app.complete_reader_page(request, Some(resources), cx));
+
+                assert!(!app.complete_reader_page(request, PageLoadOutcome::Ready(resources), cx));
             })
             .unwrap();
 
@@ -1282,4 +1285,261 @@ fn host_extracts_book_metadata_and_handles_missing_and_oversized_values() {
     assert!(long.author().len() <= 64);
     assert!(long.title().ends_with('…'));
     assert!(long.author().ends_with('…'));
+}
+
+fn notice(runtime: &TestRuntime, app: Entity<InkPaperApp>) -> Option<ReaderNotice> {
+    runtime
+        .update(app, |app, _| app.reader().unwrap().notice())
+        .unwrap()
+}
+
+fn reader_text(runtime: &mut TestRuntime) -> Vec<String> {
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(120), px(60)), &TestMeasurer)
+        .unwrap();
+
+    let mut painter = HomeTextPainter::default();
+    runtime.paint(&mut painter).unwrap().unwrap();
+    painter.0
+}
+
+#[test]
+fn book_boundaries_redraw_a_notice_and_successful_navigation_clears_it() {
+    let book = illustrated_book("<p>first</p>", "<p>last</p>", &[]);
+    let mut host = book.open();
+    let (session, _) = host.load_first().unwrap().into_app_session(&[]).unwrap();
+    let page = session.current_page().clone();
+    let (mut runtime, app) = app_with(session);
+    runtime.take_render_invalidation();
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Previous);
+    load_requested_chapter(&mut runtime, app, Some(&mut host), request, &[], &[]);
+
+    assert_eq!(notice(&runtime, app), Some(ReaderNotice::BeginningOfBook));
+    assert_eq!(
+        runtime.take_render_invalidation().kind(),
+        inkpaper_ui::Invalidation::Rebuild
+    );
+    assert!(
+        reader_text(&mut runtime)
+            .iter()
+            .any(|text| text == "Beginning of book")
+    );
+    runtime
+        .update(app, |app, _| {
+            assert_eq!(app.reader().unwrap().current_page(), &page)
+        })
+        .unwrap();
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Next);
+    load_requested_chapter(&mut runtime, app, Some(&mut host), request, &[], &[]);
+    assert_eq!(notice(&runtime, app), None);
+    assert_eq!(position(&runtime, app).0, 1);
+
+    for _ in 0..2 {
+        let request = turn_to_boundary(&mut runtime, app, Button::Next);
+        load_requested_chapter(&mut runtime, app, Some(&mut host), request, &[], &[]);
+        assert_eq!(notice(&runtime, app), Some(ReaderNotice::EndOfBook));
+        assert_eq!(position(&runtime, app), (1, 0, 1));
+    }
+
+    assert!(
+        reader_text(&mut runtime)
+            .iter()
+            .any(|text| text == "End of book")
+    );
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Previous);
+    load_requested_chapter(&mut runtime, app, Some(&mut host), request, &[], &[]);
+    assert_eq!(notice(&runtime, app), None);
+}
+
+#[test]
+fn broken_chapters_are_failures_and_allow_retry_or_reverse() {
+    let book = TestBook::new(true);
+    let mut host = book.open();
+    let (session, _) = host.load_first().unwrap().into_app_session(&[]).unwrap();
+    let (mut runtime, app) = app_with(session);
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Next);
+    let before = position(&runtime, app);
+    load_requested_chapter(&mut runtime, app, Some(&mut host), request, &[], &[]);
+
+    assert_eq!(notice(&runtime, app), Some(ReaderNotice::ChapterLoadFailed));
+    assert!(
+        reader_text(&mut runtime)
+            .iter()
+            .any(|text| text == "Could not load chapter. Try again.")
+    );
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Next);
+    load_requested_chapter(&mut runtime, app, Some(&mut host), request, &[], &[]);
+
+    assert_eq!(position(&runtime, app), before);
+    assert_eq!(notice(&runtime, app), Some(ReaderNotice::ChapterLoadFailed));
+
+    press(&mut runtime, app, Button::Previous);
+    assert_eq!(position(&runtime, app).1, before.1 - 1);
+    assert_eq!(notice(&runtime, app), None);
+}
+
+#[test]
+fn unavailable_platform_is_a_failure_and_retry_can_install_the_chapter() {
+    let book = illustrated_book("<p>first</p>", "<p>last</p>", &[]);
+    let mut host = book.open();
+    let (session, _) = host.load_first().unwrap().into_app_session(&[]).unwrap();
+    let (mut runtime, app) = app_with(session);
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Next);
+    load_requested_chapter::<1>(&mut runtime, app, None, request, &[], &[]);
+    assert_eq!(notice(&runtime, app), Some(ReaderNotice::ChapterLoadFailed));
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Next);
+    load_requested_chapter(&mut runtime, app, Some(&mut host), request, &[], &[]);
+
+    assert_eq!(notice(&runtime, app), None);
+    assert_eq!(position(&runtime, app).0, 1);
+}
+
+#[test]
+fn image_failure_preserves_pixels_and_checkpoint_and_touch_retries_through_notice() {
+    use crate::{
+        checkpoint_reader, install_reader_images, load_initial_reader,
+        reader_progress::ReaderProgress,
+    };
+
+    let book = illustrated_book(
+        r#"<img src="red.png"/><img src="blue.png"/>"#,
+        "<p>end</p>",
+        &[
+            ("red.png", png(120, 60, [200, 10, 20])),
+            ("blue.png", png(120, 60, [10, 20, 200])),
+        ],
+    );
+    let mut host = book.open();
+    let slots = [HostImageSlot::default()];
+    let ids = [ImageId::new(0)];
+
+    let mut progress = ReaderProgress::open(&book.0).unwrap();
+    let _cleanup = ProgressFile(progress.path().to_path_buf());
+    let initial = host
+        .load_first()
+        .unwrap()
+        .into_app_session(&ids)
+        .unwrap()
+        .0
+        .current_page()
+        .position();
+
+    progress.checkpoint(initial).unwrap();
+    let saved = fs::read(progress.path()).unwrap();
+
+    let (session, images) = load_initial_reader(&mut host, Some(&mut progress), &ids).unwrap();
+    let page = session.current_page().clone();
+    install_reader_images(&slots, images);
+    let (mut runtime, app) = app_with(session);
+
+    let request = page_request(&mut runtime, app, Button::Next);
+    load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &[]);
+
+    assert_eq!(notice(&runtime, app), Some(ReaderNotice::PageLoadFailed));
+    checkpoint_reader(&runtime, app, Some(&mut progress));
+    assert_eq!(fs::read(progress.path()).unwrap(), saved);
+    assert_eq!(
+        slots[0].pixel(0, 0),
+        Some(inkpaper_ui::Color::rgb(200, 10, 20))
+    );
+    runtime
+        .update(app, |app, _| {
+            assert_eq!(app.reader().unwrap().current_page(), &page)
+        })
+        .unwrap();
+    assert!(
+        reader_text(&mut runtime)
+            .iter()
+            .any(|text| text == "Could not load page. Try again.")
+    );
+
+    let point = TouchPosition::new(90, 30);
+    InkPaperApp::handle_event(
+        &mut runtime,
+        app,
+        AppEvent::Input(InputEvent::Touch(TouchEvent::Down(point))),
+    );
+    let action = InkPaperApp::handle_event(
+        &mut runtime,
+        app,
+        AppEvent::Input(InputEvent::Touch(TouchEvent::Up(point))),
+    );
+    let PlatformAction::LoadReaderPage(request) = action else {
+        panic!("notice must not block the page-turn region")
+    };
+
+    load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+
+    assert_eq!(notice(&runtime, app), None);
+    assert_eq!(position(&runtime, app).1, 1);
+    assert_eq!(
+        slots[0].pixel(0, 0),
+        Some(inkpaper_ui::Color::rgb(10, 20, 200))
+    );
+
+    checkpoint_reader(&runtime, app, Some(&mut progress));
+    assert_ne!(fs::read(progress.path()).unwrap(), saved);
+}
+
+#[test]
+fn home_clears_notices_and_cancelled_completions_cannot_restore_them() {
+    let mut broken = png(120, 60, [1, 2, 3]);
+    broken.truncate(24);
+
+    let book = illustrated_book(
+        "<p>first</p><img src=\"bad.png\"/>",
+        "<p>end</p>",
+        &[("bad.png", broken)],
+    );
+    let mut host = book.open();
+    let (session, _) = host.load_first().unwrap().into_app_session(&[]).unwrap();
+    let (mut runtime, app) = app_with(session);
+
+    let request = page_request(&mut runtime, app, Button::Next);
+    load_requested_page(
+        &mut runtime,
+        app,
+        Some(&mut host),
+        request,
+        &[HostImageSlot::default()],
+        &[ImageId::new(0)],
+    );
+
+    assert_eq!(notice(&runtime, app), Some(ReaderNotice::PageLoadFailed));
+
+    let request = page_request(&mut runtime, app, Button::Next);
+    InkPaperApp::handle_event(
+        &mut runtime,
+        app,
+        AppEvent::Input(InputEvent::Touch(TouchEvent::HomeTap)),
+    );
+
+    assert_eq!(notice(&runtime, app), None);
+
+    runtime
+        .update(app, |app, cx| {
+            assert!(!app.complete_reader_page(request, PageLoadOutcome::Failed, cx));
+            app.navigate(Route::Reader, cx);
+            assert!(!app.complete_reader_page(request, PageLoadOutcome::Failed, cx));
+            assert!(!app.complete_reader_chapter(
+                ChapterRequest {
+                    from: SpineIndex::ZERO,
+                    direction: ChapterDirection::Next,
+                },
+                ChapterLoadOutcome::Failed,
+                cx
+            ));
+        })
+        .unwrap();
+
+    assert_eq!(notice(&runtime, app), None);
+    assert_eq!(position(&runtime, app).1, 0);
 }

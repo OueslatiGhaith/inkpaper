@@ -1,10 +1,9 @@
-use alloc::boxed::Box;
 use inkpaper_ui::prelude::*;
 
 use crate::{
     AppModel,
     components::{BottomNav, TopBar},
-    reader::{ChapterRequest, PageRequest, ReaderPageResources, ReaderSession},
+    reader::{ChapterLoadOutcome, ChapterRequest, PageLoadOutcome, PageRequest, ReaderSession},
     screens::{HomeScreen, LibraryScreen, PlaceholderScreen, ReaderScreen},
     theme::Theme,
 };
@@ -134,37 +133,39 @@ impl InkPaperApp {
         self.reader.as_mut()?.take_page_request()
     }
 
-    /// complete each platform request before processing the next input event.
+    /// complete synchronously before the next input event or repaint.
     ///
-    /// pass `None` at the book boundary or when loading failed
+    /// returns true only when the replacement chapter was installed.
     pub fn complete_reader_chapter(
         &mut self,
         request: ChapterRequest,
-        replacement: Option<ReaderSession>,
+        outcome: ChapterLoadOutcome,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(reader) = self.reader.as_mut() else {
-            return false;
-        };
         if self.route != Route::Reader {
             return false;
         }
+        let Some(reader) = self.reader.as_mut() else {
+            return false;
+        };
 
-        let changed = reader.complete_chapeter_request(request, replacement);
-        if changed {
+        let previous_notice = reader.notice();
+        let changed = reader.complete_chapter_request(request, outcome);
+
+        if changed || reader.notice() != previous_notice {
             cx.notify();
         }
 
         changed
     }
 
-    /// complete synchronously before the next input event or repaint
+    /// vomplete synchronously before the next input event or repaint.
     ///
-    /// `None` releases a failed request without changing the current page
+    /// returns true only when the page and its resources were installed.
     pub fn complete_reader_page(
         &mut self,
         request: PageRequest,
-        resources: Option<Box<dyn ReaderPageResources>>,
+        outcome: PageLoadOutcome,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.route != Route::Reader {
@@ -174,8 +175,10 @@ impl InkPaperApp {
             return false;
         };
 
-        let changed = reader.complete_page_request(request, resources);
-        if changed {
+        let previous_notice = reader.notice();
+        let changed = reader.complete_page_request(request, outcome);
+
+        if changed || reader.notice() != previous_notice {
             cx.notify();
         }
 
@@ -187,6 +190,7 @@ impl InkPaperApp {
             && let Some(reader) = self.reader.as_mut()
         {
             reader.cancel_request();
+            reader.clear_notice();
         }
         if route == Route::Reader && self.reader.is_none() {
             return;

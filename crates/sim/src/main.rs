@@ -14,7 +14,7 @@ use inkpaper_app::{
     AppEvent, AppModel, BookSummary, Button as AppButton, ButtonEdge as AppButtonEdge,
     ButtonEvent as AppButtonEvent, InkPaperApp, InputEvent as AppInputEvent, PlatformAction,
     ScrollEvent as AppScrollEvent, TouchEvent as AppTouchEvent, TouchPosition as AppTouchPosition,
-    reader::{ChapterRequest, PageRequest, ReaderSession},
+    reader::{ChapterLoadOutcome, ChapterRequest, PageLoadOutcome, PageRequest, ReaderSession},
     theme::Theme,
 };
 use inkpaper_reader::Viewport;
@@ -154,14 +154,20 @@ fn load_requested_chapter<const FONTS: usize>(
     slots: &[HostImageSlot],
     ids: &[ImageId],
 ) {
-    let prepared = match host {
-        Some(host) => host.load_adjacent(request).and_then(|prepared| {
-            prepared
-                .map(|prepared| prepared.into_app_session(ids))
-                .transpose()
-        }),
-        None => Ok(None),
+    let Some(host) = host else {
+        runtime
+            .update(app, |app, cx| {
+                app.complete_reader_chapter(request, ChapterLoadOutcome::Failed, cx);
+            })
+            .expect("InkPaper application entity must remain alive");
+        return;
     };
+
+    let prepared = host.load_adjacent(request).and_then(|prepared| {
+        prepared
+            .map(|prepared| prepared.into_app_session(ids))
+            .transpose()
+    });
 
     match prepared {
         Ok(Some((session, images))) => {
@@ -170,7 +176,7 @@ fn load_requested_chapter<const FONTS: usize>(
 
             let accepted = runtime
                 .update(app, |app, cx| {
-                    app.complete_reader_chapter(request, Some(session), cx)
+                    app.complete_reader_chapter(request, ChapterLoadOutcome::Ready(session), cx)
                 })
                 .expect("InkPaper application entity must remain alive");
 
@@ -180,13 +186,18 @@ fn load_requested_chapter<const FONTS: usize>(
             }
         }
         result => {
-            if let Err(error) = result {
-                eprintln!("reader chapter load failed: {error:?}");
-            }
+            let outcome = match result {
+                Ok(None) => ChapterLoadOutcome::Boundary,
+                Err(error) => {
+                    eprintln!("reader chapter load failed: {error:?}");
+                    ChapterLoadOutcome::Failed
+                }
+                Ok(Some(_)) => unreachable!("prepared chapter handled above"),
+            };
 
             runtime
                 .update(app, |app, cx| {
-                    app.complete_reader_chapter(request, None, cx);
+                    app.complete_reader_chapter(request, outcome, cx);
                 })
                 .expect("InkPaper application entity must remain alive");
         }
@@ -209,6 +220,7 @@ fn load_requested_page<const FONTS: usize>(
             else {
                 return Ok(None);
             };
+
             match host {
                 Some(host) => host.load_page(page, ids).map(Some),
                 None => Ok(None),
@@ -222,7 +234,7 @@ fn load_requested_page<const FONTS: usize>(
 
             let accepted = runtime
                 .update(app, |app, cx| {
-                    app.complete_reader_page(request, Some(resources), cx)
+                    app.complete_reader_page(request, PageLoadOutcome::Ready(resources), cx)
                 })
                 .expect("InkPaper application entity must remain alive");
 
@@ -237,7 +249,7 @@ fn load_requested_page<const FONTS: usize>(
 
             runtime
                 .update(app, |app, cx| {
-                    app.complete_reader_page(request, None, cx);
+                    app.complete_reader_page(request, PageLoadOutcome::Failed, cx);
                 })
                 .expect("InkPaper application entity must remain alive");
         }
