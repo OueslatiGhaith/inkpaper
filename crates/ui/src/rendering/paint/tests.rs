@@ -1345,3 +1345,51 @@ fn partial_paint_report_only_records_content_inside_damage() {
     assert!(!content.has_text());
     assert!(!content.has_images());
 }
+
+#[cfg(feature = "alloc")]
+#[test]
+fn grown_frame_lays_out_and_paints_after_storage_reuse_and_shrink() {
+    let mut frame = FrameArena::<1, 1>::default();
+    let globals = GlobalArena::<0, 0>::default();
+    let mut painter = RecordingPainter::default();
+
+    let root = frame
+        .mount(
+            div().w(px(80)).child("Hello").child("World"),
+            AppContext::from_globals(&globals),
+        )
+        .unwrap();
+
+    frame.layout(root, Size::new(px(80), px(40)), &painter);
+    frame.paint(root, &mut painter).unwrap();
+
+    let first = frame.node(root).first_child.unwrap();
+    let second = frame.node(first).next_sibling.unwrap();
+
+    assert_eq!(frame.bounds(first).origin.y, px(0));
+    assert_eq!(frame.bounds(second).origin.y, px(10));
+    assert_eq!(
+        painter
+            .commands
+            .iter()
+            .filter(|command| matches!(command, Command::Text { length: 5, .. }))
+            .count(),
+        2
+    );
+
+    frame.clear();
+    painter.commands.clear();
+
+    let root = frame
+        .mount("Again", AppContext::from_globals(&globals))
+        .unwrap();
+
+    frame.shrink_to_fit();
+    frame.layout(root, Size::new(px(80), px(40)), &painter);
+    frame.paint(root, &mut painter).unwrap();
+
+    assert!(matches!(
+        painter.commands.as_slice(),
+        [Command::Text { length: 5, .. }]
+    ));
+}

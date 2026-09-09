@@ -1,16 +1,18 @@
-use heapless::Vec;
-
 use crate::{
     CanvasDraw, CanvasStyle, ElementId, EntityAccessError, EntityId, EntityRenderFn, EventBinding,
     EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size,
     StatefulInteractivity, Style, StylePatch, TextStyle, element::state::ElementStateId,
-    interaction::scroll::ScrollAxes,
+    frame::storage::FrameBuffer, interaction::scroll::ScrollAxes,
 };
 #[cfg(feature = "metrics")]
 use crate::{PerformanceMetrics, PerformanceMetricsCell};
 
 mod mount;
 mod resolve;
+mod storage;
+
+#[cfg(all(test, feature = "alloc"))]
+mod alloc_tests;
 #[cfg(test)]
 mod tests;
 
@@ -140,6 +142,8 @@ pub enum MountError {
     EventBindingsFull,
     EntityAccess(EntityAccessError),
     DuplicateEntityMount(EntityId),
+    #[cfg(feature = "alloc")]
+    AllocationFailed,
 }
 
 impl From<EntityAccessError> for MountError {
@@ -162,10 +166,10 @@ enum NodeCache {
 }
 
 pub(crate) struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
-    pub(crate) nodes: Vec<Node, NODES>,
-    pub(crate) event_bindings: Vec<EventBinding, NODES>,
-    text: Vec<u8, TEXT_BYTES>,
-    node_cache: [NodeCache; NODES],
+    pub(crate) nodes: FrameBuffer<Node, NODES>,
+    pub(crate) event_bindings: FrameBuffer<EventBinding, NODES>,
+    text: FrameBuffer<u8, TEXT_BYTES>,
+    node_cache: FrameBuffer<NodeCache, NODES>,
     subtree_paint_bounds_valid: bool,
     #[cfg(feature = "metrics")]
     pub(crate) metrics: PerformanceMetricsCell,
@@ -174,10 +178,10 @@ pub(crate) struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
 impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, TEXT_BYTES> {
     fn default() -> Self {
         Self {
-            nodes: Vec::new(),
-            event_bindings: Vec::new(),
-            text: Vec::new(),
-            node_cache: [NodeCache::Empty; NODES],
+            nodes: FrameBuffer::new(),
+            event_bindings: FrameBuffer::new(),
+            text: FrameBuffer::new(),
+            node_cache: FrameBuffer::new(),
             subtree_paint_bounds_valid: false,
             #[cfg(feature = "metrics")]
             metrics: PerformanceMetricsCell::default(),
@@ -190,23 +194,32 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.nodes.len()
     }
 
-    pub const fn node_capacity(&self) -> usize {
-        NODES
+    pub fn node_capacity(&self) -> usize {
+        self.nodes.capacity().min(self.node_cache.capacity())
     }
 
     pub fn text_bytes_used(&self) -> usize {
         self.text.len()
     }
 
-    pub const fn text_capacity(&self) -> usize {
-        TEXT_BYTES
+    pub fn text_capacity(&self) -> usize {
+        self.text.capacity()
     }
 
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.text.clear();
         self.event_bindings.clear();
+        self.node_cache.clear();
         self.subtree_paint_bounds_valid = false;
+    }
+
+    #[cfg(feature = "alloc")]
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.nodes.shrink_to_fit();
+        self.node_cache.shrink_to_fit();
+        self.event_bindings.shrink_to_fit();
+        self.text.shrink_to_fit();
     }
 
     pub(crate) fn node(&self, id: NodeId) -> &Node {

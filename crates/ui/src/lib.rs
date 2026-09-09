@@ -3,6 +3,9 @@
 #[cfg(test)]
 extern crate std;
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 #[cfg(feature = "embedded-graphics")]
 pub mod backend;
 

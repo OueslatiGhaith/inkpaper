@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["embedded-graphics", "ttf", "metrics"]
+default = ["embedded-graphics", "ttf"]
+alloc = []
 defmt = ["dep:defmt", "heapless/defmt"]
 embedded-graphics = ["dep:embedded-graphics", "embedded-graphics/defmt"]
 ttf = ["dep:ttf-parser"]

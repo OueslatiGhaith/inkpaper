@@ -1,0 +1,163 @@
+#![cfg(feature = "alloc")]
+
+use inkpaper_ui::*;
+use std::{
+    alloc::{GlobalAlloc, Layout, System},
+    cell::Cell,
+    convert::Infallible,
+};
+
+std::thread_local! {
+    static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+struct CountingAllocator;
+
+fn record_allocation() {
+    let _ = ALLOCATIONS.try_with(|count| {
+        if let Some(value) = count.get() {
+            count.set(Some(value + 1));
+        }
+    });
+}
+
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        record_allocation();
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        record_allocation();
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        record_allocation();
+        unsafe { System.realloc(ptr, layout, size) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+fn allocations_during(operation: impl FnOnce()) -> usize {
+    struct Reset;
+
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ALLOCATIONS.with(|count| count.set(None));
+        }
+    }
+
+    ALLOCATIONS.with(|count| count.set(Some(0)));
+    let _reset = Reset;
+
+    operation();
+
+    ALLOCATIONS.with(|count| count.get().unwrap())
+}
+
+struct Screen;
+
+impl Render for Screen {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        div().child("Hello").child("World")
+    }
+}
+
+#[derive(Default)]
+struct TextCounter(usize);
+
+impl TextMeasurer for TextCounter {
+    fn measure_text(&self, text: &str, _: ResolvedTextStyle, _: Size) -> Size {
+        Size::new(px(text.len() as i32 * 6), px(10))
+    }
+}
+
+impl Painter for TextCounter {
+    type Error = Infallible;
+
+    fn draw_box(&mut self, _: Rect, _: BoxPaint, _: Option<Rect>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_canvas(
+        &mut self,
+        _: Rect,
+        _: Option<Rect>,
+        _: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
+    ) -> Result<(), Self::Error> {
+        unreachable!("screen contains no canvas")
+    }
+}
+
+impl ResourcePainter for TextCounter {
+    fn draw_text(
+        &mut self,
+        _: &mut (),
+        _: &str,
+        _: Rect,
+        _: ResolvedTextStyle,
+        _: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        self.0 += 1;
+        Ok(())
+    }
+
+    fn draw_image(
+        &mut self,
+        _: &mut (),
+        _: ImageSource,
+        _: Rect,
+        _: ImagePaint,
+        _: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        unreachable!("screen contains no images")
+    }
+}
+
+#[test]
+fn dynamic_runtime_allocates_on_growth_and_reuses_storage_for_rebuild_layout_and_paint() {
+    let mut runtime = RuntimeBuilder::default()
+        .entities::<256, 4>()
+        .callbacks::<256, 4>()
+        .frame::<1, 1>()
+        .element_states::<8>()
+        .build();
+
+    let screen = runtime.create_root(|_| Screen).unwrap();
+
+    assert!(allocations_during(|| runtime.rebuild().unwrap()) > 0);
+    assert!(runtime.frame_node_count() > 1);
+    assert_eq!(runtime.frame_text_bytes_used(), 10);
+
+    let mut painter = TextCounter::default();
+
+    let allocations = allocations_during(|| {
+        runtime
+            .layout_with_measurer(Size::new(px(80), px(40)), &painter)
+            .unwrap();
+        runtime.paint(&mut painter).unwrap().unwrap();
+
+        runtime.update(screen, |_, cx| cx.notify()).unwrap();
+        runtime.rebuild().unwrap();
+
+        runtime
+            .layout_with_measurer(Size::new(px(80), px(40)), &painter)
+            .unwrap();
+        runtime.paint(&mut painter).unwrap().unwrap();
+    });
+
+    assert_eq!(allocations, 0);
+    assert_eq!(painter.0, 4);
+
+    runtime.shrink_frame_storage();
+    runtime.paint(&mut painter).unwrap().unwrap();
+
+    assert_eq!(painter.0, 6);
+}

@@ -275,6 +275,15 @@ impl<
         self.frame.text_bytes_used()
     }
 
+    /// releases spare frame capacity while preserving the current frame.
+    ///
+    /// call after rebuilding a smaller screen, rather than after every frame. The allocator
+    /// may retain some capacity
+    #[cfg(feature = "alloc")]
+    pub fn shrink_frame_storage(&mut self) {
+        self.frame.shrink_to_fit();
+    }
+
     pub(crate) fn is_dirty(&self) -> bool {
         self.invalidation() != Invalidation::None
     }

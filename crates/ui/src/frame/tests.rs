@@ -220,6 +220,7 @@ fn mounts_stateful_element_identity() {
     assert_eq!(node_text(&frame, text), "Press");
 }
 
+#[cfg(not(feature = "alloc"))]
 #[test]
 fn reports_node_capacity_exhaustion() {
     let mut frame = FrameArena::<2, 128>::default();
@@ -237,6 +238,7 @@ fn reports_node_capacity_exhaustion() {
     assert_eq!(result, Err(MountError::NodesFull));
 }
 
+#[cfg(not(feature = "alloc"))]
 #[test]
 fn reports_text_storage_exhaustion() {
     let mut frame = FrameArena::<8, 4>::default();
@@ -247,6 +249,30 @@ fn reports_text_storage_exhaustion() {
     let result = frame.mount(div().child("Hello"), app);
 
     assert_eq!(result, Err(MountError::TextStorageFull));
+}
+
+#[cfg(not(feature = "alloc"))]
+#[test]
+fn fixed_frame_failure_preserves_text_and_existing_event_bindings() {
+    let mut frame = FrameArena::<1, 16>::default();
+    let root = frame.push_div(Style::default()).unwrap();
+
+    assert_eq!(
+        frame.push_text("rollback", TextStyle::default()),
+        Err(MountError::NodesFull)
+    );
+    assert_eq!(frame.text_bytes_used(), 0);
+    assert_eq!(frame.node_count(), 1);
+
+    let event = TypeId::of::<ActivateEvent>();
+    let callback = crate::callback::CallbackId::new(0, 0);
+    frame.bind_event(root, event, callback).unwrap();
+
+    assert_eq!(
+        frame.bind_event(root, event, callback),
+        Err(MountError::EventBindingsFull)
+    );
+    assert_eq!(frame.event_callbacks(root, event).count(), 1);
 }
 
 #[test]

@@ -9,19 +9,20 @@ use crate::{
     callback::{CallbackId, CallbackStore},
     count_metric,
     entity::EntityStore,
+    frame::NodeCache,
     global::GlobalStore,
 };
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
     fn push_node(&mut self, kind: NodeKind) -> Result<NodeId, MountError> {
-        if self.nodes.len() >= NODES || self.nodes.len() > u16::MAX as usize {
-            return Err(MountError::NodesFull);
-        }
+        let index = u16::try_from(self.nodes.len()).map_err(|_| MountError::NodesFull)?;
+        self.nodes.reserve(1, MountError::NodesFull)?;
+        self.node_cache.reserve(1, MountError::NodesFull)?;
 
-        let id = NodeId::new(self.nodes.len() as u16);
-        self.nodes
-            .push(Node::new(kind))
-            .map_err(|_| MountError::NodesFull)?;
+        let id = NodeId::new(index);
+        self.nodes.push(Node::new(kind), MountError::NodesFull)?;
+        self.node_cache
+            .push(NodeCache::Empty, MountError::NodesFull)?;
 
         self.subtree_paint_bounds_valid = false;
 
@@ -108,18 +109,18 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         event_type: TypeId,
         callback: CallbackId,
     ) -> Result<(), MountError> {
-        if self.event_bindings.len() >= NODES || self.event_bindings.len() > u16::MAX as usize {
-            return Err(MountError::EventBindingsFull);
-        }
+        let index =
+            u16::try_from(self.event_bindings.len()).map_err(|_| MountError::EventBindingsFull)?;
+        let binding_id = EventBindingId::new(index);
 
-        let binding_id = EventBindingId::new(self.event_bindings.len() as u16);
-        self.event_bindings
-            .push(EventBinding {
+        self.event_bindings.push(
+            EventBinding {
                 event_type,
                 callback,
                 next: None,
-            })
-            .map_err(|_| MountError::EventBindingsFull)?;
+            },
+            MountError::EventBindingsFull,
+        )?;
 
         let node_index = node.index();
 
@@ -134,7 +135,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     }
     pub(crate) fn event_callbacks(&self, node: NodeId, event_type: TypeId) -> EventCallbacks<'_> {
         EventCallbacks::new(
-            &self.event_bindings.as_slice(),
+            &self.event_bindings,
             self.node(node).first_event_binding,
             event_type,
         )
@@ -168,27 +169,24 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
     }
 
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
-        let bytes = text.as_bytes();
         let start = self.text.len();
-        let end = start
-            .checked_add(bytes.len())
-            .ok_or(MountError::TextStorageFull)?;
 
-        if end > TEXT_BYTES {
-            return Err(MountError::TextStorageFull);
-        }
-
-        for byte in bytes {
-            self.text
-                .push(*byte)
-                .map_err(|_| MountError::TextStorageFull)?;
-        }
+        self.text
+            .extend_from_slice(text.as_bytes(), MountError::TextStorageFull)?;
 
         let range = TextRange {
             start,
-            len: bytes.len(),
+            len: text.len(),
         };
-        let node = self.push_node(NodeKind::Text { text: range })?;
+
+        let node = match self.push_node(NodeKind::Text { text: range }) {
+            Ok(node) => node,
+            Err(error) => {
+                self.text.truncate(start);
+                return Err(error);
+            }
+        };
+
         self.node_mut(node).text_style = style;
 
         Ok(node)
