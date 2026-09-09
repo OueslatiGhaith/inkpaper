@@ -1,9 +1,15 @@
+#[cfg(feature = "alloc")]
+mod allocated;
 mod arena;
 mod store;
 
 pub use arena::{EntityAccessError, EntityAllocError};
 
-pub(crate) use arena::{EntityArena, EntityBorrowKind, align_up};
+#[cfg(feature = "alloc")]
+pub(crate) use allocated::EntityArena;
+#[cfg(not(feature = "alloc"))]
+pub(crate) use arena::EntityArena;
+pub(crate) use arena::{EntityBorrowKind, align_up};
 
 pub(crate) use store::{
     BorrowState, EntityStore, RawEntityBorrow, RawEntityReservation, create_entity, drop_value,

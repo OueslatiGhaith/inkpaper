@@ -347,3 +347,92 @@ fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
         runtime.rebuild().unwrap();
     }
 }
+
+#[test]
+fn entity_allocation_failures_do_not_run_constructors_and_allow_retry() {
+    type SmallRuntime = Runtime<0, 0, 0, 0, 0, 0, 0>;
+
+    let expected = SmallRuntime::default()
+        .create(|_| 7u32)
+        .unwrap()
+        .entity_id();
+
+    for after in 0..2 {
+        let runtime = SmallRuntime::default();
+        let called = Cell::new(false);
+
+        let result = failing_allocation(after, || {
+            runtime.create(|_| {
+                called.set(true);
+                7u32
+            })
+        });
+
+        assert_eq!(result, Err(EntityAllocError::AllocationFailed));
+        assert!(!called.get());
+
+        let entity = runtime.create(|_| 9u32).unwrap();
+
+        assert_eq!(entity.entity_id(), expected);
+        assert_eq!(runtime.update(entity, |value, _| *value), Ok(9));
+    }
+}
+
+#[test]
+fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let runtime = Runtime::<0, 1, 0, 0, 0, 0, 0>::default();
+
+    let parent = runtime
+        .create(|cx| {
+            let me = cx.entity();
+
+            assert_eq!(me.read(cx, |_| ()), Err(EntityAccessError::NotReady));
+
+            cx.new(|_| 42u32).unwrap()
+        })
+        .unwrap();
+
+    runtime
+        .update(parent, |child, cx| {
+            assert_eq!(child.read(cx, |value| *value), Ok(42));
+
+            for index in 0..32 {
+                cx.new(|_| index).unwrap();
+            }
+
+            assert_eq!(child.read(cx, |value| *value), Ok(42));
+        })
+        .unwrap();
+
+    let escaped = Cell::new(None);
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let _ = runtime.create::<u32>(|cx| {
+            escaped.set(Some(cx.entity()));
+            cx.new(|_| 99u32).unwrap();
+            panic!("constructor failure");
+        });
+    }));
+
+    assert!(result.is_err());
+
+    let escaped = escaped.get().unwrap();
+
+    assert_eq!(
+        runtime.update(escaped, |_, _| ()),
+        Err(EntityAccessError::InvalidEntity)
+    );
+
+    let retry = runtime.create(|_| 5u32).unwrap();
+
+    assert_ne!(escaped, retry);
+    assert_eq!(runtime.update(retry, |value, _| *value), Ok(5));
+
+    runtime
+        .update(parent, |child, cx| {
+            assert_eq!(child.read(cx, |value| *value), Ok(42))
+        })
+        .unwrap();
+}

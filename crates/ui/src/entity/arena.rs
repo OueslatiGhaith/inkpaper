@@ -16,7 +16,12 @@ use super::{
 pub enum EntityAllocError {
     SlotsFull,
     StorageFull,
-    UnsupportedAlignment { requested: usize, supported: usize },
+    UnsupportedAlignment {
+        requested: usize,
+        supported: usize,
+    },
+    #[cfg(feature = "alloc")]
+    AllocationFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -509,6 +514,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "alloc"))]
     fn reports_slot_exhaustion() {
         let arena = EntityArena::<256, 1>::default();
 
@@ -521,6 +527,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "alloc"))]
     fn reports_storage_exhaustion() {
         struct Big {
             _data: [u8; 64],
@@ -535,6 +542,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "alloc"))]
     fn rejects_unsupported_alignment() {
         #[repr(align(32))]
         struct HighlyAligned {
