@@ -17,4 +17,5 @@ inkpaper-app = { path = "../app" }
 inkpaper-epub = { path = "../epub" }
 inkpaper-reader = { path = "../reader" }
 inkpaper-ui = { path = "../ui", features = ["embedded-graphics", "ttf"] }
+sha2 = { version = "0.11.0", default-features = false }
 static_cell = { workspace = true }

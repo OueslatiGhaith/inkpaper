@@ -1707,6 +1707,7 @@ dependencies = [
  "inkpaper-epub",
  "inkpaper-reader",
  "inkpaper-ui",
+ "sha2",
  "static_cell",
 ]
 

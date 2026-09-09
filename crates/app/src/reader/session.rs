@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use inkpaper_reader::{Page, PageItem, Pagination, SpineIndex, Viewport};
+use inkpaper_reader::{Page, PageItem, Pagination, ReadingPosition, SpineIndex, Viewport};
 
 use super::ReaderPageResources;
 
@@ -283,5 +283,30 @@ impl ReaderSession {
         *self = replacement;
 
         true
+    }
+
+    /// opens an already prepared page containing the saved position
+    ///
+    /// all images on that page must have resources before the session is installed
+    pub fn at_position(
+        pagination: Pagination<'static>,
+        viewport: Viewport,
+        resources: Box<dyn ReaderPageResources>,
+        position: ReadingPosition,
+    ) -> Option<Self> {
+        let page_index = pagination.page_at_position(position)?;
+        let page = &pagination.pages()[page_index];
+
+        if page.items().iter().any(|item| match item {
+            PageItem::Image(fragment) => resources.image_source(fragment.image()).is_none(),
+            PageItem::Text(_) => false,
+        }) {
+            return None;
+        }
+
+        let mut session = Self::new(pagination, viewport, resources)?;
+        session.page_index = page_index;
+
+        Some(session)
     }
 }

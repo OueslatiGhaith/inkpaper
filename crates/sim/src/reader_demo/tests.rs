@@ -842,3 +842,231 @@ fn invalid_page_resources_and_home_cancellation_leave_current_images_intact() {
 
     assert_eq!(position(&runtime, app).1, 1);
 }
+
+struct ProgressFile(PathBuf);
+
+impl Drop for ProgressFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+#[test]
+fn reopening_restores_a_later_chapter_image_and_page_turns_still_work() {
+    use crate::{
+        checkpoint_reader, install_reader_images, load_initial_reader,
+        reader_progress::ReaderProgress,
+    };
+
+    let book = illustrated_book(
+        "<p>start</p>",
+        r#"<img src="red.png"/><img src="blue.png"/><img src="red.png"/>"#,
+        &[
+            ("red.png", png(120, 60, [200, 10, 20])),
+            ("blue.png", png(120, 60, [10, 20, 200])),
+        ],
+    );
+    let progress = ReaderProgress::open(&book.0).unwrap();
+    let _cleanup = ProgressFile(progress.path().to_path_buf());
+    drop(progress);
+
+    let saved = {
+        let mut host = book.open();
+        let mut progress = ReaderProgress::open(&book.0).unwrap();
+        let slots = [HostImageSlot::default()];
+        let ids = [ImageId::new(0)];
+        let (session, images) = load_initial_reader(&mut host, Some(&mut progress), &ids).unwrap();
+        install_reader_images(&slots, images);
+        let (mut runtime, app) = app_with(session);
+
+        let request = turn_to_boundary(&mut runtime, app, Button::Next);
+        load_requested_chapter(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+        checkpoint_reader(&runtime, app, Some(&mut progress));
+
+        let request = page_request(&mut runtime, app, Button::Next);
+        load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+        checkpoint_reader(&runtime, app, Some(&mut progress));
+        assert_eq!(position(&runtime, app), (1, 1, 3));
+
+        progress.load().unwrap().unwrap()
+    };
+
+    assert_eq!(
+        saved.location().offset(),
+        inkpaper_epub::ContentOffset::ZERO
+    );
+    assert_eq!(saved.non_text(), 1);
+
+    let mut host = book.open();
+    let mut progress = ReaderProgress::open(&book.0).unwrap();
+    let slots = [HostImageSlot::default()];
+    let ids = [ImageId::new(0)];
+    let (session, images) = load_initial_reader(&mut host, Some(&mut progress), &ids).unwrap();
+
+    assert_eq!(session.spine(), SpineIndex::new(1));
+    assert_eq!(session.page_index(), 1);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].path().as_str(), "blue.png");
+
+    install_reader_images(&slots, images);
+    assert_eq!(
+        slots[0].pixel(0, 0),
+        Some(inkpaper_ui::Color::rgb(10, 20, 200))
+    );
+    let (mut runtime, app) = app_with(session);
+    assert_eq!(displayed_images(&runtime, app)[0].0.as_str(), "blue.png");
+
+    for (button, expected) in [(Button::Previous, 0), (Button::Next, 1)] {
+        let request = page_request(&mut runtime, app, button);
+        load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+        assert_eq!(position(&runtime, app), (1, expected, 3));
+    }
+}
+
+#[test]
+fn reopening_with_a_taller_viewport_keeps_the_original_saved_text_anchor() {
+    use crate::{checkpoint_reader, load_initial_reader, reader_progress::ReaderProgress};
+
+    let book = TestBook::new(false);
+    let mut progress = ReaderProgress::open(&book.0).unwrap();
+    let _cleanup = ProgressFile(progress.path().to_path_buf());
+
+    let saved = {
+        let mut host = book.open();
+        let (session, _) = load_initial_reader(&mut host, Some(&mut progress), &[]).unwrap();
+        let (mut runtime, app) = app_with(session);
+        assert_eq!(press(&mut runtime, app, Button::Next), PlatformAction::None);
+        checkpoint_reader(&runtime, app, Some(&mut progress));
+        progress.load().unwrap().unwrap()
+    };
+    drop(progress);
+
+    let mut fonts = FontRegistry::<1>::default();
+    let font = fonts.register(&BODY_FONT).unwrap();
+    let mut host =
+        HostReader::open(&book.0, fonts, font, font, Viewport::new(120, 120).unwrap()).unwrap();
+    let mut progress = ReaderProgress::open(&book.0).unwrap();
+    let (session, _) = load_initial_reader(&mut host, Some(&mut progress), &[]).unwrap();
+
+    assert!(session.current_page().position() < saved);
+    assert!(saved < session.current_page().end_position());
+
+    let (runtime, app) = app_with(session);
+    checkpoint_reader(&runtime, app, Some(&mut progress));
+    progress.flush().unwrap();
+
+    assert_eq!(progress.load().unwrap(), Some(saved));
+}
+
+#[test]
+fn restore_decodes_only_the_destination_and_failed_restore_preserves_saved_progress() {
+    use crate::{checkpoint_reader, load_initial_reader, reader_progress::ReaderProgress};
+    use inkpaper_epub::{BookLocation, ContentOffset};
+
+    let mut broken = png(120, 60, [1, 2, 3]);
+    broken.truncate(24);
+    let book = illustrated_book(
+        "<p>start</p>",
+        r#"<img src="bad.png"/><img src="good.png"/>"#,
+        &[("bad.png", broken), ("good.png", png(120, 60, [4, 5, 6]))],
+    );
+    let mut progress = ReaderProgress::open(&book.0).unwrap();
+    let _cleanup = ProgressFile(progress.path().to_path_buf());
+    let location = BookLocation::new(SpineIndex::new(1), ContentOffset::ZERO);
+    progress
+        .checkpoint(ReadingPosition::new(location, 1))
+        .unwrap();
+
+    let mut host = book.open();
+    let (session, images) =
+        load_initial_reader(&mut host, Some(&mut progress), &[ImageId::new(0)]).unwrap();
+
+    assert_eq!(session.spine(), SpineIndex::new(1));
+    assert_eq!(session.page_index(), 1);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].path().as_str(), "good.png");
+
+    let broken_position = ReadingPosition::new(location, 0);
+    progress.checkpoint(broken_position).unwrap();
+
+    let mut host = book.open();
+    let (session, images) =
+        load_initial_reader(&mut host, Some(&mut progress), &[ImageId::new(0)]).unwrap();
+
+    assert_eq!(session.spine(), SpineIndex::ZERO);
+    assert_eq!(session.page_index(), 0);
+    assert!(images.is_empty());
+
+    let (runtime, app) = app_with(session);
+    checkpoint_reader(&runtime, app, Some(&mut progress));
+    progress.flush().unwrap();
+
+    assert_eq!(progress.load().unwrap(), Some(broken_position));
+}
+
+#[test]
+fn failed_image_turn_does_not_checkpoint_the_requested_page() {
+    use crate::{checkpoint_reader, load_initial_reader, reader_progress::ReaderProgress};
+
+    let mut broken = png(120, 60, [1, 2, 3]);
+    broken.truncate(24);
+    let book = illustrated_book(
+        "<p>start</p><img src=\"bad.png\"/>",
+        "<p>end</p>",
+        &[("bad.png", broken)],
+    );
+    let mut progress = ReaderProgress::open(&book.0).unwrap();
+    let _cleanup = ProgressFile(progress.path().to_path_buf());
+    let mut host = book.open();
+    let ids = [ImageId::new(0)];
+    let slots = [HostImageSlot::default()];
+    let (session, _) = load_initial_reader(&mut host, Some(&mut progress), &ids).unwrap();
+    let (mut runtime, app) = app_with(session);
+
+    let request = page_request(&mut runtime, app, Button::Next);
+    load_requested_page(&mut runtime, app, Some(&mut host), request, &slots, &ids);
+    checkpoint_reader(&runtime, app, Some(&mut progress));
+    progress.flush().unwrap();
+
+    assert_eq!(position(&runtime, app), (0, 0, 2));
+    assert_eq!(progress.load().unwrap(), None);
+}
+
+#[test]
+fn invalid_saved_spine_falls_back_and_unprepared_images_cannot_enter_a_session() {
+    use crate::{load_initial_reader, reader_progress::ReaderProgress};
+    use inkpaper_epub::{BookLocation, ContentOffset};
+
+    let book = illustrated_book(
+        r#"<img src="good.png"/>"#,
+        "<p>end</p>",
+        &[("good.png", png(120, 60, [4, 5, 6]))],
+    );
+    let mut progress = ReaderProgress::open(&book.0).unwrap();
+    let _cleanup = ProgressFile(progress.path().to_path_buf());
+    let invalid = ReadingPosition::new(
+        BookLocation::new(SpineIndex::new(99), ContentOffset::ZERO),
+        0,
+    );
+    progress.checkpoint(invalid).unwrap();
+
+    let mut host = book.open();
+    let (session, _) =
+        load_initial_reader(&mut host, Some(&mut progress), &[ImageId::new(0)]).unwrap();
+
+    assert_eq!(session.spine(), SpineIndex::ZERO);
+    assert_eq!(progress.load().unwrap(), Some(invalid));
+
+    let prepared = host.load_first().unwrap();
+    let position = prepared.pagination.pages()[0].position();
+
+    assert!(
+        ReaderSession::at_position(
+            prepared.pagination,
+            prepared.viewport,
+            Box::new(()),
+            position
+        )
+        .is_none()
+    );
+}

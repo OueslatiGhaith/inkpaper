@@ -14,7 +14,7 @@ use inkpaper_app::{
     AppEvent, AppModel, BookSummary, Button as AppButton, ButtonEdge as AppButtonEdge,
     ButtonEvent as AppButtonEvent, InkPaperApp, InputEvent as AppInputEvent, PlatformAction,
     ScrollEvent as AppScrollEvent, TouchEvent as AppTouchEvent, TouchPosition as AppTouchPosition,
-    reader::{ChapterRequest, PageRequest},
+    reader::{ChapterRequest, PageRequest, ReaderSession},
     theme::Theme,
 };
 use inkpaper_reader::Viewport;
@@ -28,13 +28,15 @@ use static_cell::StaticCell;
 use crate::{
     args::SimulatorArgs,
     host_image::{HostImage, HostImageSlot},
-    reader_demo::{DecodedReaderImage, HostReader},
+    reader_demo::{DecodedReaderImage, HostReader, ReaderLoadError},
+    reader_progress::ReaderProgress,
 };
 
 mod args;
 mod host_epub;
 mod host_image;
 mod reader_demo;
+mod reader_progress;
 
 const DISPLAY_WIDTH: u32 = 480;
 const DISPLAY_HEIGHT: u32 = 800;
@@ -242,6 +244,75 @@ fn load_requested_page<const FONTS: usize>(
     }
 }
 
+fn load_initial_reader<const FONTS: usize>(
+    host: &mut HostReader<FONTS>,
+    progress: Option<&mut ReaderProgress>,
+    ids: &[ImageId],
+) -> Result<(ReaderSession, Vec<DecodedReaderImage>), ReaderLoadError> {
+    let saved = match progress.as_deref().map(ReaderProgress::load) {
+        Some(Ok(position)) => position,
+        Some(Err(error)) => {
+            eprintln!("ignoring saved reader progress: {error}");
+            None
+        }
+        None => None,
+    };
+
+    let restored = saved.and_then(|position| {
+        match host
+            .load_position(position)
+            .and_then(|prepared| prepared.into_app_session(ids))
+        {
+            Ok(prepared) => {
+                eprintln!(
+                    "reader resumed: spine={} page={}",
+                    prepared.0.spine().get(),
+                    prepared.0.page_number()
+                );
+                Some(prepared)
+            }
+            Err(error) => {
+                eprintln!("could not restore reader position; opening the beginning: {error:?}");
+                None
+            }
+        }
+    });
+
+    let (session, images) = match restored {
+        Some(prepared) => prepared,
+        None => host.load_first()?.into_app_session(ids)?,
+    };
+
+    if let Some(progress) = progress {
+        progress.start_at(session.current_page().position());
+    }
+
+    Ok((session, images))
+}
+
+fn checkpoint_reader(
+    runtime: &impl RuntimeApi,
+    app: Entity<InkPaperApp>,
+    progress: Option<&mut ReaderProgress>,
+) {
+    let Some(progress) = progress else { return };
+
+    let position = runtime
+        .update(app, |app, _| {
+            app.reader().map(|reader| reader.current_page().position())
+        })
+        .expect("InkPaper application entity must remain alive");
+
+    if let Some(position) = position
+        && let Err(error) = progress.checkpoint(position)
+    {
+        eprintln!(
+            "could not save reader progress to {}: {error}",
+            progress.path().display()
+        );
+    }
+}
+
 fn to_touch_position(point: EgPoint) -> AppTouchPosition {
     let x = point.x.clamp(0, DISPLAY_WIDTH as i32 - 1);
     let y = point.y.clamp(0, DISPLAY_HEIGHT as i32 - 1);
@@ -408,16 +479,29 @@ fn main() {
         .unwrap_or_else(|error| panic!("failed to open EPUB {}: {error:?}", path.display()))
     });
 
+    let mut reader_progress =
+        args.epub.as_deref().filter(|_| !args.no_resume).and_then(
+            |path| match ReaderProgress::open(path) {
+                Ok(progress) => {
+                    eprintln!("reader progress: {}", progress.path().display());
+                    Some(progress)
+                }
+                Err(error) => {
+                    eprintln!("reader progress unavailable: {error}");
+                    None
+                }
+            },
+        );
+
     let mut reader_image_ids = Vec::new();
     let reader_session = host_reader.as_mut().map(|host| {
         for slot in &reader_slots {
             reader_image_ids.push(runtime.register_image(slot).unwrap().id());
         }
 
-        let (session, images) = host
-            .load_first()
-            .and_then(|prepared| prepared.into_app_session(&reader_image_ids))
-            .unwrap_or_else(|error| panic!("failed to prepare EPUB: {error:?}"));
+        let (session, images) =
+            load_initial_reader(host, reader_progress.as_mut(), &reader_image_ids)
+                .unwrap_or_else(|error| panic!("failed to prepare EPUB: {error:?}"));
 
         install_reader_images(&reader_slots, images);
 
@@ -577,9 +661,17 @@ fn main() {
                 }
             }
 
+            checkpoint_reader(runtime.as_ref(), app, reader_progress.as_mut());
+
             // later events must hit the newly installed page or route.
             update_ui(runtime.as_mut(), &mut display);
         }
+    }
+
+    if let Some(progress) = reader_progress.as_mut()
+        && let Err(error) = progress.flush()
+    {
+        eprintln!("could not save reader progress on exit: {error}");
     }
 
     eprintln!(

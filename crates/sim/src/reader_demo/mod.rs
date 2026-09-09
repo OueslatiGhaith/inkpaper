@@ -12,8 +12,8 @@ use inkpaper_epub::{
 };
 
 use inkpaper_reader::{
-    BlockKind, Page, PageItem, Pagination, ReaderSettings, TextStyle as ReaderTextStyle, Viewport,
-    paginate_chapter,
+    BlockKind, Page, PageItem, Pagination, ReaderSettings, ReadingPosition,
+    TextStyle as ReaderTextStyle, Viewport, paginate_chapter,
 };
 
 use inkpaper_ui::{FontId, FontRegistry, ImageId, ImageResource, ImageSource, ShapedGlyph};
@@ -33,6 +33,7 @@ pub enum ReaderLoadError {
     NoTextChapter,
     SpineIndexOverflow,
     InvalidSpine,
+    InvalidPosition,
     TooManyImages {
         count: usize,
         capacity: usize,
@@ -123,8 +124,15 @@ impl ReaderPageResources for SimulatorReaderResources {
     }
 }
 
+enum EntryPage {
+    First,
+    Last,
+    Position(ReadingPosition),
+}
+
 pub struct PreparedReader {
     pagination: Pagination<'static>,
+    resume_position: Option<ReadingPosition>,
     viewport: Viewport,
     resources: SimulatorReaderResources,
     images: Vec<DecodedReaderImage>,
@@ -150,8 +158,15 @@ impl PreparedReader {
                 .source = Some(source);
         }
 
-        let session = ReaderSession::new(self.pagination, self.viewport, Box::new(self.resources))
-            .expect("pagination always contains a page");
+        let resources: Box<dyn ReaderPageResources> = Box::new(self.resources);
+        let session = match self.resume_position {
+            Some(position) => {
+                ReaderSession::at_position(self.pagination, self.viewport, resources, position)
+                    .ok_or(ReaderLoadError::InvalidPosition)?
+            }
+            None => ReaderSession::new(self.pagination, self.viewport, resources)
+                .expect("pagination always contains a page"),
+        };
 
         Ok((session, self.images))
     }
@@ -232,7 +247,12 @@ impl<const FONTS: usize> HostReader<FONTS> {
             {
                 let spine =
                     SpineIndex::try_from_usize(index).ok_or(ReaderLoadError::SpineIndexOverflow)?;
-                if let Some(prepared) = self.prepare(chapter, spine, direction)? {
+                let entry = match direction {
+                    ChapterDirection::Previous => EntryPage::Last,
+                    ChapterDirection::Next => EntryPage::First,
+                };
+
+                if let Some(prepared) = self.prepare(chapter, spine, entry)? {
                     return Ok(Some(prepared));
                 }
             }
@@ -243,9 +263,9 @@ impl<const FONTS: usize> HostReader<FONTS> {
             };
 
             let Some(next) = next else { break };
-
             index = next;
         }
+
         Ok(None)
     }
 
@@ -253,7 +273,7 @@ impl<const FONTS: usize> HostReader<FONTS> {
         &mut self,
         chapter: Chapter,
         spine: SpineIndex,
-        direction: ChapterDirection,
+        entry: EntryPage,
     ) -> Result<Option<PreparedReader>, ReaderLoadError> {
         let styles = future::block_on(self.epub.load_chapter_styles(&chapter))
             .map_err(ReaderLoadError::Epub)?;
@@ -283,16 +303,23 @@ impl<const FONTS: usize> HostReader<FONTS> {
             return Ok(None);
         }
 
-        let entry_page = match direction {
-            ChapterDirection::Previous => pagination.pages().last(),
-            ChapterDirection::Next => pagination.pages().first(),
-        }
-        .expect("pagination always contains a page");
+        let (page_index, resume_position) = match entry {
+            EntryPage::First => (0, None),
+            EntryPage::Last => (pagination.len() - 1, None),
+            EntryPage::Position(position) => (
+                pagination
+                    .page_at_position(position)
+                    .ok_or(ReaderLoadError::InvalidPosition)?,
+                Some(position),
+            ),
+        };
+        let entry_page = &pagination.pages()[page_index];
 
         let images = decode_page_images(&mut self.epub, entry_page)?;
 
         Ok(Some(PreparedReader {
             pagination: pagination.into_owned(),
+            resume_position,
             viewport: self.viewport,
             resources,
             images,
@@ -340,6 +367,37 @@ impl<const FONTS: usize> HostReader<FONTS> {
         }
 
         Ok((Box::new(resources), images))
+    }
+
+    pub fn load_position(
+        &mut self,
+        position: ReadingPosition,
+    ) -> Result<PreparedReader, ReaderLoadError> {
+        let spine = position.location().spine();
+        let index = spine.as_usize().ok_or(ReaderLoadError::InvalidPosition)?;
+
+        let readable = self
+            .epub
+            .spine()
+            .items()
+            .get(index)
+            .is_some_and(|item| item.linear())
+            && self
+                .epub
+                .package()
+                .spine_manifest_item(index)
+                .is_some_and(|item| item.media_type() == "application/xhtml+xml");
+
+        if !readable {
+            return Err(ReaderLoadError::InvalidPosition);
+        }
+
+        let chapter = future::block_on(self.epub.load_spine_chapter(index))
+            .map_err(ReaderLoadError::Epub)?
+            .ok_or(ReaderLoadError::InvalidPosition)?;
+
+        self.prepare(chapter, spine, EntryPage::Position(position))?
+            .ok_or(ReaderLoadError::InvalidPosition)
     }
 }
 
