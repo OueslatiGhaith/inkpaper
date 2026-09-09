@@ -106,10 +106,8 @@ impl<T: 'static> Context<'_, T> {
         E: 'static,
         F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
     {
-        match self.try_listener(callback) {
-            Ok(listener) => listener,
-            Err(_) => panic!("listener arena capacity exceeded"),
-        }
+        self.try_listener(callback)
+            .unwrap_or_else(|error| panic!("could not allocate listener: {error:?}"))
     }
 
     pub fn try_canvas<F>(&mut self, callback: F) -> Result<Canvas, CallbackAllocError>
@@ -125,10 +123,8 @@ impl<T: 'static> Context<'_, T> {
     where
         F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
     {
-        match self.try_canvas(callback) {
-            Ok(canvas) => canvas,
-            Err(_) => panic!("callback arena capacity exceeded"),
-        }
+        self.try_canvas(callback)
+            .unwrap_or_else(|error| panic!("could not allocate canvas callback: {error:?}"))
     }
 }
 

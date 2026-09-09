@@ -19,7 +19,12 @@ use crate::{
 pub enum CallbackAllocError {
     SlotsFull,
     StorageFull,
-    UnsupportedAlignment { requested: usize, supported: usize },
+    UnsupportedAlignment {
+        requested: usize,
+        supported: usize,
+    },
+    #[cfg(feature = "alloc")]
+    AllocationFailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -506,6 +511,7 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::callback::CallbackArena;
     use crate::*;
 
     struct Counter {
@@ -688,6 +694,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "alloc"))]
     fn listener_arena_reports_slot_exhaustion() {
         let entities = EntityArena::<1024, 16>::default();
         let callbacks = CallbackArena::<1024, 1>::default();
@@ -706,6 +713,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "alloc"))]
     fn listener_arena_reports_storage_exhaustion() {
         let entities = EntityArena::<1024, 16>::default();
         let callbacks = CallbackArena::<4, 16>::default();

@@ -29,7 +29,7 @@ mod style;
 mod text_layout;
 mod text_shaping;
 
-pub use callback::Listener;
+pub use callback::{CallbackAllocError, Listener, ListenerInvokeError};
 pub use color::*;
 pub use context::*;
 pub use element::*;

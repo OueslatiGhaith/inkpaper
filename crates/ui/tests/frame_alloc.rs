@@ -436,3 +436,69 @@ fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
         })
         .unwrap();
 }
+
+#[test]
+fn callback_allocation_failures_drop_captures_and_allow_listener_and_canvas_retry() {
+    use std::rc::Rc;
+
+    struct Capture(Rc<Cell<usize>>);
+
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    for canvas in [false, true] {
+        for after in 0..2 {
+            let runtime = Runtime::<0, 0, 0, 0, 0, 0, 0>::default();
+            let entity = runtime.create(|_| ()).unwrap();
+            let drops = Rc::new(Cell::new(0));
+            let capture = Capture(drops.clone());
+
+            let result = failing_allocation(after, || {
+                runtime.update(entity, |_, cx| {
+                    if canvas {
+                        cx.try_canvas(move |_, _, _| {
+                            let _ = &capture;
+                        })
+                        .map(|_| ())
+                    } else {
+                        cx.try_listener::<ActivateEvent, _>(move |_, _, _| {
+                            let _ = &capture;
+                        })
+                        .map(|_| ())
+                    }
+                })
+            })
+            .unwrap();
+
+            assert_eq!(result, Err(CallbackAllocError::AllocationFailed));
+            assert_eq!(drops.get(), 1);
+
+            let capture = Capture(drops.clone());
+
+            runtime
+                .update(entity, |_, cx| {
+                    if canvas {
+                        cx.try_canvas(move |_, _, _| {
+                            let _ = &capture;
+                        })
+                        .unwrap();
+                    } else {
+                        cx.try_listener::<ActivateEvent, _>(move |_, _, _| {
+                            let _ = &capture;
+                        })
+                        .unwrap();
+                    }
+                })
+                .unwrap();
+
+            assert_eq!(drops.get(), 1);
+
+            drop(runtime);
+
+            assert_eq!(drops.get(), 2);
+        }
+    }
+}
