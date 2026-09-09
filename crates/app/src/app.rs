@@ -241,7 +241,12 @@ impl Render for InkPaperApp {
         let continue_reading = self.reader.as_ref().map(|_| open_reader);
 
         let screen = match route {
-            Route::Home => Either::Left(HomeScreen::new(model, current_cover, continue_reading)),
+            Route::Home => Either::Left(HomeScreen::new(
+                model,
+                current_cover,
+                self.reader.as_ref(),
+                continue_reading,
+            )),
             Route::Library => Either::Right(Either::Left(LibraryScreen::new(model.library()))),
             Route::Settings => Either::Right(Either::Right(PlaceholderScreen::new(
                 "Settings",

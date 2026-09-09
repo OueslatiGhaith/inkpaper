@@ -2,9 +2,12 @@ use std::{io, path::Path};
 
 use futures_lite::future;
 
-use inkpaper_app::reader::{
-    ChapterDirection, ChapterRequest, ReaderPageResources, ReaderSession, UiReaderMeasureError,
-    UiReaderMeasurer,
+use inkpaper_app::{
+    BookSummary,
+    reader::{
+        ChapterDirection, ChapterRequest, ReaderPageResources, ReaderSession, UiReaderMeasureError,
+        UiReaderMeasurer,
+    },
 };
 
 use inkpaper_epub::{
@@ -398,6 +401,17 @@ impl<const FONTS: usize> HostReader<FONTS> {
 
         self.prepare(chapter, spine, EntryPage::Position(position))?
             .ok_or(ReaderLoadError::InvalidPosition)
+    }
+
+    pub fn book_summary(&self) -> BookSummary {
+        let metadata = self.epub.metadata();
+        let author = metadata
+            .creators()
+            .iter()
+            .map(|creator| creator.trim())
+            .find(|creator| !creator.is_empty());
+
+        BookSummary::from_metadata(metadata.title(), author)
     }
 }
 

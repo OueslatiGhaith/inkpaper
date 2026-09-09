@@ -87,6 +87,45 @@ impl BookSummary {
     pub const fn progress(&self) -> &Percent {
         &self.progress
     }
+
+    pub fn from_metadata(title: Option<&str>, author: Option<&str>) -> Self {
+        let title = title
+            .map(str::trim)
+            .filter(|v| !str::is_empty(v))
+            .unwrap_or("Untitled book");
+        let author = author
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .unwrap_or("Unknown author");
+
+        Self {
+            title: metadata_text(title),
+            author: metadata_text(author),
+            progress: Percent::new(0),
+        }
+    }
+}
+
+fn metadata_text<const N: usize>(value: &str) -> String<N> {
+    let suffix = if value.len() > N && N >= "…".len() {
+        "…"
+    } else {
+        ""
+    };
+
+    let mut end = value.len().min(N - suffix.len());
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    let mut stored = String::new();
+    stored
+        .push_str(&value[..end])
+        .expect("bounded metadata prefix must fit");
+    stored
+        .push_str(suffix)
+        .expect("reserved metadata suffix must fit");
+    stored
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

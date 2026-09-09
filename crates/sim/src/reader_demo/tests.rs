@@ -1070,3 +1070,216 @@ fn invalid_saved_spine_falls_back_and_unprepared_images_cannot_enter_a_session()
         .is_none()
     );
 }
+
+#[derive(Default)]
+struct HomeTextPainter(Vec<String>);
+
+impl inkpaper_ui::Painter for HomeTextPainter {
+    type Error = std::convert::Infallible;
+
+    fn draw_box(
+        &mut self,
+        _: inkpaper_ui::Rect,
+        _: inkpaper_ui::BoxPaint,
+        _: Option<inkpaper_ui::Rect>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_canvas(
+        &mut self,
+        _: inkpaper_ui::Rect,
+        _: Option<inkpaper_ui::Rect>,
+        _: &mut dyn FnMut(inkpaper_ui::Rect, &mut dyn inkpaper_ui::CanvasPainter),
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+impl inkpaper_ui::ResourcePainter for HomeTextPainter {
+    fn draw_text(
+        &mut self,
+        _: &mut (),
+        text: &str,
+        _: inkpaper_ui::Rect,
+        _: inkpaper_ui::ResolvedTextStyle,
+        _: Option<inkpaper_ui::Rect>,
+    ) -> Result<(), Self::Error> {
+        self.0.push(text.to_owned());
+        Ok(())
+    }
+
+    fn draw_image(
+        &mut self,
+        _: &mut (),
+        _: ImageSource,
+        _: inkpaper_ui::Rect,
+        _: inkpaper_ui::ImagePaint,
+        _: Option<inkpaper_ui::Rect>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+fn home_text(runtime: &mut TestRuntime, app: Entity<InkPaperApp>) -> Vec<String> {
+    InkPaperApp::handle_event(
+        runtime,
+        app,
+        AppEvent::Input(InputEvent::Touch(TouchEvent::HomeTap)),
+    );
+
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(480), px(800)), &TestMeasurer)
+        .unwrap();
+
+    let mut painter = HomeTextPainter::default();
+    runtime.paint(&mut painter).unwrap().unwrap();
+    painter.0
+}
+
+#[test]
+fn home_shows_active_metadata_and_tracks_navigation_and_restoration() {
+    let book = TestBook::new(false);
+    let mut host = book.open();
+    let (session, _) = host.load_first().unwrap().into_app_session(&[]).unwrap();
+    let (mut runtime, app) = app_with(session);
+
+    runtime
+        .update(app, |app, cx| {
+            app.model_mut().set_current_book(host.book_summary());
+            cx.notify();
+        })
+        .unwrap();
+
+    assert_eq!(press(&mut runtime, app, Button::Next), PlatformAction::None);
+    let before = position(&runtime, app);
+    let text = home_text(&mut runtime, app);
+
+    assert!(text.iter().any(|text| text == "Test"));
+    assert!(text.iter().any(|text| text == "Unknown author"));
+    assert!(text.contains(&format!("Page 2 of {} in this chapter", before.2)));
+    assert!(!text.iter().any(|text| text == "0%" || text == "68%"));
+    assert_eq!(position(&runtime, app), before);
+
+    // the card is Home's first focusable control.
+    assert_eq!(press(&mut runtime, app, Button::Next), PlatformAction::None);
+    press(&mut runtime, app, Button::Activate);
+    InkPaperApp::handle_event(
+        &mut runtime,
+        app,
+        AppEvent::Input(InputEvent::Button(ButtonEvent::new(
+            Button::Activate,
+            ButtonEdge::Released,
+        ))),
+    );
+
+    assert_eq!(
+        runtime.update(app, |app, _| app.route()).unwrap(),
+        Route::Reader
+    );
+    assert_eq!(position(&runtime, app), before);
+
+    let request = turn_to_boundary(&mut runtime, app, Button::Next);
+    load_requested_chapter(&mut runtime, app, Some(&mut host), request, &[], &[]);
+    assert_eq!(position(&runtime, app).0, 3);
+
+    let text = home_text(&mut runtime, app);
+    assert!(text.contains(&format!(
+        "Page 1 of {} in this chapter",
+        position(&runtime, app).2
+    )));
+
+    runtime
+        .update(app, |app, cx| app.navigate(Route::Reader, cx))
+        .unwrap();
+    press(&mut runtime, app, Button::Next);
+
+    let saved = runtime
+        .update(app, |app, _| {
+            app.reader().unwrap().current_page().position()
+        })
+        .unwrap();
+    let expected = position(&runtime, app);
+    drop(runtime);
+    drop(host);
+
+    let mut reopened = book.open();
+    let (session, _) = reopened
+        .load_position(saved)
+        .unwrap()
+        .into_app_session(&[])
+        .unwrap();
+    let (mut runtime, app) = app_with(session);
+
+    runtime
+        .update(app, |app, cx| {
+            app.model_mut().set_current_book(reopened.book_summary());
+            cx.notify();
+        })
+        .unwrap();
+
+    let text = home_text(&mut runtime, app);
+    assert_eq!(position(&runtime, app), expected);
+    assert!(text.contains(&format!(
+        "Page {} of {} in this chapter",
+        expected.1 + 1,
+        expected.2
+    )));
+    assert!(text.iter().any(|text| text == "Test"));
+}
+
+fn metadata_book(metadata: &str) -> TestBook {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "inkpaper-metadata-{}-{}.epub",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let container = br#"<container><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+    let package = format!(
+        r#"<package version="3.0" xmlns="http://www.idpf.org/2007/opf"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">{metadata}</metadata><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>"#
+    );
+
+    fs::write(
+        &path,
+        stored_zip(&[
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", container),
+            ("book.opf", package.as_bytes()),
+            ("a.xhtml", b"<html><body><p>Text</p></body></html>"),
+        ]),
+    )
+    .unwrap();
+
+    TestBook(path)
+}
+
+#[test]
+fn host_extracts_book_metadata_and_handles_missing_and_oversized_values() {
+    let book = metadata_book(
+        "<dc:title> A &amp; B </dc:title><dc:creator> </dc:creator><dc:creator> Ada </dc:creator><dc:creator>Grace</dc:creator>",
+    );
+    let summary = book.open().book_summary();
+
+    assert_eq!(summary.title(), "A & B");
+    assert_eq!(summary.author(), "Ada");
+
+    let missing = metadata_book("").open().book_summary();
+    assert_eq!(missing.title(), "Untitled book");
+    assert_eq!(missing.author(), "Unknown author");
+
+    let long = metadata_book(&format!(
+        "<dc:title>{}</dc:title><dc:creator>{}</dc:creator>",
+        "é".repeat(100),
+        "🙂".repeat(50)
+    ))
+    .open()
+    .book_summary();
+
+    assert!(long.title().len() <= 96);
+    assert!(long.author().len() <= 64);
+    assert!(long.title().ends_with('…'));
+    assert!(long.author().ends_with('…'));
+}

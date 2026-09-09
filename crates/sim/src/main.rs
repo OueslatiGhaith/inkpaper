@@ -329,6 +329,11 @@ fn key_event(keycode: Keycode, edge: AppButtonEdge) -> Option<AppEvent> {
         Keycode::Down | Keycode::Right | Keycode::Tab => AppButton::Next,
         Keycode::Up | Keycode::Left => AppButton::Previous,
         Keycode::Return | Keycode::Space => AppButton::Activate,
+        Keycode::H | Keycode::Home => {
+            return (edge == AppButtonEdge::Pressed).then_some(AppEvent::Input(
+                AppInputEvent::Touch(AppTouchEvent::HomeTap),
+            ));
+        }
         // P represents the physical power button in the simulator.
         // The application decides that pressing it requests suspend.
         Keycode::P => AppButton::Power,
@@ -532,7 +537,9 @@ fn main() {
         );
     }
 
-    let model = demo_model();
+    let model = host_reader
+        .as_ref()
+        .map_or_else(demo_model, |host| AppModel::new(73, host.book_summary()));
     let mut app_state = InkPaperApp::new(model);
 
     if let Some(reader) = reader_session {
