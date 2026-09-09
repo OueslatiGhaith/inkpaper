@@ -344,6 +344,7 @@ fn clear_changes_generation_when_slot_is_reused() {
     assert_ne!(old, new,);
 }
 
+#[cfg(not(feature = "alloc"))]
 #[test]
 fn reports_state_capacity_exhaustion() {
     let mut states = ElementStateTable::<1>::default();

@@ -1273,6 +1273,7 @@ impl Render for TooManyStatesApp {
     }
 }
 
+#[cfg(not(feature = "alloc"))]
 #[test]
 fn identity_resolution_reports_state_capacity_exhaustion() {
     let entities = EntityArena::<2048, 16>::default();

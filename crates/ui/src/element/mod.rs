@@ -13,6 +13,7 @@ pub use div::*;
 pub use identity::*;
 pub use image::*;
 pub use render::*;
+pub use state::IdentityError;
 pub use stateful::*;
 
 use crate::{MountCx, MountError, NodeId, TextStyle, TextStyled};

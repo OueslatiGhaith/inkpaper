@@ -1,5 +1,10 @@
 use crate::{ElementId, EntityId, NodeId};
 
+#[cfg(all(test, feature = "alloc"))]
+mod alloc_tests;
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ElementStateId {
     slot: u16,
@@ -58,18 +63,30 @@ impl ElementStateSlot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityError {
     StatesFull,
-    DuplicateElementId { id: ElementId },
-    MissingEntityScope { node: NodeId },
+    DuplicateElementId {
+        id: ElementId,
+    },
+    MissingEntityScope {
+        node: NodeId,
+    },
+    #[cfg(feature = "alloc")]
+    AllocationFailed,
 }
 
 pub(crate) struct ElementStateTable<const SLOTS: usize> {
+    #[cfg(not(feature = "alloc"))]
     slots: [ElementStateSlot; SLOTS],
+    #[cfg(feature = "alloc")]
+    slots: alloc::vec::Vec<ElementStateSlot>,
 }
 
 impl<const SLOTS: usize> Default for ElementStateTable<SLOTS> {
     fn default() -> Self {
         Self {
+            #[cfg(not(feature = "alloc"))]
             slots: [ElementStateSlot::vacant(); SLOTS],
+            #[cfg(feature = "alloc")]
+            slots: alloc::vec::Vec::new(),
         }
     }
 }
@@ -104,26 +121,46 @@ impl<const SLOTS: usize> ElementStateTable<SLOTS> {
             return Ok(ElementStateId::new(index as u16, slot.generation));
         }
 
-        // new logical element: find a vacant slot
-        for (index, slot) in self.slots.iter_mut().enumerate() {
-            if slot.entry.is_some() {
-                continue;
-            }
-            if index > u16::MAX as usize {
+        let index = match self.slots.iter().position(|slot| slot.entry.is_none()) {
+            Some(index) => index,
+            None => {
+                #[cfg(not(feature = "alloc"))]
                 return Err(IdentityError::StatesFull);
+
+                #[cfg(feature = "alloc")]
+                {
+                    let index = self.slots.len();
+                    u16::try_from(index).map_err(|_| IdentityError::StatesFull)?;
+
+                    if index == self.slots.capacity() {
+                        let additional = if index == 0 { SLOTS.max(1) } else { 1 };
+                        self.slots
+                            .try_reserve(additional)
+                            .map_err(|_| IdentityError::AllocationFailed)?;
+                    }
+
+                    self.slots.push(ElementStateSlot::vacant());
+                    index
+                }
             }
+        };
 
-            slot.entry = Some(ElementStateEntry {
-                key,
-                created_frame: frame,
-                previous_seen_frame: frame,
-                last_seen_frame: frame,
-            });
+        let index = u16::try_from(index).map_err(|_| IdentityError::StatesFull)?;
+        let slot = &mut self.slots[usize::from(index)];
 
-            return Ok(ElementStateId::new(index as u16, slot.generation));
-        }
+        slot.entry = Some(ElementStateEntry {
+            key,
+            created_frame: frame,
+            previous_seen_frame: frame,
+            last_seen_frame: frame,
+        });
 
-        Err(IdentityError::StatesFull)
+        Ok(ElementStateId::new(index, slot.generation))
+    }
+
+    /// includes vacant slots whose generations must survive reuse.
+    pub(crate) fn slot_count(&self) -> usize {
+        self.slots.len()
     }
 
     pub(crate) fn sweep(&mut self, current_frame: u32) {
@@ -193,6 +230,3 @@ impl<const SLOTS: usize> ElementStateTable<SLOTS> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -9,6 +9,7 @@ use std::{
 
 std::thread_local! {
     static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
+    static FAIL_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
 struct CountingAllocator;
@@ -24,22 +25,47 @@ fn record_allocation() {
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         record_allocation();
+        if reject_allocation() {
+            return core::ptr::null_mut();
+        }
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         record_allocation();
+        if reject_allocation() {
+            return core::ptr::null_mut();
+        }
         unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         record_allocation();
+        if reject_allocation() {
+            return core::ptr::null_mut();
+        }
         unsafe { System.realloc(ptr, layout, size) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { System.dealloc(ptr, layout) }
     }
+}
+
+fn reject_allocation() -> bool {
+    FAIL_AFTER
+        .try_with(|remaining| match remaining.get() {
+            Some(0) => {
+                remaining.set(None);
+                true
+            }
+            Some(count) => {
+                remaining.set(Some(count - 1));
+                false
+            }
+            None => false,
+        })
+        .unwrap_or(false)
 }
 
 #[global_allocator]
@@ -160,4 +186,164 @@ fn dynamic_runtime_allocates_on_growth_and_reuses_storage_for_rebuild_layout_and
     runtime.paint(&mut painter).unwrap().unwrap();
 
     assert_eq!(painter.0, 6);
+}
+
+fn failing_allocation<T>(after: usize, operation: impl FnOnce() -> T) -> T {
+    struct Reset;
+
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            FAIL_AFTER.with(|remaining| remaining.set(None));
+        }
+    }
+
+    FAIL_AFTER.with(|remaining| remaining.set(Some(after)));
+    let _reset = Reset;
+
+    operation()
+}
+
+struct StatefulScreen {
+    rows: usize,
+}
+
+impl Render for StatefulScreen {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        div()
+            .id("scroll")
+            .w(px(80))
+            .h(px(40))
+            .overflow_y_scroll()
+            .children((0..self.rows).map(|row| div().id(row).h(px(30)).focusable()))
+    }
+}
+
+type StateRuntime = Runtime<256, 4, 256, 4, 128, 128, 1>;
+
+fn state_runtime() -> (StateRuntime, Entity<StatefulScreen>) {
+    let mut runtime = StateRuntime::default();
+    let screen = runtime.create_root(|_| StatefulScreen { rows: 4 }).unwrap();
+
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
+        .unwrap();
+
+    assert!(runtime.focus_next());
+    assert!(runtime.scroll_at(Point::new(px(10), px(10)), Offset::new(px(0), px(10))));
+
+    (runtime, screen)
+}
+
+#[test]
+fn dynamic_identity_growth_preserves_focus_and_scrolling_without_input_allocations() {
+    let (mut runtime, screen) = state_runtime();
+    let original = runtime.focused_target().unwrap();
+
+    runtime
+        .update(screen, |screen, cx| {
+            screen.rows = 32;
+            cx.notify();
+        })
+        .unwrap();
+
+    assert!(allocations_during(|| runtime.rebuild().unwrap()) > 0);
+    assert_eq!(runtime.focused_target(), Some(original));
+
+    let allocations = allocations_during(|| {
+        runtime
+            .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
+            .unwrap();
+
+        assert!(runtime.scroll_at(Point::new(px(10), px(10)), Offset::new(px(0), px(-10))));
+        assert!(!runtime.scroll_at(Point::new(px(10), px(10)), Offset::new(px(0), px(-10))));
+        assert!(runtime.focus_next());
+
+        runtime.rebuild().unwrap();
+        runtime
+            .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
+            .unwrap();
+    });
+
+    assert_eq!(allocations, 0);
+
+    runtime
+        .update(screen, |screen, cx| {
+            screen.rows = 0;
+            cx.notify();
+        })
+        .unwrap();
+    runtime.rebuild().unwrap();
+
+    assert_eq!(runtime.focused_target(), None);
+
+    runtime
+        .update(screen, |screen, cx| {
+            screen.rows = 4;
+            cx.notify();
+        })
+        .unwrap();
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
+        .unwrap();
+
+    assert!(runtime.focus_next());
+    assert_ne!(runtime.focused_target(), Some(original));
+}
+
+#[test]
+fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
+    let (mut probe, screen) = state_runtime();
+
+    probe
+        .update(screen, |screen, cx| {
+            screen.rows = 32;
+            cx.notify();
+        })
+        .unwrap();
+
+    let allocations = allocations_during(|| probe.rebuild().unwrap());
+    assert!(allocations > 0);
+
+    for after in 0..allocations {
+        let (mut runtime, screen) = state_runtime();
+        let original = runtime.focused_target().unwrap();
+
+        runtime
+            .update(screen, |screen, cx| {
+                screen.rows = 32;
+                cx.notify();
+            })
+            .unwrap();
+
+        assert_eq!(
+            failing_allocation(after, || runtime.rebuild()),
+            Err(FrameBuildError::Identity(IdentityError::AllocationFailed))
+        );
+        assert_eq!(runtime.frame_node_count(), 0);
+
+        runtime
+            .update(screen, |screen, cx| {
+                screen.rows = 4;
+                cx.notify();
+            })
+            .unwrap();
+        runtime.rebuild().unwrap();
+        runtime
+            .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
+            .unwrap();
+
+        assert!(runtime.scroll_at(Point::new(px(10), px(10)), Offset::new(px(0), px(-10))));
+        assert!(runtime.focus_next());
+        assert_eq!(runtime.focused_target(), Some(original));
+
+        runtime
+            .update(screen, |screen, cx| {
+                screen.rows = 32;
+                cx.notify();
+            })
+            .unwrap();
+        runtime.rebuild().unwrap();
+    }
 }

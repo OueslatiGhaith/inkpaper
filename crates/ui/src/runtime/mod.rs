@@ -255,6 +255,8 @@ impl<
 
         self.frame
             .resolve_identities(&mut self.element_states, generation)?;
+        self.scroll_states
+            .prepare(self.element_states.slot_count())?;
 
         Ok(root_node)
     }
