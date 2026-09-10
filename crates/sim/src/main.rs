@@ -33,6 +33,10 @@ use crate::{
 };
 
 mod args;
+#[cfg(feature = "heap-profile")]
+mod heap;
+#[cfg(feature = "heap-profile")]
+mod heap_profile;
 mod host_epub;
 mod host_image;
 mod reader_demo;
@@ -435,6 +439,12 @@ fn layout_ui(runtime: &mut impl RenderRuntimeApi) {
     runtime.layout(DISPLAY_SIZE).unwrap();
 }
 
+#[cfg(feature = "heap-profile")]
+fn main() {
+    heap_profile::run(SimulatorArgs::parse());
+}
+
+#[cfg(not(feature = "heap-profile"))]
 fn main() {
     let args = SimulatorArgs::parse();
 

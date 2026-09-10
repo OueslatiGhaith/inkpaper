@@ -5,10 +5,13 @@ edition = "2024"
 
 [features]
 default = []
+alloc = ["inkpaper-ui/alloc"]
+heap-profile = ["dep:dhat"]
 defmt = ["inkpaper-app/defmt", "inkpaper-ui/defmt"]
 
 [dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
+dhat = { version = "0.3.3", optional = true }
 embedded-graphics = { workspace = true }
 embedded-graphics-simulator = { workspace = true }
 futures-lite = { workspace = true }
