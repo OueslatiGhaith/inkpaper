@@ -48,9 +48,9 @@ const DISPLAY_HEIGHT: u32 = 800;
 const DISPLAY_SIZE_EG: EgSize = EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT);
 const DISPLAY_SIZE: Size = Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32));
 
-const RUNTIME_FONT_STORAGE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_RUNTIME_FONT_BYTES: usize = 5 * 1024 * 1024;
 
-static RUNTIME_FONT_BYTES: StaticCell<Box<[u8; RUNTIME_FONT_STORAGE_BYTES]>> = StaticCell::new();
+static RUNTIME_FONT_BYTES: StaticCell<Box<[u8]>> = StaticCell::new();
 static RUNTIME_FONT: StaticCell<TtfFont> = StaticCell::new();
 
 static BODY_FONT: MonoFontFace<'static> = MonoFontFace::ascii(&FONT_6X10);
@@ -129,16 +129,17 @@ fn load_font_data(path: &Path) -> FontData<'static> {
 
     assert!(file_len > 0, "font {} is empty", path.display());
     assert!(
-        file_len <= RUNTIME_FONT_STORAGE_BYTES,
-        "font {} is {file_len} bytes, but simulator storage is limited to {RUNTIME_FONT_STORAGE_BYTES} bytes",
+        file_len <= MAX_RUNTIME_FONT_BYTES,
+        "font {} is {file_len} bytes, but simulator storage is limited to {MAX_RUNTIME_FONT_BYTES} bytes",
         path.display()
     );
 
-    let storage = RUNTIME_FONT_BYTES.init_with(|| Box::new([0; RUNTIME_FONT_STORAGE_BYTES]));
-    file.read_exact(&mut storage[..file_len])
+    let mut storage = vec![0; file_len].into_boxed_slice();
+    file.read_exact(&mut storage)
         .unwrap_or_else(|error| panic!("failed to read font {}: {error}", path.display()));
 
-    FontData::new(&storage[..file_len])
+    let storage: &'static [u8] = RUNTIME_FONT_BYTES.init(storage);
+    FontData::new(storage)
 }
 
 fn install_reader_images(slots: &[HostImageSlot], images: Vec<DecodedReaderImage>) {
