@@ -41,6 +41,7 @@ mod host_epub;
 mod host_image;
 mod reader_demo;
 mod reader_progress;
+mod runtime;
 
 const DISPLAY_WIDTH: u32 = 480;
 const DISPLAY_HEIGHT: u32 = 800;
@@ -447,21 +448,14 @@ fn main() {
 
 #[cfg(not(feature = "heap-profile"))]
 fn main() {
+    use crate::runtime::new_runtime;
+
     let args = SimulatorArgs::parse();
 
     let reader_slots: [HostImageSlot; READER_IMAGE_CAPACITY] =
         std::array::from_fn(|_| HostImageSlot::default());
 
-    let mut runtime = Box::new(
-        RuntimeBuilder::default()
-            .entities::<16_384, 32>()
-            .callbacks::<8_192, 64>()
-            .frame::<2_048, 32_768>()
-            .element_states::<256>()
-            .globals::<2_048, 8>()
-            .render_resources::<2, 128, { 16 * 1024 }, READER_IMAGE_CAPACITY>()
-            .build(),
-    );
+    let mut runtime = new_runtime();
     runtime.set_global(Theme::EINK).unwrap();
 
     let runtime_font = runtime_font_path(args.font.as_deref());

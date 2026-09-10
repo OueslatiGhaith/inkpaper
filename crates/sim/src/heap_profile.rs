@@ -1,6 +1,26 @@
-use super::*;
-use inkpaper_app::Route;
+use std::path::Path;
+
+use embedded_graphics::pixelcolor::Rgb888;
+use embedded_graphics_simulator::SimulatorDisplay;
+use inkpaper_app::{
+    AppEvent, AppModel, Button as AppButton, ButtonEdge as AppButtonEdge, InkPaperApp,
+    InputEvent as AppInputEvent, PlatformAction, Route, TouchEvent as AppTouchEvent, theme::Theme,
+};
 use inkpaper_epub::SpineIndex;
+use inkpaper_reader::Viewport;
+use inkpaper_ui::{FontFace, FontRegistry, prelude::*};
+
+use crate::{
+    BODY_FONT, DISPLAY_HEIGHT, DISPLAY_SIZE_EG, DISPLAY_WIDTH, HEADING_FONT, READER_IMAGE_CAPACITY,
+    args::SimulatorArgs,
+    button_event, handle_app_event, heap,
+    host_image::HostImageSlot,
+    install_reader_images, load_initial_reader, load_requested_chapter, load_requested_page,
+    reader_demo::HostReader,
+    rebuild_ui,
+    runtime::{SimulatorRuntime, new_runtime},
+    runtime_font_path, update_ui,
+};
 
 pub fn run(args: SimulatorArgs) {
     let path = args.epub.as_deref().expect("profiling requires --epub");
@@ -34,16 +54,7 @@ fn run_cycle(path: &Path, font: Option<&'static dyn FontFace>, turns: usize, bas
     let slots: [HostImageSlot; READER_IMAGE_CAPACITY] =
         std::array::from_fn(|_| HostImageSlot::default());
 
-    let mut runtime = Box::new(
-        RuntimeBuilder::default()
-            .entities::<16_384, 32>()
-            .callbacks::<8_192, 64>()
-            .frame::<2_048, 32_768>()
-            .element_states::<256>()
-            .globals::<2_048, 8>()
-            .render_resources::<2, 128, { 16 * 1024 }, READER_IMAGE_CAPACITY>()
-            .build(),
-    );
+    let mut runtime = new_runtime();
     runtime.set_global(Theme::EINK).unwrap();
 
     let mut fonts = FontRegistry::<2>::default();
@@ -105,6 +116,7 @@ fn run_cycle(path: &Path, font: Option<&'static dyn FontFace>, turns: usize, bas
                 &ids,
                 button_event(AppButton::Next, edge),
             );
+
             update_ui(runtime.as_mut(), &mut display);
         }
 
@@ -187,7 +199,13 @@ fn position(runtime: &impl RuntimeApi, app: Entity<InkPaperApp>) -> (Route, Spin
         .unwrap()
 }
 
-fn report_state(runtime: &impl RuntimeApi, app: Entity<InkPaperApp>) {
+fn report_state(runtime: &SimulatorRuntime<'_>, app: Entity<InkPaperApp>) {
+    eprintln!(
+        "frame: nodes={} text_bytes={}",
+        runtime.frame_node_count(),
+        runtime.frame_text_bytes_used()
+    );
+
     runtime
         .update(app, |app, _| {
             let reader = app.reader().expect("profile reader must remain installed");

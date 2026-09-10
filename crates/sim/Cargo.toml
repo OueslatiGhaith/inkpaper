@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = []
+default = ["alloc"]
 alloc = ["inkpaper-ui/alloc"]
 heap-profile = ["dep:dhat"]
 defmt = ["inkpaper-app/defmt", "inkpaper-ui/defmt"]
