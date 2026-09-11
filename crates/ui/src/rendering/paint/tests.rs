@@ -200,18 +200,20 @@ impl CanvasPainter for RecordingCanvasPainter<'_> {
     }
 }
 
-fn draw_test_canvas(bounds: Rect, painter: &mut dyn CanvasPainter) {
-    painter.fill_rect(
-        Rect::new(Point::ZERO, Size::new(bounds.width(), px(4))),
-        Color::RED,
-    );
-    painter.line(
-        Point::new(px(0), px(0)),
-        Point::new(bounds.width() - px(1), bounds.height() - px(1)),
-        px(1),
-        Color::GREEN,
-    );
-    painter.fill_circle(Point::new(px(10), px(10)), px(3), Color::BLUE);
+fn draw_test_canvas(paint: &mut PaintCx<'_>) {
+    paint.draw_shapes(paint.bounds(), |bounds, painter| {
+        painter.fill_rect(
+            Rect::new(Point::ZERO, Size::new(bounds.width(), px(4))),
+            Color::RED,
+        );
+        painter.line(
+            Point::new(px(0), px(0)),
+            Point::new(bounds.width() - px(1), bounds.height() - px(1)),
+            px(1),
+            Color::GREEN,
+        );
+        painter.fill_circle(Point::new(px(10), px(10)), px(3), Color::BLUE);
+    });
 }
 
 #[test]
@@ -534,6 +536,8 @@ fn canvas_callback_draws_in_local_coordinates() {
     );
 }
 
+type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
+
 #[test]
 fn entity_canvas_can_draw_from_entity_state() {
     struct Gauge {
@@ -543,11 +547,13 @@ fn entity_canvas_can_draw_from_entity_state() {
     impl Render for Gauge {
         fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
             div().w(px(100)).h(px(20)).child(
-                cx.canvas(|this, bounds, painter| {
-                    painter.fill_rect(
-                        Rect::new(Point::ZERO, Size::new(this.value, bounds.height())),
-                        Color::GREEN,
-                    );
+                cx.canvas(|this, paint| {
+                    paint.draw_shapes(paint.bounds(), |bounds, painter| {
+                        painter.fill_rect(
+                            Rect::new(Point::ZERO, Size::new(this.value, bounds.height())),
+                            Color::GREEN,
+                        );
+                    });
                 })
                 .size(Size::new(px(100), px(20))),
             )
@@ -574,8 +580,6 @@ fn entity_canvas_can_draw_from_entity_state() {
     );
 }
 
-type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
-
 #[test]
 fn entity_canvas_callback_can_capture_render_data() {
     struct Gauge {
@@ -588,14 +592,16 @@ fn entity_canvas_callback_can_capture_render_data() {
             let inset = self.inset;
 
             div().child(
-                cx.canvas(move |this, bounds, painter| {
-                    painter.fill_rect(
-                        Rect::new(
-                            Point::new(inset, Pixels::ZERO),
-                            Size::new(this.value, bounds.height()),
-                        ),
-                        Color::BLUE,
-                    );
+                cx.canvas(move |this, paint| {
+                    paint.draw_shapes(paint.bounds(), |bounds, painter| {
+                        painter.fill_rect(
+                            Rect::new(
+                                Point::new(inset, Pixels::ZERO),
+                                Size::new(this.value, bounds.height()),
+                            ),
+                            Color::BLUE,
+                        );
+                    });
                 })
                 .size(Size::new(px(100), px(20))),
             )

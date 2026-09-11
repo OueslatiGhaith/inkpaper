@@ -1,5 +1,6 @@
 use crate::{
-    Color, Element, MountCx, MountError, NodeId, Pixels, Point, Rect, Size, callback::CallbackId,
+    Color, Element, MountCx, MountError, NodeId, PaintCx, Pixels, Point, Rect, Size,
+    callback::CallbackId,
 };
 
 pub trait CanvasPainter {
@@ -10,7 +11,9 @@ pub trait CanvasPainter {
     fn stroke_circle(&mut self, center: Point, radius: Pixels, width: Pixels, color: Color);
 }
 
-pub type CanvasDrawFn = fn(bounds: Rect, painter: &mut dyn CanvasPainter);
+/// Called during painting with the canva's resources, local bounds, and clip.
+/// It may run once per damage rectangle or be skipped. Only read state and draw
+pub type CanvasDrawFn = fn(paint: &mut PaintCx<'_>);
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CanvasDraw {

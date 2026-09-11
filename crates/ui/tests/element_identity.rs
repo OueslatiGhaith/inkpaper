@@ -12,7 +12,7 @@ type TestRuntime = Runtime<
     32,   // element states
 >;
 
-fn draw_nothing(_: Rect, _: &mut dyn CanvasPainter) {}
+fn draw_nothing(_: &mut PaintCx<'_>) {}
 
 struct Badge<'a> {
     label: &'a str,

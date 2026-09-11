@@ -1007,18 +1007,20 @@ fn image_can_use_explicit_box_size() {
     assert_bounds(frame.bounds(image_node), 0, 0, 30, 30);
 }
 
-fn draw_test_canvas(bounds: Rect, painter: &mut dyn CanvasPainter) {
-    painter.fill_rect(
-        Rect::new(Point::ZERO, Size::new(bounds.width(), px(4))),
-        Color::RED,
-    );
-    painter.line(
-        Point::new(px(0), px(0)),
-        Point::new(bounds.width() - px(1), bounds.height() - px(1)),
-        px(1),
-        Color::GREEN,
-    );
-    painter.fill_circle(Point::new(px(10), px(10)), px(3), Color::BLUE);
+fn draw_test_canvas(paint: &mut PaintCx<'_>) {
+    paint.draw_shapes(paint.bounds(), |bounds, painter| {
+        painter.fill_rect(
+            Rect::new(Point::ZERO, Size::new(bounds.width(), px(4))),
+            Color::RED,
+        );
+        painter.line(
+            Point::new(px(0), px(0)),
+            Point::new(bounds.width() - px(1), bounds.height() - px(1)),
+            px(1),
+            Color::GREEN,
+        );
+        painter.fill_circle(Point::new(px(10), px(10)), px(3), Color::BLUE);
+    });
 }
 
 #[test]

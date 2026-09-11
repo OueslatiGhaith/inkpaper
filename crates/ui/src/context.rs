@@ -1,7 +1,7 @@
 use core::cell::Cell;
 
 use crate::{
-    Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, Rect,
+    Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, PaintCx, Rect,
     callback::{CallbackAllocError, CallbackStore, register_canvas_callback, register_listener},
     entity::{EntityStore, create_entity},
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
@@ -112,7 +112,7 @@ impl<T: 'static> Context<'_, T> {
 
     pub fn try_canvas<F>(&mut self, callback: F) -> Result<Canvas, CallbackAllocError>
     where
-        F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
+        F: Fn(&T, &mut PaintCx<'_>) + 'static,
     {
         let callback = register_canvas_callback(self.callbacks, self.entity, callback)?;
 
@@ -121,7 +121,7 @@ impl<T: 'static> Context<'_, T> {
 
     pub fn canvas<F>(&mut self, callback: F) -> Canvas
     where
-        F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
+        F: Fn(&T, &mut PaintCx<'_>) + 'static,
     {
         self.try_canvas(callback)
             .unwrap_or_else(|error| panic!("could not allocate canvas callback: {error:?}"))

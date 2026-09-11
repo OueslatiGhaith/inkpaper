@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 mod allocated;
 mod arena;
 
-pub use arena::{CallbackAllocError, ListenerInvokeError};
+pub use arena::{CallbackAllocError, CanvasInvokeError, ListenerInvokeError};
 
 pub(crate) use arena::{CallbackStore, register_canvas_callback, register_listener};
 

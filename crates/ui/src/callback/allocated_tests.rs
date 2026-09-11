@@ -1,25 +1,26 @@
 use super::*;
 use crate::{
-    ActivateEvent, Color, Context, EntityAccessError, EntityArena, GlobalArena, Pixels, Point,
+    ActivateEvent, Context, EntityAccessError, EntityArena, GlobalArena, PaintCx, Point, Rect,
+    ResolvedTextStyle, Size,
     callback::{register_canvas_callback, register_listener},
+    px, text,
 };
 use std::{cell::Cell, rc::Rc};
 
 #[derive(Default)]
 struct Painter(usize);
 
-impl CanvasPainter for Painter {
-    fn fill_rect(&mut self, _: Rect, _: Color) {
+impl crate::PaintSink for Painter {
+    fn text(&mut self, _: Rect, _: Rect, _: &str, _: crate::ResolvedTextStyle) {
         self.0 += 1;
     }
 
-    fn stroke_rect(&mut self, _: Rect, _: Pixels, _: Color) {}
+    fn image(&mut self, _: Rect, _: Rect, _: crate::ImageSource, _: crate::ImagePaint) {}
 
-    fn line(&mut self, _: Point, _: Point, _: Pixels, _: Color) {}
+    fn box_paint(&mut self, _: Rect, _: Rect, _: crate::BoxPaint) {}
 
-    fn fill_circle(&mut self, _: Point, _: Pixels, _: Color) {}
-
-    fn stroke_circle(&mut self, _: Point, _: Pixels, _: Pixels, _: Color) {}
+    fn shapes(&mut self, _: Rect, _: Rect, _: &mut dyn FnMut(Rect, &mut dyn crate::CanvasPainter)) {
+    }
 }
 
 #[test]
@@ -43,7 +44,7 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
 
             for _ in 0..32 {
                 cx.try_listener::<ActivateEvent, _>(|_, _, _| {}).unwrap();
-                cx.try_canvas(|_, _, _| {}).unwrap();
+                cx.try_canvas(|_, _| {}).unwrap();
             }
 
             assert_eq!(&capture as *const Capture, address);
@@ -73,20 +74,19 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
     let listener =
         register_listener(&callbacks, target, |_: &mut u32, _: &ActivateEvent, _| {}).unwrap();
 
-    let canvas = register_canvas_callback(&callbacks, target, |value, bounds, painter| {
+    let canvas = register_canvas_callback(&callbacks, target, |value, paint| {
         assert_eq!(*value, 42);
-        painter.fill_rect(bounds, Color::WHITE);
+        paint.draw_text(paint.bounds(), text("ok"));
     })
     .unwrap();
 
     let mut painter = Painter::default();
-    let bounds = Rect::default();
+    let bounds = Rect::new(Point::ZERO, Size::new(px(10), px(10)));
+    let mut paint = PaintCx::new(&mut painter, bounds, None, ResolvedTextStyle::default());
 
     callbacks
-        .invoke_canvas(canvas, bounds, &mut painter, &entities)
+        .invoke_canvas(canvas, &mut paint, &entities)
         .unwrap();
-
-    assert_eq!(painter.0, 1);
 
     assert_eq!(
         callbacks.invoke_listener(
@@ -100,7 +100,7 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
     );
 
     assert_eq!(
-        callbacks.invoke_canvas(listener.id, bounds, &mut painter, &entities),
+        callbacks.invoke_canvas(listener.id, &mut paint, &entities),
         Err(CanvasInvokeError::CallbackKindMismatch)
     );
 
@@ -118,7 +118,7 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
     entities
         .update(target, |_| {
             assert_eq!(
-                callbacks.invoke_canvas(canvas, bounds, &mut painter, &entities),
+                callbacks.invoke_canvas(canvas, &mut paint, &entities),
                 Err(CanvasInvokeError::Entity(EntityAccessError::BorrowConflict))
             );
         })
@@ -126,7 +126,7 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
 
     callbacks.reset();
 
-    let replacement = register_canvas_callback(&callbacks, target, |_, _, _| {}).unwrap();
+    let replacement = register_canvas_callback(&callbacks, target, |_, _| {}).unwrap();
 
     assert_eq!(replacement.slot(), listener.id.slot());
     assert_ne!(replacement.generation(), listener.id.generation());
@@ -137,13 +137,14 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
     );
 
     assert_eq!(
-        callbacks.invoke_canvas(canvas, bounds, &mut painter, &entities),
+        callbacks.invoke_canvas(canvas, &mut paint, &entities),
         Err(CanvasInvokeError::InvalidCallback)
     );
 
     callbacks
-        .invoke_canvas(replacement, bounds, &mut painter, &entities)
+        .invoke_canvas(replacement, &mut paint, &entities)
         .unwrap();
+    assert_eq!(painter.0, 1);
 }
 
 #[test]
@@ -175,7 +176,7 @@ fn reset_releases_captures_and_reuses_slot_capacity() {
 
         let capture = Capture(drops.clone());
 
-        register_canvas_callback(&callbacks, target, move |_, _, _| {
+        register_canvas_callback(&callbacks, target, move |_, _| {
             let _ = &capture;
         })
         .unwrap();

@@ -9,7 +9,7 @@ use core::{
 use heapless::Vec;
 
 use crate::{
-    CanvasPainter, Context, Entity, EntityAccessError, EntityId, Listener, Rect,
+    CanvasPainter, Context, Entity, EntityAccessError, EntityId, Listener, PaintCx, Rect,
     callback::CallbackId,
     entity::{EntityBorrowKind, EntityStore, RawEntityBorrow, align_up},
     global::GlobalStore,
@@ -41,7 +41,7 @@ impl From<EntityAccessError> for ListenerInvokeError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CanvasInvokeError {
+pub enum CanvasInvokeError {
     InvalidCallback,
     CallbackKindMismatch,
     Entity(EntityAccessError),
@@ -66,8 +66,7 @@ type ListenerInvokeFn = unsafe fn(
 type CanvasInvokeFn = unsafe fn(
     closure: *const u8,
     target: EntityId,
-    bounds: Rect,
-    painter: &mut dyn CanvasPainter,
+    paint: &mut PaintCx<'_>,
     entities: &dyn EntityStore,
 ) -> Result<(), CanvasInvokeError>;
 
@@ -122,8 +121,7 @@ pub(crate) unsafe trait CallbackStore {
     fn invoke_canvas(
         &self,
         callback: CallbackId,
-        bounds: Rect,
-        painter: &mut dyn CanvasPainter,
+        paint: &mut PaintCx<'_>,
         entities: &dyn EntityStore,
     ) -> Result<(), CanvasInvokeError>;
 }
@@ -151,8 +149,8 @@ impl<const N: usize> CallbackStorage<N> {
 /// 4. event [`TypeId`] is checked before casting event pointer to E.
 /// 5. the callback trampoline used for a callback matches the concrete F, T, and E used when
 ///    that callback was registered.
-/// 6. the callback target is exclusively borrowed through [`EntityStore`] for
-///    the complete callback.
+/// 6. Listeners hold an exclusive target borrow and canvas callbacks hold a shared target
+///    borrow for the complete callback
 /// 7. only Live callbacks are dropped.
 /// 8. each live callback is dropped exactly once.
 pub(crate) struct CallbackArena<const BYTES: usize, const SLOTS: usize> {
@@ -282,8 +280,7 @@ impl<const BYTES: usize, const SLOTS: usize> CallbackArena<BYTES, SLOTS> {
     fn invoke_canvas_callback(
         &self,
         callback: CallbackId,
-        bounds: Rect,
-        painter: &mut dyn CanvasPainter,
+        paint: &mut PaintCx<'_>,
         entities: &dyn EntityStore,
     ) -> Result<(), CanvasInvokeError> {
         let slot = callback.slot() as usize;
@@ -307,7 +304,7 @@ impl<const BYTES: usize, const SLOTS: usize> CallbackArena<BYTES, SLOTS> {
 
         let closure = unsafe { self.storage_ptr().add(meta.offset) };
 
-        unsafe { invoke_fn(closure, meta.target, bounds, painter, entities) }
+        unsafe { invoke_fn(closure, meta.target, paint, entities) }
     }
 }
 
@@ -380,11 +377,10 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore for CallbackAr
     fn invoke_canvas(
         &self,
         callback: CallbackId,
-        bounds: Rect,
-        painter: &mut dyn CanvasPainter,
+        paint: &mut PaintCx<'_>,
         entities: &dyn EntityStore,
     ) -> Result<(), CanvasInvokeError> {
-        self.invoke_canvas_callback(callback, bounds, painter, entities)
+        self.invoke_canvas_callback(callback, paint, entities)
     }
 }
 
@@ -433,13 +429,12 @@ where
 unsafe fn invoke_canvas_callback<T, F>(
     closure: *const u8,
     target: EntityId,
-    bounds: Rect,
-    painter: &mut dyn CanvasPainter,
+    paint: &mut PaintCx<'_>,
     entities: &dyn EntityStore,
 ) -> Result<(), CanvasInvokeError>
 where
     T: 'static,
-    F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
+    F: Fn(&T, &mut PaintCx<'_>) + 'static,
 {
     let borrow = RawEntityBorrow::acquire(
         entities,
@@ -451,7 +446,7 @@ where
     let state = unsafe { &*borrow.ptr().cast::<T>().as_ptr() };
     let callback = unsafe { &*closure.cast::<F>() };
 
-    callback(state, bounds, painter);
+    callback(state, paint);
 
     Ok(())
 }
@@ -489,7 +484,7 @@ pub(crate) fn register_canvas_callback<T, F>(
 ) -> Result<CallbackId, CallbackAllocError>
 where
     T: 'static,
-    F: Fn(&T, Rect, &mut dyn CanvasPainter) + 'static,
+    F: Fn(&T, &mut PaintCx<'_>) + 'static,
 {
     let reservation = store.reserve(
         Layout::new::<F>(),

@@ -11,7 +11,8 @@ use alloc::{
 };
 
 use crate::{
-    CallbackAllocError, CanvasPainter, EntityId, GlobalStore, Listener, ListenerInvokeError, Rect,
+    CallbackAllocError, CanvasPainter, EntityId, GlobalStore, Listener, ListenerInvokeError,
+    PaintCx, Rect,
     callback::{
         CallbackId, CallbackStore,
         arena::{CallbackKind, CanvasInvokeError, RawCallbackReservation},
@@ -203,8 +204,7 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore for CallbackAr
     fn invoke_canvas(
         &self,
         callback: CallbackId,
-        bounds: Rect,
-        painter: &mut dyn CanvasPainter,
+        paint: &mut PaintCx<'_>,
         entities: &dyn EntityStore,
     ) -> Result<(), CanvasInvokeError> {
         let (ptr, target, kind) = self
@@ -217,7 +217,7 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore for CallbackAr
 
         // SAFETY: lookup validated the live closure. Its canvas trampoline acquires
         // a shared borrow of the target. Reset cannot run during this &self borrow.
-        unsafe { invoke_fn(ptr.as_ptr(), target, bounds, painter, entities) }
+        unsafe { invoke_fn(ptr.as_ptr(), target, paint, entities) }
     }
 }
 

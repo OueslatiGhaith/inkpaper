@@ -1,12 +1,10 @@
 use inkpaper_ui::prelude::*;
 
-use crate::{
-    reader::{ReaderPageView, ReaderSession},
-    theme::Theme,
-};
+use crate::{reader::ReaderSession, theme::Theme};
 
 pub struct ReaderScreen<'a> {
     session: &'a ReaderSession,
+    page: Canvas,
     previous: Listener<ActivateEvent>,
     next: Listener<ActivateEvent>,
 }
@@ -14,11 +12,13 @@ pub struct ReaderScreen<'a> {
 impl<'a> ReaderScreen<'a> {
     pub const fn new(
         session: &'a ReaderSession,
+        page: Canvas,
         previous: Listener<ActivateEvent>,
         next: Listener<ActivateEvent>,
     ) -> Self {
         Self {
             session,
+            page,
             previous,
             next,
         }
@@ -34,11 +34,7 @@ impl RenderOnce for ReaderScreen<'_> {
             .w_full()
             .h_full()
             .overflow_hidden()
-            .child(ReaderPageView::new(
-                self.session.current_page(),
-                self.session.viewport(),
-                self.session.resources(),
-            ))
+            .child(self.page)
             .child(
                 div()
                     .absolute()

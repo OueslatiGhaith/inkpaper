@@ -225,6 +225,26 @@ impl Render for InkPaperApp {
                 .as_ref()
                 .expect("reader route requires an installed reader session");
 
+            let viewport = reader.viewport();
+            let size = Size::new(
+                px(i32::try_from(viewport.width()).unwrap_or(i32::MAX)),
+                px(i32::try_from(viewport.height()).unwrap_or(i32::MAX)),
+            );
+            let page = cx
+                .canvas(|app, paint| {
+                    let reader = app
+                        .reader
+                        .as_ref()
+                        .expect("reader session must remain installed");
+                    crate::reader::paint_reader_page(
+                        reader.current_page(),
+                        reader.viewport(),
+                        reader.resources(),
+                        paint,
+                    );
+                })
+                .size(size);
+
             return Either::Left(
                 div()
                     .w_full()
@@ -233,6 +253,7 @@ impl Render for InkPaperApp {
                     .text_color(theme.ink)
                     .child(ReaderScreen::new(
                         reader,
+                        page,
                         previous_reader_page,
                         next_reader_page,
                     )),

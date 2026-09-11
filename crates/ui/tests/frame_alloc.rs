@@ -457,7 +457,7 @@ fn callback_allocation_failures_drop_captures_and_allow_listener_and_canvas_retr
             let result = failing_allocation(after, || {
                 runtime.update(entity, |_, cx| {
                     if canvas {
-                        cx.try_canvas(move |_, _, _| {
+                        cx.try_canvas(move |_, _| {
                             let _ = &capture;
                         })
                         .map(|_| ())
@@ -479,7 +479,7 @@ fn callback_allocation_failures_drop_captures_and_allow_listener_and_canvas_retr
             runtime
                 .update(entity, |_, cx| {
                     if canvas {
-                        cx.try_canvas(move |_, _, _| {
+                        cx.try_canvas(move |_, _| {
                             let _ = &capture;
                         })
                         .unwrap();

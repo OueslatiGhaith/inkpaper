@@ -1,9 +1,10 @@
 use crate::{
-    Axis, CanvasDraw, CanvasPainter, Color, DamageRegion, FrameArena, ImageColorMode, ImagePaint,
-    ImageSource, NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle,
-    callback::CallbackStore, count_metric, entity::EntityStore, flow_axis, visual::VisualNode,
+    Axis, CanvasPainter, Color, DamageRegion, FrameArena, ImageColorMode, ImagePaint, ImageSource,
+    NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, callback::CallbackStore,
+    count_metric, entity::EntityStore, flow_axis, visual::VisualNode,
 };
 
+mod canvas;
 #[cfg(test)]
 mod tests;
 
@@ -198,44 +199,16 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 Ok(())
             }
 
-            NodeKind::Canvas { draw, .. } => {
-                let mut invoke =
-                    |local_bounds: Rect, canvas_painter: &mut dyn CanvasPainter| match draw {
-                        CanvasDraw::Static(draw) => {
-                            draw(local_bounds, canvas_painter);
-                        }
-
-                        CanvasDraw::Entity(callback) => {
-                            let Some(runtime) = runtime else {
-                                debug_assert!(
-                                    false,
-                                    "entity canvas painted without callback context",
-                                );
-                                return;
-                            };
-
-                            let result = runtime.callbacks.invoke_canvas(
-                                callback,
-                                local_bounds,
-                                canvas_painter,
-                                runtime.entities,
-                            );
-
-                            debug_assert!(
-                                result.is_ok(),
-                                "entity canvas callback invocation failed: {result:?}",
-                            );
-                        }
-                    };
-
-                painter.draw_canvas(bounds, clip, &mut invoke)?;
-
-                // vanvas drawing is opaque to the frame traversal.
-                // conservatively classify a painted canvas as graphics.
-                report.mark_graphics();
-
-                Ok(())
-            }
+            NodeKind::Canvas { draw, .. } => canvas::paint_canvas(
+                draw,
+                bounds,
+                clip,
+                node.effective_text_style,
+                runtime,
+                resources,
+                report,
+                painter,
+            ),
 
             NodeKind::Image { source, style } => {
                 painter.draw_image(resources, source, bounds, style.paint, clip)?;
