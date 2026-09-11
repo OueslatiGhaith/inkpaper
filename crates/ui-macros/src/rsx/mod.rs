@@ -5,7 +5,7 @@ use rstml::{
     node::{Node, NodeAttribute, NodeBlock, NodeElement},
     parse2,
 };
-use syn::{Expr, Ident, Lit};
+use syn::{Expr, Ident, Lit, Stmt};
 
 use crate::rsx::spec::{ArgumentKind, UtilityReceiver, UtilitySpec, utility_specs};
 
@@ -88,6 +88,10 @@ fn expand_block(block: &NodeBlock) -> syn::Result<TokenStream> {
             "invalid Rust expression in rsx! child",
         ));
     };
+
+    if let [Stmt::Expr(expression, None)] = block.stmts.as_slice() {
+        return Ok(quote! { #expression });
+    }
 
     Ok(quote! { #block })
 }
