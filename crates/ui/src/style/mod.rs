@@ -1,8 +1,11 @@
-mod text;
-
 pub use text::*;
 
 use crate::{Color, FontId, Invalidation, Length, Pixels, px};
+
+mod text;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -76,13 +79,22 @@ macro_rules! declare_style {
         pub struct Style {
             $(
                 $invalidation:ident {
-                    $( $field_name:ident: $field_ty:ty = $field_default:expr ),* $(,)?
+                    $(
+                        $field_name:ident: $field_ty:ty = $field_default:expr => {
+                            $($field_utilities:tt)*
+                        }
+                    ),* $(,)?
                 }
             )*
+
             @text {
                 $(
                     $text_invalidation:ident {
-                        $( $text_name:ident: $text_ty:ty = $text_default:expr ),* $(,)?
+                        $(
+                            $text_name:ident: $text_ty:ty = $text_default:expr => {
+                                $($text_utilities:tt)*
+                            }
+                        ),* $(,)?
                     }
                 )*
             }
@@ -90,14 +102,22 @@ macro_rules! declare_style {
     ) => {
         $(#[$attr])*
         pub struct Style {
-            $( $( pub $field_name: $field_ty,)* )*
+            $(
+                $(
+                    pub $field_name: $field_ty,
+                )*
+            )*
             pub(crate) text: TextStyle,
         }
 
         impl Default for Style {
             fn default() -> Self {
                 Self {
-                    $( $( $field_name: $field_default, )* )*
+                    $(
+                        $(
+                            $field_name: $field_default,
+                        )*
+                    )*
                     text: TextStyle::default(),
                 }
             }
@@ -126,7 +146,11 @@ macro_rules! declare_style {
 
             pub(crate) fn resolve(self, inherited: ResolvedTextStyle) -> ResolvedTextStyle {
                 ResolvedTextStyle {
-                    $( $( $text_name: self.$text_name.unwrap_or(inherited.$text_name), )* )*
+                    $(
+                        $(
+                            $text_name: self.$text_name.unwrap_or(inherited.$text_name),
+                        )*
+                    )*
                 }
             }
 
@@ -167,7 +191,6 @@ macro_rules! declare_style {
             }
         }
 
-
         #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
         pub(crate) struct StylePatch {
             $( $( $field_name: Option< $field_ty >, )* )*
@@ -195,6 +218,7 @@ macro_rules! declare_style {
                         }
                     )*
                 )*
+
                 style.text = style.text.merge(self.text);
 
                 style
@@ -218,344 +242,210 @@ macro_rules! declare_style {
                     $(
                         if self.$field_name.is_some() {
                             invalidation = invalidation.merge(
-                                declare_style!(@invalidation, $invalidation)
+                                declare_style!(@invalidation, $invalidation),
                             );
                         }
                     )*
                 )*
+
                 invalidation = invalidation.merge(self.text.invalidation());
 
                 invalidation
             }
         }
+
+        pub trait Styled: Sized {
+            fn style_mut(&mut self) -> &mut Style;
+
+            $(
+                $(
+                    declare_style!(
+                        @styled_methods
+                        $field_name;
+                        $($field_utilities)*
+                    );
+                )*
+            )*
+        }
+
+        pub trait TextStyled: Sized {
+            fn text_style_mut(&mut self) -> &mut TextStyle;
+
+            $(
+                $(
+                    declare_style!(
+                        @text_styled_methods
+                        $text_name;
+                        $($text_utilities)*
+                    );
+                )*
+            )*
+        }
+
+        impl<T> TextStyled for T
+        where
+            T: Styled,
+        {
+            fn text_style_mut(&mut self) -> &mut TextStyle {
+                &mut self.style_mut().text
+            }
+        }
     };
 
-    (@invalidation, layout) => { Invalidation::Layout };
-    (@invalidation, paint) => { Invalidation::Paint };
-    (@invalidation, rebuild) => { Invalidation::Rebuild };
+    (@styled_methods $field_name:ident;) => {};
+
+    (
+        @styled_methods
+        $field_name:ident;
+        $method_name:ident(
+            $( $arg_name:ident: $arg_ty:ty ),+ $(,)?
+        ) => |$style:ident| $body:block;
+        $($rest:tt)*
+    ) => {
+        fn $method_name(
+            mut self,
+            $( $arg_name: $arg_ty ),+
+        ) -> Self {
+            let $style = self.style_mut();
+            $body
+            self
+        }
+
+        declare_style!(@styled_methods $field_name; $($rest)*);
+    };
+
+    (
+        @styled_methods
+        $field_name:ident;
+        $method_name:ident => |$style:ident| $body:block;
+        $($rest:tt)*
+    ) => {
+        fn $method_name(mut self) -> Self {
+            let $style = self.style_mut();
+            $body
+            self
+        }
+
+        declare_style!(@styled_methods $field_name; $($rest)*);
+    };
+
+    (
+        @styled_methods
+        $field_name:ident;
+        $method_name:ident(
+            $( $arg_name:ident: $arg_ty:ty ),+ $(,)?
+        ) => $value:expr;
+        $($rest:tt)*
+    ) => {
+        fn $method_name(
+            mut self,
+            $( $arg_name: $arg_ty ),+
+        ) -> Self {
+            self.style_mut().$field_name = $value;
+            self
+        }
+
+        declare_style!(@styled_methods $field_name; $($rest)*);
+    };
+
+    (
+        @styled_methods
+        $field_name:ident;
+        $method_name:ident => $value:expr;
+        $($rest:tt)*
+    ) => {
+        fn $method_name(mut self) -> Self {
+            self.style_mut().$field_name = $value;
+            self
+        }
+
+        declare_style!(@styled_methods $field_name; $($rest)*);
+    };
+
+    (@text_styled_methods $field_name:ident;) => {};
+
+    (
+        @text_styled_methods
+        $field_name:ident;
+        $method_name:ident(
+            $( $arg_name:ident: $arg_ty:ty ),+ $(,)?
+        ) => |$text_style:ident| $body:block;
+        $($rest:tt)*
+    ) => {
+        fn $method_name(
+            mut self,
+            $( $arg_name: $arg_ty ),+
+        ) -> Self {
+            let $text_style = self.text_style_mut();
+            $body
+            self
+        }
+
+        declare_style!(@text_styled_methods $field_name; $($rest)*);
+    };
+
+    (
+        @text_styled_methods
+        $field_name:ident;
+        $method_name:ident => |$text_style:ident| $body:block;
+        $($rest:tt)*
+    ) => {
+        fn $method_name(mut self) -> Self {
+            let $text_style = self.text_style_mut();
+            $body
+            self
+        }
+
+        declare_style!(@text_styled_methods $field_name; $($rest)*);
+    };
+
+    (
+        @text_styled_methods
+        $field_name:ident;
+        $method_name:ident(
+            $( $arg_name:ident: $arg_ty:ty ),+ $(,)?
+        ) => $value:expr;
+        $($rest:tt)*
+    ) => {
+        fn $method_name(
+            mut self,
+            $( $arg_name: $arg_ty ),+
+        ) -> Self {
+            self.text_style_mut().$field_name = Some($value);
+            self
+        }
+
+        declare_style!(@text_styled_methods $field_name; $($rest)*);
+    };
+
+    (
+        @text_styled_methods
+        $field_name:ident;
+        $method_name:ident => $value:expr;
+        $($rest:tt)*
+    ) => {
+        fn $method_name(mut self) -> Self {
+            self.text_style_mut().$field_name = Some($value);
+            self
+        }
+
+        declare_style!(@text_styled_methods $field_name; $($rest)*);
+    };
+
+    (@invalidation, layout) => {
+        Invalidation::Layout
+    };
+
+    (@invalidation, paint) => {
+        Invalidation::Paint
+    };
+
+    (@invalidation, rebuild) => {
+        Invalidation::Rebuild
+    };
 }
 
-declare_style! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct Style {
-        layout {
-            display: Display = Display::Block,
-            position: Position = Position::Static,
-
-            flex_direction: FlexDirection = FlexDirection::Row,
-            align_items: AlignItems = AlignItems::Start,
-            justify_content: JustifyContent = JustifyContent::Start,
-
-            flex_grow: u16 = 0,
-            flex_shrink: u16 = 0,
-            flex_basis: FlexBasis = FlexBasis::Auto,
-
-            width: Length = Length::Auto,
-            height: Length = Length::Auto,
-
-            min_width: Option<Pixels> = None,
-            max_width: Option<Pixels> = None,
-            min_height: Option<Pixels> = None,
-            max_height: Option<Pixels> = None,
-
-            padding: Edges<Pixels> = Edges::all(px(0)),
-            margin: Edges<Pixels> = Edges::all(px(0)),
-            gap: Pixels = px(0),
-
-            inset: Edges<Option<Pixels>> = Edges::all(None),
-
-            border_width: Pixels = px(0),
-        }
-        paint {
-            background: Option<Color> = None,
-
-            border_color: Option<Color> = None,
-            border_radius: Pixels = px(0),
-
-            clip_children: bool = false,
-        }
-        @text {
-            layout {
-                font: FontId = FontId::DEFAULT,
-                font_size: Pixels = px(16),
-                line_height: LineHeight = LineHeight::Normal,
-                wrap: TextWrap = TextWrap::NoWrap,
-                max_lines: TextMaxLines = TextMaxLines::Unlimited,
-                overflow: TextOverflow = TextOverflow::Clip,
-            }
-            paint {
-                color: Color = Color::BLACK,
-                align: TextAlign = TextAlign::Start,
-            }
-        }
-    }
-}
-
-pub trait Styled: Sized {
-    fn style_mut(&mut self) -> &mut Style;
-
-    fn relative(mut self) -> Self {
-        self.style_mut().position = Position::Relative;
-        self
-    }
-
-    fn absolute(mut self) -> Self {
-        self.style_mut().position = Position::Absolute;
-        self
-    }
-
-    fn top(mut self, value: impl Into<Pixels>) -> Self {
-        self.style_mut().inset.top = Some(value.into());
-        self
-    }
-
-    fn right(mut self, value: impl Into<Pixels>) -> Self {
-        self.style_mut().inset.right = Some(value.into());
-        self
-    }
-
-    fn bottom(mut self, value: impl Into<Pixels>) -> Self {
-        self.style_mut().inset.bottom = Some(value.into());
-        self
-    }
-
-    fn left(mut self, value: impl Into<Pixels>) -> Self {
-        self.style_mut().inset.left = Some(value.into());
-        self
-    }
-
-    fn inset(mut self, value: impl Into<Pixels>) -> Self {
-        self.style_mut().inset = Edges::all(Some(value.into()));
-        self
-    }
-
-    fn flex(mut self) -> Self {
-        self.style_mut().display = Display::Flex;
-        self
-    }
-
-    fn flex_col(mut self) -> Self {
-        self.style_mut().flex_direction = FlexDirection::Column;
-        self
-    }
-
-    fn flex_row(mut self) -> Self {
-        self.style_mut().flex_direction = FlexDirection::Row;
-        self
-    }
-
-    fn items_start(mut self) -> Self {
-        self.style_mut().align_items = AlignItems::Start;
-        self
-    }
-
-    fn items_center(mut self) -> Self {
-        self.style_mut().align_items = AlignItems::Center;
-        self
-    }
-
-    fn items_end(mut self) -> Self {
-        self.style_mut().align_items = AlignItems::End;
-        self
-    }
-
-    fn justify_start(mut self) -> Self {
-        self.style_mut().justify_content = JustifyContent::Start;
-
-        self
-    }
-
-    fn justify_center(mut self) -> Self {
-        self.style_mut().justify_content = JustifyContent::Center;
-        self
-    }
-
-    fn justify_end(mut self) -> Self {
-        self.style_mut().justify_content = JustifyContent::End;
-        self
-    }
-
-    fn justify_between(mut self) -> Self {
-        self.style_mut().justify_content = JustifyContent::Between;
-        self
-    }
-
-    fn flex_grow(mut self, weight: u16) -> Self {
-        self.style_mut().flex_grow = weight;
-        self
-    }
-
-    fn flex_shrink(mut self, weight: u16) -> Self {
-        self.style_mut().flex_shrink = weight;
-        self
-    }
-
-    fn flex_basis(mut self, basis: Pixels) -> Self {
-        self.style_mut().flex_basis = FlexBasis::Pixels(basis);
-        self
-    }
-
-    fn flex_basis_auto(mut self) -> Self {
-        self.style_mut().flex_basis = FlexBasis::Auto;
-        self
-    }
-
-    fn flex_1(mut self) -> Self {
-        self.style_mut().flex_grow = 1;
-        self.style_mut().flex_shrink = 1;
-        self.style_mut().flex_basis = FlexBasis::Pixels(px(0));
-        self
-    }
-
-    fn w(mut self, width: impl Into<Length>) -> Self {
-        self.style_mut().width = width.into();
-        self
-    }
-
-    fn w_full(mut self) -> Self {
-        self.style_mut().width = Length::Fill;
-        self
-    }
-
-    fn h(mut self, height: impl Into<Length>) -> Self {
-        self.style_mut().height = height.into();
-        self
-    }
-
-    fn h_full(mut self) -> Self {
-        self.style_mut().height = Length::Fill;
-        self
-    }
-
-    fn min_w(mut self, value: impl Into<Pixels>) -> Self {
-        self.style_mut().min_width = Some(value.into());
-        self
-    }
-
-    fn max_w(mut self, value: impl Into<Pixels>) -> Self {
-        self.style_mut().max_width = Some(value.into());
-        self
-    }
-
-    fn min_h(mut self, value: impl Into<Pixels>) -> Self {
-        self.style_mut().min_height = Some(value.into());
-        self
-    }
-
-    fn max_h(mut self, value: impl Into<Pixels>) -> Self {
-        self.style_mut().max_height = Some(value.into());
-        self
-    }
-
-    fn p(mut self, padding: impl Into<Pixels>) -> Self {
-        self.style_mut().padding = Edges::all(padding.into());
-        self
-    }
-
-    fn pt(mut self, padding: impl Into<Pixels>) -> Self {
-        self.style_mut().padding.top = padding.into();
-        self
-    }
-
-    fn pr(mut self, padding: impl Into<Pixels>) -> Self {
-        self.style_mut().padding.right = padding.into();
-        self
-    }
-
-    fn pb(mut self, padding: impl Into<Pixels>) -> Self {
-        self.style_mut().padding.bottom = padding.into();
-        self
-    }
-
-    fn pl(mut self, padding: impl Into<Pixels>) -> Self {
-        self.style_mut().padding.left = padding.into();
-        self
-    }
-
-    fn px(mut self, padding: impl Into<Pixels>) -> Self {
-        let padding = padding.into();
-        self.style_mut().padding.right = padding;
-        self.style_mut().padding.left = padding;
-        self
-    }
-
-    fn py(mut self, padding: impl Into<Pixels>) -> Self {
-        let padding = padding.into();
-        self.style_mut().padding.top = padding;
-        self.style_mut().padding.bottom = padding;
-        self
-    }
-
-    fn m(mut self, margin: impl Into<Pixels>) -> Self {
-        self.style_mut().margin = Edges::all(margin.into());
-        self
-    }
-
-    fn mt(mut self, margin: impl Into<Pixels>) -> Self {
-        self.style_mut().margin.top = margin.into();
-        self
-    }
-
-    fn mr(mut self, margin: impl Into<Pixels>) -> Self {
-        self.style_mut().margin.right = margin.into();
-        self
-    }
-
-    fn mb(mut self, margin: impl Into<Pixels>) -> Self {
-        self.style_mut().margin.bottom = margin.into();
-        self
-    }
-
-    fn ml(mut self, margin: impl Into<Pixels>) -> Self {
-        self.style_mut().margin.left = margin.into();
-        self
-    }
-
-    fn mx(mut self, margin: impl Into<Pixels>) -> Self {
-        let margin = margin.into();
-        self.style_mut().margin.right = margin;
-        self.style_mut().margin.left = margin;
-        self
-    }
-
-    fn my(mut self, margin: impl Into<Pixels>) -> Self {
-        let margin = margin.into();
-        self.style_mut().margin.top = margin;
-        self.style_mut().margin.bottom = margin;
-        self
-    }
-
-    fn gap(mut self, gap: impl Into<Pixels>) -> Self {
-        self.style_mut().gap = gap.into();
-        self
-    }
-
-    fn bg(mut self, color: Color) -> Self {
-        self.style_mut().background = Some(color);
-        self
-    }
-
-    fn border(mut self, width: impl Into<Pixels>) -> Self {
-        self.style_mut().border_width = width.into();
-        self
-    }
-
-    fn border_color(mut self, color: Color) -> Self {
-        self.style_mut().border_color = Some(color);
-        self
-    }
-
-    fn rounded(mut self, radius: impl Into<Pixels>) -> Self {
-        self.style_mut().border_radius = radius.into();
-        self
-    }
-
-    fn overflow_hidden(mut self) -> Self {
-        self.style_mut().clip_children = true;
-        self
-    }
-}
+inkpaper_ui_style_schema::inkpaper_style_schema!(declare_style);
 
 #[derive(Debug, Clone, Copy)]
 pub struct InteractionStyle {

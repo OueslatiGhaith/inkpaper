@@ -1767,8 +1767,13 @@ dependencies = [
  "embedded-graphics",
  "embedded-graphics-simulator",
  "heapless 0.9.3",
+ "inkpaper-ui-style-schema",
  "ttf-parser",
 ]
+
+[[package]]
+name = "inkpaper-ui-style-schema"
+version = "0.1.0"
 
 [[package]]
 name = "inkpaper-x4-pro"
