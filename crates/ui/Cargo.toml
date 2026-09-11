@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["embedded-graphics", "ttf"]
+default = ["embedded-graphics", "ttf", "macros"]
 alloc = []
+macros = ["dep:inkpaper-ui-macros"]
 defmt = ["dep:defmt", "heapless/defmt"]
 embedded-graphics = ["dep:embedded-graphics", "embedded-graphics/defmt"]
 ttf = ["dep:ttf-parser"]
@@ -15,6 +16,7 @@ metrics = []
 defmt = { workspace = true, optional = true }
 embedded-graphics = { workspace = true, optional = true }
 heapless = { workspace = true }
+inkpaper-ui-macros = { path = "../ui-macros", optional = true }
 inkpaper-ui-style-schema = { path = "../ui-style-schema" }
 ttf-parser = { version = "0.25.1", optional = true, default-features = false, features = ["no-std-float", "opentype-layout"] }
 

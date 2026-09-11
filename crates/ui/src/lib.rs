@@ -65,4 +65,7 @@ pub mod prelude {
         Runtime, RuntimeApi, RuntimeBuilder, Size, StatefulInteractiveElementExt, Style, Styled,
         TextAlign, TextMaxLines, TextOverflow, TextStyled, TextWrap, canvas, div, image, px, text,
     };
+
+    #[cfg(feature = "macros")]
+    pub use inkpaper_ui_macros::rsx;
 }
