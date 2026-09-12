@@ -192,3 +192,83 @@ fn rsx_distinguishes_overloaded_tailwind_namespaces() {
 
     assert_into_element(tree);
 }
+
+#[test]
+fn rsx_supports_static_text_elements() {
+    let tree = rsx! {
+        <text class="text-lg text-zinc-700">
+            "Hello"
+        </text>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_dynamic_text_elements() {
+    let title = "Continue reading";
+
+    let tree = rsx! {
+        <text class="text-lg text-zinc-700">
+            {title}
+        </text>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_text_elements_inside_divs() {
+    let subtitle = "Chapter 4";
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            <text class="text-lg text-black">
+                "Continue reading"
+            </text>
+
+            <text class="text-sm text-zinc-500">
+                {subtitle}
+            </text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_dynamic_text_colors() {
+    let ink = Color::rgb(32, 32, 32);
+
+    let tree = rsx! {
+        <text class="text-lg text-{color:ink}">
+            "Hello"
+        </text>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_dynamic_font_sizes() {
+    let font_size = px(18);
+
+    let tree = rsx! {
+        <text class="text-{length:font_size}">
+            "Hello"
+        </text>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_dynamic_border_colors() {
+    let border_color = Color::rgb(128, 128, 128);
+
+    let tree = rsx! {
+        <div class="border-2 border-{color:border_color}" />
+    };
+
+    assert_into_element(tree);
+}

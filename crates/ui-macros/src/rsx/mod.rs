@@ -11,11 +11,68 @@ use syn::{Expr, Ident, Lit, Stmt};
 use crate::rsx::spec::{ArgumentKind, UtilityReceiver, UtilitySpec, utility_specs};
 
 mod spec;
+#[cfg(test)]
+mod tests;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClassTarget {
+    Div,
+    Text,
+}
+
+impl ClassTarget {
+    fn accepts(self, spec: &UtilitySpec) -> bool {
+        match self {
+            Self::Div => true,
+            Self::Text => spec.receiver == UtilityReceiver::TextStyled,
+        }
+    }
+
+    fn tag_name(self) -> &'static str {
+        match self {
+            Self::Div => "div",
+            Self::Text => "text",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RustValueHint {
+    Color,
+    Length,
+}
+
+impl RustValueHint {
+    fn accepts(self, value_kind: Option<ValueKind>) -> bool {
+        match self {
+            Self::Color => value_kind == Some(ValueKind::Color),
+
+            Self::Length => matches!(
+                value_kind,
+                Some(ValueKind::Spacing)
+                    | Some(ValueKind::BorderWidth)
+                    | Some(ValueKind::Radius)
+                    | Some(ValueKind::FontSize)
+                    | Some(ValueKind::LineHeight)
+            ),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Color => "color",
+            Self::Length => "length",
+        }
+    }
+}
 
 enum ClassValue<'a> {
     Tailwind(&'a str),
     Arbitrary(&'a str),
-    Rust(&'a str),
+    Rust {
+        hint: Option<RustValueHint>,
+        expression: &'a str,
+    },
 }
 
 pub(crate) fn expand_rsx(input: TokenStream) -> syn::Result<TokenStream> {
@@ -47,44 +104,54 @@ pub(crate) fn expand_rsx(input: TokenStream) -> syn::Result<TokenStream> {
 }
 
 fn expand_element(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
-    let name = element.name().to_string();
+    match element.name().to_string().as_str() {
+        "div" => expand_div(element),
+        "text" => expand_text(element),
 
-    if name != "div" {
-        return Err(syn::Error::new_spanned(
+        name => Err(syn::Error::new_spanned(
             element,
             format!("unsupported rsx! element <{name}>"),
-        ));
+        )),
     }
+}
 
+fn expand_div(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
     let class = parse_class_attribute(element)?;
 
-    let mut expression = quote! { ::inkpaper_ui::div() };
-
-    if let Some((classes, span)) = class {
-        for class in split_classes(&classes, span)? {
-            expression = apply_class(expression, class, span)?;
-        }
-    }
+    let expression = quote! { ::inkpaper_ui::div() };
+    let mut expression = apply_classes(expression, class, ClassTarget::Div)?;
 
     for child in element.children() {
         let child = expand_child(child)?;
 
-        expression = quote! {
-            ::inkpaper_ui::ParentElement::child(
-                #expression,
-                #child,
-            )
-        };
+        expression = quote! { ::inkpaper_ui::ParentElement::child(#expression, #child) };
     }
 
     Ok(expression)
+}
+
+fn expand_text(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+    let class = parse_class_attribute(element)?;
+    let content = expand_text_content(element)?;
+
+    let expression = quote! { ::inkpaper_ui::text(#content) };
+
+    apply_classes(expression, class, ClassTarget::Text)
 }
 
 fn expand_child(node: &Node<Infallible>) -> syn::Result<TokenStream> {
     match node {
         Node::Element(element) => expand_element(element),
         Node::Block(block) => expand_block(block),
-        _ => Err(syn::Error::new_spanned(node, "not supported yet")),
+        Node::Text(_) => Err(syn::Error::new_spanned(
+            node,
+            "quoted text must be wrapped in a <text> element",
+        )),
+        Node::RawText(_) => Err(syn::Error::new_spanned(
+            node,
+            "bare text is not supported; use <text>\"...\"</text>",
+        )),
+        _ => Err(syn::Error::new_spanned(node, "unsupported rsx! child")),
     }
 }
 
@@ -101,6 +168,39 @@ fn expand_block(block: &NodeBlock) -> syn::Result<TokenStream> {
     }
 
     Ok(quote! { #block })
+}
+
+fn expand_text_content(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+    match element.children() {
+        [] => Err(syn::Error::new_spanned(element, "<text> requires content")),
+        [Node::Text(text)] => {
+            let value = &text.value;
+            Ok(quote! { #value })
+        }
+        [Node::Block(block)] => expand_block(block),
+        [child] => Err(syn::Error::new_spanned(
+            child,
+            "<text> content must be a quoted string or Rust expression",
+        )),
+        [_, second, ..] => Err(syn::Error::new_spanned(
+            second,
+            "<text> accepts exactly one content child",
+        )),
+    }
+}
+
+fn apply_classes(
+    mut receiver: TokenStream,
+    class: Option<(String, Span)>,
+    target: ClassTarget,
+) -> syn::Result<TokenStream> {
+    if let Some((classes, span)) = class {
+        for class in split_classes(&classes, span)? {
+            receiver = apply_class(receiver, class, span, target)?;
+        }
+    }
+
+    Ok(receiver)
 }
 
 fn parse_class_attribute(element: &NodeElement<Infallible>) -> syn::Result<Option<(String, Span)>> {
@@ -217,20 +317,26 @@ fn split_classes(classes: &str, span: Span) -> syn::Result<Vec<&str>> {
     Ok(result)
 }
 
-fn apply_class(receiver: TokenStream, class: &str, span: Span) -> syn::Result<TokenStream> {
+fn apply_class(
+    receiver: TokenStream,
+    class: &str,
+    span: Span,
+    target: ClassTarget,
+) -> syn::Result<TokenStream> {
     let specs = utility_specs();
 
-    if let Some(spec) = specs
-        .iter()
-        .find(|spec| spec.argument_kind() == ArgumentKind::None && spec.classname() == class)
-    {
+    if let Some(spec) = specs.iter().find(|spec| {
+        target.accepts(spec)
+            && spec.argument_kind() == ArgumentKind::None
+            && spec.classname() == class
+    }) {
         return Ok(emit_no_argument_utility(receiver, spec, span));
     }
 
     let mut candidates = Vec::new();
 
     for spec in &specs {
-        if spec.argument_types.is_empty() {
+        if !target.accepts(spec) || spec.argument_types.is_empty() {
             continue;
         }
 
@@ -245,6 +351,18 @@ fn apply_class(receiver: TokenStream, class: &str, span: Span) -> syn::Result<To
     }
 
     if candidates.is_empty() {
+        let known_for_other_target = specs.iter().any(|spec| class_matches_spec(spec, class));
+
+        if known_for_other_target {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "utility class `{class}` is not valid on <{}>",
+                    target.tag_name(),
+                ),
+            ));
+        }
+
         return Err(syn::Error::new(
             span,
             format!("unknown utility class `{class}`"),
@@ -311,10 +429,37 @@ fn parse_class_value(value: &str, span: Span) -> syn::Result<ClassValue<'_>> {
             return Err(syn::Error::new(span, "malformed Rust class value"));
         };
 
-        return Ok(ClassValue::Rust(value));
+        let value = value.trim();
+
+        let (hint, expression) = if let Some(expression) = value.strip_prefix("color:") {
+            (Some(RustValueHint::Color), expression.trim())
+        } else if let Some(expression) = value.strip_prefix("length:") {
+            (Some(RustValueHint::Length), expression.trim())
+        } else {
+            (None, value)
+        };
+
+        if expression.is_empty() {
+            return Err(syn::Error::new(
+                span,
+                "Rust class value requires an expression",
+            ));
+        }
+
+        return Ok(ClassValue::Rust { hint, expression });
     }
 
     Ok(ClassValue::Tailwind(value))
+}
+
+fn class_matches_spec(spec: &UtilitySpec, class: &str) -> bool {
+    let classname = spec.classname();
+
+    if spec.argument_types.is_empty() {
+        return classname == class;
+    }
+
+    class.starts_with(&format!("{classname}-"))
 }
 
 fn emit_no_argument_utility(receiver: TokenStream, spec: &UtilitySpec, span: Span) -> TokenStream {
@@ -344,7 +489,22 @@ fn emit_argument_utility(
     }
 
     match parse_class_value(value, span)? {
-        ClassValue::Rust(expression) => emit_rust_value(receiver, spec, expression, span),
+        ClassValue::Rust { hint, expression } => {
+            if let Some(hint) = hint
+                && !hint.accepts(spec.value_kind)
+            {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "`{}` Rust value does not apply to `{}`",
+                        hint.name(),
+                        spec.rust_name,
+                    ),
+                ));
+            }
+
+            emit_rust_value(receiver, spec, expression, span)
+        }
         ClassValue::Arbitrary(value) => {
             emit_arbitrary_value(receiver, spec, class_name, value, span)
         }
