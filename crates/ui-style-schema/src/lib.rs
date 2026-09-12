@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod image;
 pub mod tailwind;
 
 #[macro_export]

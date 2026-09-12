@@ -8,7 +8,10 @@ use rstml::{
 };
 use syn::{Expr, Ident, Lit, Stmt};
 
-use crate::rsx::spec::{ArgumentKind, UtilityReceiver, UtilitySpec, utility_specs};
+use crate::rsx::spec::{
+    ArgumentKind, ImageUtilitySpec, UtilityReceiver, UtilitySpec, image_utility_specs,
+    utility_specs,
+};
 
 mod spec;
 #[cfg(test)]
@@ -75,6 +78,11 @@ enum ClassValue<'a> {
     },
 }
 
+struct ImageAttributes<'a> {
+    source: &'a Expr,
+    class: Option<(String, Span)>,
+}
+
 pub(crate) fn expand_rsx(input: TokenStream) -> syn::Result<TokenStream> {
     let nodes = parse2(input)?;
 
@@ -107,6 +115,7 @@ fn expand_element(element: &NodeElement<Infallible>) -> syn::Result<TokenStream>
     match element.name().to_string().as_str() {
         "div" => expand_div(element),
         "text" => expand_text(element),
+        "image" => expand_image(element),
 
         name => Err(syn::Error::new_spanned(
             element,
@@ -137,6 +146,24 @@ fn expand_text(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
     let expression = quote! { ::inkpaper_ui::text(#content) };
 
     apply_classes(expression, class, ClassTarget::Text)
+}
+
+fn expand_image(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+    if let Some(child) = element.children().first() {
+        return Err(syn::Error::new_spanned(
+            child,
+            "<image> cannot have children",
+        ));
+    }
+
+    let attributes = parse_image_attributes(element)?;
+    let source = attributes.source;
+
+    let expression = quote! {
+        ::inkpaper_ui::image(#source)
+    };
+
+    apply_image_classes(expression, attributes.class)
 }
 
 fn expand_child(node: &Node<Infallible>) -> syn::Result<TokenStream> {
@@ -189,6 +216,90 @@ fn expand_text_content(element: &NodeElement<Infallible>) -> syn::Result<TokenSt
     }
 }
 
+fn parse_image_attributes<'a>(
+    element: &'a NodeElement<Infallible>,
+) -> syn::Result<ImageAttributes<'a>> {
+    let mut source = None;
+    let mut class = None;
+
+    for attribute in element.attributes() {
+        let NodeAttribute::Attribute(attribute) = attribute else {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                "dynamic <image> attributes are not supported",
+            ));
+        };
+
+        let name = attribute.key.to_string();
+
+        match name.as_str() {
+            "source" => {
+                if source.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        attribute,
+                        "duplicate `source` attribute",
+                    ));
+                }
+
+                let Some(value) = attribute.value() else {
+                    return Err(syn::Error::new_spanned(
+                        attribute,
+                        "`source` requires a Rust expression",
+                    ));
+                };
+
+                source = Some(value);
+            }
+            "class" => {
+                if class.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        attribute,
+                        "duplicate `class` attribute",
+                    ));
+                }
+
+                let Some(value) = attribute.value() else {
+                    return Err(syn::Error::new_spanned(
+                        attribute,
+                        "`class` requires a string literal value",
+                    ));
+                };
+
+                let Expr::Lit(expression) = value else {
+                    return Err(syn::Error::new_spanned(
+                        value,
+                        "`class` must be a string literal",
+                    ));
+                };
+
+                let Lit::Str(value) = &expression.lit else {
+                    return Err(syn::Error::new_spanned(
+                        value,
+                        "`class` must be a string literal",
+                    ));
+                };
+
+                class = Some((value.value(), value.span()));
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    format!("unsupported <image> attribute `{name}`"),
+                ));
+            }
+        }
+    }
+
+    let Some(source) = source else {
+        return Err(syn::Error::new_spanned(
+            element,
+            "<image> requires a `source` attribute",
+        ));
+    };
+
+    Ok(ImageAttributes { source, class })
+}
+
 fn apply_classes(
     mut receiver: TokenStream,
     class: Option<(String, Span)>,
@@ -197,6 +308,19 @@ fn apply_classes(
     if let Some((classes, span)) = class {
         for class in split_classes(&classes, span)? {
             receiver = apply_class(receiver, class, span, target)?;
+        }
+    }
+
+    Ok(receiver)
+}
+
+fn apply_image_classes(
+    mut receiver: TokenStream,
+    class: Option<(String, Span)>,
+) -> syn::Result<TokenStream> {
+    if let Some((classes, span)) = class {
+        for class in split_classes(&classes, span)? {
+            receiver = apply_image_class(receiver, class, span)?;
         }
     }
 
@@ -407,6 +531,60 @@ fn apply_class(
             ))
         }
     }
+}
+
+fn apply_image_class(receiver: TokenStream, class: &str, span: Span) -> syn::Result<TokenStream> {
+    let specs = image_utility_specs();
+
+    if let Some(spec) = specs
+        .iter()
+        .find(|spec| spec.argument_kind() == ArgumentKind::None && spec.classname() == class)
+    {
+        return Ok(emit_image_no_argument_utility(receiver, spec, span));
+    }
+
+    let mut candidates = Vec::new();
+
+    for spec in &specs {
+        if spec.argument_types.is_empty() {
+            continue;
+        }
+
+        let classname = spec.classname();
+        let prefix = format!("{classname}-");
+
+        let Some(value) = class.strip_prefix(&prefix) else {
+            continue;
+        };
+
+        candidates.push((spec, classname, value));
+    }
+
+    if candidates.is_empty() {
+        return Err(syn::Error::new(
+            span,
+            format!("unknown <image> utility class `{class}`"),
+        ));
+    }
+
+    let longest_prefix = candidates
+        .iter()
+        .map(|(_, classname, _)| classname.len())
+        .max()
+        .unwrap();
+
+    candidates.retain(|(_, classname, _)| classname.len() == longest_prefix);
+
+    if candidates.len() != 1 {
+        return Err(syn::Error::new(
+            span,
+            format!("ambiguous <image> utility class `{class}`"),
+        ));
+    }
+
+    let (spec, classname, value) = candidates.remove(0);
+
+    emit_image_argument_utility(receiver, spec, &classname, value, span)
 }
 
 fn parse_class_value(value: &str, span: Span) -> syn::Result<ClassValue<'_>> {
@@ -721,6 +899,116 @@ fn emit_color_utility(
         },
         span,
     )
+}
+
+fn emit_image_no_argument_utility(
+    receiver: TokenStream,
+    spec: &ImageUtilitySpec,
+    span: Span,
+) -> TokenStream {
+    let method = Ident::new(spec.rust_name, span);
+
+    quote! { ::inkpaper_ui::Image::#method(#receiver) }
+}
+
+fn emit_image_argument_utility(
+    receiver: TokenStream,
+    spec: &ImageUtilitySpec,
+    class_name: &str,
+    value: &str,
+    span: Span,
+) -> syn::Result<TokenStream> {
+    if spec.argument_types.len() != 1 {
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "image utility class `{class_name}` cannot be represented because it takes {} arguments",
+                spec.argument_types.len(),
+            ),
+        ));
+    }
+
+    match parse_class_value(value, span)? {
+        ClassValue::Rust { hint, expression } => {
+            if let Some(hint) = hint
+                && !hint.accepts(spec.value_kind)
+            {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "`{}` Rust value does not apply to image utility `{}`",
+                        hint.name(),
+                        spec.rust_name,
+                    ),
+                ));
+            }
+
+            let expression = syn::parse_str::<Expr>(expression).map_err(|error| {
+                syn::Error::new(
+                    span,
+                    format!("invalid Rust expression in image class value: {error}"),
+                )
+            })?;
+
+            Ok(emit_image_utility_call(
+                receiver,
+                spec,
+                quote! { #expression },
+                span,
+            ))
+        }
+        ClassValue::Arbitrary(value) => match spec.argument_kind() {
+            ArgumentKind::Pixels => {
+                let pixels = parse_arbitrary_pixels(class_name, value, span)?;
+                let pixels = Literal::i32_unsuffixed(pixels);
+
+                Ok(emit_image_utility_call(
+                    receiver,
+                    spec,
+                    quote! { ::inkpaper_ui::px(#pixels) },
+                    span,
+                ))
+            }
+            _ => Err(syn::Error::new(
+                span,
+                format!("arbitrary values are not supported for image utility `{class_name}`"),
+            )),
+        },
+        ClassValue::Tailwind(value) => match spec.value_kind {
+            Some(ValueKind::Spacing) => {
+                let pixels = spacing::resolve_pixels(value).ok_or_else(|| {
+                    syn::Error::new(
+                        span,
+                        format!("`{class_name}-{value}` cannot be represented"),
+                    )
+                })?;
+
+                let pixels = Literal::i32_unsuffixed(pixels);
+
+                Ok(emit_image_utility_call(
+                    receiver,
+                    spec,
+                    quote! { ::inkpaper_ui::px(#pixels) },
+                    span,
+                ))
+            }
+            _ => Err(syn::Error::new(
+                span,
+                format!("image utility `{class_name}` has no Tailwind value scale"),
+            )),
+        },
+    }
+}
+
+fn emit_image_utility_call(
+    receiver: TokenStream,
+    spec: &ImageUtilitySpec,
+    argument: TokenStream,
+    span: Span,
+) -> TokenStream {
+    let method = Ident::new(spec.rust_name, span);
+
+    quote! { ::inkpaper_ui::Image::#method(#receiver, #argument) }
 }
 
 fn oklch_to_srgb(value: color::Oklch) -> color::Rgb {

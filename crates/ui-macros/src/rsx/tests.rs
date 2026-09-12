@@ -118,3 +118,113 @@ fn rejects_multiple_text_children() {
 
     assert!(error.to_string().contains("exactly one content child"));
 }
+
+#[test]
+fn expands_image_element() {
+    let result = expand_rsx(quote! {
+        <image
+            source={cover}
+            class="w-24 h-32 object-cover"
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_image_inside_div() {
+    let result = expand_rsx(quote! {
+        <div class="flex">
+            <image
+                source={cover}
+                class="w-24 h-32 object-contain"
+            />
+        </div>
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_image_filter_utilities() {
+    let result = expand_rsx(quote! {
+        <image
+            source={cover}
+            class="grayscale invert"
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_arbitrary_image_dimensions() {
+    let result = expand_rsx(quote! {
+        <image
+            source={cover}
+            class="w-[110px] h-[160px]"
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_dynamic_image_dimensions() {
+    let result = expand_rsx(quote! {
+        <image
+            source={cover}
+            class="w-{length:width} h-{height}"
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_image_without_source() {
+    let error = expand_rsx(quote! {
+        <image class="w-24 h-32"/>
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("requires a `source` attribute"));
+}
+
+#[test]
+fn rejects_image_children() {
+    let error = expand_rsx(quote! {
+        <image source={cover}>
+            <text>"Nope"</text>
+        </image>
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("cannot have children"));
+}
+
+#[test]
+fn rejects_non_image_utility_on_image() {
+    let error = expand_rsx(quote! {
+        <image
+            source={cover}
+            class="p-4"
+        />
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("unknown <image> utility class"));
+}
+
+#[test]
+fn rejects_unsupported_object_scale_down() {
+    let error = expand_rsx(quote! {
+        <image
+            source={cover}
+            class="object-scale-down"
+        />
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("unknown <image> utility class"));
+}

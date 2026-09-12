@@ -272,3 +272,82 @@ fn rsx_supports_dynamic_border_colors() {
 
     assert_into_element(tree);
 }
+
+#[test]
+fn rsx_supports_image_elements() {
+    let source = ImageSource::new(ImageId::new(1), Size::new(px(120), px(180)));
+
+    let tree = rsx! {
+        <image
+            source={source}
+            class="w-24 h-32 object-cover"
+        />
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_nested_image_elements() {
+    let source = ImageSource::new(ImageId::new(1), Size::new(px(120), px(180)));
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            <image
+                source={source}
+                class="w-24 h-32 object-cover"
+            />
+
+            <text class="text-sm text-zinc-500">
+                "Book cover"
+            </text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_arbitrary_image_dimensions() {
+    let source = ImageSource::new(ImageId::new(1), Size::new(px(120), px(180)));
+
+    let tree = rsx! {
+        <image
+            source={source}
+            class="w-[110px] h-[160px] object-contain"
+        />
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_dynamic_image_dimensions() {
+    let source = ImageSource::new(ImageId::new(1), Size::new(px(120), px(180)));
+
+    let width = px(96);
+    let height = px(128);
+
+    let tree = rsx! {
+        <image
+            source={source}
+            class="w-{length:width} h-{length:height} object-cover"
+        />
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_image_filters() {
+    let source = ImageSource::new(ImageId::new(1), Size::new(px(120), px(180)));
+
+    let tree = rsx! {
+        <image
+            source={source}
+            class="w-24 h-32 object-cover grayscale invert"
+        />
+    };
+
+    assert_into_element(tree);
+}
