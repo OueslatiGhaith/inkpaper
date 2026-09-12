@@ -1,4 +1,5 @@
 pub mod border;
+pub mod color;
 pub mod radius;
 pub mod spacing;
 pub mod typography;

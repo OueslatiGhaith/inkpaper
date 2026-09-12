@@ -1,4 +1,4 @@
-use inkpaper_ui_style_schema::tailwind::{ValueKind, border, radius, spacing, typography};
+use inkpaper_ui_style_schema::tailwind::{ValueKind, border, color, radius, spacing, typography};
 use proc_macro2::{Literal, Span, TokenStream};
 use quote::quote;
 use rstml::{
@@ -227,7 +227,7 @@ fn apply_class(receiver: TokenStream, class: &str, span: Span) -> syn::Result<To
         return Ok(emit_no_argument_utility(receiver, spec, span));
     }
 
-    let mut best_match: Option<(&UtilitySpec, String, &str)> = None;
+    let mut candidates = Vec::new();
 
     for spec in &specs {
         if spec.argument_types.is_empty() {
@@ -241,23 +241,54 @@ fn apply_class(receiver: TokenStream, class: &str, span: Span) -> syn::Result<To
             continue;
         };
 
-        let should_replace = best_match
-            .as_ref()
-            .is_none_or(|(_, current, _)| classname.len() > current.len());
-
-        if should_replace {
-            best_match = Some((spec, classname, value));
-        }
+        candidates.push((spec, classname, value));
     }
 
-    let Some((spec, class_name, value)) = best_match else {
+    if candidates.is_empty() {
         return Err(syn::Error::new(
             span,
             format!("unknown utility class `{class}`"),
         ));
-    };
+    }
 
-    emit_argument_utility(receiver, spec, &class_name, value, span)
+    let longest_prefix = candidates
+        .iter()
+        .map(|(_, classname, _)| classname.len())
+        .max()
+        .unwrap();
+
+    candidates.retain(|(_, classname, _)| classname.len() == longest_prefix);
+
+    let mut successes = Vec::new();
+    let mut errors = Vec::new();
+
+    for (spec, classname, value) in &candidates {
+        match emit_argument_utility(receiver.clone(), spec, classname, value, span) {
+            Ok(tokens) => successes.push((*spec, tokens)),
+            Err(error) => errors.push(error),
+        }
+    }
+
+    match successes.len() {
+        1 => Ok(successes.remove(0).1),
+        0 if candidates.len() == 1 => Err(errors.remove(0)),
+        0 => Err(syn::Error::new(
+            span,
+            format!("no utility in `{class}` accepts this value"),
+        )),
+        _ => {
+            let methods = successes
+                .iter()
+                .map(|(spec, _)| spec.rust_name)
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            Err(syn::Error::new(
+                span,
+                format!("ambiguous utility class `{class}`. It could refer to: {methods}"),
+            ))
+        }
+    }
 }
 
 fn parse_class_value(value: &str, span: Span) -> syn::Result<ClassValue<'_>> {
@@ -349,6 +380,17 @@ fn emit_arbitrary_value(
     value: &str,
     span: Span,
 ) -> syn::Result<TokenStream> {
+    if spec.value_kind == Some(ValueKind::Color) {
+        let rgb = color::parse_hex(value).ok_or_else(|| {
+            syn::Error::new(
+                span,
+                format!("arbitrary color `{class_name}-[{value}]` must be `#rgb` or `#rrggbb`"),
+            )
+        })?;
+
+        return Ok(emit_color_utility(receiver, spec, rgb, span));
+    }
+
     match spec.argument_kind() {
         ArgumentKind::Pixels => {
             let value = parse_arbitrary_pixels(class_name, value, span)?;
@@ -423,7 +465,7 @@ fn emit_tailwind_value(
 
             let value = Literal::u16_unsuffixed(value);
 
-            Ok(emit_utility_call(receiver, spec, quote! { #value}, span))
+            Ok(emit_utility_call(receiver, spec, quote! { #value }, span))
         }
         Some(ValueKind::FontSize) => {
             let font_size = typography::font_size::resolve(value).ok_or_else(|| {
@@ -447,10 +489,19 @@ fn emit_tailwind_value(
 
             emit_pixel_utility(receiver, spec, pixels, span)
         }
-        Some(ValueKind::Color) => Err(syn::Error::new(
-            span,
-            format!("Tailwind color `{class_name}-{value}` is not implemented yet"),
-        )),
+        Some(ValueKind::Color) => {
+            let value = color::resolve(value).ok_or_else(|| {
+                syn::Error::new(
+                    span,
+                    format!("unknown Tailwind color `{class_name}-{value}`"),
+                )
+            })?;
+
+            let rgb = oklch_to_srgb(value);
+
+            Ok(emit_color_utility(receiver, spec, rgb, span))
+        }
+
         None => match spec.argument_kind() {
             ArgumentKind::U16 => {
                 let value = value.parse::<u16>().map_err(|_| {
@@ -486,6 +537,65 @@ fn emit_pixel_utility(
         quote! { ::inkpaper_ui::px(#pixels) },
         span,
     ))
+}
+
+fn emit_color_utility(
+    receiver: TokenStream,
+    spec: &UtilitySpec,
+    rgb: color::Rgb,
+    span: Span,
+) -> TokenStream {
+    let red = Literal::u8_unsuffixed(rgb.red);
+    let green = Literal::u8_unsuffixed(rgb.green);
+    let blue = Literal::u8_unsuffixed(rgb.blue);
+
+    emit_utility_call(
+        receiver,
+        spec,
+        quote! {
+            ::inkpaper_ui::Color::rgb(
+                #red,
+                #green,
+                #blue,
+            )
+        },
+        span,
+    )
+}
+
+fn oklch_to_srgb(value: color::Oklch) -> color::Rgb {
+    let hue = value.hue.to_radians();
+
+    let a = value.chroma * hue.cos();
+    let b = value.chroma * hue.sin();
+
+    let l_ = value.lightness + 0.396_337_777_4 * a + 0.215_803_757_3 * b;
+    let m_ = value.lightness - 0.105_561_345_8 * a - 0.063_854_172_8 * b;
+    let s_ = value.lightness - 0.089_484_177_5 * a - 1.291_485_548_0 * b;
+
+    let l = l_ * l_ * l_;
+    let m = m_ * m_ * m_;
+    let s = s_ * s_ * s_;
+
+    let red_linear = 4.076_741_662_1 * l - 3.307_711_591_3 * m + 0.230_969_929_2 * s;
+    let green_linear = -1.268_438_004_6 * l + 2.609_757_401_1 * m - 0.341_319_396_5 * s;
+    let blue_linear = -0.004_196_086_3 * l - 0.703_418_614_7 * m + 1.707_614_701_0 * s;
+
+    color::Rgb {
+        red: linear_to_srgb_channel(red_linear),
+        green: linear_to_srgb_channel(green_linear),
+        blue: linear_to_srgb_channel(blue_linear),
+    }
+}
+
+fn linear_to_srgb_channel(value: f64) -> u8 {
+    let value = if value <= 0.003_130_8 {
+        12.92 * value
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    };
+
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 fn emit_font_size_utility(

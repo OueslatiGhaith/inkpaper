@@ -216,6 +216,7 @@ macro_rules! inkpaper_style_schema {
                     },
 
                     border_color: Option<Color> = None => {
+                        @tailwind(Color, class = "border")
                         border_color(color: Color) => Some(color);
                     },
 
@@ -267,6 +268,7 @@ macro_rules! inkpaper_style_schema {
 
                     paint {
                         color: Color = Color::BLACK => {
+                            @tailwind(Color, class = "text")
                             text_color(color: Color) => color;
                         },
 
