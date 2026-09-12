@@ -1,4 +1,5 @@
 use heck::ToKebabCase;
+use inkpaper_ui_style_schema::tailwind::ValueKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UtilityReceiver {
@@ -19,11 +20,15 @@ pub struct UtilitySpec {
     pub rust_name: &'static str,
     pub receiver: UtilityReceiver,
     pub argument_types: Vec<&'static str>,
+    pub classname_override: Option<&'static str>,
+    pub value_kind: Option<ValueKind>,
 }
 
 impl UtilitySpec {
-    pub fn class_name(&self) -> String {
-        self.rust_name.to_kebab_case()
+    pub fn classname(&self) -> String {
+        self.classname_override
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.rust_name.to_kebab_case())
     }
 
     pub fn argument_kind(&self) -> ArgumentKind {
@@ -50,8 +55,70 @@ fn classify_argument_type(argument: &str) -> ArgumentKind {
     }
 }
 
+macro_rules! tailwind_metadata {
+    () => {
+        (None::<ValueKind>, None::<&'static str>)
+    };
+
+    ($kind:ident) => {
+        (Some(ValueKind::$kind), None::<&'static str>)
+    };
+
+    ($kind:ident, class = $classname:literal) => {
+        (Some(ValueKind::$kind), Some($classname))
+    };
+
+    (class = $classname:literal) => {
+        (None::<ValueKind>, Some($classname))
+    };
+}
+
 macro_rules! collect_utility_specs {
     ($specs:ident, $receiver:expr;) => {};
+
+    (
+        $specs:ident,
+        $receiver:expr;
+        @tailwind($($tailwind:tt)*)
+        $method_name:ident( $( $argument_name:ident: $argument_type:ty ),+ $(,)? ) => $implementation:expr;
+        $($rest:tt)*
+    ) => {
+        {
+            let (value_kind, classname_override) = tailwind_metadata!($($tailwind)*);
+
+            $specs.push(UtilitySpec {
+                rust_name: stringify!($method_name),
+                receiver: $receiver,
+                argument_types: vec![ $( stringify!($argument_type) ),+ ],
+                classname_override,
+                value_kind,
+            });
+        }
+
+        collect_utility_specs!($specs, $receiver; $( $rest )*);
+    };
+
+    (
+        $specs:ident,
+        $receiver:expr;
+        @tailwind($($tailwind:tt)*)
+        $method_name:ident => $implementation:expr;
+        $($rest:tt)*
+    ) => {
+        {
+            let (value_kind, classname_override) = tailwind_metadata!($($tailwind)*);
+
+            $specs.push(UtilitySpec {
+                rust_name: stringify!($method_name),
+                receiver: $receiver,
+                argument_types: Vec::new(),
+                classname_override,
+                value_kind,
+            });
+        }
+
+        collect_utility_specs!($specs, $receiver; $( $rest )*);
+    };
 
     (
         $specs:ident,
@@ -62,10 +129,16 @@ macro_rules! collect_utility_specs {
         $specs.push(UtilitySpec {
             rust_name: stringify!($method_name),
             receiver: $receiver,
-            argument_types: vec![ $( stringify!($argument_type) ),+ ]
+            argument_types: vec![ $( stringify!($argument_type) ),+ ],
+            classname_override: None,
+            value_kind: None,
         });
 
-        collect_utility_specs!($specs, $receiver; $( $rest )*);
+        collect_utility_specs!(
+            $specs,
+            $receiver;
+            $($rest)*
+        );
     };
 
     (
@@ -78,9 +151,15 @@ macro_rules! collect_utility_specs {
             rust_name: stringify!($method_name),
             receiver: $receiver,
             argument_types: Vec::new(),
+            classname_override: None,
+            value_kind: None,
         });
 
-        collect_utility_specs!($specs, $receiver; $( $rest )*);
+        collect_utility_specs!(
+            $specs,
+            $receiver;
+            $($rest)*
+        );
     };
 }
 

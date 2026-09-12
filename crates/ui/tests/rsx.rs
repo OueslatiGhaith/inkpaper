@@ -7,8 +7,8 @@ fn assert_into_element(element: impl IntoElement) {
 #[test]
 fn rsx_builds_nested_divs() {
     let tree = rsx! {
-        <div class="flex flex-col gap-8 p-12">
-            <div class="w-full h-24"/>
+        <div class="flex flex-col gap-2 p-3">
+            <div class="w-full h-6"/>
             <div class="flex-1"/>
         </div>
     };
@@ -21,7 +21,7 @@ fn rsx_accepts_rust_expression_children() {
     let child = text("Hello");
 
     let tree = rsx! {
-        <div class="w-full p-12">
+        <div class="w-full p-3">
             {child}
         </div>
     };
@@ -47,12 +47,53 @@ fn rsx_accepts_complex_expression_children() {
 }
 
 #[test]
-fn rsx_uses_schema_generated_layout_classes() {
+fn rsx_supports_tailwind_spacing() {
     let tree = rsx! {
-        <div class="relative flex flex-col items-center justify-between flex-1 w-full h-full min-w-10 max-w-300 min-h-20 max-h-400 p-12 px-14 py-16 pt-1 pr-2 pb-3 pl-4 m-10 mx-12 my-14 mt-5 mr-6 mb-7 ml-8 gap-18 border-2 rounded-8 overflow-hidden top-1 right-2 bottom-3 left-4">
-            <div class="absolute flex flex-row items-start justify-start w-100 h-50"/>
-            <div class="items-end justify-end"/>
-            <div class="justify-center"/>
+        <div class=" flex flex-col items-center justify-between w-full min-w-10 max-w-300 p-4 px-3 gap-2 top-1 rounded-lg border-2 "/>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_arbitrary_pixel_values() {
+    let tree = rsx! {
+        <div class="w-[240px] h-[160px] p-[10px] gap-[6px] rounded-[7px] border-[3px]" />
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_rust_values_inside_classes() {
+    let padding = px(10);
+    let width = px(240);
+    let background = Color::rgb(240, 240, 240);
+
+    let tree = rsx! {
+        <div class="w-{width} p-{padding} bg-{background}" />
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_rust_values_may_contain_whitespace() {
+    let tree = rsx! {
+        <div class="
+            p-{if true { px(10) } else { px(20) }}
+            bg-{Color::rgb(240, 240, 240)}
+        "/>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_tailwind_typography_defaults() {
+    let tree = rsx! {
+        <div class="text-lg leading-6 text-center wrap">
+            {text("Hello")}
         </div>
     };
 
@@ -60,11 +101,9 @@ fn rsx_uses_schema_generated_layout_classes() {
 }
 
 #[test]
-fn rsx_uses_schema_generated_text_classes() {
+fn rsx_supports_tailwind_utility_aliases() {
     let tree = rsx! {
-        <div class="font-size-14 line-height-18 wrap text-center max-lines-2 text-ellipsis">
-            {text("Hello")}
-        </div>
+        <div class="basis-4 basis-auto grow-2 shrink-1 "/>
     };
 
     assert_into_element(tree);

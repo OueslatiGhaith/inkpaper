@@ -297,6 +297,19 @@ macro_rules! declare_style {
     (
         @styled_methods
         $field_name:ident;
+        @tailwind($($tailwind:tt)*)
+        $($rest:tt)*
+    ) => {
+        declare_style!(
+            @styled_methods
+            $field_name;
+            $($rest)*
+        );
+    };
+
+    (
+        @styled_methods
+        $field_name:ident;
         $method_name:ident(
             $( $arg_name:ident: $arg_ty:ty ),+ $(,)?
         ) => |$style:ident| $body:block;
@@ -363,6 +376,19 @@ macro_rules! declare_style {
     };
 
     (@text_styled_methods $field_name:ident;) => {};
+
+    (
+        @text_styled_methods
+        $field_name:ident;
+        @tailwind($($tailwind:tt)*)
+        $($rest:tt)*
+    ) => {
+        declare_style!(
+            @text_styled_methods
+            $field_name;
+            $($rest)*
+        );
+    };
 
     (
         @text_styled_methods
