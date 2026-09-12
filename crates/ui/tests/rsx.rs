@@ -448,3 +448,97 @@ fn rsx_supports_conditional_children() {
 
     assert_into_element(tree);
 }
+
+#[test]
+fn rsx_supports_fragments() {
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            <>
+                <text>"First"</text>
+                <text>"Second"</text>
+            </>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_nested_fragments() {
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            <>
+                <text>"First"</text>
+
+                <>
+                    <text>"Second"</text>
+                    <text>"Third"</text>
+                </>
+            </>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_multiple_conditional_children() {
+    let available = true;
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            <text>"Before"</text>
+
+            {#if available}
+                <text>"Available"</text>
+                <text>"Ready"</text>
+            {:else}
+                <text>"Unavailable"</text>
+                <text>"Try again later"</text>
+            {/if}
+
+            <text>"After"</text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_conditional_without_else() {
+    let show_badge = true;
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            <text>"Book"</text>
+
+            {#if show_badge}
+                <text>"New"</text>
+            {/if}
+
+            <text>"Footer"</text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_fragments_inside_conditionals() {
+    let expanded = true;
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            {#if expanded}
+                <>
+                    <text>"Details"</text>
+                    <text>"Metadata"</text>
+                </>
+            {:else}
+                <text>"Collapsed"</text>
+            {/if}
+        </div>
+    };
+
+    assert_into_element(tree);
+}

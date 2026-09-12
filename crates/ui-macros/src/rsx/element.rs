@@ -3,7 +3,10 @@ use quote::quote;
 use rstml::node::{Node, NodeBlock};
 use syn::Stmt;
 
-use crate::rsx::{RsxElement, RsxNode, control_flow::expand_control_flow};
+use crate::rsx::{
+    RsxElement, RsxNode,
+    control_flow::{expand_control_flow, expand_control_flow_into},
+};
 
 use super::{
     attribute::{parse_class_attribute, parse_image_attributes},
@@ -31,15 +34,9 @@ pub(super) fn expand_element(element: &RsxElement) -> syn::Result<TokenStream> {
 fn expand_div(element: &RsxElement) -> syn::Result<TokenStream> {
     let class = parse_class_attribute(element)?;
 
-    let mut expression = apply_classes(quote! { ::inkpaper_ui::div() }, class, ClassTarget::Div)?;
+    let expression = apply_classes(quote! { ::inkpaper_ui::div() }, class, ClassTarget::Div)?;
 
-    for child in element.children() {
-        let child = expand_child(child)?;
-
-        expression = quote! { ::inkpaper_ui::ParentElement::child(#expression, #child) };
-    }
-
-    Ok(expression)
+    expand_children_into(expression, element.children())
 }
 
 fn expand_text(element: &RsxElement) -> syn::Result<TokenStream> {
@@ -72,11 +69,37 @@ fn expand_image(element: &RsxElement) -> syn::Result<TokenStream> {
     )
 }
 
+pub(super) fn expand_children_into(
+    mut parent: TokenStream,
+    children: &[RsxNode],
+) -> syn::Result<TokenStream> {
+    for child in children {
+        parent = expand_child_into(parent, child)?;
+    }
+
+    Ok(parent)
+}
+
+fn expand_child_into(parent: TokenStream, node: &RsxNode) -> syn::Result<TokenStream> {
+    match node {
+        Node::Fragment(fragment) => expand_children_into(parent, fragment.children()),
+        Node::Custom(control_flow) => expand_control_flow_into(parent, control_flow),
+        _ => {
+            let child = expand_child(node)?;
+            Ok(quote! { ::inkpaper_ui::ParentElement::child(#parent, #child) })
+        }
+    }
+}
+
 pub(super) fn expand_child(node: &RsxNode) -> syn::Result<TokenStream> {
     match node {
         Node::Element(element) => expand_element(element),
         Node::Custom(control_flow) => expand_control_flow(control_flow),
         Node::Block(block) => expand_block(block),
+        Node::Fragment(_) => Err(syn::Error::new_spanned(
+            node,
+            "fragment cannot be used as a standalone element",
+        )),
         Node::Text(_) => Err(syn::Error::new_spanned(
             node,
             "quoted text must be wrapped in a <text> element",

@@ -42,6 +42,10 @@ pub(crate) fn expand_rsx(input: TokenStream) -> syn::Result<TokenStream> {
     match root {
         Node::Element(element) => element::expand_element(element),
         Node::Custom(control_flow) => control_flow::expand_control_flow(control_flow),
+        Node::Fragment(_) => Err(syn::Error::new_spanned(
+            root,
+            "an rsx! fragment cannot be the root because InkPaper requires one mounted root element",
+        )),
         _ => Err(syn::Error::new_spanned(
             root,
             "the root of rsx! must be an element or a control-flow block",

@@ -403,7 +403,7 @@ fn rejects_if_without_else() {
 }
 
 #[test]
-fn rejects_multiple_nodes_in_branch() {
+fn rejects_multiple_nodes_in_root_conditional_branch() {
     let error = expand_rsx(rsx_tokens(
         r#"
         {#if visible}
@@ -416,7 +416,11 @@ fn rejects_multiple_nodes_in_branch() {
     ))
     .unwrap_err();
 
-    assert!(error.to_string().contains("exactly one renderable child"));
+    assert!(
+        error
+            .to_string()
+            .contains("accepts exactly one root element")
+    );
 }
 
 #[test]
@@ -432,4 +436,119 @@ fn rejects_unclosed_if() {
     .unwrap_err();
 
     assert!(error.to_string().contains("expected `{/if}`"));
+}
+
+#[test]
+fn expands_fragment_children() {
+    let result = expand_rsx(quote! {
+        <div>
+            <>
+                <text>"First"</text>
+                <text>"Second"</text>
+            </>
+        </div>
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_nested_fragments() {
+    let result = expand_rsx(quote! {
+        <div>
+            <>
+                <text>"First"</text>
+
+                <>
+                    <text>"Second"</text>
+                    <text>"Third"</text>
+                </>
+            </>
+        </div>
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_fragment_as_root() {
+    let error = expand_rsx(quote! {
+        <>
+            <text>"First"</text>
+            <text>"Second"</text>
+        </>
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("fragment cannot be the root"));
+}
+
+#[test]
+fn expands_multiple_nodes_in_conditional_child_branch() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#if visible}
+                <text>"One"</text>
+                <text>"Two"</text>
+            {:else}
+                <text>"Three"</text>
+                <text>"Four"</text>
+            {/if}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_conditional_child_without_else() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#if visible}
+                <text>"Visible"</text>
+            {/if}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_empty_conditional_branch() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#if visible}
+            {:else}
+                <text>"Fallback"</text>
+            {/if}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_fragment_inside_conditional_branch() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#if visible}
+                <>
+                    <text>"One"</text>
+                    <text>"Two"</text>
+                </>
+            {:else}
+                <text>"Fallback"</text>
+            {/if}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
 }

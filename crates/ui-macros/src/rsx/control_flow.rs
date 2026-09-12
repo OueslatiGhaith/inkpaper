@@ -1,10 +1,12 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use rstml::{
     node::CustomNode,
     recoverable::{ParseRecoverable, RecoverableContext},
 };
-use syn::{Expr, Token, braced, parse::ParseStream, spanned::Spanned};
+use syn::{Expr, Ident, Token, braced, parse::ParseStream, spanned::Spanned};
+
+use crate::rsx::element::expand_children_into;
 
 use super::{RsxNode, element::expand_child};
 
@@ -59,10 +61,6 @@ impl ParseRecoverable for ControlFlow {
             parse_else_marker(parser, input)?;
             Some(parse_branch(parser, input)?)
         } else {
-            parser.push_diagnostic(syn::Error::new(
-                condition.span(),
-                "`{#if}` requires a `{:else}` branch",
-            ));
             None
         };
 
@@ -97,19 +95,28 @@ pub(super) fn expand_control_flow(control_flow: &ControlFlow) -> syn::Result<Tok
     }
 }
 
+pub(super) fn expand_control_flow_into(
+    parent: TokenStream,
+    control_flow: &ControlFlow,
+) -> syn::Result<TokenStream> {
+    match control_flow {
+        ControlFlow::If(block) => expand_if_into(parent, block),
+    }
+}
+
 fn expand_if(block: &IfBlock) -> syn::Result<TokenStream> {
     let else_branch = block.else_branch.as_ref().ok_or_else(|| {
         syn::Error::new(
             block.condition.span(),
-            "`{#if}` requires an `{:else} branch",
+            "root `{#if}` requires a `{:else}` branch because rsx! must always produce one root element",
         )
     })?;
 
-    let mut fallback = expand_branch(else_branch, block.condition.span(), "`{:else}`")?;
+    let mut fallback = expand_root_branch(else_branch, block.condition.span(), "`{:else}`")?;
 
     for branch in block.else_ifs.iter().rev() {
         let condition = &branch.condition;
-        let body = expand_branch(&branch.body, condition.span(), "`{:else if ...}`")?;
+        let body = expand_root_branch(&branch.body, condition.span(), "`{:else if ...}`")?;
 
         fallback = quote! {
             if #condition {
@@ -121,7 +128,7 @@ fn expand_if(block: &IfBlock) -> syn::Result<TokenStream> {
     }
 
     let condition = &block.condition;
-    let then_branch = expand_branch(&block.then_branch, condition.span(), "`{#if ...}`")?;
+    let then_branch = expand_root_branch(&block.then_branch, condition.span(), "`{#if ...}`")?;
 
     Ok(quote! {
         if #condition {
@@ -132,20 +139,56 @@ fn expand_if(block: &IfBlock) -> syn::Result<TokenStream> {
     })
 }
 
-fn expand_branch(
-    body: &[RsxNode],
-    span: proc_macro2::Span,
-    branch_name: &str,
-) -> syn::Result<TokenStream> {
+fn expand_if_into(parent: TokenStream, block: &IfBlock) -> syn::Result<TokenStream> {
+    let parent_ident = Ident::new("__inkpaper_rsx_parent", Span::mixed_site());
+    let parent_ref = quote! { #parent_ident };
+
+    let mut fallback = match &block.else_branch {
+        Some(else_branch) => expand_children_into(parent_ref.clone(), else_branch)?,
+        None => parent_ref.clone(),
+    };
+
+    for branch in block.else_ifs.iter().rev() {
+        let condition = &branch.condition;
+        let body = expand_children_into(parent_ref.clone(), &branch.body)?;
+
+        fallback = quote! {
+            if #condition {
+                ::inkpaper_ui::Either::Left(#body)
+            } else {
+                ::inkpaper_ui::Either::Right(#fallback)
+            }
+        };
+    }
+
+    let condition = &block.condition;
+    let then_branch = expand_children_into(parent_ref, &block.then_branch)?;
+
+    Ok(quote! {
+        {
+            let #parent_ident = #parent;
+
+            if #condition {
+                ::inkpaper_ui::Either::Left(#then_branch)
+            } else {
+                ::inkpaper_ui::Either::Right(#fallback)
+            }
+        }
+    })
+}
+
+fn expand_root_branch(body: &[RsxNode], span: Span, branch_name: &str) -> syn::Result<TokenStream> {
     match body {
         [] => Err(syn::Error::new(
             span,
-            format!("{branch_name} requires a renderable child"),
+            format!("{branch_name} requires a renderable root element"),
         )),
         [child] => expand_child(child),
         [_, second, ..] => Err(syn::Error::new_spanned(
             second,
-            format!("{branch_name} accepts exactly one renderable child"),
+            format!(
+                "{branch_name} accepts exactly one root element when the conditional itself is the rsx! root"
+            ),
         )),
     }
 }
