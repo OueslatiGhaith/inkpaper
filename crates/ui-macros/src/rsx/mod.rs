@@ -197,6 +197,22 @@ fn expand_block(block: &NodeBlock) -> syn::Result<TokenStream> {
     Ok(quote! { #block })
 }
 
+fn unbrace_expr(expression: &Expr) -> &Expr {
+    let Expr::Block(block) = expression else {
+        return expression;
+    };
+
+    if !block.attrs.is_empty() || block.label.is_some() {
+        return expression;
+    }
+
+    let [Stmt::Expr(inner, None)] = block.block.stmts.as_slice() else {
+        return expression;
+    };
+
+    unbrace_expr(inner)
+}
+
 fn expand_text_content(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
     match element.children() {
         [] => Err(syn::Error::new_spanned(element, "<text> requires content")),
@@ -248,7 +264,7 @@ fn parse_image_attributes<'a>(
                     ));
                 };
 
-                source = Some(value);
+                source = Some(unbrace_expr(value));
             }
             "class" => {
                 if class.is_some() {

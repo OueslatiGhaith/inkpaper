@@ -1,3 +1,5 @@
+#![deny(unused_braces)]
+
 use inkpaper_ui::prelude::*;
 
 fn assert_into_element(element: impl IntoElement) {
