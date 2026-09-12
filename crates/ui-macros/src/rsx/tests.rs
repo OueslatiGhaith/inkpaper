@@ -724,3 +724,65 @@ fn rejects_unclosed_each() {
 
     assert!(error.to_string().contains("expected `{/each}`"));
 }
+
+#[test]
+fn expands_dynamic_id() {
+    let result = expand_rsx(quote! {
+        <div id={book_id} />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_focusable_element() {
+    let result = expand_rsx(quote! {
+        <div id="button" focusable />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_activate_listener() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div
+            id="button"
+            on:activate={listener}
+        />
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_focusable_without_id() {
+    let error = expand_rsx(quote! {
+        <div focusable />
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("`focusable` requires an `id` attribute")
+    );
+}
+
+#[test]
+fn rejects_activate_without_id() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        <div on:activate={listener} />
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("`on:activate` requires an `id` attribute")
+    );
+}

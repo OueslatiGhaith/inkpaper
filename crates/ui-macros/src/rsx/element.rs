@@ -5,11 +5,12 @@ use syn::Stmt;
 
 use crate::rsx::{
     RsxElement, RsxNode,
+    attribute::{ImageAttributes, IntrinsicAttributes, parse_intrinsic_attributes},
     control_flow::{expand_control_flow, expand_control_flow_group_into, expand_control_flow_into},
 };
 
 use super::{
-    attribute::{parse_class_attribute, parse_image_attributes},
+    attribute::parse_image_attributes,
     class::{ClassTarget, apply_classes},
     component::{expand_component, is_component_tag},
 };
@@ -32,21 +33,24 @@ pub(super) fn expand_element(element: &RsxElement) -> syn::Result<TokenStream> {
 }
 
 fn expand_div(element: &RsxElement) -> syn::Result<TokenStream> {
-    let class = parse_class_attribute(element)?;
+    let attributes = parse_intrinsic_attributes(element)?;
 
-    let expression = apply_classes(quote! { ::inkpaper_ui::div() }, class, ClassTarget::Div)?;
+    let expression = apply_intrinsic_attributes(
+        quote! { ::inkpaper_ui::div() },
+        attributes,
+        ClassTarget::Div,
+    )?;
 
     expand_children_into(expression, element.children())
 }
 
 fn expand_text(element: &RsxElement) -> syn::Result<TokenStream> {
-    let class = parse_class_attribute(element)?;
-
+    let attributes = parse_intrinsic_attributes(element)?;
     let content = expand_text_content(element)?;
 
-    apply_classes(
+    apply_intrinsic_attributes(
         quote! { ::inkpaper_ui::text(#content) },
-        class,
+        attributes,
         ClassTarget::Text,
     )
 }
@@ -59,14 +63,42 @@ fn expand_image(element: &RsxElement) -> syn::Result<TokenStream> {
         ));
     }
 
-    let attributes = parse_image_attributes(element)?;
-    let source = attributes.source;
+    let ImageAttributes { source, intrinsic } = parse_image_attributes(element)?;
 
-    apply_classes(
+    apply_intrinsic_attributes(
         quote! { ::inkpaper_ui::image(#source) },
-        attributes.class,
+        intrinsic,
         ClassTarget::Image,
     )
+}
+
+fn apply_intrinsic_attributes(
+    expression: TokenStream,
+    attributes: IntrinsicAttributes<'_>,
+    target: ClassTarget,
+) -> syn::Result<TokenStream> {
+    let IntrinsicAttributes {
+        class,
+        id,
+        focusable,
+        on_activate,
+    } = attributes;
+
+    let mut expression = apply_classes(expression, class, target)?;
+
+    if let Some(id) = id {
+        expression = quote! { ::inkpaper_ui::IdentifiableElementExt::id(#expression, #id) };
+    }
+
+    if focusable {
+        expression = quote! { ::inkpaper_ui::StatefulInteractiveElementExt::focusable(#expression) }
+    }
+
+    if let Some(listener) = on_activate {
+        expression = quote! { ::inkpaper_ui::StatefulInteractiveElementExt::on_activate(#expression, #listener) };
+    }
+
+    Ok(expression)
 }
 
 pub(super) fn expand_children_group(children: &[RsxNode]) -> syn::Result<TokenStream> {

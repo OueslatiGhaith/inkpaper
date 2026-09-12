@@ -6,9 +6,27 @@ use crate::rsx::RsxElement;
 
 pub(super) type ClassAttribute = Option<(String, Span)>;
 
+pub(super) struct IntrinsicAttributes<'a> {
+    pub class: ClassAttribute,
+    pub id: Option<&'a Expr>,
+    pub focusable: bool,
+    pub on_activate: Option<&'a Expr>,
+}
+
+impl IntrinsicAttributes<'_> {
+    fn new() -> Self {
+        Self {
+            class: None,
+            id: None,
+            focusable: false,
+            on_activate: None,
+        }
+    }
+}
+
 pub(super) struct ImageAttributes<'a> {
     pub source: &'a Expr,
-    pub class: ClassAttribute,
+    pub intrinsic: IntrinsicAttributes<'a>,
 }
 
 pub(super) struct ComponentProp<'a> {
@@ -16,8 +34,8 @@ pub(super) struct ComponentProp<'a> {
     pub value: &'a Expr,
 }
 
-pub(super) fn parse_class_attribute(element: &RsxElement) -> syn::Result<ClassAttribute> {
-    let mut class = None;
+pub(super) fn parse_intrinsic_attributes(element: &RsxElement) -> syn::Result<IntrinsicAttributes> {
+    let mut attributes = IntrinsicAttributes::new();
 
     for attribute in element.attributes() {
         let NodeAttribute::Attribute(attribute) = attribute else {
@@ -27,33 +45,126 @@ pub(super) fn parse_class_attribute(element: &RsxElement) -> syn::Result<ClassAt
             ));
         };
 
+        if parse_intrinsic_attribute(attribute, &mut attributes)? {
+            continue;
+        }
+
         let name = attribute.key.to_string();
 
-        if name != "class" {
-            return Err(syn::Error::new_spanned(
-                attribute,
-                format!("unsupported attribute `{name}`"),
-            ));
-        }
-
-        if class.is_some() {
-            return Err(syn::Error::new_spanned(
-                attribute,
-                "duplicate `class` attribute",
-            ));
-        }
-
-        class = Some(parse_class_literal(attribute)?);
+        return Err(syn::Error::new_spanned(
+            attribute,
+            format!("unsupported attribute `{name}`"),
+        ));
     }
 
-    Ok(class)
+    validate_interaction_identity(element, &attributes)?;
+
+    Ok(attributes)
+}
+
+fn parse_intrinsic_attribute<'a>(
+    attribute: &'a KeyedAttribute,
+    attributes: &mut IntrinsicAttributes<'a>,
+) -> syn::Result<bool> {
+    let name = attribute.key.to_string();
+
+    match name.as_str() {
+        "class" => {
+            if attributes.class.is_some() {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "duplicate `class` attribute",
+                ));
+            }
+
+            attributes.class = Some(parse_class_literal(attribute)?);
+            Ok(true)
+        }
+        "id" => {
+            if attributes.id.is_some() {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "duplicate `id` attribute",
+                ));
+            }
+
+            let Some(value) = attribute.value() else {
+                return Err(syn::Error::new_spanned(attribute, "`id` requires a value"));
+            };
+
+            attributes.id = Some(unbrace_expr(value));
+            Ok(true)
+        }
+        "focusable" => {
+            if attributes.focusable {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "duplicate `focusable` attribute",
+                ));
+            }
+
+            if attribute.value().is_some() {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "`focusable` is a boolean attribute and must not have a value",
+                ));
+            }
+
+            attributes.focusable = true;
+            Ok(true)
+        }
+        "on:activate" => {
+            if attributes.on_activate.is_some() {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "duplicate `on:activate` attribute",
+                ));
+            }
+
+            let Some(value) = attribute.value() else {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "`on:activate` requires a Listener<ActivateEvent>",
+                ));
+            };
+
+            attributes.on_activate = Some(unbrace_expr(value));
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn validate_interaction_identity(
+    element: &RsxElement,
+    attributes: &IntrinsicAttributes<'_>,
+) -> syn::Result<()> {
+    if attributes.id.is_some() {
+        return Ok(());
+    }
+
+    if let Some(listener) = attributes.on_activate {
+        return Err(syn::Error::new_spanned(
+            listener,
+            "`on:activate` requires an `id` attribute",
+        ));
+    }
+
+    if attributes.focusable {
+        return Err(syn::Error::new_spanned(
+            element,
+            "`focusable` requires an `id` attribute",
+        ));
+    }
+
+    Ok(())
 }
 
 pub(super) fn parse_image_attributes<'a>(
     element: &'a RsxElement,
 ) -> syn::Result<ImageAttributes<'a>> {
     let mut source = None;
-    let mut class = None;
+    let mut intrinsic = IntrinsicAttributes::new();
 
     for attribute in element.attributes() {
         let NodeAttribute::Attribute(attribute) = attribute else {
@@ -62,6 +173,10 @@ pub(super) fn parse_image_attributes<'a>(
                 "dynamic <image> attributes are not supported",
             ));
         };
+
+        if parse_intrinsic_attribute(attribute, &mut intrinsic)? {
+            continue;
+        }
 
         let name = attribute.key.to_string();
 
@@ -83,18 +198,6 @@ pub(super) fn parse_image_attributes<'a>(
 
                 source = Some(unbrace_expr(value));
             }
-
-            "class" => {
-                if class.is_some() {
-                    return Err(syn::Error::new_spanned(
-                        attribute,
-                        "duplicate `class` attribute",
-                    ));
-                }
-
-                class = Some(parse_class_literal(attribute)?);
-            }
-
             _ => {
                 return Err(syn::Error::new_spanned(
                     attribute,
@@ -111,7 +214,9 @@ pub(super) fn parse_image_attributes<'a>(
         ));
     };
 
-    Ok(ImageAttributes { source, class })
+    validate_interaction_identity(element, &intrinsic)?;
+
+    Ok(ImageAttributes { source, intrinsic })
 }
 
 pub(super) fn parse_component_props<'a>(

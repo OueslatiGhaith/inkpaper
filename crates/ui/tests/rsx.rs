@@ -629,3 +629,43 @@ fn rsx_supports_nested_each() {
 
     assert_into_element(tree);
 }
+
+#[test]
+fn rsx_supports_identity() {
+    let book_id = 42_u64;
+
+    let tree = rsx! {
+        <div id={book_id}>
+            <text id="title">"Book"</text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_focusable_elements() {
+    let tree = rsx! {
+        <div id="open" focusable>
+            <text>"Open"</text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+fn interactive_rsx_tree(listener: Listener<ActivateEvent>) -> impl IntoElement {
+    rsx! {
+        <div
+            id="open"
+            on:activate={listener}
+        >
+            <text>"Open"</text>
+        </div>
+    }
+}
+
+#[test]
+fn rsx_supports_activate_listeners() {
+    let _ = interactive_rsx_tree;
+}
