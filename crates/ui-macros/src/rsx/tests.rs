@@ -309,7 +309,7 @@ fn unwraps_trivial_braced_expression() {
         { source }
     };
 
-    let expression = super::unbrace_expr(&expression);
+    let expression = super::attribute::unbrace_expr(&expression);
 
     assert!(matches!(expression, syn::Expr::Path(_)));
 }
@@ -323,7 +323,7 @@ fn preserves_nontrivial_block_expression() {
         }
     };
 
-    let expression = super::unbrace_expr(&expression);
+    let expression = super::attribute::unbrace_expr(&expression);
 
     assert!(matches!(expression, syn::Expr::Block(_)));
 }

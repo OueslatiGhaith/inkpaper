@@ -5,6 +5,7 @@ use inkpaper_ui_style_schema::tailwind::ValueKind;
 pub enum UtilityReceiver {
     Styled,
     TextStyled,
+    Image,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,34 +41,10 @@ impl UtilitySpec {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ImageUtilitySpec {
-    pub rust_name: &'static str,
-    pub argument_types: Vec<&'static str>,
-    pub classname_override: Option<&'static str>,
-    pub value_kind: Option<ValueKind>,
-}
-
-impl ImageUtilitySpec {
-    pub fn classname(&self) -> String {
-        self.classname_override
-            .map(str::to_owned)
-            .unwrap_or_else(|| self.rust_name.to_kebab_case())
-    }
-
-    pub fn argument_kind(&self) -> ArgumentKind {
-        match self.argument_types.as_slice() {
-            [] => ArgumentKind::None,
-            [argument] => classify_argument_type(argument),
-            _ => ArgumentKind::Unsupported,
-        }
-    }
-}
-
 fn classify_argument_type(argument: &str) -> ArgumentKind {
     let normalized = argument
         .chars()
-        .filter(|c| !c.is_whitespace())
+        .filter(|character| !character.is_whitespace())
         .collect::<String>();
 
     match normalized.as_str() {
@@ -97,7 +74,7 @@ macro_rules! tailwind_metadata {
     };
 }
 
-macro_rules! collect_utility_specs {
+macro_rules! collect_style_specs {
     ($specs:ident, $receiver:expr;) => {};
 
     (
@@ -119,7 +96,7 @@ macro_rules! collect_utility_specs {
             });
         }
 
-        collect_utility_specs!($specs, $receiver; $( $rest )*);
+        collect_style_specs!($specs, $receiver; $( $rest )*);
     };
 
     (
@@ -141,7 +118,7 @@ macro_rules! collect_utility_specs {
             });
         }
 
-        collect_utility_specs!($specs, $receiver; $( $rest )*);
+        collect_style_specs!($specs, $receiver; $( $rest )*);
     };
 
     (
@@ -158,7 +135,7 @@ macro_rules! collect_utility_specs {
             value_kind: None,
         });
 
-        collect_utility_specs!(
+        collect_style_specs!(
             $specs,
             $receiver;
             $($rest)*
@@ -179,7 +156,7 @@ macro_rules! collect_utility_specs {
             value_kind: None,
         });
 
-        collect_utility_specs!(
+        collect_style_specs!(
             $specs,
             $receiver;
             $($rest)*
@@ -187,7 +164,66 @@ macro_rules! collect_utility_specs {
     };
 }
 
-macro_rules! collect_image_utility_specs {
+macro_rules! declare_style_specs {
+    (
+        $(#[$attr:meta])*
+        pub struct $style_name:ident {
+            $(
+                $invalidation:ident {
+                    $(
+                        $field_name:ident:
+                        $field_ty:ty =
+                        $field_default:expr => {
+                            $($field_utilities:tt)*
+                        }
+                    ),*
+                    $(,)?
+                }
+            )*
+
+            @text {
+                $(
+                    $text_invalidation:ident {
+                        $(
+                            $text_name:ident:
+                            $text_ty:ty =
+                            $text_default:expr => {
+                                $($text_utilities:tt)*
+                            }
+                        ),*
+                        $(,)?
+                    }
+                )*
+            }
+        }
+    ) => {
+        fn push_style_specs(
+            specs: &mut Vec<UtilitySpec>,
+        ) {
+            $(
+                $(
+                    collect_style_specs!(
+                        specs,
+                        UtilityReceiver::Styled;
+                        $($field_utilities)*
+                    );
+                )*
+            )*
+
+            $(
+                $(
+                    collect_style_specs!(
+                        specs,
+                        UtilityReceiver::TextStyled;
+                        $($text_utilities)*
+                    );
+                )*
+            )*
+        }
+    };
+}
+
+macro_rules! collect_image_specs {
     ($specs:ident;) => {};
 
     (
@@ -204,17 +240,16 @@ macro_rules! collect_image_utility_specs {
             let (value_kind, classname_override) =
                 tailwind_metadata!($($tailwind)*);
 
-            $specs.push(ImageUtilitySpec {
+            $specs.push(UtilitySpec {
                 rust_name: stringify!($method_name),
-                argument_types: vec![
-                    $(stringify!($argument_type)),+
-                ],
+                receiver: UtilityReceiver::Image,
+                argument_types: vec![$(stringify!($argument_type)),+],
                 classname_override,
                 value_kind,
             });
         }
 
-        collect_image_utility_specs!(
+        collect_image_specs!(
             $specs;
             $($rest)*
         );
@@ -229,81 +264,70 @@ macro_rules! collect_image_utility_specs {
         $($rest:tt)*
     ) => {
         {
-            let (value_kind, classname_override) =
-                tailwind_metadata!($($tailwind)*);
+            let (value_kind, classname_override) = tailwind_metadata!($($tailwind)*);
 
-            $specs.push(ImageUtilitySpec {
+            $specs.push(UtilitySpec {
                 rust_name: stringify!($method_name),
+                receiver: UtilityReceiver::Image,
                 argument_types: Vec::new(),
                 classname_override,
                 value_kind,
             });
         }
 
-        collect_image_utility_specs!(
-            $specs;
-            $($rest)*
-        );
+        collect_image_specs!($specs; $($rest)*);
     };
-}
 
-macro_rules! declare_image_utility_specs {
     (
-        $($utilities:tt)*
+        $specs:ident;
+        $method_name:ident($($argument_name:ident: $argument_type:ty),+ $(,)? );
+        $($rest:tt)*
     ) => {
-        #[allow(clippy::vec_init_then_push)]
-        pub fn image_utility_specs() -> Vec<ImageUtilitySpec> {
-            let mut specs = Vec::new();
+        $specs.push(UtilitySpec {
+            rust_name: stringify!($method_name),
+            receiver: UtilityReceiver::Image,
+            argument_types: vec![$(stringify!($argument_type)),+],
+            classname_override: None,
+            value_kind: None,
+        });
 
-            collect_image_utility_specs!(
-                specs;
-                $($utilities)*
-            );
-
-            specs
-        }
+        collect_image_specs!($specs; $($rest)*);
     };
-}
 
-macro_rules! declare_utility_specs {
     (
-        $(#[$attr:meta])*
-        pub struct $style_name:ident {
-            $(
-                $invalidation:ident {
-                    $(
-                        $field_name:ident: $field_ty:ty = $field_default:expr => {
-                            $($field_utilities:tt)*
-                        }
-                    ),* $(,)?
-                }
-            )*
-
-            @text {
-                $(
-                    $text_invalidation:ident {
-                        $(
-                            $text_name:ident: $text_ty:ty = $text_default:expr => {
-                                $($text_utilities:tt)*
-                            }
-                        ),* $(,)?
-                    }
-                )*
-            }
-        }
+        $specs:ident;
+        $method_name:ident;
+        $($rest:tt)*
     ) => {
-        #[allow(clippy::vec_init_then_push)]
-        pub fn utility_specs() -> Vec<UtilitySpec> {
-            let mut specs = Vec::new();
+        $specs.push(UtilitySpec {
+            rust_name: stringify!($method_name),
+            receiver: UtilityReceiver::Image,
+            argument_types: Vec::new(),
+            classname_override: None,
+            value_kind: None,
+        });
 
-            $( $( collect_utility_specs!( specs, UtilityReceiver::Styled; $( $field_utilities )* ); )* )*
+        collect_image_specs!($specs; $($rest)*);
+    };
+}
 
-            $( $( collect_utility_specs!(specs, UtilityReceiver::TextStyled; $( $text_utilities )* ); )* )*
-
-            specs
+macro_rules! declare_image_specs {
+    ( $( $utilities:tt )* ) => {
+        fn push_image_specs(specs: &mut Vec<UtilitySpec>) {
+            collect_image_specs!(specs; $($utilities)*);
         }
     };
 }
 
-inkpaper_ui_style_schema::inkpaper_style_schema!(declare_utility_specs);
-inkpaper_ui_style_schema::inkpaper_image_schema!(declare_image_utility_specs);
+inkpaper_ui_style_schema::inkpaper_style_schema!(declare_style_specs);
+inkpaper_ui_style_schema::inkpaper_image_schema!(declare_image_specs);
+
+#[allow(clippy::vec_init_then_push)]
+pub fn utility_specs() -> Vec<UtilitySpec> {
+    let mut specs = Vec::new();
+
+    push_style_specs(&mut specs);
+    push_image_specs(&mut specs);
+
+    specs
+}
