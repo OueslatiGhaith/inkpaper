@@ -1,0 +1,5 @@
+error: bare text is not supported. Use <text>"..."</text>
+ --> tests/ui/rsx/fail/bare_text.rs:6:13
+  |
+6 |             Hello
+  |             ^^^^^

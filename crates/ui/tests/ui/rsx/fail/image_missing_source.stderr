@@ -1,0 +1,5 @@
+error: <image> requires a `source` attribute
+ --> tests/ui/rsx/fail/image_missing_source.rs:5:9
+  |
+5 |         <image class="w-24 h-32 object-cover" />
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

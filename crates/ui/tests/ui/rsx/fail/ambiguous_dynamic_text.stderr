@@ -1,0 +1,5 @@
+error: ambiguous utility class `text-{value}`. It could refer to: font_size, text_color
+ --> tests/ui/rsx/fail/ambiguous_dynamic_text.rs:7:21
+  |
+7 |         <text class="text-{value}">
+  |                     ^^^^^^^^^^^^^^

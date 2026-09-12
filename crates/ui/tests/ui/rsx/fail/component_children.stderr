@@ -1,0 +1,5 @@
+error: custom component children are not supported yet
+ --> tests/ui/rsx/fail/component_children.rs:6:13
+  |
+6 |             <text>"Hello"</text>
+  |             ^^^^^^^^^^^^^^^^^^^^

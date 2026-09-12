@@ -1,0 +1,5 @@
+error: utility class `p-4` is not valid on <text>
+ --> tests/ui/rsx/fail/layout_utility_on_text.rs:5:21
+  |
+5 |         <text class="p-4">
+  |                     ^^^^^

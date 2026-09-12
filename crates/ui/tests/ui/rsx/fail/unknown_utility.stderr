@@ -1,0 +1,5 @@
+error: unknown utility class `definitely-not-a-utility`
+ --> tests/ui/rsx/fail/unknown_utility.rs:5:20
+  |
+5 |         <div class="definitely-not-a-utility" />
+  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^

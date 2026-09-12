@@ -23,6 +23,7 @@ ttf-parser = { version = "0.25.1", optional = true, default-features = false, fe
 [dev-dependencies]
 criterion = "0.8.2"
 embedded-graphics-simulator = { workspace = true }
+trybuild = "1.0.121"
 
 [[bench]]
 name = "rendering"
