@@ -413,3 +413,38 @@ fn rsx_supports_custom_components_as_children() {
 
     assert_into_element(tree);
 }
+
+#[test]
+fn rsx_supports_conditionals() {
+    let downloaded = false;
+    let downloading = true;
+
+    let tree = rsx! {
+        {#if downloaded}
+            <text>"Read"</text>
+        {:else if downloading}
+            <text>"Downloading..."</text>
+        {:else}
+            <text>"Download"</text>
+        {/if}
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_conditional_children() {
+    let available = true;
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            {#if available}
+                <text>"Available"</text>
+            {:else}
+                <text>"Unavailable"</text>
+            {/if}
+        </div>
+    };
+
+    assert_into_element(tree);
+}

@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::expand_rsx;
@@ -326,4 +329,107 @@ fn preserves_nontrivial_block_expression() {
     let expression = super::attribute::unbrace_expr(&expression);
 
     assert!(matches!(expression, syn::Expr::Block(_)));
+}
+
+fn rsx_tokens(source: &str) -> TokenStream {
+    TokenStream::from_str(source).expect("valid token stream")
+}
+
+#[test]
+fn expands_if_else() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        {#if visible}
+            <text>"Visible"</text>
+        {:else}
+            <text>"Hidden"</text>
+        {/if}
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_else_if() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        {#if primary}
+            <text>"Primary"</text>
+        {:else if secondary}
+            <text>"Secondary"</text>
+        {:else}
+            <text>"Fallback"</text>
+        {/if}
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_nested_if() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        {#if outer}
+            <div>
+                {#if inner}
+                    <text>"Inner"</text>
+                {:else}
+                    <text>"Other"</text>
+                {/if}
+            </div>
+        {:else}
+            <text>"Outer fallback"</text>
+        {/if}
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_if_without_else() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        {#if visible}
+            <text>"Visible"</text>
+        {/if}
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(error.to_string().contains("requires a `{:else}` branch"));
+}
+
+#[test]
+fn rejects_multiple_nodes_in_branch() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        {#if visible}
+            <text>"One"</text>
+            <text>"Two"</text>
+        {:else}
+            <text>"Fallback"</text>
+        {/if}
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(error.to_string().contains("exactly one renderable child"));
+}
+
+#[test]
+fn rejects_unclosed_if() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        {#if visible}
+            <text>"Visible"</text>
+        {:else}
+            <text>"Hidden"</text>
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(error.to_string().contains("expected `{/if}`"));
 }

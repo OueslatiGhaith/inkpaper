@@ -1,10 +1,9 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use rstml::{
-    Infallible,
-    node::{Node, NodeBlock, NodeElement},
-};
+use rstml::node::{Node, NodeBlock};
 use syn::Stmt;
+
+use crate::rsx::{RsxElement, RsxNode, control_flow::expand_control_flow};
 
 use super::{
     attribute::{parse_class_attribute, parse_image_attributes},
@@ -12,7 +11,7 @@ use super::{
     component::{expand_component, is_component_tag},
 };
 
-pub(super) fn expand_element(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+pub(super) fn expand_element(element: &RsxElement) -> syn::Result<TokenStream> {
     let name = element.name().to_string();
 
     match name.as_str() {
@@ -29,7 +28,7 @@ pub(super) fn expand_element(element: &NodeElement<Infallible>) -> syn::Result<T
     }
 }
 
-fn expand_div(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+fn expand_div(element: &RsxElement) -> syn::Result<TokenStream> {
     let class = parse_class_attribute(element)?;
 
     let mut expression = apply_classes(quote! { ::inkpaper_ui::div() }, class, ClassTarget::Div)?;
@@ -43,7 +42,7 @@ fn expand_div(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
     Ok(expression)
 }
 
-fn expand_text(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+fn expand_text(element: &RsxElement) -> syn::Result<TokenStream> {
     let class = parse_class_attribute(element)?;
 
     let content = expand_text_content(element)?;
@@ -55,7 +54,7 @@ fn expand_text(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
     )
 }
 
-fn expand_image(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+fn expand_image(element: &RsxElement) -> syn::Result<TokenStream> {
     if let Some(child) = element.children().first() {
         return Err(syn::Error::new_spanned(
             child,
@@ -73,9 +72,10 @@ fn expand_image(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
     )
 }
 
-fn expand_child(node: &Node<Infallible>) -> syn::Result<TokenStream> {
+pub(super) fn expand_child(node: &RsxNode) -> syn::Result<TokenStream> {
     match node {
         Node::Element(element) => expand_element(element),
+        Node::Custom(control_flow) => expand_control_flow(control_flow),
         Node::Block(block) => expand_block(block),
         Node::Text(_) => Err(syn::Error::new_spanned(
             node,
@@ -104,7 +104,7 @@ fn expand_block(block: &NodeBlock) -> syn::Result<TokenStream> {
     Ok(quote! { #block })
 }
 
-fn expand_text_content(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+fn expand_text_content(element: &RsxElement) -> syn::Result<TokenStream> {
     match element.children() {
         [] => Err(syn::Error::new_spanned(element, "<text> requires content")),
         [Node::Text(text)] => {

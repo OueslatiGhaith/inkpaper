@@ -1,9 +1,8 @@
 use proc_macro2::Span;
-use rstml::{
-    Infallible,
-    node::{KeyedAttribute, NodeAttribute, NodeElement},
-};
+use rstml::node::{KeyedAttribute, NodeAttribute};
 use syn::{Expr, Ident, Lit, Stmt};
+
+use crate::rsx::RsxElement;
 
 pub(super) type ClassAttribute = Option<(String, Span)>;
 
@@ -17,9 +16,7 @@ pub(super) struct ComponentProp<'a> {
     pub value: &'a Expr,
 }
 
-pub(super) fn parse_class_attribute(
-    element: &NodeElement<Infallible>,
-) -> syn::Result<ClassAttribute> {
+pub(super) fn parse_class_attribute(element: &RsxElement) -> syn::Result<ClassAttribute> {
     let mut class = None;
 
     for attribute in element.attributes() {
@@ -53,7 +50,7 @@ pub(super) fn parse_class_attribute(
 }
 
 pub(super) fn parse_image_attributes<'a>(
-    element: &'a NodeElement<Infallible>,
+    element: &'a RsxElement,
 ) -> syn::Result<ImageAttributes<'a>> {
     let mut source = None;
     let mut class = None;
@@ -118,7 +115,7 @@ pub(super) fn parse_image_attributes<'a>(
 }
 
 pub(super) fn parse_component_props<'a>(
-    element: &'a NodeElement<Infallible>,
+    element: &'a RsxElement,
 ) -> syn::Result<Vec<ComponentProp<'a>>> {
     let mut props = Vec::new();
 

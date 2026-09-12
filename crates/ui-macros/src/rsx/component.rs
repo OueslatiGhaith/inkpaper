@@ -1,7 +1,8 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use rstml::{Infallible, node::NodeElement};
 use syn::Path;
+
+use crate::rsx::RsxElement;
 
 use super::attribute::parse_component_props;
 
@@ -22,7 +23,7 @@ pub(super) fn is_component_tag(name: &str) -> bool {
         .is_some_and(char::is_uppercase)
 }
 
-pub(super) fn expand_component(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+pub(super) fn expand_component(element: &RsxElement) -> syn::Result<TokenStream> {
     if let Some(child) = element.children().first() {
         return Err(syn::Error::new_spanned(
             child,
@@ -45,7 +46,7 @@ pub(super) fn expand_component(element: &NodeElement<Infallible>) -> syn::Result
     })
 }
 
-fn parse_component_path(element: &NodeElement<Infallible>) -> syn::Result<Path> {
+fn parse_component_path(element: &RsxElement) -> syn::Result<Path> {
     let name = element.name().to_string();
 
     syn::parse_str::<Path>(&name).map_err(|error| {

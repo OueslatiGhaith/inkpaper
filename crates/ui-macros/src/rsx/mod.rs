@@ -1,17 +1,27 @@
 use proc_macro2::{Span, TokenStream};
-use rstml::{node::Node, parse2};
+use rstml::{
+    Parser, ParserConfig,
+    node::{Node, NodeElement},
+};
+
+use crate::rsx::control_flow::ControlFlow;
 
 mod attribute;
 mod class;
 mod component;
+mod control_flow;
 mod element;
 mod spec;
 
 #[cfg(test)]
 mod tests;
 
+pub(super) type RsxNode = Node<ControlFlow>;
+pub(super) type RsxElement = NodeElement<ControlFlow>;
+
 pub(crate) fn expand_rsx(input: TokenStream) -> syn::Result<TokenStream> {
-    let nodes = parse2(input)?;
+    let nodes =
+        Parser::new(ParserConfig::new().custom_node::<ControlFlow>()).parse_simple(input)?;
 
     let root = match nodes.as_slice() {
         [] => {
@@ -31,9 +41,10 @@ pub(crate) fn expand_rsx(input: TokenStream) -> syn::Result<TokenStream> {
 
     match root {
         Node::Element(element) => element::expand_element(element),
+        Node::Custom(control_flow) => control_flow::expand_control_flow(control_flow),
         _ => Err(syn::Error::new_spanned(
             root,
-            "the root of rsx! must be an element",
+            "the root of rsx! must be an element or a control-flow block",
         )),
     }
 }
