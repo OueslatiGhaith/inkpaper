@@ -353,3 +353,63 @@ fn rsx_supports_image_filters() {
 
     assert_into_element(tree);
 }
+
+struct TestCard<'a> {
+    title: &'a str,
+    width: Pixels,
+}
+
+struct TestCardProps<'a> {
+    title: &'a str,
+    width: Pixels,
+}
+
+impl<'a> From<TestCardProps<'a>> for TestCard<'a> {
+    fn from(props: TestCardProps<'a>) -> Self {
+        Self {
+            title: props.title,
+            width: props.width,
+        }
+    }
+}
+
+impl RenderOnce for TestCard<'_> {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        div().w(self.width).child(self.title)
+    }
+}
+
+#[test]
+fn rsx_supports_custom_components() {
+    let title = "Continue reading";
+    let width = px(240);
+
+    let tree = rsx! {
+        <TestCard
+            title={title}
+            width={width}
+        />
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_custom_components_as_children() {
+    let title = "Continue reading";
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-4">
+            <TestCard
+                title={title}
+                width={px(240)}
+            />
+
+            <text class="text-sm text-zinc-500">
+                "Recent"
+            </text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}

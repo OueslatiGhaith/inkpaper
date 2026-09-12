@@ -1,12 +1,12 @@
 use inkpaper_ui_style_schema::tailwind::{ValueKind, border, color, radius, spacing, typography};
 use proc_macro2::{Literal, Span, TokenStream};
-use quote::quote;
+use quote::{format_ident, quote};
 use rstml::{
     Infallible,
     node::{Node, NodeAttribute, NodeBlock, NodeElement},
     parse2,
 };
-use syn::{Expr, Ident, Lit, Stmt};
+use syn::{Expr, Ident, Lit, Path, Stmt};
 
 use crate::rsx::spec::{
     ArgumentKind, ImageUtilitySpec, UtilityReceiver, UtilitySpec, image_utility_specs,
@@ -83,6 +83,11 @@ struct ImageAttributes<'a> {
     class: Option<(String, Span)>,
 }
 
+struct ComponentProp<'a> {
+    name: Ident,
+    value: &'a Expr,
+}
+
 pub(crate) fn expand_rsx(input: TokenStream) -> syn::Result<TokenStream> {
     let nodes = parse2(input)?;
 
@@ -112,16 +117,34 @@ pub(crate) fn expand_rsx(input: TokenStream) -> syn::Result<TokenStream> {
 }
 
 fn expand_element(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
-    match element.name().to_string().as_str() {
+    let name = element.name().to_string();
+
+    match name.as_str() {
         "div" => expand_div(element),
         "text" => expand_text(element),
         "image" => expand_image(element),
-
-        name => Err(syn::Error::new_spanned(
+        _ if is_component_tag(&name) => expand_component(element),
+        _ => Err(syn::Error::new_spanned(
             element,
             format!("unsupported rsx! element <{name}>"),
         )),
     }
+}
+
+fn is_component_tag(name: &str) -> bool {
+    let Ok(path) = syn::parse_str::<Path>(name) else {
+        return false;
+    };
+    let Some(segment) = path.segments.last() else {
+        return false;
+    };
+
+    segment
+        .ident
+        .to_string()
+        .chars()
+        .next()
+        .is_some_and(char::is_uppercase)
 }
 
 fn expand_div(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
@@ -164,6 +187,30 @@ fn expand_image(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
     };
 
     apply_image_classes(expression, attributes.class)
+}
+
+fn expand_component(element: &NodeElement<Infallible>) -> syn::Result<TokenStream> {
+    if let Some(child) = element.children().first() {
+        return Err(syn::Error::new_spanned(
+            child,
+            "custom component children are not supported yet",
+        ));
+    }
+
+    let component = parse_component_path(element)?;
+    let props_type = component_props_path(&component)?;
+    let props = parse_component_props(element)?;
+
+    let names = props.iter().map(|prop| &prop.name);
+    let values = props.iter().map(|prop| prop.value);
+
+    Ok(quote! {
+        #component::from(
+            #props_type {
+                #( #names: #values, )*
+            }
+        )
+    })
 }
 
 fn expand_child(node: &Node<Infallible>) -> syn::Result<TokenStream> {
@@ -314,6 +361,82 @@ fn parse_image_attributes<'a>(
     };
 
     Ok(ImageAttributes { source, class })
+}
+
+fn parse_component_path(element: &NodeElement<Infallible>) -> syn::Result<Path> {
+    let name = element.name().to_string();
+
+    syn::parse_str::<Path>(&name).map_err(|error| {
+        syn::Error::new_spanned(
+            element,
+            format!("invalid custom component path `{name}`: {error}"),
+        )
+    })
+}
+
+fn component_props_path(component: &Path) -> syn::Result<Path> {
+    let mut props = component.clone();
+
+    let Some(segment) = props.segments.last_mut() else {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "component path cannot be empty",
+        ));
+    };
+
+    let name = format!("{}Props", segment.ident);
+
+    segment.ident = format_ident!("{}", name, span = segment.ident.span(),);
+
+    Ok(props)
+}
+
+fn parse_component_props<'a>(
+    element: &'a NodeElement<Infallible>,
+) -> syn::Result<Vec<ComponentProp<'a>>> {
+    let mut props = Vec::new();
+
+    for attribute in element.attributes() {
+        let NodeAttribute::Attribute(attribute) = attribute else {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                "dynamic component attributes are not supported",
+            ));
+        };
+
+        let name = attribute.key.to_string();
+
+        let ident = syn::parse_str::<Ident>(&name).map_err(|error| {
+            syn::Error::new_spanned(
+                attribute,
+                format!("invalid component prop name `{name}`: {error}"),
+            )
+        })?;
+
+        if props
+            .iter()
+            .any(|prop: &ComponentProp<'_>| prop.name == ident)
+        {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                format!("duplicate component prop `{name}`"),
+            ));
+        }
+
+        let Some(value) = attribute.value() else {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                format!("component prop `{name}` requires a Rust expression"),
+            ));
+        };
+
+        props.push(ComponentProp {
+            name: ident,
+            value: unbrace_expr(value),
+        });
+    }
+
+    Ok(props)
 }
 
 fn apply_classes(

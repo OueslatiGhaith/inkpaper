@@ -228,3 +228,102 @@ fn rejects_unsupported_object_scale_down() {
 
     assert!(error.to_string().contains("unknown <image> utility class"));
 }
+
+#[test]
+fn expands_custom_component() {
+    let result = expand_rsx(quote! {
+        <TopBar
+            clock={clock}
+            battery={battery}
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_custom_component_inside_div() {
+    let result = expand_rsx(quote! {
+        <div class="flex flex-col">
+            <TopBar
+                clock={clock}
+                battery={battery}
+            />
+        </div>
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_custom_component_with_no_props() {
+    let result = expand_rsx(quote! {
+        <LoadingIndicator />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_custom_component_children_for_now() {
+    let error = expand_rsx(quote! {
+        <Panel>
+            <text>"Hello"</text>
+        </Panel>
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("children are not supported yet"));
+}
+
+#[test]
+fn rejects_duplicate_component_props() {
+    let error = expand_rsx(quote! {
+        <TopBar
+            clock={clock}
+            clock={other_clock}
+        />
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("duplicate component prop `clock`")
+    );
+}
+
+#[test]
+fn rejects_component_prop_without_value() {
+    let error = expand_rsx(quote! {
+        <TopBar clock />
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("requires a Rust expression"));
+}
+
+#[test]
+fn unwraps_trivial_braced_expression() {
+    let expression: syn::Expr = syn::parse_quote! {
+        { source }
+    };
+
+    let expression = super::unbrace_expr(&expression);
+
+    assert!(matches!(expression, syn::Expr::Path(_)));
+}
+
+#[test]
+fn preserves_nontrivial_block_expression() {
+    let expression: syn::Expr = syn::parse_quote! {
+        {
+            let value = make_value();
+            value
+        }
+    };
+
+    let expression = super::unbrace_expr(&expression);
+
+    assert!(matches!(expression, syn::Expr::Block(_)));
+}
