@@ -552,3 +552,175 @@ fn expands_fragment_inside_conditional_branch() {
 
     assert!(result.is_ok());
 }
+
+#[test]
+fn expands_each() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as book}
+                <BookRow book={book} />
+            {/each}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_each_with_multiple_children() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as book}
+                <BookRow book={book} />
+                <text>"Divider"</text>
+            {/each}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_each_with_index() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as book, index}
+                <BookRow
+                    book={book}
+                    index={index}
+                />
+            {/each}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_each_with_else() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as book}
+                <BookRow book={book} />
+            {:else}
+                <text>"No books"</text>
+            {/each}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_conditional_inside_each() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as book}
+                {#if book.downloaded}
+                    <text>"Read"</text>
+                {:else}
+                    <text>"Download"</text>
+                {/if}
+            {/each}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_each_inside_conditional() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#if loaded}
+                {#each books as book}
+                    <BookRow book={book} />
+                {/each}
+            {:else}
+                <text>"Loading"</text>
+            {/if}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_nested_each() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each shelves as shelf}
+                <text>{shelf.name}</text>
+
+                {#each shelf.books as book}
+                    <BookRow book={book} />
+                {/each}
+            {/each}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_each_as_root() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        {#each books as book}
+            <BookRow book={book} />
+        {/each}
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("root `{#each}` is not supported")
+    );
+}
+
+#[test]
+fn rejects_each_without_as() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books}
+                <text>"Book"</text>
+            {/each}
+        </div>
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(error.to_string().contains("requires `as`"));
+}
+
+#[test]
+fn rejects_unclosed_each() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as book}
+                <BookRow book={book} />
+        </div>
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(error.to_string().contains("expected `{/each}`"));
+}

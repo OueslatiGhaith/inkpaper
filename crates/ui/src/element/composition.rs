@@ -1,6 +1,6 @@
 use crate::{
-    Element, IntoElement, MountCx, MountError, NodeId, ParentElement, StatefulInteractiveElement,
-    StatefulInteractivity, Style, Styled,
+    Children, Element, IntoElement, MountCx, MountError, NodeId, ParentElement,
+    StatefulInteractiveElement, StatefulInteractivity, Style, Styled,
 };
 
 /// marker type for a [`ComponentSlot`] that has not been filled yet.
@@ -94,6 +94,19 @@ where
         match self {
             Either::Left(left) => left.style_mut(),
             Either::Right(right) => right.style_mut(),
+        }
+    }
+}
+
+impl<L, R> Children for Either<L, R>
+where
+    L: Children,
+    R: Children,
+{
+    fn mount_children(self, parent: NodeId, cx: &mut MountCx<'_>) -> Result<(), MountError> {
+        match self {
+            Either::Left(left) => left.mount_children(parent, cx),
+            Either::Right(right) => right.mount_children(parent, cx),
         }
     }
 }

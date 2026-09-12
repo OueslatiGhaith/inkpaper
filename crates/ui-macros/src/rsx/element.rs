@@ -5,7 +5,7 @@ use syn::Stmt;
 
 use crate::rsx::{
     RsxElement, RsxNode,
-    control_flow::{expand_control_flow, expand_control_flow_into},
+    control_flow::{expand_control_flow, expand_control_flow_group_into, expand_control_flow_into},
 };
 
 use super::{
@@ -67,6 +67,33 @@ fn expand_image(element: &RsxElement) -> syn::Result<TokenStream> {
         attributes.class,
         ClassTarget::Image,
     )
+}
+
+pub(super) fn expand_children_group(children: &[RsxNode]) -> syn::Result<TokenStream> {
+    expand_children_group_into(quote! { ::inkpaper_ui::NoChildren }, children)
+}
+
+pub(super) fn expand_children_group_into(
+    mut group: TokenStream,
+    children: &[RsxNode],
+) -> syn::Result<TokenStream> {
+    for child in children {
+        group = expand_child_group_into(group, child)?;
+    }
+
+    Ok(group)
+}
+
+fn expand_child_group_into(group: TokenStream, node: &RsxNode) -> syn::Result<TokenStream> {
+    match node {
+        Node::Fragment(fragment) => expand_children_group_into(group, fragment.children()),
+        Node::Custom(control_flow) => expand_control_flow_group_into(group, control_flow),
+        _ => {
+            let child = expand_child(node)?;
+
+            Ok(quote! { ::inkpaper_ui::ChildrenExt::child(#group, #child) })
+        }
+    }
 }
 
 pub(super) fn expand_children_into(

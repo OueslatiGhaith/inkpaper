@@ -542,3 +542,90 @@ fn rsx_supports_fragments_inside_conditionals() {
 
     assert_into_element(tree);
 }
+
+#[test]
+fn rsx_supports_each() {
+    let books = ["Dune", "Neuromancer", "Foundation"];
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            {#each books as book}
+                <text>{book}</text>
+            {/each}
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_each_with_multiple_children() {
+    let books = ["Dune", "Neuromancer"];
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            {#each books as book}
+                <text>{book}</text>
+                <text>"Book"</text>
+            {/each}
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_each_index() {
+    let books = ["Dune", "Neuromancer"];
+
+    let tree = rsx! {
+        <div>
+            {#each books as book, index}
+                {#if index == 0}
+                    <text>{book}</text>
+                    <text>"First"</text>
+                {:else}
+                    <text>{book}</text>
+                {/if}
+            {/each}
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_each_else() {
+    let books: [&str; 0] = [];
+
+    let tree = rsx! {
+        <div>
+            {#each books as book}
+                <text>{book}</text>
+            {:else}
+                <text>"No books"</text>
+            {/each}
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_nested_each() {
+    let rows = [["A", "B"], ["C", "D"]];
+
+    let tree = rsx! {
+        <div>
+            {#each rows as row}
+                <div>
+                    {#each row as value}
+                        <text>{value}</text>
+                    {/each}
+                </div>
+            {/each}
+        </div>
+    };
+
+    assert_into_element(tree);
+}

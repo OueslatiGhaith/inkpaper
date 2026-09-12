@@ -8,6 +8,8 @@ mod render;
 pub(crate) mod state;
 mod stateful;
 
+use core::marker::PhantomData;
+
 pub use canvas::*;
 pub use composition::*;
 pub use div::*;
@@ -91,6 +93,15 @@ pub struct PushMany<C, I> {
     pub elements: I,
 }
 
+#[doc(hidden)]
+pub struct PushEach<C, I, F, H, G, E> {
+    previous: C,
+    items: I,
+    render: F,
+    fallback: H,
+    marker: PhantomData<fn() -> (G, E)>,
+}
+
 pub trait Children {
     fn mount_children(self, parent: NodeId, cx: &mut MountCx<'_>) -> Result<(), MountError>;
 }
@@ -137,6 +148,84 @@ where
     }
 }
 
+impl<C, I, F, H, G, E> Children for PushEach<C, I, F, H, G, E>
+where
+    C: Children,
+    I: IntoIterator,
+    F: FnMut(I::Item) -> G,
+    H: FnOnce() -> E,
+    G: Children,
+    E: Children,
+{
+    fn mount_children(self, parent: NodeId, cx: &mut MountCx<'_>) -> Result<(), MountError> {
+        let PushEach {
+            previous,
+            items,
+            mut render,
+            fallback,
+            ..
+        } = self;
+
+        previous.mount_children(parent, cx)?;
+
+        let mut empty = true;
+
+        for item in items {
+            empty = false;
+            render(item).mount_children(parent, cx)?;
+        }
+
+        if empty {
+            fallback().mount_children(parent, cx)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[doc(hidden)]
+pub trait ChildrenExt: Children + Sized {
+    fn child<E>(self, child: E) -> Push<Self, E>
+    where
+        E: IntoElement,
+    {
+        Push {
+            previous: self,
+            element: child,
+        }
+    }
+
+    fn children<I>(self, children: I) -> PushMany<Self, I>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement,
+    {
+        PushMany {
+            previous: self,
+            elements: children,
+        }
+    }
+
+    fn each<I, F, H, G, E>(self, items: I, render: F, fallback: H) -> PushEach<Self, I, F, H, G, E>
+    where
+        I: IntoIterator,
+        F: FnMut(I::Item) -> G,
+        H: FnOnce() -> E,
+        G: Children,
+        E: Children,
+    {
+        PushEach {
+            previous: self,
+            items,
+            render,
+            fallback,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<C> ChildrenExt for C where C: Children {}
+
 pub trait ParentElement: Sized {
     type WithChild<E>: ParentElement
     where
@@ -156,3 +245,82 @@ pub trait ParentElement: Sized {
         I: IntoIterator,
         I::Item: IntoElement;
 }
+
+#[doc(hidden)]
+pub struct AppendChildren<P, C> {
+    parent: P,
+    children: C,
+}
+
+impl<P, C> Element for AppendChildren<P, C>
+where
+    P: IntoElement,
+    C: Children,
+{
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+        let root = self.parent.into_element().mount(cx)?;
+
+        self.children.mount_children(root, cx)?;
+
+        Ok(root)
+    }
+}
+
+impl<P, C> ParentElement for AppendChildren<P, C>
+where
+    P: IntoElement,
+    C: Children,
+{
+    type WithChild<E>
+        = AppendChildren<P, Push<C, E>>
+    where
+        E: IntoElement;
+
+    type WithChildren<I>
+        = AppendChildren<P, PushMany<C, I>>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement;
+
+    fn child<E>(self, child: E) -> Self::WithChild<E>
+    where
+        E: IntoElement,
+    {
+        AppendChildren {
+            parent: self.parent,
+            children: Push {
+                previous: self.children,
+                element: child,
+            },
+        }
+    }
+
+    fn children<I>(self, children: I) -> Self::WithChildren<I>
+    where
+        I: IntoIterator,
+        I::Item: IntoElement,
+    {
+        AppendChildren {
+            parent: self.parent,
+            children: PushMany {
+                previous: self.children,
+                elements: children,
+            },
+        }
+    }
+}
+
+#[doc(hidden)]
+pub trait ParentElementChildrenExt: ParentElement + IntoElement + Sized {
+    fn child_sequence<C>(self, children: C) -> AppendChildren<Self, C>
+    where
+        C: Children,
+    {
+        AppendChildren {
+            parent: self,
+            children,
+        }
+    }
+}
+
+impl<T> ParentElementChildrenExt for T where T: ParentElement + IntoElement {}
