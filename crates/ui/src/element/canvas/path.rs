@@ -1,32 +1,38 @@
-use crate::{
-    AffineTransform, CanvasPainter, PathCommand, PathStroke, Point, VectorPath, VectorPoint, px,
-};
+use crate::{AffineTransform, PathCommand, VectorPath, VectorPoint};
 
-const VECTOR_CURVE_PIXELS_PER_STEP: f32 = 2.0;
-const VECTOR_MAX_CURVE_STEPS: usize = 32;
+const CURVE_PIXELS_PER_STEP: f32 = 2.0;
+const MAX_CURVE_STEPS: usize = 32;
 
-pub fn paint_stroked_path<P>(
-    painter: &mut P,
-    path: VectorPath<'_>,
-    transform: AffineTransform,
-    stroke: PathStroke,
-) where
-    P: CanvasPainter + ?Sized,
+pub(super) trait FlattenedPathSink {
+    fn begin_contour(&mut self, start: VectorPoint);
+    fn segment(&mut self, from: VectorPoint, to: VectorPoint);
+    fn end_contour(&mut self, closed: bool);
+}
+
+pub(super) fn flatten_path<S>(path: VectorPath<'_>, transform: AffineTransform, sink: &mut S)
+where
+    S: FlattenedPathSink + ?Sized,
 {
-    if stroke.width.is_non_positive() {
-        return;
-    }
-
     let mut current = None;
     let mut contour_start = None;
+    let mut contour_active = false;
 
     for command in path.commands() {
         match *command {
             PathCommand::MoveTo(point) => {
+                if contour_active {
+                    sink.end_contour(false);
+                }
+
                 let point = transform.map_point(point);
+
+                sink.begin_contour(point);
+
                 current = Some(point);
                 contour_start = Some(point);
+                contour_active = true;
             }
+
             PathCommand::LineTo(point) => {
                 let Some(from) = current else {
                     continue;
@@ -34,10 +40,13 @@ pub fn paint_stroked_path<P>(
 
                 let to = transform.map_point(point);
 
-                paint_vector_segment(painter, from, to, stroke);
+                if from != to {
+                    sink.segment(from, to);
+                }
 
                 current = Some(to);
             }
+
             PathCommand::QuadraticTo { control, to } => {
                 let Some(from) = current else {
                     continue;
@@ -46,10 +55,11 @@ pub fn paint_stroked_path<P>(
                 let control = transform.map_point(control);
                 let to = transform.map_point(to);
 
-                paint_quadratic_curve(painter, from, control, to, stroke);
+                flatten_quadratic(sink, from, control, to);
 
                 current = Some(to);
             }
+
             PathCommand::CubicTo {
                 control_1,
                 control_2,
@@ -63,33 +73,39 @@ pub fn paint_stroked_path<P>(
                 let control_2 = transform.map_point(control_2);
                 let to = transform.map_point(to);
 
-                paint_cubic_curve(painter, from, control_1, control_2, to, stroke);
+                flatten_cubic(sink, from, control_1, control_2, to);
 
                 current = Some(to);
             }
+
             PathCommand::Close => {
-                let (Some(from), Some(to)) = (current, contour_start) else {
+                let (Some(from), Some(start)) = (current, contour_start) else {
                     continue;
                 };
 
-                paint_vector_segment(painter, from, to, stroke);
+                if from != start {
+                    sink.segment(from, start);
+                }
 
-                current = Some(to);
+                sink.end_contour(true);
+
+                current = None;
+                contour_start = None;
+                contour_active = false;
             }
         }
     }
+
+    if contour_active {
+        sink.end_contour(false);
+    }
 }
 
-fn paint_quadratic_curve<P>(
-    painter: &mut P,
-    start: VectorPoint,
-    control: VectorPoint,
-    end: VectorPoint,
-    stroke: PathStroke,
-) where
-    P: CanvasPainter + ?Sized,
+fn flatten_quadratic<S>(sink: &mut S, start: VectorPoint, control: VectorPoint, end: VectorPoint)
+where
+    S: FlattenedPathSink + ?Sized,
 {
-    let steps = vector_curve_steps(&[start, control, end]);
+    let steps = curve_steps(&[start, control, end]);
 
     let mut previous = start;
 
@@ -102,23 +118,24 @@ fn paint_quadratic_curve<P>(
             inverse * inverse * start.y + 2.0 * inverse * t * control.y + t * t * end.y,
         );
 
-        paint_vector_segment(painter, previous, point, stroke);
+        if previous != point {
+            sink.segment(previous, point);
+        }
 
         previous = point;
     }
 }
 
-fn paint_cubic_curve<P>(
-    painter: &mut P,
+fn flatten_cubic<S>(
+    sink: &mut S,
     start: VectorPoint,
     control_1: VectorPoint,
     control_2: VectorPoint,
     end: VectorPoint,
-    stroke: PathStroke,
 ) where
-    P: CanvasPainter + ?Sized,
+    S: FlattenedPathSink + ?Sized,
 {
-    let steps = vector_curve_steps(&[start, control_1, control_2, end]);
+    let steps = curve_steps(&[start, control_1, control_2, end]);
 
     let mut previous = start;
 
@@ -140,31 +157,15 @@ fn paint_cubic_curve<P>(
                 + t_2 * t * end.y,
         );
 
-        paint_vector_segment(painter, previous, point, stroke);
+        if previous != point {
+            sink.segment(previous, point);
+        }
 
         previous = point;
     }
 }
 
-fn paint_vector_segment<P>(
-    painter: &mut P,
-    start: VectorPoint,
-    end: VectorPoint,
-    stroke: PathStroke,
-) where
-    P: CanvasPainter + ?Sized,
-{
-    let start = vector_point_to_pixel_point(start);
-    let end = vector_point_to_pixel_point(end);
-
-    if start == end {
-        return;
-    }
-
-    painter.line(start, end, stroke.width, stroke.color);
-}
-
-fn vector_curve_steps(points: &[VectorPoint]) -> usize {
+fn curve_steps(points: &[VectorPoint]) -> usize {
     if points.len() < 2 {
         return 1;
     }
@@ -172,10 +173,10 @@ fn vector_curve_steps(points: &[VectorPoint]) -> usize {
     let mut length = 0.0;
 
     for pair in points.windows(2) {
-        length += vector_approximate_distance(pair[0], pair[1]);
+        length += approximate_distance(pair[0], pair[1]);
     }
 
-    let estimate = length / VECTOR_CURVE_PIXELS_PER_STEP;
+    let estimate = length / CURVE_PIXELS_PER_STEP;
     let truncated = estimate as usize;
 
     let mut steps = if (truncated as f32) < estimate {
@@ -188,25 +189,24 @@ fn vector_curve_steps(points: &[VectorPoint]) -> usize {
         steps = 1;
     }
 
-    steps.min(VECTOR_MAX_CURVE_STEPS)
+    steps.min(MAX_CURVE_STEPS)
 }
 
-fn vector_approximate_distance(from: VectorPoint, to: VectorPoint) -> f32 {
-    vector_abs(to.x - from.x) + vector_abs(to.y - from.y)
+fn approximate_distance(from: VectorPoint, to: VectorPoint) -> f32 {
+    (to.x - from.x).abs() + (to.y - from.y).abs()
 }
 
-fn vector_abs(value: f32) -> f32 {
-    if value < 0.0 { -value } else { value }
+pub(super) fn ceil_to_i32(value: f32) -> i32 {
+    let truncated = value as i32;
+
+    if (truncated as f32) < value {
+        truncated.saturating_add(1)
+    } else {
+        truncated
+    }
 }
 
-fn vector_point_to_pixel_point(point: VectorPoint) -> Point {
-    Point::new(
-        px(round_vector_coordinate(point.x)),
-        px(round_vector_coordinate(point.y)),
-    )
-}
-
-fn round_vector_coordinate(value: f32) -> i32 {
+pub(super) fn round_to_i32(value: f32) -> i32 {
     if !value.is_finite() {
         return 0;
     }
@@ -215,156 +215,5 @@ fn round_vector_coordinate(value: f32) -> i32 {
         (value + 0.5) as i32
     } else {
         (value - 0.5) as i32
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::vec::Vec;
-
-    use crate::{
-        AffineTransform, CanvasPainter, Color, PathCommand, PathStroke, Pixels, Point, Rect,
-        VectorPath, VectorPoint, px,
-    };
-
-    #[derive(Default)]
-    struct RecordingPainter {
-        lines: Vec<(Point, Point, Pixels, Color)>,
-    }
-
-    impl CanvasPainter for RecordingPainter {
-        fn fill_rect(&mut self, _: Rect, _: Color) {}
-        fn stroke_rect(&mut self, _: Rect, _: Pixels, _: Color) {}
-        fn fill_circle(&mut self, _: Point, _: Pixels, _: Color) {}
-        fn stroke_circle(&mut self, _: Point, _: Pixels, _: Pixels, _: Color) {}
-
-        fn line(&mut self, start: Point, end: Point, width: Pixels, color: Color) {
-            self.lines.push((start, end, width, color));
-        }
-    }
-
-    #[test]
-    fn stroke_path_draws_lines_and_closes_contour() {
-        const COMMANDS: [PathCommand; 4] = [
-            PathCommand::MoveTo(VectorPoint::new(0.0, 0.0)),
-            PathCommand::LineTo(VectorPoint::new(4.0, 0.0)),
-            PathCommand::LineTo(VectorPoint::new(4.0, 2.0)),
-            PathCommand::Close,
-        ];
-
-        let mut painter = RecordingPainter::default();
-
-        painter.stroke_path(
-            VectorPath::new(&COMMANDS),
-            AffineTransform::scale_translate(2.0, 2.0, 1.0, 3.0),
-            PathStroke::new(px(2), Color::BLACK),
-        );
-
-        assert_eq!(painter.lines.len(), 3);
-        assert_eq!(
-            painter.lines[0],
-            (
-                Point::new(px(1), px(3)),
-                Point::new(px(9), px(3)),
-                px(2),
-                Color::BLACK,
-            ),
-        );
-        assert_eq!(
-            painter.lines[1],
-            (
-                Point::new(px(9), px(3)),
-                Point::new(px(9), px(7)),
-                px(2),
-                Color::BLACK,
-            ),
-        );
-        assert_eq!(
-            painter.lines[2],
-            (
-                Point::new(px(9), px(7)),
-                Point::new(px(1), px(3)),
-                px(2),
-                Color::BLACK,
-            ),
-        );
-    }
-
-    #[test]
-    fn stroke_path_flattens_quadratic_curve() {
-        const COMMANDS: [PathCommand; 2] = [
-            PathCommand::MoveTo(VectorPoint::new(0.0, 0.0)),
-            PathCommand::QuadraticTo {
-                control: VectorPoint::new(5.0, 10.0),
-                to: VectorPoint::new(10.0, 0.0),
-            },
-        ];
-
-        let mut painter = RecordingPainter::default();
-
-        painter.stroke_path(
-            VectorPath::new(&COMMANDS),
-            AffineTransform::IDENTITY,
-            PathStroke::new(px(1), Color::BLACK),
-        );
-
-        assert!(painter.lines.len() > 1);
-        assert_eq!(
-            painter.lines.first().map(|line| line.0),
-            Some(Point::new(px(0), px(0))),
-        );
-        assert_eq!(
-            painter.lines.last().map(|line| line.1),
-            Some(Point::new(px(10), px(0))),
-        );
-    }
-
-    #[test]
-    fn stroke_path_flattens_cubic_curve() {
-        const COMMANDS: [PathCommand; 2] = [
-            PathCommand::MoveTo(VectorPoint::new(0.0, 0.0)),
-            PathCommand::CubicTo {
-                control_1: VectorPoint::new(0.0, 10.0),
-                control_2: VectorPoint::new(10.0, 10.0),
-                to: VectorPoint::new(10.0, 0.0),
-            },
-        ];
-
-        let mut painter = RecordingPainter::default();
-
-        painter.stroke_path(
-            VectorPath::new(&COMMANDS),
-            AffineTransform::IDENTITY,
-            PathStroke::new(px(1), Color::BLACK),
-        );
-
-        assert!(painter.lines.len() > 1);
-
-        assert_eq!(
-            painter.lines.first().map(|line| line.0),
-            Some(Point::new(px(0), px(0))),
-        );
-        assert_eq!(
-            painter.lines.last().map(|line| line.1),
-            Some(Point::new(px(10), px(0))),
-        );
-    }
-
-    #[test]
-    fn stroke_path_skips_non_positive_stroke_width() {
-        const COMMANDS: [PathCommand; 2] = [
-            PathCommand::MoveTo(VectorPoint::new(0.0, 0.0)),
-            PathCommand::LineTo(VectorPoint::new(10.0, 10.0)),
-        ];
-
-        let mut painter = RecordingPainter::default();
-
-        painter.stroke_path(
-            VectorPath::new(&COMMANDS),
-            AffineTransform::IDENTITY,
-            PathStroke::new(px(0), Color::BLACK),
-        );
-
-        assert!(painter.lines.is_empty());
     }
 }

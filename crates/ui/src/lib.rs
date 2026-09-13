@@ -58,16 +58,17 @@ pub mod prelude {
     pub use crate::{
         ActivateEvent, AffineTransform, AppContext, Canvas, CanvasPainter, Children, Color,
         ComponentChildren, ComponentSlot, ConditionalElementExt, Context, DamageRegion, Div,
-        Either, Element, EmptySlot, Entity, EventTarget, FontId, FontResources, FrameBuildError,
-        Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError, IdentifiableElementExt,
-        Image, ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint, ImagePosition,
-        ImageRegistry, ImageRegistryError, ImageResource, ImageSampling, ImageSource, IntoElement,
-        Invalidation, LineHeight, Listener, MountCx, MountError, NoChildren, NodeId, Offset,
-        OnEvent, PaintCx, PaintReport, ParentElement, ParentElementChildrenExt, PathCommand,
-        PathStroke, Pixels, Point, Rect, Render, RenderInvalidation, RenderOnce, RenderRuntimeApi,
-        ResourcePainter, Runtime, RuntimeApi, RuntimeBuilder, Size, StatefulInteractiveElementExt,
-        Style, Styled, TextAlign, TextMaxLines, TextOverflow, TextStyled, TextWrap, VectorPath,
-        VectorPoint, canvas, div, image, px, text,
+        Either, Element, EmptySlot, Entity, EventTarget, FillRule, FontId, FontResources,
+        FrameBuildError, Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError,
+        IdentifiableElementExt, Image, ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint,
+        ImagePosition, ImageRegistry, ImageRegistryError, ImageResource, ImageSampling,
+        ImageSource, IntoElement, Invalidation, LineHeight, Listener, MountCx, MountError,
+        NoChildren, NodeId, Offset, OnEvent, PaintCx, PaintReport, ParentElement,
+        ParentElementChildrenExt, PathCommand, PathFill, PathStroke, Pixels, Point, Rect, Render,
+        RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourcePainter, Runtime, RuntimeApi,
+        RuntimeBuilder, Size, StatefulInteractiveElementExt, StrokeCap, StrokeJoin, Style, Styled,
+        TextAlign, TextMaxLines, TextOverflow, TextStyled, TextWrap, VectorPath, VectorPoint,
+        canvas, div, image, px, text,
     };
 
     #[cfg(feature = "macros")]

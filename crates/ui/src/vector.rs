@@ -111,14 +111,81 @@ impl Default for AffineTransform {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum FillRule {
+    #[default]
+    NonZero,
+    EvenOdd,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathFill {
+    pub color: Color,
+    pub rule: FillRule,
+}
+
+impl PathFill {
+    pub const fn new(color: Color) -> Self {
+        Self {
+            color,
+            rule: FillRule::NonZero,
+        }
+    }
+
+    pub const fn with_rule(mut self, rule: FillRule) -> Self {
+        self.rule = rule;
+        self
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum StrokeCap {
+    #[default]
+    Butt,
+    Round,
+    Square,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum StrokeJoin {
+    #[default]
+    Miter,
+    Round,
+    Bevel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PathStroke {
     pub width: Pixels,
     pub color: Color,
+    pub cap: StrokeCap,
+    pub join: StrokeJoin,
+    pub miter_limit: f32,
 }
 
 impl PathStroke {
     pub const fn new(width: Pixels, color: Color) -> Self {
-        Self { width, color }
+        Self {
+            width,
+            color,
+            cap: StrokeCap::Butt,
+            join: StrokeJoin::Miter,
+            miter_limit: 4.0,
+        }
+    }
+
+    pub const fn with_cap(mut self, cap: StrokeCap) -> Self {
+        self.cap = cap;
+        self
+    }
+
+    pub const fn with_join(mut self, join: StrokeJoin) -> Self {
+        self.join = join;
+        self
+    }
+
+    pub const fn with_miter_limit(mut self, miter_limit: f32) -> Self {
+        self.miter_limit = miter_limit;
+        self
     }
 }
