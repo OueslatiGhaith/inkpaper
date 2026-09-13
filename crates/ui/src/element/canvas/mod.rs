@@ -1,7 +1,9 @@
 use crate::{
-    Color, Element, MountCx, MountError, NodeId, PaintCx, Pixels, Point, Rect, Size,
-    callback::CallbackId,
+    AffineTransform, Color, Element, MountCx, MountError, NodeId, PaintCx, PathStroke, Pixels,
+    Point, Rect, Size, VectorPath, callback::CallbackId,
 };
+
+mod path;
 
 pub trait CanvasPainter {
     fn fill_rect(&mut self, rect: Rect, color: Color);
@@ -9,6 +11,15 @@ pub trait CanvasPainter {
     fn line(&mut self, start: Point, end: Point, width: Pixels, color: Color);
     fn fill_circle(&mut self, center: Point, radius: Pixels, color: Color);
     fn stroke_circle(&mut self, center: Point, radius: Pixels, width: Pixels, color: Color);
+
+    fn stroke_path(
+        &mut self,
+        path: VectorPath<'_>,
+        transform: AffineTransform,
+        stroke: PathStroke,
+    ) {
+        path::paint_stroked_path(self, path, transform, stroke)
+    }
 }
 
 /// Called during painting with the canva's resources, local bounds, and clip.
