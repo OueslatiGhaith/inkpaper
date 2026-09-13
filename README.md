@@ -87,6 +87,25 @@ impl Render for ReaderView {
 }
 ```
 
+There's also an `rsx!` macro for html-like syntax:
+
+```rs
+impl Render for ReaderView {
+  fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    let theme = cx.global::<Theme>(); 
+
+    rsx! {
+      <div class="w-full flex flex-col bg-{theme.background}">
+        <text class="color={theme.foreground}">"Header"</text>
+        <div class="flex flex-col">
+          <text>"Paragraph content goes here"</text>
+        </div>
+      </div>
+    }
+  }
+}
+```
+
 A simplified view looks like this:
 
 ```mermaid
