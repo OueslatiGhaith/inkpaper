@@ -65,6 +65,15 @@ impl<T> ComponentSlot<T> {
     }
 }
 
+pub trait ComponentChildren<C>: Sized
+where
+    C: Children,
+{
+    type WithChildren: IntoElement;
+
+    fn with_children(self, children: C) -> Self::WithChildren;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Either<L, R> {

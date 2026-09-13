@@ -54,16 +54,17 @@ pub use ttf::*;
 
 pub mod prelude {
     pub use crate::{
-        ActivateEvent, AppContext, Canvas, CanvasPainter, Color, ComponentSlot,
-        ConditionalElementExt, Context, DamageRegion, Div, Either, Element, EmptySlot, Entity,
-        EventTarget, FontId, FontResources, FrameBuildError, Global, GlobalAccessError, GlobalMut,
-        GlobalRef, GlobalSetError, IdentifiableElementExt, Image, ImageColorMode, ImageDither,
-        ImageFit, ImageId, ImagePaint, ImagePosition, ImageRegistry, ImageRegistryError,
-        ImageResource, ImageSampling, ImageSource, IntoElement, Invalidation, LineHeight, Listener,
-        MountCx, MountError, NodeId, Offset, OnEvent, PaintCx, PaintReport, ParentElement, Pixels,
-        Point, Rect, Render, RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourcePainter,
-        Runtime, RuntimeApi, RuntimeBuilder, Size, StatefulInteractiveElementExt, Style, Styled,
-        TextAlign, TextMaxLines, TextOverflow, TextStyled, TextWrap, canvas, div, image, px, text,
+        ActivateEvent, AppContext, Canvas, CanvasPainter, Children, Color, ComponentChildren,
+        ComponentSlot, ConditionalElementExt, Context, DamageRegion, Div, Either, Element,
+        EmptySlot, Entity, EventTarget, FontId, FontResources, FrameBuildError, Global,
+        GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError, IdentifiableElementExt, Image,
+        ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint, ImagePosition, ImageRegistry,
+        ImageRegistryError, ImageResource, ImageSampling, ImageSource, IntoElement, Invalidation,
+        LineHeight, Listener, MountCx, MountError, NoChildren, NodeId, Offset, OnEvent, PaintCx,
+        PaintReport, ParentElement, ParentElementChildrenExt, Pixels, Point, Rect, Render,
+        RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourcePainter, Runtime, RuntimeApi,
+        RuntimeBuilder, Size, StatefulInteractiveElementExt, Style, Styled, TextAlign,
+        TextMaxLines, TextOverflow, TextStyled, TextWrap, canvas, div, image, px, text,
     };
 
     #[cfg(feature = "macros")]

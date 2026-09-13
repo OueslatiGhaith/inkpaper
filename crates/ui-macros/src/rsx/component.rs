@@ -23,27 +23,30 @@ pub(super) fn is_component_tag(name: &str) -> bool {
         .is_some_and(char::is_uppercase)
 }
 
-pub(super) fn expand_component(element: &RsxElement) -> syn::Result<TokenStream> {
-    if let Some(child) = element.children().first() {
-        return Err(syn::Error::new_spanned(
-            child,
-            "custom component children are not supported yet",
-        ));
-    }
-
+pub(super) fn expand_component(
+    element: &RsxElement,
+    children: Option<TokenStream>,
+) -> syn::Result<TokenStream> {
     let component = parse_component_path(element)?;
     let props_type = component_props_path(&component)?;
     let props = parse_component_props(element)?;
     let names = props.iter().map(|prop| &prop.name);
     let values = props.iter().map(|prop| prop.value);
 
-    Ok(quote! {
+    let component = quote! {
         #component::from(
             #props_type {
                 #( #names: #values, )*
             }
         )
-    })
+    };
+
+    match children {
+        Some(children) => {
+            Ok(quote! { ::inkpaper_ui::ComponentChildren::with_children(#component, #children) })
+        }
+        None => Ok(component),
+    }
 }
 
 fn parse_component_path(element: &RsxElement) -> syn::Result<Path> {

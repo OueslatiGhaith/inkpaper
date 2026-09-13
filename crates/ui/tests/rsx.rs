@@ -763,3 +763,82 @@ fn rsx_keyed_each_supports_interactive_root() {
 
     assert_into_element(tree);
 }
+
+struct TestPanel<C = NoChildren> {
+    children: C,
+}
+
+struct TestPanelProps {}
+
+impl From<TestPanelProps> for TestPanel<NoChildren> {
+    fn from(_: TestPanelProps) -> Self {
+        Self {
+            children: NoChildren,
+        }
+    }
+}
+
+impl<C> ComponentChildren<C> for TestPanel<NoChildren>
+where
+    C: Children,
+{
+    type WithChildren = TestPanel<C>;
+
+    fn with_children(self, children: C) -> Self::WithChildren {
+        TestPanel { children }
+    }
+}
+
+impl<C> RenderOnce for TestPanel<C>
+where
+    C: Children,
+{
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        div().p(px(2)).child_sequence(self.children)
+    }
+}
+
+#[test]
+fn rsx_supports_component_children() {
+    let tree = rsx! {
+        <TestPanel>
+            <text>"First"</text>
+            <text>"Second"</text>
+        </TestPanel>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_component_children_support_control_flow() {
+    let visible = true;
+    let labels = ["One", "Two", "Three"];
+
+    let tree = rsx! {
+        <TestPanel>
+            <text>"Before"</text>
+
+            {#if visible}
+                <text>"Visible"</text>
+            {/if}
+
+            {#each labels as label}
+                <text>{label}</text>
+            {/each}
+
+            <text>"After"</text>
+        </TestPanel>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_component_with_children_can_still_be_self_closing() {
+    let tree = rsx! {
+        <TestPanel />
+    };
+
+    assert_into_element(tree);
+}

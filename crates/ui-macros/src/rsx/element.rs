@@ -32,7 +32,13 @@ fn expand_element_with_implicit_id(
         "image" => expand_image(element, implicit_id),
 
         _ if is_component_tag(&name) => {
-            let expression = expand_component(element)?;
+            let children = if element.children().is_empty() {
+                None
+            } else {
+                Some(expand_children_group(element.children())?)
+            };
+
+            let expression = expand_component(element, children)?;
 
             match implicit_id {
                 Some(id) => Ok(quote! {

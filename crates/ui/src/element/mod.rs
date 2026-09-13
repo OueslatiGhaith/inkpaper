@@ -310,7 +310,7 @@ where
     }
 }
 
-#[doc(hidden)]
+/// extension for attaching an already-composed child sequence to a parent element
 pub trait ParentElementChildrenExt: ParentElement + IntoElement + Sized {
     fn child_sequence<C>(self, children: C) -> AppendChildren<Self, C>
     where

@@ -268,15 +268,15 @@ fn expands_custom_component_with_no_props() {
 }
 
 #[test]
-fn rejects_custom_component_children_for_now() {
-    let error = expand_rsx(quote! {
+fn expands_custom_component_children() {
+    let result = expand_rsx(quote! {
         <Panel>
             <text>"Hello"</text>
+            <text>"World"</text>
         </Panel>
-    })
-    .unwrap_err();
+    });
 
-    assert!(error.to_string().contains("children are not supported yet"));
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -954,6 +954,39 @@ fn keyed_each_key_supplies_root_identity() {
         </div>
         "#,
     ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_custom_component_children_with_control_flow() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <Panel>
+            {#if visible}
+                <text>"Visible"</text>
+            {/if}
+
+            {#each items as item}
+                <text>{item}</text>
+            {/each}
+        </Panel>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_custom_component_children_with_fragment() {
+    let result = expand_rsx(quote! {
+        <Panel>
+            <>
+                <text>"One"</text>
+                <text>"Two"</text>
+            </>
+        </Panel>
+    });
 
     assert!(result.is_ok());
 }
