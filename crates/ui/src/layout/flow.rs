@@ -401,6 +401,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             NodeKind::Div { .. } => self.node(node).style(),
             NodeKind::Text { .. }
             | NodeKind::Image { .. }
+            | NodeKind::Svg { .. }
             | NodeKind::Canvas { .. }
             | NodeKind::Entity { .. } => None,
         };
@@ -413,7 +414,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         let own_bounds = self.own_paint_bounds(node);
 
         match self.node(node).kind {
-            NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => own_bounds,
+            NodeKind::Text { .. }
+            | NodeKind::Image { .. }
+            | NodeKind::Svg { .. }
+            | NodeKind::Canvas { .. } => own_bounds,
             NodeKind::Entity { .. } => {
                 match self.node(node).first_child {
                     Some(child) => {
@@ -561,6 +565,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             NodeKind::Div { .. }
             | NodeKind::Text { .. }
             | NodeKind::Image { .. }
+            | NodeKind::Svg { .. }
             | NodeKind::Canvas { .. } => {
                 let bounds = self.node(node).layout.bounds;
 

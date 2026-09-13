@@ -18,6 +18,7 @@ pub(super) fn emit_no_argument_utility(
         UtilityReceiver::Styled => quote! { ::inkpaper_ui::Styled::#method(#receiver) },
         UtilityReceiver::TextStyled => quote! { ::inkpaper_ui::TextStyled::#method(#receiver)},
         UtilityReceiver::Image => quote! { ::inkpaper_ui::Image::#method(#receiver) },
+        UtilityReceiver::Svg => quote! { ::inkpaper_ui::Svg::#method(#receiver) },
     }
 }
 
@@ -284,6 +285,7 @@ fn emit_utility_call(
             quote! { ::inkpaper_ui::TextStyled::#method(#receiver, #argument) }
         }
         UtilityReceiver::Image => quote! { ::inkpaper_ui::Image::#method(#receiver, #argument) },
+        UtilityReceiver::Svg => quote! { ::inkpaper_ui::Svg::#method(#receiver, #argument) },
     }
 }
 

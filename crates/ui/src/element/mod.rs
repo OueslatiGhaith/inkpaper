@@ -7,6 +7,7 @@ mod paint;
 mod render;
 pub(crate) mod state;
 mod stateful;
+mod svg;
 
 use core::marker::PhantomData;
 
@@ -19,6 +20,7 @@ pub use paint::*;
 pub use render::*;
 pub use state::IdentityError;
 pub use stateful::*;
+pub use svg::*;
 
 use crate::{MountCx, MountError, NodeId, TextStyle, TextStyled};
 

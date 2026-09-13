@@ -1,7 +1,8 @@
 use super::*;
 
 use crate::{
-    CanvasStyle, FrameArena, ImageSource, ImageStyle, NodeId, NodeKind, Position, count_metric,
+    CanvasStyle, FrameArena, ImageSource, ImageStyle, NodeId, NodeKind, Position, SvgSource,
+    SvgStyle, count_metric,
 };
 
 impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
@@ -41,6 +42,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                 )
             }
             NodeKind::Image { source, style } => measure_image(source, style, available),
+            NodeKind::Svg { source, style } => measure_svg(source, style, available),
             NodeKind::Canvas { style, .. } => measure_canvas(style, available),
             NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.measure_node(child, available, text_measurer),
@@ -142,6 +144,32 @@ fn measure_image(source: ImageSource, style: ImageStyle, available: Size) -> Siz
         (None, Some(height)) => {
             let height = height.non_negative();
             let width = intrinsic.width.scale_ratio_floor(height, intrinsic.height);
+            Size::new(width, height)
+        }
+        (Some(width), Some(height)) => Size::new(width.non_negative(), height.non_negative()),
+    };
+
+    Size::new(
+        natural.width.min(available.width.non_negative()),
+        natural.height.min(available.height.non_negative()),
+    )
+}
+
+fn measure_svg(source: SvgSource, style: SvgStyle, available: Size) -> Size {
+    let intrinsic = source.size();
+
+    let natural = match (style.width, style.height) {
+        (None, None) => intrinsic,
+        (Some(width), None) => {
+            let width = width.non_negative();
+            let height = intrinsic.height.scale_ratio_floor(width, intrinsic.width);
+
+            Size::new(width, height)
+        }
+        (None, Some(height)) => {
+            let height = height.non_negative();
+            let width = intrinsic.width.scale_ratio_floor(height, intrinsic.height);
+
             Size::new(width, height)
         }
         (Some(width), Some(height)) => Size::new(width.non_negative(), height.non_negative()),

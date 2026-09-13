@@ -100,7 +100,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     .expect("div node must have style")
                     .text
                     .resolve(inherited),
-                NodeKind::Text { .. } => self.node(node_id).text_style.resolve(inherited),
+                NodeKind::Text { .. } | NodeKind::Svg { .. } => {
+                    self.node(node_id).text_style.resolve(inherited)
+                }
                 NodeKind::Image { .. } | NodeKind::Entity { .. } | NodeKind::Canvas { .. } => {
                     inherited
                 }

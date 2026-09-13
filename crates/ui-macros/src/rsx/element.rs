@@ -6,7 +6,8 @@ use syn::{Expr, Stmt};
 use crate::rsx::{
     RsxElement, RsxNode,
     attribute::{
-        EventAttributeKind, ImageAttributes, IntrinsicAttributes, parse_intrinsic_attributes,
+        EventAttributeKind, ImageAttributes, IntrinsicAttributes, SvgAttributes,
+        parse_intrinsic_attributes, parse_svg_attributes,
     },
     class::{apply_interaction_classes, has_interaction_variants},
     control_flow::{expand_control_flow, expand_control_flow_group_into, expand_control_flow_into},
@@ -32,6 +33,7 @@ fn expand_element_with_implicit_id(
         "div" => expand_div(element, implicit_id),
         "text" => expand_text(element, implicit_id),
         "image" => expand_image(element, implicit_id),
+        "svg" => expand_svg(element, implicit_id),
 
         _ if is_component_tag(&name) => {
             let children = if element.children().is_empty() {
@@ -101,6 +103,22 @@ fn expand_image(element: &RsxElement, implicit_id: Option<&Expr>) -> syn::Result
         quote! { ::inkpaper_ui::image(#source) },
         intrinsic,
         ClassTarget::Image,
+        implicit_id,
+        element,
+    )
+}
+
+fn expand_svg(element: &RsxElement, implicit_id: Option<&Expr>) -> syn::Result<TokenStream> {
+    if let Some(child) = element.children().first() {
+        return Err(syn::Error::new_spanned(child, "<svg> cannot have children"));
+    }
+
+    let SvgAttributes { source, intrinsic } = parse_svg_attributes(element)?;
+
+    apply_intrinsic_attributes(
+        quote! { ::inkpaper_ui::svg(#source) },
+        intrinsic,
+        ClassTarget::Svg,
         implicit_id,
         element,
     )

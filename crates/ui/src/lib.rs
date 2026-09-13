@@ -26,6 +26,7 @@ mod rendering;
 mod resources;
 mod runtime;
 mod style;
+mod svg_source;
 mod text_layout;
 mod text_shaping;
 mod vector;
@@ -48,6 +49,7 @@ pub use rendering::*;
 pub use resources::*;
 pub use runtime::*;
 pub use style::*;
+pub use svg_source::*;
 pub use text_shaping::*;
 pub use vector::*;
 
@@ -67,8 +69,9 @@ pub mod prelude {
         ParentElementChildrenExt, PathCommand, PathFill, PathStroke, Pixels, Point, Rect, Render,
         RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourcePainter, Runtime, RuntimeApi,
         RuntimeBuilder, Size, StatefulInteractiveElementExt, StrokeCap, StrokeJoin, Style, Styled,
-        TextAlign, TextMaxLines, TextOverflow, TextStyled, TextWrap, VectorPath, VectorPoint,
-        canvas, div, image, px, text,
+        Svg, SvgFill, SvgPaint, SvgPath, SvgSource, SvgStroke, SvgViewBox, TextAlign, TextMaxLines,
+        TextOverflow, TextStyled, TextWrap, VectorPath, VectorPoint, canvas, div, image, px, svg,
+        text,
     };
 
     #[cfg(feature = "macros")]

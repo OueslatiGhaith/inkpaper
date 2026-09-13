@@ -1,8 +1,8 @@
 use crate::{
     CanvasDraw, CanvasStyle, ElementId, EntityAccessError, EntityId, EntityRenderFn, EventBinding,
     EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size,
-    StatefulInteractivity, Style, StylePatch, TextStyle, element::state::ElementStateId,
-    frame::storage::FrameBuffer, interaction::scroll::ScrollAxes,
+    StatefulInteractivity, Style, StylePatch, SvgSource, SvgStyle, TextStyle,
+    element::state::ElementStateId, frame::storage::FrameBuffer, interaction::scroll::ScrollAxes,
 };
 #[cfg(feature = "metrics")]
 use crate::{PerformanceMetrics, PerformanceMetricsCell};
@@ -49,6 +49,10 @@ pub(crate) enum NodeKind {
     Image {
         source: ImageSource,
         style: ImageStyle,
+    },
+    Svg {
+        source: SvgSource,
+        style: SvgStyle,
     },
     Canvas {
         draw: CanvasDraw,

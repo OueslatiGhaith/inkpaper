@@ -1060,3 +1060,58 @@ fn rejects_unknown_lowercase_event() {
 
     assert!(error.to_string().contains("unknown built-in event `focus`"));
 }
+
+#[test]
+fn expands_svg() {
+    let result = expand_rsx(quote! {
+        <svg
+            source={settings_icon}
+            class="w-[32px] h-[32px] text-black"
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_svg_without_source() {
+    let error = expand_rsx(quote! {
+        <svg class="w-[32px] h-[32px]" />
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("<svg> requires a `source` attribute")
+    );
+}
+
+#[test]
+fn rejects_svg_children() {
+    let error = expand_rsx(quote! {
+        <svg source={settings_icon}>
+            <text>"nope"</text>
+        </svg>
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("<svg> cannot have children"));
+}
+
+#[test]
+fn rejects_image_utility_on_svg() {
+    let error = expand_rsx(quote! {
+        <svg
+            source={settings_icon}
+            class="grayscale"
+        />
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("utility class `grayscale` is not valid on <svg>")
+    );
+}

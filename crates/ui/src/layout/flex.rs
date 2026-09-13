@@ -43,9 +43,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
                     .expect("div node must have style")
                     .margin
             }
-            NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => {
-                Edges::all(px(0))
-            }
+            NodeKind::Text { .. }
+            | NodeKind::Image { .. }
+            | NodeKind::Svg { .. }
+            | NodeKind::Canvas { .. } => Edges::all(px(0)),
             NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.node_margin(child),
                 None => Edges::all(px(0)),
@@ -55,7 +56,10 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     pub(super) fn node_flex_style(&self, node: NodeId) -> Option<Style> {
         match self.node(node).kind {
             NodeKind::Div { .. } => self.node(node).style(),
-            NodeKind::Text { .. } | NodeKind::Image { .. } | NodeKind::Canvas { .. } => None,
+            NodeKind::Text { .. }
+            | NodeKind::Image { .. }
+            | NodeKind::Svg { .. }
+            | NodeKind::Canvas { .. } => None,
             NodeKind::Entity { .. } => self
                 .node(node)
                 .first_child

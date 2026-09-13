@@ -130,6 +130,10 @@ macro_rules! declare_style {
         }
 
         impl TextStyle {
+            pub(crate) const DEFAULT: Self = Self {
+                $( $( $text_name: None, )* )*
+            };
+
             pub(crate) fn between(base: Self, variant: Self) -> Self {
                 Self {
                     $(

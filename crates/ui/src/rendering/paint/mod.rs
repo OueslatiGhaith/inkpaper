@@ -5,6 +5,7 @@ use crate::{
 };
 
 mod canvas;
+mod svg;
 #[cfg(test)]
 mod tests;
 
@@ -217,6 +218,15 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
                 Ok(())
             }
+
+            NodeKind::Svg { source, .. } => svg::paint_svg(
+                source,
+                bounds,
+                clip,
+                node.effective_text_style,
+                report,
+                painter,
+            ),
 
             NodeKind::Entity { .. } => Ok(()),
         }

@@ -5,7 +5,7 @@ use super::{FrameArena, MountError, NodeId, NodeKind, TextRange};
 use crate::{
     AppContext, CanvasDraw, CanvasStyle, Element, ElementId, EntityId, EntityRenderFn,
     EventBinding, EventBindingId, EventCallbacks, ImageSource, ImageStyle, IntoElement, Node,
-    StatefulInteractivity, Style, TextStyle,
+    StatefulInteractivity, Style, SvgSource, SvgStyle, TextStyle,
     callback::{CallbackId, CallbackStore},
     count_metric,
     entity::EntityStore,
@@ -144,17 +144,32 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
 pub(crate) trait FrameStore {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError>;
+
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError>;
+
     fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError>;
+
+    fn push_svg(
+        &mut self,
+        source: SvgSource,
+        style: SvgStyle,
+        text_style: TextStyle,
+    ) -> Result<NodeId, MountError>;
+
     fn push_canvas(&mut self, draw: CanvasDraw, style: CanvasStyle) -> Result<NodeId, MountError>;
+
     fn push_entity(
         &mut self,
         entity: EntityId,
         render: EntityRenderFn,
     ) -> Result<NodeId, MountError>;
+
     fn append_child(&mut self, parent: NodeId, child: NodeId);
+
     fn identify(&mut self, node: NodeId, id: ElementId);
+
     fn apply_interactivity(&mut self, node: NodeId, interactivity: StatefulInteractivity);
+
     fn bind_event(
         &mut self,
         node: NodeId,
@@ -194,6 +209,19 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODE
 
     fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError> {
         self.push_node(NodeKind::Image { source, style })
+    }
+
+    fn push_svg(
+        &mut self,
+        source: SvgSource,
+        style: SvgStyle,
+        text_style: TextStyle,
+    ) -> Result<NodeId, MountError> {
+        let node = self.push_node(NodeKind::Svg { source, style })?;
+
+        self.node_mut(node).text_style = text_style;
+
+        Ok(node)
     }
 
     fn push_canvas(&mut self, draw: CanvasDraw, style: CanvasStyle) -> Result<NodeId, MountError> {
@@ -288,6 +316,15 @@ impl MountCx<'_> {
         style: ImageStyle,
     ) -> Result<NodeId, MountError> {
         self.frame.push_image(source, style)
+    }
+
+    pub(crate) fn push_svg(
+        &mut self,
+        source: SvgSource,
+        style: SvgStyle,
+        text_style: TextStyle,
+    ) -> Result<NodeId, MountError> {
+        self.frame.push_svg(source, style, text_style)
     }
 
     pub(crate) fn push_canvas(

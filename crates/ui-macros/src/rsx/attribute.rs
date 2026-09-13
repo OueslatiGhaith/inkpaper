@@ -40,6 +40,11 @@ pub(super) struct ImageAttributes<'a> {
     pub intrinsic: IntrinsicAttributes<'a>,
 }
 
+pub(super) struct SvgAttributes<'a> {
+    pub source: &'a Expr,
+    pub intrinsic: IntrinsicAttributes<'a>,
+}
+
 pub(super) struct ComponentProp<'a> {
     pub name: Ident,
     pub value: &'a Expr,
@@ -114,7 +119,9 @@ fn parse_event_attribute<'a>(
     Ok(true)
 }
 
-pub(super) fn parse_intrinsic_attributes(element: &RsxElement) -> syn::Result<IntrinsicAttributes> {
+pub(super) fn parse_intrinsic_attributes(
+    element: &RsxElement,
+) -> syn::Result<IntrinsicAttributes<'_>> {
     let mut attributes = IntrinsicAttributes::new();
 
     for attribute in element.attributes() {
@@ -254,6 +261,61 @@ pub(super) fn parse_image_attributes<'a>(
     };
 
     Ok(ImageAttributes { source, intrinsic })
+}
+
+pub(super) fn parse_svg_attributes<'a>(element: &'a RsxElement) -> syn::Result<SvgAttributes<'a>> {
+    let mut source = None;
+    let mut intrinsic = IntrinsicAttributes::new();
+
+    for attribute in element.attributes() {
+        let NodeAttribute::Attribute(attribute) = attribute else {
+            return Err(syn::Error::new_spanned(
+                attribute,
+                "dynamic <svg> attributes are not supported",
+            ));
+        };
+
+        if parse_intrinsic_attribute(attribute, &mut intrinsic)? {
+            continue;
+        }
+
+        let name = attribute.key.to_string();
+
+        match name.as_str() {
+            "source" => {
+                if source.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        attribute,
+                        "duplicate `source` attribute",
+                    ));
+                }
+
+                let Some(value) = attribute.value() else {
+                    return Err(syn::Error::new_spanned(
+                        attribute,
+                        "`source` requires a Rust expression",
+                    ));
+                };
+
+                source = Some(unbrace_expr(value))
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    format!("unsupported <svg> attribute `{name}`"),
+                ));
+            }
+        }
+    }
+
+    let Some(source) = source else {
+        return Err(syn::Error::new_spanned(
+            element,
+            "<svg> requires a `source` attribute",
+        ));
+    };
+
+    Ok(SvgAttributes { source, intrinsic })
 }
 
 pub(super) fn parse_component_props<'a>(

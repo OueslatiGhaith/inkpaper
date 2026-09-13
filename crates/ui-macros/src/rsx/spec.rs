@@ -6,6 +6,7 @@ pub enum UtilityReceiver {
     Styled,
     TextStyled,
     Image,
+    Svg,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,8 +320,43 @@ macro_rules! declare_image_specs {
     };
 }
 
+macro_rules! collect_svg_specs {
+    ($specs:ident;) => {};
+
+    (
+        $specs:ident;
+
+        @tailwind($($tailwind:tt)*)
+        $method_name:ident($($argument_name:ident: $argument_type:ty),+ $(,)?);
+        $($rest:tt)*
+    ) => {
+        {
+            let (value_kind, classname_override) = tailwind_metadata!($($tailwind)*);
+
+            $specs.push(UtilitySpec {
+                rust_name: stringify!($method_name),
+                receiver: UtilityReceiver::Svg,
+                argument_types: vec![$(stringify!($argument_type)),+],
+                classname_override,
+                value_kind,
+            });
+        }
+
+        collect_svg_specs!($specs; $($rest)*);
+    };
+}
+
+macro_rules! declare_svg_specs {
+    ( $( $utilities:tt )* ) => {
+        fn push_svg_specs(specs: &mut Vec<UtilitySpec>) {
+            collect_svg_specs!(specs; $($utilities)*);
+        }
+    };
+}
+
 inkpaper_ui_style_schema::inkpaper_style_schema!(declare_style_specs);
 inkpaper_ui_style_schema::inkpaper_image_schema!(declare_image_specs);
+inkpaper_ui_style_schema::inkpaper_svg_schema!(declare_svg_specs);
 
 #[allow(clippy::vec_init_then_push)]
 pub fn utility_specs() -> Vec<UtilitySpec> {
@@ -328,6 +364,7 @@ pub fn utility_specs() -> Vec<UtilitySpec> {
 
     push_style_specs(&mut specs);
     push_image_specs(&mut specs);
+    push_svg_specs(&mut specs);
 
     specs
 }

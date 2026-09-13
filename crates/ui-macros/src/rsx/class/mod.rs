@@ -18,6 +18,7 @@ pub(super) enum ClassTarget {
     Div,
     Text,
     Image,
+    Svg,
 }
 
 impl ClassTarget {
@@ -29,6 +30,10 @@ impl ClassTarget {
             ),
             Self::Text => spec.receiver == UtilityReceiver::TextStyled,
             Self::Image => spec.receiver == UtilityReceiver::Image,
+            Self::Svg => matches!(
+                spec.receiver,
+                UtilityReceiver::Svg | UtilityReceiver::TextStyled
+            ),
         }
     }
 
@@ -37,6 +42,7 @@ impl ClassTarget {
             Self::Div => "div",
             Self::Text => "text",
             Self::Image => "image",
+            Self::Svg => "svg",
         }
     }
 }
