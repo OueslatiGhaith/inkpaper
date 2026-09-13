@@ -1,7 +1,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use rstml::node::{Node, NodeBlock};
-use syn::Stmt;
+use syn::{Expr, Stmt};
 
 use crate::rsx::{
     RsxElement, RsxNode,
@@ -17,14 +17,33 @@ use super::{
 };
 
 pub(super) fn expand_element(element: &RsxElement) -> syn::Result<TokenStream> {
+    expand_element_with_implicit_id(element, None)
+}
+
+fn expand_element_with_implicit_id(
+    element: &RsxElement,
+    implicit_id: Option<&Expr>,
+) -> syn::Result<TokenStream> {
     let name = element.name().to_string();
 
     match name.as_str() {
-        "div" => expand_div(element),
-        "text" => expand_text(element),
-        "image" => expand_image(element),
+        "div" => expand_div(element, implicit_id),
+        "text" => expand_text(element, implicit_id),
+        "image" => expand_image(element, implicit_id),
 
-        _ if is_component_tag(&name) => expand_component(element),
+        _ if is_component_tag(&name) => {
+            let expression = expand_component(element)?;
+
+            match implicit_id {
+                Some(id) => Ok(quote! {
+                    ::inkpaper_ui::IdentifiableElementExt::id(
+                        ::inkpaper_ui::IntoElement::into_element(#expression),
+                        #id,
+                    )
+                }),
+                None => Ok(expression),
+            }
+        }
 
         _ => Err(syn::Error::new_spanned(
             element,
@@ -33,19 +52,21 @@ pub(super) fn expand_element(element: &RsxElement) -> syn::Result<TokenStream> {
     }
 }
 
-fn expand_div(element: &RsxElement) -> syn::Result<TokenStream> {
+fn expand_div(element: &RsxElement, implicit_id: Option<&Expr>) -> syn::Result<TokenStream> {
     let attributes = parse_intrinsic_attributes(element)?;
 
     let expression = apply_intrinsic_attributes(
         quote! { ::inkpaper_ui::div() },
         attributes,
         ClassTarget::Div,
+        implicit_id,
+        element,
     )?;
 
     expand_children_into(expression, element.children())
 }
 
-fn expand_text(element: &RsxElement) -> syn::Result<TokenStream> {
+fn expand_text(element: &RsxElement, implicit_id: Option<&Expr>) -> syn::Result<TokenStream> {
     let attributes = parse_intrinsic_attributes(element)?;
     let content = expand_text_content(element)?;
 
@@ -53,10 +74,12 @@ fn expand_text(element: &RsxElement) -> syn::Result<TokenStream> {
         quote! { ::inkpaper_ui::text(#content) },
         attributes,
         ClassTarget::Text,
+        implicit_id,
+        element,
     )
 }
 
-fn expand_image(element: &RsxElement) -> syn::Result<TokenStream> {
+fn expand_image(element: &RsxElement, implicit_id: Option<&Expr>) -> syn::Result<TokenStream> {
     if let Some(child) = element.children().first() {
         return Err(syn::Error::new_spanned(
             child,
@@ -70,6 +93,8 @@ fn expand_image(element: &RsxElement) -> syn::Result<TokenStream> {
         quote! { ::inkpaper_ui::image(#source) },
         intrinsic,
         ClassTarget::Image,
+        implicit_id,
+        element,
     )
 }
 
@@ -77,6 +102,8 @@ fn apply_intrinsic_attributes(
     expression: TokenStream,
     attributes: IntrinsicAttributes<'_>,
     target: ClassTarget,
+    implicit_id: Option<&Expr>,
+    element: &RsxElement,
 ) -> syn::Result<TokenStream> {
     let IntrinsicAttributes {
         class,
@@ -84,6 +111,32 @@ fn apply_intrinsic_attributes(
         focusable,
         on_activate,
     } = attributes;
+
+    if implicit_id.is_some()
+        && let Some(id) = id
+    {
+        return Err(syn::Error::new_spanned(
+            id,
+            "a keyed `{#each}` root must not declare `id`. They key already provides its identity",
+        ));
+    }
+
+    let effective_id = implicit_id.or(id);
+    if effective_id.is_none() {
+        if let Some(listener) = on_activate {
+            return Err(syn::Error::new_spanned(
+                listener,
+                "`on:activate` requires an `id` attribute",
+            ));
+        }
+
+        if focusable {
+            return Err(syn::Error::new_spanned(
+                element,
+                "`focusable` requires an `id` attribute",
+            ));
+        }
+    }
 
     let has_variants = has_interaction_variants(&class)?;
     if has_variants {
@@ -102,7 +155,7 @@ fn apply_intrinsic_attributes(
             ));
         }
 
-        if id.is_none() {
+        if effective_id.is_none() {
             return Err(syn::Error::new(
                 span,
                 "interaction variants require an `id` attribute",
@@ -121,7 +174,7 @@ fn apply_intrinsic_attributes(
 
     let mut expression = apply_classes(expression, class, target)?;
 
-    if let Some(id) = id {
+    if let Some(id) = effective_id {
         expression = quote! { ::inkpaper_ui::IdentifiableElementExt::id(#expression, #id) };
     }
 
@@ -205,6 +258,22 @@ pub(super) fn expand_child(node: &RsxNode) -> syn::Result<TokenStream> {
             "bare text is not supported. Use <text>\"...\"</text>",
         )),
         _ => Err(syn::Error::new_spanned(node, "unsupported rsx! child")),
+    }
+}
+
+pub(super) fn expand_keyed_child(node: &RsxNode, key: &Expr) -> syn::Result<TokenStream> {
+    match node {
+        Node::Element(element) => expand_element_with_implicit_id(element, Some(key)),
+        _ => {
+            let child = expand_child(node)?;
+
+            Ok(quote! {
+                ::inkpaper_ui::IdentifiableElementExt::id(
+                    ::inkpaper_ui::IntoElement::into_element(#child),
+                    #key,
+                )
+            })
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use proc_macro2::{Span, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Span, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use rstml::{
     node::CustomNode,
@@ -9,6 +9,8 @@ use syn::{
     parse::{ParseStream, Parser as _},
     spanned::Spanned,
 };
+
+use crate::rsx::element::expand_keyed_child;
 
 use super::{
     RsxNode,
@@ -50,6 +52,7 @@ pub struct EachBlock {
     pub iterable: Expr,
     pub pattern: Pat,
     pub index: Option<Ident>,
+    pub key: Option<Expr>,
     pub body: Vec<RsxNode>,
     pub else_branch: Option<Vec<RsxNode>>,
 }
@@ -162,7 +165,7 @@ fn parse_if_block(parser: &mut RecoverableContext, input: ParseStream) -> Option
 }
 
 fn parse_each_block(parser: &mut RecoverableContext, input: ParseStream) -> Option<EachBlock> {
-    let (iterable, pattern, index) = parse_each_marker(parser, input)?;
+    let (iterable, pattern, index, key) = parse_each_marker(parser, input)?;
 
     let body = parse_each_branch(parser, input)?;
 
@@ -187,6 +190,7 @@ fn parse_each_block(parser: &mut RecoverableContext, input: ParseStream) -> Opti
         iterable,
         pattern,
         index,
+        key,
         body,
         else_branch,
     })
@@ -310,7 +314,10 @@ fn expand_each_into(parent: TokenStream, block: &EachBlock) -> syn::Result<Token
 }
 
 fn expand_each_group_into(group: TokenStream, block: &EachBlock) -> syn::Result<TokenStream> {
-    let body = expand_children_group(&block.body)?;
+    let body = match &block.key {
+        Some(key) => expand_keyed_each_body(&block.body, key)?,
+        None => expand_children_group(&block.body)?,
+    };
 
     let fallback = match &block.else_branch {
         Some(else_branch) => expand_children_group(else_branch)?,
@@ -344,6 +351,26 @@ fn expand_each_group_into(group: TokenStream, block: &EachBlock) -> syn::Result<
             },
         )
     })
+}
+
+fn expand_keyed_each_body(body: &[RsxNode], key: &Expr) -> syn::Result<TokenStream> {
+    let child = match body {
+        [] => {
+            return Err(syn::Error::new(
+                key.span(),
+                "keyed `{#each}` requires one root element",
+            ));
+        }
+        [child] => expand_keyed_child(child, key)?,
+        [_, second, ..] => {
+            return Err(syn::Error::new_spanned(
+                second,
+                "keyed `{#each}` requires exactly one root element",
+            ));
+        }
+    };
+
+    Ok(quote! { ::inkpaper_ui::ChildrenExt::child(::inkpaper_ui::NoChildren, #child) })
 }
 
 fn expand_root_branch(body: &[RsxNode], span: Span, branch_name: &str) -> syn::Result<TokenStream> {
@@ -483,7 +510,7 @@ fn parse_if_marker(parser: &mut RecoverableContext, input: ParseStream) -> Optio
 fn parse_each_marker(
     parser: &mut RecoverableContext,
     input: ParseStream,
-) -> Option<(Expr, Pat, Option<Ident>)> {
+) -> Option<(Expr, Pat, Option<Ident>, Option<Expr>)> {
     parser.parse_mixed_fn(input, |_, input| {
         let content;
         braced!(content in input);
@@ -497,7 +524,7 @@ fn parse_each_marker(
     })
 }
 
-fn parse_each_head(head: TokenStream) -> syn::Result<(Expr, Pat, Option<Ident>)> {
+fn parse_each_head(head: TokenStream) -> syn::Result<(Expr, Pat, Option<Ident>, Option<Expr>)> {
     let tokens = head.into_iter().collect::<Vec<_>>();
 
     let span = tokens
@@ -533,14 +560,14 @@ fn parse_each_head(head: TokenStream) -> syn::Result<(Expr, Pat, Option<Ident>)>
     }
 
     let iterable_tokens = tokens[..as_index].iter().cloned().collect::<TokenStream>();
-    let binding_tokens = &tokens[as_index + 1..];
+    let raw_binding_tokens = &tokens[as_index + 1..];
+    let (binding_tokens, key) = split_each_key(raw_binding_tokens)?;
 
     let commas = binding_tokens
         .iter()
         .enumerate()
         .filter_map(|(index, token)| match token {
             TokenTree::Punct(punct) if punct.as_char() == ',' => Some(index),
-
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -565,7 +592,6 @@ fn parse_each_head(head: TokenStream) -> syn::Result<(Expr, Pat, Option<Ident>)>
                     .collect::<TokenStream>(),
             ),
         ),
-
         None => (
             binding_tokens.iter().cloned().collect::<TokenStream>(),
             None,
@@ -595,7 +621,33 @@ fn parse_each_head(head: TokenStream) -> syn::Result<(Expr, Pat, Option<Ident>)>
         None => None,
     };
 
-    Ok((iterable, pattern, index))
+    Ok((iterable, pattern, index, key))
+}
+
+fn split_each_key(tokens: &[TokenTree]) -> syn::Result<(Vec<TokenTree>, Option<Expr>)> {
+    let Some(TokenTree::Group(group)) = tokens.last() else {
+        return Ok((tokens.to_vec(), None));
+    };
+
+    if group.delimiter() != Delimiter::Parenthesis || tokens.len() == 1 {
+        return Ok((tokens.to_vec(), None));
+    }
+
+    if group.stream().is_empty() {
+        return Err(syn::Error::new(
+            group.span(),
+            "keyed `{#each}` requires an expression inside `(...)`",
+        ));
+    }
+
+    let key = syn::parse2::<Expr>(group.stream()).map_err(|error| {
+        syn::Error::new(
+            error.span(),
+            format!("invalid keyed `{{#each}}` expression: {error}"),
+        )
+    })?;
+
+    Ok((tokens[..tokens.len() - 1].to_vec(), Some(key)))
 }
 
 fn parse_else_if_marker(parser: &mut RecoverableContext, input: ParseStream) -> Option<Expr> {

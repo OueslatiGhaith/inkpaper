@@ -57,8 +57,6 @@ pub(super) fn parse_intrinsic_attributes(element: &RsxElement) -> syn::Result<In
         ));
     }
 
-    validate_interaction_identity(element, &attributes)?;
-
     Ok(attributes)
 }
 
@@ -135,31 +133,6 @@ fn parse_intrinsic_attribute<'a>(
     }
 }
 
-fn validate_interaction_identity(
-    element: &RsxElement,
-    attributes: &IntrinsicAttributes<'_>,
-) -> syn::Result<()> {
-    if attributes.id.is_some() {
-        return Ok(());
-    }
-
-    if let Some(listener) = attributes.on_activate {
-        return Err(syn::Error::new_spanned(
-            listener,
-            "`on:activate` requires an `id` attribute",
-        ));
-    }
-
-    if attributes.focusable {
-        return Err(syn::Error::new_spanned(
-            element,
-            "`focusable` requires an `id` attribute",
-        ));
-    }
-
-    Ok(())
-}
-
 pub(super) fn parse_image_attributes<'a>(
     element: &'a RsxElement,
 ) -> syn::Result<ImageAttributes<'a>> {
@@ -213,8 +186,6 @@ pub(super) fn parse_image_attributes<'a>(
             "<image> requires a `source` attribute",
         ));
     };
-
-    validate_interaction_identity(element, &intrinsic)?;
 
     Ok(ImageAttributes { source, intrinsic })
 }

@@ -718,3 +718,48 @@ fn interactive_variant_tree(listener: Listener<ActivateEvent>) -> impl IntoEleme
 fn rsx_interaction_variants_work_with_activate_listener() {
     let _ = interactive_variant_tree;
 }
+
+#[test]
+fn rsx_supports_keyed_each() {
+    let books = [
+        (1_u64, "Dune"),
+        (2_u64, "Neuromancer"),
+        (3_u64, "Foundation"),
+    ];
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            {#each books as (id, title) (id)}
+                <div>
+                    <text>{title}</text>
+                </div>
+            {/each}
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_keyed_each_supports_interactive_root() {
+    let books = [(1_u64, "Dune"), (2_u64, "Neuromancer")];
+
+    let tree = rsx! {
+        <div>
+            {#each books as (id, title) (id)}
+                <div
+                    focusable
+                    class="
+                        bg-white
+                        focus:bg-zinc-100
+                        active:bg-zinc-200
+                    "
+                >
+                    <text>{title}</text>
+                </div>
+            {/each}
+        </div>
+    };
+
+    assert_into_element(tree);
+}

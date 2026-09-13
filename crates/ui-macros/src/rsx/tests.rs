@@ -881,3 +881,79 @@ fn rejects_interaction_variant_on_text() {
             .contains("interaction variants are not supported on <text>")
     );
 }
+
+#[test]
+fn expands_keyed_each() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as book (book.id)}
+                <div>
+                    <text>{book.title}</text>
+                </div>
+            {/each}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_keyed_each_with_destructuring() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as (id, title), index (id)}
+                <div>
+                    <text>{title}</text>
+                    <text>{index.to_string()}</text>
+                </div>
+            {/each}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_multiple_roots_in_keyed_each() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as book (book.id)}
+                <text>{book.title}</text>
+                <text>{book.author}</text>
+            {/each}
+        </div>
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("keyed `{#each}` requires exactly one root element")
+    );
+}
+
+#[test]
+fn keyed_each_key_supplies_root_identity() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#each books as book (book.id)}
+                <div
+                    focusable
+                    class="focus:bg-zinc-100"
+                >
+                    <text>{book.title}</text>
+                </div>
+            {/each}
+        </div>
+        "#,
+    ));
+
+    assert!(result.is_ok());
+}
