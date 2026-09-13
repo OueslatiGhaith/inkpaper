@@ -5,7 +5,9 @@ use syn::{Expr, Stmt};
 
 use crate::rsx::{
     RsxElement, RsxNode,
-    attribute::{ImageAttributes, IntrinsicAttributes, parse_intrinsic_attributes},
+    attribute::{
+        EventAttributeKind, ImageAttributes, IntrinsicAttributes, parse_intrinsic_attributes,
+    },
     class::{apply_interaction_classes, has_interaction_variants},
     control_flow::{expand_control_flow, expand_control_flow_group_into, expand_control_flow_into},
 };
@@ -115,8 +117,12 @@ fn apply_intrinsic_attributes(
         class,
         id,
         focusable,
-        on_activate,
+        events,
     } = attributes;
+
+    let has_activate_event = events
+        .iter()
+        .any(|event| matches!(event.kind, EventAttributeKind::Activate));
 
     if implicit_id.is_some()
         && let Some(id) = id
@@ -129,10 +135,10 @@ fn apply_intrinsic_attributes(
 
     let effective_id = implicit_id.or(id);
     if effective_id.is_none() {
-        if let Some(listener) = on_activate {
+        if let Some(event) = events.first() {
             return Err(syn::Error::new_spanned(
-                listener,
-                "`on:activate` requires an `id` attribute",
+                event.listener,
+                format!("`on:{}` requires an `id` attribute", event.name),
             ));
         }
 
@@ -168,7 +174,7 @@ fn apply_intrinsic_attributes(
             ));
         }
 
-        if !focusable && on_activate.is_none() {
+        if !focusable && !has_activate_event {
             return Err(syn::Error::new(
                 span,
                 "interaction variants require `focusable` or `on:activate`",
@@ -188,8 +194,17 @@ fn apply_intrinsic_attributes(
         expression = quote! { ::inkpaper_ui::StatefulInteractiveElementExt::focusable(#expression) }
     }
 
-    if let Some(listener) = on_activate {
-        expression = quote! { ::inkpaper_ui::StatefulInteractiveElementExt::on_activate(#expression, #listener) };
+    for event in events {
+        let listener = event.listener;
+
+        expression = match event.kind {
+            EventAttributeKind::Activate => {
+                quote! { ::inkpaper_ui::StatefulInteractiveElementExt::on_activate(#expression, #listener) }
+            }
+            EventAttributeKind::Typed(event_type) => {
+                quote! { ::inkpaper_ui::StatefulInteractiveElementExt::on::<#event_type>(#expression, #listener) }
+            }
+        };
     }
 
     expression = apply_interaction_classes(expression, interaction_class, target)?;

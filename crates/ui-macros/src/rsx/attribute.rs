@@ -6,11 +6,22 @@ use crate::rsx::RsxElement;
 
 pub(super) type ClassAttribute = Option<(String, Span)>;
 
+pub(super) enum EventAttributeKind {
+    Activate,
+    Typed(Ident),
+}
+
+pub(super) struct EventAttribute<'a> {
+    pub name: String,
+    pub kind: EventAttributeKind,
+    pub listener: &'a Expr,
+}
+
 pub(super) struct IntrinsicAttributes<'a> {
     pub class: ClassAttribute,
     pub id: Option<&'a Expr>,
     pub focusable: bool,
-    pub on_activate: Option<&'a Expr>,
+    pub events: Vec<EventAttribute<'a>>,
 }
 
 impl IntrinsicAttributes<'_> {
@@ -19,7 +30,7 @@ impl IntrinsicAttributes<'_> {
             class: None,
             id: None,
             focusable: false,
-            on_activate: None,
+            events: Vec::new(),
         }
     }
 }
@@ -32,6 +43,75 @@ pub(super) struct ImageAttributes<'a> {
 pub(super) struct ComponentProp<'a> {
     pub name: Ident,
     pub value: &'a Expr,
+}
+
+fn parse_event_attribute<'a>(
+    attribute: &'a KeyedAttribute,
+    attributes: &mut IntrinsicAttributes<'a>,
+) -> syn::Result<bool> {
+    let name = attribute.key.to_string();
+
+    let Some(event_name) = name.strip_prefix("on:") else {
+        return Ok(false);
+    };
+
+    if event_name.is_empty() {
+        return Err(syn::Error::new_spanned(
+            attribute,
+            "`on:` requires an event name",
+        ));
+    }
+
+    if attributes
+        .events
+        .iter()
+        .any(|event| event.name == event_name)
+    {
+        return Err(syn::Error::new_spanned(
+            attribute,
+            format!("duplicate `on:{event_name}` attribute"),
+        ));
+    }
+
+    let Some(value) = attribute.value() else {
+        return Err(syn::Error::new_spanned(
+            attribute,
+            format!("`on:{event_name}` requires a listener"),
+        ));
+    };
+
+    let kind = match event_name {
+        "activate" => EventAttributeKind::Activate,
+        _ => {
+            let Some(first) = event_name.chars().next() else {
+                unreachable!()
+            };
+
+            if !first.is_uppercase() {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    format!("unknown built-in event `{event_name}`"),
+                ));
+            }
+
+            let event_type = syn::parse_str::<Ident>(event_name).map_err(|_| {
+                syn::Error::new_spanned(
+                    attribute,
+                    "custom event names must be a single Rust type identifier",
+                )
+            })?;
+
+            EventAttributeKind::Typed(event_type)
+        }
+    };
+
+    attributes.events.push(EventAttribute {
+        name: event_name.to_owned(),
+        kind,
+        listener: unbrace_expr(value),
+    });
+
+    Ok(true)
 }
 
 pub(super) fn parse_intrinsic_attributes(element: &RsxElement) -> syn::Result<IntrinsicAttributes> {
@@ -64,6 +144,10 @@ fn parse_intrinsic_attribute<'a>(
     attribute: &'a KeyedAttribute,
     attributes: &mut IntrinsicAttributes<'a>,
 ) -> syn::Result<bool> {
+    if parse_event_attribute(attribute, attributes)? {
+        return Ok(true);
+    }
+
     let name = attribute.key.to_string();
 
     match name.as_str() {
@@ -109,24 +193,6 @@ fn parse_intrinsic_attribute<'a>(
             }
 
             attributes.focusable = true;
-            Ok(true)
-        }
-        "on:activate" => {
-            if attributes.on_activate.is_some() {
-                return Err(syn::Error::new_spanned(
-                    attribute,
-                    "duplicate `on:activate` attribute",
-                ));
-            }
-
-            let Some(value) = attribute.value() else {
-                return Err(syn::Error::new_spanned(
-                    attribute,
-                    "`on:activate` requires a Listener<ActivateEvent>",
-                ));
-            };
-
-            attributes.on_activate = Some(unbrace_expr(value));
             Ok(true)
         }
         _ => Ok(false),

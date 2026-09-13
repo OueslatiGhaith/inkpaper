@@ -990,3 +990,73 @@ fn expands_custom_component_children_with_fragment() {
 
     assert!(result.is_ok());
 }
+
+#[test]
+fn expands_typed_event_attribute() {
+    let result = expand_rsx(quote! {
+        <div
+            id="book"
+            on:BookSelectedEvent={selected}
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_multiple_event_attributes() {
+    let result = expand_rsx(quote! {
+        <div
+            id="book"
+            on:activate={activate}
+            on:BookSelectedEvent={selected}
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_duplicate_typed_event_attributes() {
+    let error = expand_rsx(quote! {
+        <div
+            id="book"
+            on:BookSelectedEvent={first}
+            on:BookSelectedEvent={second}
+        />
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("duplicate `on:BookSelectedEvent` attribute")
+    );
+}
+
+#[test]
+fn rejects_typed_event_without_identity() {
+    let error = expand_rsx(quote! {
+        <div on:BookSelectedEvent={selected} />
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("`on:BookSelectedEvent` requires an `id` attribute")
+    );
+}
+
+#[test]
+fn rejects_unknown_lowercase_event() {
+    let error = expand_rsx(quote! {
+        <div
+            id="book"
+            on:focus={listener}
+        />
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("unknown built-in event `focus`"));
+}
