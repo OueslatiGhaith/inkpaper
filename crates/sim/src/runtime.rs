@@ -1,11 +1,7 @@
 use inkpaper_ui::{Runtime, RuntimeResources};
 
-use crate::READER_IMAGE_CAPACITY;
-
-// allocated storage starts small and grows.
 #[cfg(feature = "alloc")]
 const FRAME_NODES: usize = 64;
-// fixed storage keeps its hard limits
 #[cfg(not(feature = "alloc"))]
 const FRAME_NODES: usize = 2_048;
 
@@ -24,7 +20,7 @@ pub(crate) type SimulatorRuntime<'resources> = Runtime<
     256,
     2_048,
     8,
-    RuntimeResources<'resources, 2, 128, { 16 * 1024 }, READER_IMAGE_CAPACITY>,
+    RuntimeResources<'resources, 2, 128, { 16 * 1024 }, 1>,
 >;
 
 pub(crate) fn new_runtime<'resources>() -> Box<SimulatorRuntime<'resources>> {

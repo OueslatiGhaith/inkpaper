@@ -5,10 +5,7 @@ edition = "2024"
 
 [features]
 default = []
-defmt = ["dep:defmt", "inkpaper-ui/defmt", "heapless/defmt"]
+defmt = ["inkpaper-ui/defmt"]
 
 [dependencies]
-defmt = { workspace = true, optional = true }
-heapless = { workspace = true }
-inkpaper-reader = { path = "../reader" }
 inkpaper-ui = { path = "../ui" }

@@ -6,19 +6,12 @@ edition = "2024"
 [features]
 default = ["alloc"]
 alloc = ["inkpaper-ui/alloc"]
-heap-profile = ["dep:dhat"]
 defmt = ["inkpaper-app/defmt", "inkpaper-ui/defmt"]
 
 [dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
-dhat = { version = "0.3.3", optional = true }
 embedded-graphics = { workspace = true }
 embedded-graphics-simulator = { workspace = true }
-futures-lite = { workspace = true }
-image = { workspace = true }
 inkpaper-app = { path = "../app" }
-inkpaper-epub = { path = "../epub" }
-inkpaper-reader = { path = "../reader" }
 inkpaper-ui = { path = "../ui", features = ["embedded-graphics", "ttf"] }
-sha2 = { version = "0.11.0", default-features = false }
 static_cell = { workspace = true }

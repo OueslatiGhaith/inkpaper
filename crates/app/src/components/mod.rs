@@ -1,7 +1,4 @@
-mod book_cover;
-mod bottom_nav;
-mod top_bar;
-
-pub use book_cover::BookCover;
-pub use bottom_nav::BottomNav;
-pub use top_bar::TopBar;
+pub(crate) mod header;
+pub(crate) mod home_menu;
+pub(crate) mod icon;
+pub(crate) mod recent_book;
