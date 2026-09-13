@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/crates/app/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/bm8563/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw2017/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/epd-bus/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/epub/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/epub/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/frontlight/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/gt911/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/reader/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/reader/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/sim/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ssd1677/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/uc8179/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/uc8279-x4/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ui-macros/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ui-style-schema/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ui/benches" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ui/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ui/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ui/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/xteink-display-probe/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/firmware/x4-pro/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

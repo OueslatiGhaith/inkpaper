@@ -669,3 +669,52 @@ fn interactive_rsx_tree(listener: Listener<ActivateEvent>) -> impl IntoElement {
 fn rsx_supports_activate_listeners() {
     let _ = interactive_rsx_tree;
 }
+
+#[test]
+fn rsx_supports_interaction_variants() {
+    let tree = rsx! {
+        <div
+            id="button"
+            focusable
+            class="
+                bg-white
+                border-2
+                p-2
+                text-zinc-700
+
+                focus:bg-zinc-100
+                focus:border-black
+                focus:p-3
+                focus:text-black
+
+                active:bg-zinc-200
+                active:p-4
+            "
+        >
+            <text>"Open book"</text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+fn interactive_variant_tree(listener: Listener<ActivateEvent>) -> impl IntoElement {
+    rsx! {
+        <div
+            id="button"
+            on:activate={listener}
+            class="
+                bg-white
+                focus:bg-zinc-100
+                active:bg-zinc-200
+            "
+        >
+            <text>"Open"</text>
+        </div>
+    }
+}
+
+#[test]
+fn rsx_interaction_variants_work_with_activate_listener() {
+    let _ = interactive_variant_tree;
+}

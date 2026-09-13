@@ -786,3 +786,98 @@ fn rejects_activate_without_id() {
             .contains("`on:activate` requires an `id` attribute")
     );
 }
+
+#[test]
+fn expands_focus_variant() {
+    let result = expand_rsx(quote! {
+        <div
+            id="button"
+            focusable
+            class="bg-white focus:bg-zinc-100"
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_active_variant() {
+    let result = expand_rsx(quote! {
+        <div
+            id="button"
+            focusable
+            class="bg-white active:bg-zinc-200"
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn expands_interaction_variant_utilities() {
+    let result = expand_rsx(quote! {
+        <div
+            id="button"
+            focusable
+            class="
+                focus:p-4
+                focus:text-black
+                active:border-2
+                active:bg-[#abcdef]
+            "
+        />
+    });
+
+    assert!(result.is_ok());
+}
+
+#[test]
+fn rejects_interaction_variant_without_id() {
+    let error = expand_rsx(quote! {
+        <div class="focus:bg-zinc-100" />
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("interaction variants require an `id` attribute")
+    );
+}
+
+#[test]
+fn rejects_interaction_variant_on_noninteractive_element() {
+    let error = expand_rsx(quote! {
+        <div
+            id="button"
+            class="focus:bg-zinc-100"
+        />
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("require `focusable` or `on:activate`")
+    );
+}
+
+#[test]
+fn rejects_interaction_variant_on_text() {
+    let error = expand_rsx(quote! {
+        <text
+            id="title"
+            focusable
+            class="focus:text-black"
+        >
+            "Title"
+        </text>
+    })
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("interaction variants are not supported on <text>")
+    );
+}

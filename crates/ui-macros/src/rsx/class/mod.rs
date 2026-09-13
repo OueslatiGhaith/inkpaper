@@ -1,5 +1,7 @@
 use inkpaper_ui_style_schema::tailwind::ValueKind;
 use proc_macro2::{Span, TokenStream};
+use quote::quote;
+use syn::Ident;
 
 use super::{
     attribute::ClassAttribute,
@@ -30,13 +32,19 @@ impl ClassTarget {
         }
     }
 
-    fn tag_name(self) -> &'static str {
+    pub(super) fn tag_name(self) -> &'static str {
         match self {
             Self::Div => "div",
             Self::Text => "text",
             Self::Image => "image",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InteractionVariant {
+    Focus,
+    Active,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +85,17 @@ enum ClassValue<'a> {
     },
 }
 
+fn split_interaction_variant(class: &str) -> (Option<InteractionVariant>, &str) {
+    if let Some(class) = class.strip_prefix("focus:") {
+        return (Some(InteractionVariant::Focus), class);
+    }
+    if let Some(class) = class.strip_prefix("active:") {
+        return (Some(InteractionVariant::Active), class);
+    }
+
+    (None, class)
+}
+
 pub(super) fn apply_classes(
     mut receiver: TokenStream,
     class: ClassAttribute,
@@ -84,8 +103,82 @@ pub(super) fn apply_classes(
 ) -> syn::Result<TokenStream> {
     if let Some((classes, span)) = class {
         for class in split_classes(&classes, span)? {
+            let (variant, _) = split_interaction_variant(class);
+            if variant.is_some() {
+                continue;
+            }
+
             receiver = apply_class(receiver, class, span, target)?;
         }
+    }
+
+    Ok(receiver)
+}
+
+pub(super) fn has_interaction_variants(class: &ClassAttribute) -> syn::Result<bool> {
+    let Some((classes, span)) = class else {
+        return Ok(false);
+    };
+
+    for class in split_classes(classes, *span)? {
+        if split_interaction_variant(class).0.is_some() {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+pub(super) fn apply_interaction_classes(
+    mut receiver: TokenStream,
+    class: ClassAttribute,
+    target: ClassTarget,
+) -> syn::Result<TokenStream> {
+    let Some((classes, span)) = class else {
+        return Ok(receiver);
+    };
+
+    for class in split_classes(&classes, span)? {
+        let (variant, utility) = split_interaction_variant(class);
+        let Some(variant) = variant else {
+            continue;
+        };
+
+        if target != ClassTarget::Div {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "interaction variants are not supported on <{}>",
+                    target.tag_name(),
+                ),
+            ));
+        }
+
+        if utility.is_empty() {
+            return Err(syn::Error::new(
+                span,
+                format!("interaction variant `{class}` requires a utility"),
+            ));
+        }
+
+        if split_interaction_variant(utility).0.is_some() {
+            return Err(syn::Error::new(
+                span,
+                format!("stacked interaction variants are not supported in `{class}`"),
+            ));
+        }
+
+        let style = Ident::new("__inkpaper_ui_interaction_style", Span::mixed_site());
+        let transformed = apply_class(quote! { #style }, utility, span, target)?;
+
+        receiver = match variant {
+            InteractionVariant::Focus => {
+                quote! { ::inkpaper_ui::StatefulInteractiveElementExt::when_focused(#receiver, |#style| #transformed) }
+            }
+            InteractionVariant::Active => {
+                quote! { ::inkpaper_ui::StatefulInteractiveElementExt::when_pressed(#receiver, |#style| #transformed) }
+            }
+        };
     }
 
     Ok(receiver)

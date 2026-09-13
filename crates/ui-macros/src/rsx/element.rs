@@ -1,4 +1,4 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use rstml::node::{Node, NodeBlock};
 use syn::Stmt;
@@ -6,6 +6,7 @@ use syn::Stmt;
 use crate::rsx::{
     RsxElement, RsxNode,
     attribute::{ImageAttributes, IntrinsicAttributes, parse_intrinsic_attributes},
+    class::{apply_interaction_classes, has_interaction_variants},
     control_flow::{expand_control_flow, expand_control_flow_group_into, expand_control_flow_into},
 };
 
@@ -84,6 +85,40 @@ fn apply_intrinsic_attributes(
         on_activate,
     } = attributes;
 
+    let has_variants = has_interaction_variants(&class)?;
+    if has_variants {
+        let span = class
+            .as_ref()
+            .map(|(_, span)| *span)
+            .unwrap_or_else(Span::call_site);
+
+        if target != ClassTarget::Div {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "interaction variants are not supported on <{}>",
+                    target.tag_name(),
+                ),
+            ));
+        }
+
+        if id.is_none() {
+            return Err(syn::Error::new(
+                span,
+                "interaction variants require an `id` attribute",
+            ));
+        }
+
+        if !focusable && on_activate.is_none() {
+            return Err(syn::Error::new(
+                span,
+                "interaction variants require `focusable` or `on:activate`",
+            ));
+        }
+    }
+
+    let interaction_class = class.clone();
+
     let mut expression = apply_classes(expression, class, target)?;
 
     if let Some(id) = id {
@@ -97,6 +132,8 @@ fn apply_intrinsic_attributes(
     if let Some(listener) = on_activate {
         expression = quote! { ::inkpaper_ui::StatefulInteractiveElementExt::on_activate(#expression, #listener) };
     }
+
+    expression = apply_interaction_classes(expression, interaction_class, target)?;
 
     Ok(expression)
 }
