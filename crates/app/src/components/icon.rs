@@ -9,14 +9,9 @@ pub(crate) enum IconKind {
     BookOpen,
 }
 
+#[component]
 pub(crate) struct Icon {
     kind: IconKind,
-}
-
-impl Icon {
-    pub(crate) const fn new(kind: IconKind) -> Self {
-        Self { kind }
-    }
 }
 
 impl RenderOnce for Icon {

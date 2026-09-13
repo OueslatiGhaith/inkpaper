@@ -1,36 +1,24 @@
 use inkpaper_ui::prelude::*;
 
-pub(crate) struct HomeHeaderProps<'a> {
-    pub battery: &'a str,
-}
-
+#[component]
 pub(crate) struct HomeHeader<'a> {
     battery: &'a str,
 }
 
-impl<'a> From<HomeHeaderProps<'a>> for HomeHeader<'a> {
-    fn from(value: HomeHeaderProps<'a>) -> Self {
-        Self {
-            battery: value.battery,
-        }
-    }
-}
-
 impl RenderOnce for HomeHeader<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let battery_icon = BatteryIcon;
-
         rsx! {
             <div class="w-full h-full relative">
                 <div class="absolute top-[5px] right-[18px] flex items-center gap-[4px]">
                     <text class="text-[10px] leading-[12px]">{self.battery}</text>
-                    {battery_icon}
+                    <BatteryIcon />
                 </div>
             </div>
         }
     }
 }
 
+#[component]
 struct BatteryIcon;
 
 impl BatteryIcon {

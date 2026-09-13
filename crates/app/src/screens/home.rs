@@ -6,15 +6,8 @@ use crate::components::{
     recent_book::{RecentBookCard, RecentBookCardProps},
 };
 
-pub(crate) struct HomeScreenProps;
-
+#[component]
 pub(crate) struct HomeScreen;
-
-impl From<HomeScreenProps> for HomeScreen {
-    fn from(_: HomeScreenProps) -> Self {
-        Self
-    }
-}
 
 impl RenderOnce for HomeScreen {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {

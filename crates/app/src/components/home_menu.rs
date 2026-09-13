@@ -1,16 +1,9 @@
 use inkpaper_ui::prelude::*;
 
-use crate::components::icon::{Icon, IconKind};
+use crate::components::icon::{Icon, IconKind, IconProps};
 
-pub(crate) struct HomeMenuProps;
-
+#[component]
 pub(crate) struct HomeMenu;
-
-impl From<HomeMenuProps> for HomeMenu {
-    fn from(_: HomeMenuProps) -> Self {
-        Self
-    }
-}
 
 impl RenderOnce for HomeMenu {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
@@ -25,32 +18,17 @@ impl RenderOnce for HomeMenu {
     }
 }
 
-struct HomeMenuRowProps {
-    label: &'static str,
-    icon: IconKind,
-}
-
+#[component]
 struct HomeMenuRow {
     label: &'static str,
     icon: IconKind,
 }
 
-impl From<HomeMenuRowProps> for HomeMenuRow {
-    fn from(value: HomeMenuRowProps) -> Self {
-        Self {
-            label: value.label,
-            icon: value.icon,
-        }
-    }
-}
-
 impl RenderOnce for HomeMenuRow {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let icon = Icon::new(self.icon);
-
         rsx! {
             <div class="w-full h-[56px] flex items-center pl-[16px] gap-[10px]">
-                {icon}
+                <Icon kind={self.icon} />
                 <text class="text-[12px] leading-[16px]">{self.label}</text>
             </div>
         }
