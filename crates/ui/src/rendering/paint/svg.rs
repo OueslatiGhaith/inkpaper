@@ -144,17 +144,17 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingPainter {
-        lines: Vec<(Point, Point, Pixels, Color)>,
+        fills: Vec<(Rect, Color)>,
     }
 
     impl CanvasPainter for RecordingPainter {
-        fn fill_rect(&mut self, _: Rect, _: Color) {}
+        fn fill_rect(&mut self, rect: Rect, color: Color) {
+            self.fills.push((rect, color));
+        }
 
         fn stroke_rect(&mut self, _: Rect, _: Pixels, _: Color) {}
 
-        fn line(&mut self, start: Point, end: Point, width: Pixels, color: Color) {
-            self.lines.push((start, end, width, color));
-        }
+        fn line(&mut self, _: Point, _: Point, _: Pixels, _: Color) {}
 
         fn fill_circle(&mut self, _: Point, _: Pixels, _: Color) {}
 
@@ -189,16 +189,41 @@ mod tests {
             &mut painter,
         );
 
-        assert_eq!(painter.lines.len(), 1);
+        assert!(!painter.fills.is_empty());
 
-        assert_eq!(
-            painter.lines[0],
-            (
-                Point::new(px(0), px(5)),
-                Point::new(px(20), px(5)),
-                px(2),
-                Color::RED,
-            ),
+        assert!(
+            painter.fills.iter().all(|(_, color)| *color == Color::RED),
+            "currentColor must resolve to the SVG element's text color",
         );
+
+        let min_x = painter
+            .fills
+            .iter()
+            .map(|(rect, _)| rect.origin.x.get())
+            .min()
+            .unwrap();
+
+        let min_y = painter
+            .fills
+            .iter()
+            .map(|(rect, _)| rect.origin.y.get())
+            .min()
+            .unwrap();
+
+        let max_x = painter
+            .fills
+            .iter()
+            .map(|(rect, _)| rect.origin.x.get() + rect.size.width.get())
+            .max()
+            .unwrap();
+
+        let max_y = painter
+            .fills
+            .iter()
+            .map(|(rect, _)| rect.origin.y.get() + rect.size.height.get())
+            .max()
+            .unwrap();
+
+        assert_eq!((min_x, min_y, max_x, max_y,), (0, 4, 20, 6,),);
     }
 }
