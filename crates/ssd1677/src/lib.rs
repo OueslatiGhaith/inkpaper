@@ -5,7 +5,10 @@ use epd_bus::{BusyPolarity, EpdInterface};
 
 use crate::{
     command::Command,
-    grayscale::{FACTORY_GRAYSCALE_BORDER, FACTORY_GRAYSCALE_LUT},
+    grayscale::{
+        FACTORY_GRAYSCALE_BORDER, FACTORY_GRAYSCALE_LUT, OVERLAY_GRAYSCALE_BORDER,
+        OVERLAY_GRAYSCALE_LUT,
+    },
 };
 
 mod command;
@@ -202,6 +205,7 @@ pub struct Ssd1677 {
 
     screen_on: bool,
     needs_initial_clean: bool,
+    overlay_grayscale_on_panel: bool,
 }
 
 impl Ssd1677 {
@@ -210,11 +214,16 @@ impl Ssd1677 {
             config,
             screen_on: false,
             needs_initial_clean: true,
+            overlay_grayscale_on_panel: false,
         }
     }
 
     pub const fn config(&self) -> Config {
         self.config
+    }
+
+    pub const fn overlay_grayscale_on_panel(&self) -> bool {
+        self.overlay_grayscale_on_panel
     }
 
     pub async fn initialize<B, D>(
@@ -285,6 +294,7 @@ impl Ssd1677 {
 
         self.screen_on = false;
         self.needs_initial_clean = true;
+        self.overlay_grayscale_on_panel = false;
 
         Ok(())
     }
@@ -362,72 +372,175 @@ impl Ssd1677 {
         self.validate_frame(msb)?;
 
         self.set_full_ram_area(bus).await?;
-
-        // the public absolute encoding is
-        // back         = 00
-        // dark gray    = 10
-        // light gray   = 01
-        // white        = 11
-        // the SSD1677 factory bank uses the opposite polarity:
-        // black = 11, white = 00
-        // complement both planes during transfer
         self.write_inverted_plane(bus, Command::WriteBlackWhiteRam, lsb)
             .await?;
-        self.write_inverted_plane(bus, Command::WriteBlackWhiteRam, msb)
+
+        self.set_full_ram_area(bus).await?;
+        self.write_inverted_plane(bus, Command::WriteRedRam, msb)
             .await?;
 
-        self.load_factory_grayscale_lut(bus).await?;
-
-        self.command_data(bus, Command::BorderWaveform, &[FACTORY_GRAYSCALE_BORDER])
+        self.activate_grayscale(bus, delay, &FACTORY_GRAYSCALE_LUT, FACTORY_GRAYSCALE_BORDER)
             .await?;
 
-        // RED RAM must participate in the refresh
-        self.command_data(
-            bus,
-            Command::DisplayUpdateControl1,
-            &[DISPLAY_UPDATE_NORMAL],
-        )
-        .await?;
-
-        // factory absolute grayscale activation:
-        // CLOCK_ON | ANALOG_ON | MODE_SELECT | DISPLAY_START
-        self.command_data(bus, Command::DisplayUpdateControl2, &[0xcc])
-            .await?;
-        self.command(bus, Command::MasterActivation).await?;
-
-        bus.wait_busy(BUSY_POLARITY, delay)
-            .await
-            .map_err(Error::Bus)?;
-
-        self.screen_on = true;
-
-        // grayscale leaves intermediate electrophoretic state behind.
-        // the next ordinary B/W paint must not use a differential FAST update against
-        // those selector planes
+        // absolute grayscale does not preserve a normal B/W differential baseline.
         self.needs_initial_clean = true;
+        self.overlay_grayscale_on_panel = false;
 
         if turn_off {
-            self.command_data(
-                bus,
-                Command::BorderWaveform,
-                &[self.config.border_waveform_init],
-            )
-            .await?;
-
-            self.command_data(bus, Command::DisplayUpdateControl2, &[0x03])
-                .await?;
-            self.command(bus, Command::MasterActivation).await?;
-
-            delay.delay_ms(200).await;
-
-            bus.wait_busy(BUSY_POLARITY, delay)
-                .await
-                .map_err(Error::Bus)?;
-
-            self.screen_on = false;
+            self.power_off_after_grayscale(bus, delay).await?;
         }
 
         Ok(())
+    }
+
+    pub async fn display_grayscale_window<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+        region: Region,
+        mode: RefreshMode,
+        turn_off: bool,
+    ) -> Result<Region, Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.validate_frame(lsb)?;
+        self.validate_frame(msb)?;
+
+        let requested = self.normalize_region(region)?;
+
+        let full = Region::new(0, 0, self.config.width, self.config.height);
+
+        // a periodic/full clean must rebuild the B/W base for the whole panel. Likewise
+        // the first update after boot cannot safely start from a differential window.
+        let (base_region, base_mode) = if self.needs_initial_clean {
+            (full, RefreshMode::Clean)
+        } else {
+            match mode {
+                RefreshMode::Fast => (requested, RefreshMode::Fast),
+                RefreshMode::Full => (full, RefreshMode::Full),
+                RefreshMode::Clean => (full, RefreshMode::Clean),
+            }
+        };
+
+        self.paint_grayscale_base(bus, delay, lsb, msb, base_region, base_mode)
+            .await?;
+
+        self.needs_initial_clean = false;
+
+        // if this particular update contains no gray, the B/W base pass already
+        // produced its final result.
+        // existing grayscale elsewhere on the physical panel is untouched because
+        // the base update was windowed.
+        if self.region_has_grayscale(lsb, msb, base_region) {
+            self.write_overlay_masks(bus, lsb, msb, base_region).await?;
+
+            self.activate_grayscale(bus, delay, &OVERLAY_GRAYSCALE_LUT, OVERLAY_GRAYSCALE_BORDER)
+                .await?;
+
+            // the overlay activation temporarily replaces both controller RAM planes
+            // with selector masks.
+            // restore a clean binary baseline without activating another waveform. Physical
+            // grayscale stays visible, but the next partial B/W base update has valid OLD RAM.
+            self.restore_grayscale_base(bus, lsb, msb).await?;
+        }
+
+        self.overlay_grayscale_on_panel = lsb != msb;
+
+        if turn_off {
+            self.power_off_after_grayscale(bus, delay).await?;
+        }
+
+        Ok(base_region)
+    }
+
+    async fn paint_grayscale_base<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+        region: Region,
+        mode: RefreshMode,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        if mode == RefreshMode::Fast {
+            self.set_ram_area(bus, region).await?;
+
+            self.write_transformed_window_plane(
+                bus,
+                Command::WriteBlackWhiteRam,
+                lsb,
+                msb,
+                region,
+                grayscale_base_byte,
+            )
+            .await?;
+
+            // RED keeps the previous B/W base here, so the normal
+            // FAST waveform performs the differential transition.
+            self.refresh(bus, delay, RefreshMode::Fast).await?;
+
+            // Synchronize the new base into both controller planes.
+            self.set_ram_area(bus, region).await?;
+
+            self.write_transformed_window_plane(
+                bus,
+                Command::WriteBlackWhiteRam,
+                lsb,
+                msb,
+                region,
+                grayscale_base_byte,
+            )
+            .await?;
+
+            self.set_ram_area(bus, region).await?;
+
+            self.write_transformed_window_plane(
+                bus,
+                Command::WriteRedRam,
+                lsb,
+                msb,
+                region,
+                grayscale_base_byte,
+            )
+            .await?;
+
+            return Ok(());
+        }
+
+        debug_assert_eq!(
+            region,
+            Region::new(0, 0, self.config.width, self.config.height)
+        );
+
+        self.set_full_ram_area(bus).await?;
+
+        self.write_transformed_plane(
+            bus,
+            Command::WriteBlackWhiteRam,
+            lsb,
+            msb,
+            grayscale_base_byte,
+        )
+        .await?;
+
+        self.set_full_ram_area(bus).await?;
+
+        self.write_transformed_plane(bus, Command::WriteRedRam, lsb, msb, grayscale_base_byte)
+            .await?;
+
+        self.refresh(bus, delay, mode).await?;
+
+        // match the ordinary single-buffer path: after activation, re-seed both RAM
+        // planes with the displayed B/W baseline.
+        self.restore_grayscale_base(bus, lsb, msb).await
     }
 
     pub async fn seed_previous_frame<B>(
@@ -799,21 +912,345 @@ impl Ssd1677 {
         Ok(())
     }
 
-    async fn load_factory_grayscale_lut<B>(&self, bus: &mut B) -> Result<(), Error<B::Error>>
+    async fn load_grayscale_lut<B>(
+        &self,
+        bus: &mut B,
+        lut: &[u8; 110],
+    ) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
     {
-        self.command_data(bus, Command::WriteLut, &FACTORY_GRAYSCALE_LUT[..105])
+        self.command_data(bus, Command::WriteLut, &lut[..105])
             .await?;
-        self.command_data(bus, Command::GateVoltage, &[FACTORY_GRAYSCALE_LUT[105]])
+        self.command_data(bus, Command::GateVoltage, &[lut[105]])
             .await?;
+        self.command_data(bus, Command::SourceVoltage, &lut[106..109])
+            .await?;
+        self.command_data(bus, Command::WriteVcom, &[lut[109]])
+            .await
+    }
+
+    async fn activate_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lut: &[u8; 110],
+        border: u8,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.load_grayscale_lut(bus, lut).await?;
+
+        self.command_data(bus, Command::BorderWaveform, &[border])
+            .await?;
+
+        // both selector planes must participate.
         self.command_data(
             bus,
-            Command::SourceVoltage,
-            &FACTORY_GRAYSCALE_LUT[106..109],
+            Command::DisplayUpdateControl1,
+            &[DISPLAY_UPDATE_NORMAL],
         )
         .await?;
-        self.command_data(bus, Command::WriteVcom, &[FACTORY_GRAYSCALE_LUT[109]])
+
+        self.command_data(bus, Command::DisplayUpdateControl2, &[0xcc])
+            .await?;
+
+        self.command(bus, Command::MasterActivation).await?;
+
+        bus.wait_busy(BUSY_POLARITY, delay)
             .await
+            .map_err(Error::Bus)?;
+
+        self.screen_on = true;
+
+        Ok(())
+    }
+
+    async fn power_off_after_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        if !self.screen_on {
+            return Ok(());
+        }
+
+        self.command_data(
+            bus,
+            Command::BorderWaveform,
+            &[self.config.border_waveform_init],
+        )
+        .await?;
+
+        self.command_data(bus, Command::DisplayUpdateControl2, &[0x03])
+            .await?;
+
+        self.command(bus, Command::MasterActivation).await?;
+
+        delay.delay_ms(200).await;
+
+        bus.wait_busy(BUSY_POLARITY, delay)
+            .await
+            .map_err(Error::Bus)?;
+
+        self.screen_on = false;
+
+        Ok(())
+    }
+
+    async fn write_transformed_plane<B>(
+        &self,
+        bus: &mut B,
+        command: Command,
+        lsb: &[u8],
+        msb: &[u8],
+        transform: fn(u8, u8) -> u8,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        self.command(bus, command).await?;
+
+        let mut buffer = [0u8; GRAYSCALE_STREAM_CHUNK];
+        let mut offset = 0;
+
+        while offset < lsb.len() {
+            let len = (lsb.len() - offset).min(buffer.len());
+
+            for index in 0..len {
+                buffer[index] = transform(lsb[offset + index], msb[offset + index]);
+            }
+
+            bus.data(&buffer[..len]).await.map_err(Error::Bus)?;
+
+            offset += len;
+        }
+
+        Ok(())
+    }
+
+    async fn write_transformed_window_plane<B>(
+        &self,
+        bus: &mut B,
+        command: Command,
+        lsb: &[u8],
+        msb: &[u8],
+        region: Region,
+        transform: fn(u8, u8) -> u8,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        let stride = self.config.width as usize / 8;
+
+        let x_byte = region.x as usize / 8;
+
+        let row_bytes = region.width as usize / 8;
+
+        self.command(bus, command).await?;
+
+        let mut buffer = [0u8; GRAYSCALE_STREAM_CHUNK];
+
+        for row in 0..region.height as usize {
+            let start = (region.y as usize + row) * stride + x_byte;
+
+            let mut offset = 0;
+
+            while offset < row_bytes {
+                let len = (row_bytes - offset).min(buffer.len());
+
+                for index in 0..len {
+                    let source = start + offset + index;
+
+                    buffer[index] = transform(lsb[source], msb[source]);
+                }
+
+                bus.data(&buffer[..len]).await.map_err(Error::Bus)?;
+
+                offset += len;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn write_overlay_mask_plane<B>(
+        &self,
+        bus: &mut B,
+        command: Command,
+        lsb: &[u8],
+        msb: &[u8],
+        region: Region,
+        transform: fn(u8, u8) -> u8,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        let stride = self.config.width as usize / 8;
+
+        let x_start = region.x as usize / 8;
+        let x_end = x_start + region.width as usize / 8;
+
+        let y_start = region.y as usize;
+        let y_end = y_start + region.height as usize;
+
+        self.command(bus, command).await?;
+
+        let mut buffer = [0u8; GRAYSCALE_STREAM_CHUNK];
+
+        for y in 0..self.config.height as usize {
+            let row_start = y * stride;
+
+            let mut x = 0;
+
+            while x < stride {
+                let len = (stride - x).min(buffer.len());
+
+                for index in 0..len {
+                    let byte_x = x + index;
+
+                    buffer[index] =
+                        if y >= y_start && y < y_end && byte_x >= x_start && byte_x < x_end {
+                            let source = row_start + byte_x;
+
+                            transform(lsb[source], msb[source])
+                        } else {
+                            0x00
+                        };
+                }
+
+                bus.data(&buffer[..len]).await.map_err(Error::Bus)?;
+
+                x += len;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn write_overlay_masks<B>(
+        &self,
+        bus: &mut B,
+        lsb: &[u8],
+        msb: &[u8],
+        region: Region,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        self.set_full_ram_area(bus).await?;
+
+        self.write_overlay_mask_plane(
+            bus,
+            Command::WriteBlackWhiteRam,
+            lsb,
+            msb,
+            region,
+            overlay_lsb_byte,
+        )
+        .await?;
+
+        self.set_full_ram_area(bus).await?;
+
+        self.write_overlay_mask_plane(
+            bus,
+            Command::WriteRedRam,
+            lsb,
+            msb,
+            region,
+            overlay_msb_byte,
+        )
+        .await
+    }
+
+    async fn restore_grayscale_base<B>(
+        &self,
+        bus: &mut B,
+        lsb: &[u8],
+        msb: &[u8],
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        self.set_full_ram_area(bus).await?;
+
+        self.write_transformed_plane(
+            bus,
+            Command::WriteBlackWhiteRam,
+            lsb,
+            msb,
+            grayscale_base_byte,
+        )
+        .await?;
+
+        self.set_full_ram_area(bus).await?;
+
+        self.write_transformed_plane(bus, Command::WriteRedRam, lsb, msb, grayscale_base_byte)
+            .await
+    }
+
+    fn region_has_grayscale(&self, lsb: &[u8], msb: &[u8], region: Region) -> bool {
+        let stride = self.config.width as usize / 8;
+
+        let x_byte = region.x as usize / 8;
+
+        let row_bytes = region.width as usize / 8;
+
+        for row in 0..region.height as usize {
+            let start = (region.y as usize + row) * stride + x_byte;
+            let end = start + row_bytes;
+
+            if lsb[start..end] != msb[start..end] {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+fn grayscale_base_byte(lsb: u8, msb: u8) -> u8 {
+    lsb & msb
+}
+
+fn overlay_lsb_byte(lsb: u8, msb: u8) -> u8 {
+    lsb & !msb
+}
+
+fn overlay_msb_byte(lsb: u8, msb: u8) -> u8 {
+    lsb ^ msb
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{grayscale_base_byte, overlay_lsb_byte, overlay_msb_byte};
+
+    #[test]
+    fn absolute_pixels_convert_to_overlay_encoding() {
+        // black: absolute 00 -> base 0, mask 00
+        assert_eq!(grayscale_base_byte(0x00, 0x00), 0x00);
+        assert_eq!(overlay_lsb_byte(0x00, 0x00), 0x00);
+        assert_eq!(overlay_msb_byte(0x00, 0x00), 0x00);
+
+        // dark: absolute 10 -> base 0, mask 11
+        assert_eq!(grayscale_base_byte(0xff, 0x00), 0x00);
+        assert_eq!(overlay_lsb_byte(0xff, 0x00), 0xff);
+        assert_eq!(overlay_msb_byte(0xff, 0x00), 0xff);
+
+        // light: absolute 01 -> base 0, mask 01
+        assert_eq!(grayscale_base_byte(0x00, 0xff), 0x00);
+        assert_eq!(overlay_lsb_byte(0x00, 0xff), 0x00);
+        assert_eq!(overlay_msb_byte(0x00, 0xff), 0xff);
+
+        // white: absolute 11 -> base 1, mask 00
+        assert_eq!(grayscale_base_byte(0xff, 0xff), 0xff);
+        assert_eq!(overlay_lsb_byte(0xff, 0xff), 0x00);
+        assert_eq!(overlay_msb_byte(0xff, 0xff), 0x00);
     }
 }

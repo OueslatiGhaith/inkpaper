@@ -172,6 +172,7 @@ impl Presenter {
         &mut self,
         runtime: &mut UiRuntime,
         frame: &mut FramebufferStorage,
+        partial_grayscale_supported: bool,
     ) -> Option<FrameUpdate> {
         let invalidation = runtime.take_render_invalidation();
         if invalidation.is_none() {
@@ -180,9 +181,7 @@ impl Presenter {
 
         let rendered = render_invalidation(runtime, frame, invalidation)?;
 
-        let refresh = if rendered.frame_has_grayscale {
-            // current grayscale driver implementation still activates the whole panel,
-            // so account for this as a full physical refresh
+        let refresh = if rendered.frame_has_grayscale && !partial_grayscale_supported {
             self.refresh_policy.record_full_refresh();
             RefreshRequest::Full
         } else {

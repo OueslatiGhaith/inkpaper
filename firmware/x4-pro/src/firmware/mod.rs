@@ -328,7 +328,9 @@ async fn main(spawner: Spawner) -> ! {
             stay_alive().await;
         }
 
-        let Some(update) = presenter.render_pending(runtime, frame) else {
+        let Some(update) =
+            presenter.render_pending(runtime, frame, panel.supports_partial_grayscale())
+        else {
             continue;
         };
 
@@ -358,7 +360,7 @@ async fn stay_alive() -> ! {
 fn handle_input_event(event: InputEvent) -> InputAction {
     match event {
         InputEvent::Button(event)
-            if event.button() == Button::Power {} && event.edge() == ButtonEdge::Pressed =>
+            if event.button() == Button::Power && event.edge() == ButtonEdge::Pressed =>
         {
             InputAction::Sleep
         }
