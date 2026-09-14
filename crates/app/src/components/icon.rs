@@ -10,6 +10,11 @@ pub(crate) enum IconKind {
     BookMarked,
     ChevronLeft,
     SlidersHorizontal,
+    BatteryCharging,
+    BatteryFull,
+    BatteryMedium,
+    BatteryLow,
+    BatteryWarning,
 }
 
 #[component]
@@ -30,6 +35,15 @@ impl RenderOnce for Icon {
             IconKind::ChevronLeft => include_svg!("assets/icons/lucide/chevron-left.svg"),
             IconKind::SlidersHorizontal => {
                 include_svg!("assets/icons/lucide/sliders-horizontal.svg")
+            }
+            IconKind::BatteryCharging => {
+                include_svg!("assets/icons/lucide/battery-charging.svg")
+            }
+            IconKind::BatteryFull => include_svg!("assets/icons/lucide/battery-full.svg"),
+            IconKind::BatteryMedium => include_svg!("assets/icons/lucide/battery-medium.svg"),
+            IconKind::BatteryLow => include_svg!("assets/icons/lucide/battery-low.svg"),
+            IconKind::BatteryWarning => {
+                include_svg!("assets/icons/lucide/battery-warning.svg")
             }
         };
 

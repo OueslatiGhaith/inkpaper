@@ -5,16 +5,14 @@ use crate::components::icon::{Icon, IconKind, IconProps};
 #[component]
 pub(crate) struct HomeHeader<'a> {
     battery: &'a str,
+    charging: bool,
 }
 
 impl RenderOnce for HomeHeader<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-full h-full relative">
-                <div class="absolute top-[5px] right-[18px] flex items-center gap-1">
-                    <text class="text-[10px] leading-3">{self.battery}</text>
-                    <BatteryIcon />
-                </div>
+                <BatteryStatus battery={self.battery} charging={self.charging} />
             </div>
         }
     }
@@ -24,15 +22,16 @@ impl RenderOnce for HomeHeader<'_> {
 pub(crate) struct FileBrowserHeader<'a> {
     title: &'a str,
     battery: &'a str,
+    charging: bool,
 }
 
 impl RenderOnce for FileBrowserHeader<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-full h-full relative">
-                <BatteryStatus battery={self.battery} />
+                <BatteryStatus battery={self.battery} charging={self.charging} />
 
-                <div class="absolute left-[10px] top-[22px] w-8 h-8">
+                <div class="absolute left-2.5 top-[22px] w-8 h-8">
                     <Icon kind={IconKind::ChevronLeft} size={px(32)} />
                 </div>
 
@@ -42,7 +41,7 @@ impl RenderOnce for FileBrowserHeader<'_> {
                     </text>
                 </div>
 
-                <div class="absolute right-[14px] top-[26px] w-6 h-6">
+                <div class="absolute right-3.5 top-[26px] w-6 h-6">
                     <Icon kind={IconKind::SlidersHorizontal} size={px(24)} />
                 </div>
             </div>
@@ -53,83 +52,59 @@ impl RenderOnce for FileBrowserHeader<'_> {
 #[component]
 struct BatteryStatus<'a> {
     battery: &'a str,
+    charging: bool,
 }
 
 impl RenderOnce for BatteryStatus<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let icon = battery_icon(self.battery, self.charging);
+
         rsx! {
             <div class="absolute top-0 right-[18px] flex items-center gap-1">
                 <text class="text-[10px] leading-3">{self.battery}</text>
-                <BatteryIcon />
+                <Icon kind={icon} size={px(20)} />
             </div>
         }
     }
 }
 
-#[component]
-struct BatteryIcon;
+fn battery_icon(battery: &str, charging: bool) -> IconKind {
+    if charging {
+        return IconKind::BatteryCharging;
+    }
 
-impl BatteryIcon {
-    fn draw(paint: &mut PaintCx<'_>) {
-        paint.draw_shapes(paint.bounds(), |_, painter| {
-            let black = Color::BLACK;
-
-            painter.line(
-                Point::new(px(1), px(0)),
-                Point::new(px(12), px(0)),
-                px(1),
-                black,
-            );
-            painter.line(
-                Point::new(px(1), px(11)),
-                Point::new(px(12), px(11)),
-                px(1),
-                black,
-            );
-            painter.line(
-                Point::new(px(0), px(1)),
-                Point::new(px(0), px(10)),
-                px(1),
-                black,
-            );
-            painter.line(
-                Point::new(px(13), px(1)),
-                Point::new(px(13), px(10)),
-                px(1),
-                black,
-            );
-
-            painter.line(
-                Point::new(px(14), px(3)),
-                Point::new(px(14), px(8)),
-                px(1),
-                black,
-            );
-            painter.line(
-                Point::new(px(15), px(4)),
-                Point::new(px(15), px(7)),
-                px(1),
-                black,
-            );
-
-            painter.fill_rect(
-                Rect::new(Point::new(px(2), px(2)), Size::new(px(3), px(8))),
-                black,
-            );
-            painter.fill_rect(
-                Rect::new(Point::new(px(6), px(2)), Size::new(px(3), px(8))),
-                black,
-            );
-            painter.fill_rect(
-                Rect::new(Point::new(px(10), px(2)), Size::new(px(3), px(8))),
-                black,
-            );
-        });
+    match parse_battery_percent(battery) {
+        0..=10 => IconKind::BatteryWarning,
+        11..=35 => IconKind::BatteryLow,
+        36..=70 => IconKind::BatteryMedium,
+        71..=100 => IconKind::BatteryFull,
+        _ => unreachable!(),
     }
 }
 
-impl RenderOnce for BatteryIcon {
-    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        canvas(Self::draw).size(Size::new(px(16), px(12)))
+fn parse_battery_percent(value: &str) -> u8 {
+    let mut percent = 0u16;
+    let mut has_digit = false;
+
+    for byte in value.bytes() {
+        if byte == b'%' {
+            break;
+        }
+
+        if !byte.is_ascii_digit() {
+            return 0;
+        }
+
+        has_digit = true;
+
+        percent = percent
+            .saturating_mul(10)
+            .saturating_add(u16::from(byte - b'0'));
     }
+
+    if !has_digit {
+        return 0;
+    }
+
+    percent.min(100) as u8
 }

@@ -13,7 +13,7 @@ impl RenderOnce for BrowseFilesScreen {
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
                 <div class="absolute left-0 top-[5px] w-[480px] h-[77px]">
-                    <FileBrowserHeader title="SD Card" battery="72%" />
+                    <FileBrowserHeader title="SD Card" battery="72%" charging={false} />
                 </div>
 
                 <div class="absolute left-0 top-[98px] w-[480px] flex flex-col">
