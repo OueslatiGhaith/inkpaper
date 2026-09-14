@@ -217,3 +217,17 @@ pub(super) fn round_to_i32(value: f32) -> i32 {
         (value - 0.5) as i32
     }
 }
+
+pub(super) fn floor_to_i32(value: f32) -> i32 {
+    if !value.is_finite() {
+        return 0;
+    }
+
+    let truncated = value as i32;
+
+    if (truncated as f32) > value {
+        truncated.saturating_sub(1)
+    } else {
+        truncated
+    }
+}

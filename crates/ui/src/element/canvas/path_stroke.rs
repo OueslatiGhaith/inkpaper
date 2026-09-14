@@ -474,6 +474,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingPainter {
         fills: Vec<Rect>,
+        coverage_pixels: Vec<(Point, u8)>,
     }
 
     impl CanvasPainter for RecordingPainter {
@@ -485,26 +486,75 @@ mod tests {
         fn line(&mut self, _: Point, _: Point, _: Pixels, _: Color) {}
         fn fill_circle(&mut self, _: Point, _: Pixels, _: Color) {}
         fn stroke_circle(&mut self, _: Point, _: Pixels, _: Pixels, _: Color) {}
+
+        fn fill_pixel_coverage(&mut self, point: Point, _: Color, coverage: u8) {
+            if coverage != 0 {
+                self.coverage_pixels.push((point, coverage));
+            }
+        }
     }
 
     fn painted_bounds(painter: &RecordingPainter) -> Option<(i32, i32, i32, i32)> {
-        let first = painter.fills.first()?;
+        let mut bounds: Option<(i32, i32, i32, i32)> = None;
 
-        let mut min_x = first.origin.x.get();
-        let mut min_y = first.origin.y.get();
-
-        let mut max_x = first.origin.x.get() + first.size.width.get();
-        let mut max_y = first.origin.y.get() + first.size.height.get();
-
-        for rect in &painter.fills[1..] {
-            min_x = min_x.min(rect.origin.x.get());
-            min_y = min_y.min(rect.origin.y.get());
-
-            max_x = max_x.max(rect.origin.x.get() + rect.size.width.get());
-            max_y = max_y.max(rect.origin.y.get() + rect.size.height.get());
+        for rect in &painter.fills {
+            extend_bounds(
+                &mut bounds,
+                rect.origin.x.get(),
+                rect.origin.y.get(),
+                rect.origin.x.get().saturating_add(rect.size.width.get()),
+                rect.origin.y.get().saturating_add(rect.size.height.get()),
+            );
         }
 
-        Some((min_x, min_y, max_x, max_y))
+        for &(point, coverage) in &painter.coverage_pixels {
+            if coverage == 0 {
+                continue;
+            }
+
+            extend_bounds(
+                &mut bounds,
+                point.x.get(),
+                point.y.get(),
+                point.x.get().saturating_add(1),
+                point.y.get().saturating_add(1),
+            );
+        }
+
+        bounds
+    }
+
+    fn extend_bounds(
+        bounds: &mut Option<(i32, i32, i32, i32)>,
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    ) {
+        match bounds {
+            Some((min_x, min_y, max_x, max_y)) => {
+                *min_x = (*min_x).min(left);
+                *min_y = (*min_y).min(top);
+                *max_x = (*max_x).max(right);
+                *max_y = (*max_y).max(bottom);
+            }
+            None => {
+                *bounds = Some((left, top, right, bottom));
+            }
+        }
+    }
+
+    fn coverage_at(painter: &RecordingPainter, point: Point) -> u8 {
+        if painter.fills.iter().any(|rect| rect.contains(point)) {
+            return u8::MAX;
+        }
+
+        painter
+            .coverage_pixels
+            .iter()
+            .rev()
+            .find_map(|&(painted_point, coverage)| (painted_point == point).then_some(coverage))
+            .unwrap_or(0)
     }
 
     #[test]
@@ -522,14 +572,12 @@ mod tests {
             PathStroke::new(3.0, Color::BLACK),
         );
 
-        assert!(!painter.fills.is_empty());
-
-        for rect in &painter.fills {
-            assert_eq!(rect.origin.x, px(1),);
-            assert_eq!(rect.size.width, px(3),);
-        }
-
-        assert_eq!(painted_bounds(&painter), Some((1, 1, 4, 9)),);
+        assert_eq!(coverage_at(&painter, Point::new(px(0), px(4))), 0);
+        assert_eq!(coverage_at(&painter, Point::new(px(1), px(4))), 191);
+        assert_eq!(coverage_at(&painter, Point::new(px(2), px(4))), 255);
+        assert_eq!(coverage_at(&painter, Point::new(px(3), px(4))), 255);
+        assert_eq!(coverage_at(&painter, Point::new(px(4), px(4))), 64);
+        assert_eq!(coverage_at(&painter, Point::new(px(5), px(4))), 0);
     }
 
     #[test]
@@ -547,7 +595,7 @@ mod tests {
             PathStroke::new(4.0, Color::BLACK).with_cap(StrokeCap::Round),
         );
 
-        assert_eq!(painted_bounds(&painter), Some((2, 2, 10, 6)),);
+        assert_eq!(painted_bounds(&painter), Some((2, 2, 10, 6)));
     }
 
     #[test]
@@ -565,7 +613,7 @@ mod tests {
             PathStroke::new(4.0, Color::BLACK).with_cap(StrokeCap::Square),
         );
 
-        assert_eq!(painted_bounds(&painter), Some((2, 2, 10, 6)),);
+        assert_eq!(painted_bounds(&painter), Some((2, 2, 10, 6)));
     }
 
     #[test]
@@ -621,13 +669,11 @@ mod tests {
             PathStroke::new(8.0 / 3.0, Color::BLACK),
         );
 
-        assert!(!painter.fills.is_empty());
-
-        for rect in &painter.fills {
-            assert_eq!(rect.origin.x, px(1),);
-            assert_eq!(rect.size.width, px(2),);
-        }
-
-        assert_eq!(painted_bounds(&painter), Some((1, 1, 3, 9)),);
+        assert_eq!(coverage_at(&painter, Point::new(px(-1), px(4))), 0);
+        assert_eq!(coverage_at(&painter, Point::new(px(0), px(4))), 64);
+        assert_eq!(coverage_at(&painter, Point::new(px(1), px(4))), 255);
+        assert_eq!(coverage_at(&painter, Point::new(px(2), px(4))), 255);
+        assert_eq!(coverage_at(&painter, Point::new(px(3), px(4))), 64);
+        assert_eq!(coverage_at(&painter, Point::new(px(4), px(4))), 0);
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     AffineTransform, Color, Element, MountCx, MountError, NodeId, PaintCx, PathFill, PathStroke,
-    Pixels, Point, Rect, Size, VectorPath, callback::CallbackId,
+    Pixels, Point, Rect, Size, VectorPath, callback::CallbackId, px,
 };
 
 mod path;
@@ -13,6 +13,14 @@ pub trait CanvasPainter {
     fn line(&mut self, start: Point, end: Point, width: Pixels, color: Color);
     fn fill_circle(&mut self, center: Point, radius: Pixels, color: Color);
     fn stroke_circle(&mut self, center: Point, radius: Pixels, width: Pixels, color: Color);
+
+    fn fill_pixel_coverage(&mut self, point: Point, color: Color, coverage: u8) {
+        if coverage < 128 {
+            return;
+        }
+
+        self.fill_rect(Rect::new(point, Size::new(px(1), px(1))), color);
+    }
 
     fn fill_path(&mut self, path: VectorPath<'_>, transform: AffineTransform, fill: PathFill) {
         path_fill::paint_filled_path(self, path, transform, fill);

@@ -149,12 +149,25 @@ where
             return Ok(());
         };
 
-        let mut target = self.target.color_converted::<EgRgb888>();
-        let clip = to_embedded_rect(canvas_clip);
-        let mut clipped = target.clipped(&clip);
+        let target_bounds = self.target.bounding_box();
+        let target_bounds = Rect::new(
+            Point::new(px(target_bounds.top_left.x), px(target_bounds.top_left.y)),
+            from_embedded_size(target_bounds.size),
+        );
+
+        let Some(canvas_clip) = canvas_clip.intersection(target_bounds) else {
+            return Ok(());
+        };
 
         let local_bounds = Rect::new(Point::ZERO, bounds.size);
-        let mut canvas_painter = EmbeddedGraphicsCanvasPainter::new(&mut clipped, bounds.origin);
+        let coverage_mode = self.coverage_mode;
+
+        let mut canvas_painter = EmbeddedGraphicsCanvasPainter::new(
+            self.target,
+            bounds.origin,
+            canvas_clip,
+            coverage_mode,
+        );
 
         draw(local_bounds, &mut canvas_painter);
 
