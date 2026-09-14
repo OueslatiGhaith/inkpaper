@@ -75,5 +75,5 @@ pub mod prelude {
     };
 
     #[cfg(feature = "macros")]
-    pub use inkpaper_ui_macros::{component, rsx};
+    pub use inkpaper_ui_macros::{component, include_svg, rsx};
 }

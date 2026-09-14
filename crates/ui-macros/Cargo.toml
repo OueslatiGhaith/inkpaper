@@ -11,5 +11,7 @@ heck = "0.5.0"
 inkpaper-ui-style-schema = { path = "../ui-style-schema" }
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
+roxmltree = "0.21.1"
 rstml = "0.13.0"
+svgtypes = "0.16.1"
 syn = { version = "3.0.5", features = ["full"] }
