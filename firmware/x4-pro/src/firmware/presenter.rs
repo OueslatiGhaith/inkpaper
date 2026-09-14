@@ -64,6 +64,8 @@ pub type UiRuntime = Runtime<
 #[derive(Debug, Clone, Copy)]
 struct RenderedFrame {
     physical_damage: Region,
+    damage_has_grayscale: bool,
+    frame_has_grayscale: bool,
     paint_report: PaintReport,
 }
 
@@ -71,6 +73,8 @@ struct RenderedFrame {
 pub struct FrameUpdate {
     refresh: RefreshRequest,
     physical_damage: Region,
+    damage_has_grayscale: bool,
+    frame_has_grayscale: bool,
     paint_report: PaintReport,
 }
 
@@ -78,11 +82,15 @@ impl FrameUpdate {
     pub const fn new(
         refresh: RefreshRequest,
         physical_damage: Region,
+        damage_has_grayscale: bool,
+        frame_has_grayscale: bool,
         paint_report: PaintReport,
     ) -> Self {
         Self {
             refresh,
             physical_damage,
+            damage_has_grayscale,
+            frame_has_grayscale,
             paint_report,
         }
     }
@@ -93,6 +101,14 @@ impl FrameUpdate {
 
     pub const fn physical_damage(self) -> Region {
         self.physical_damage
+    }
+
+    pub const fn damage_has_grayscale(self) -> bool {
+        self.damage_has_grayscale
+    }
+
+    pub const fn frame_has_grayscale(self) -> bool {
+        self.frame_has_grayscale
     }
 
     pub const fn paint_report(self) -> PaintReport {
@@ -145,7 +161,9 @@ impl Presenter {
 
         FrameUpdate::new(
             RefreshRequest::Full,
-            full_physical_region(),
+            rendered.physical_damage,
+            rendered.damage_has_grayscale,
+            rendered.frame_has_grayscale,
             rendered.paint_report,
         )
     }
@@ -162,23 +180,20 @@ impl Presenter {
 
         let rendered = render_invalidation(runtime, frame, invalidation)?;
 
-        if frame.has_grayscale() {
-            // the absolute grayscale drivers currently update the whole panel.
-            // Reflect that in both refresh accounting and reported damage
+        let refresh = if rendered.frame_has_grayscale {
+            // current grayscale driver implementation still activates the whole panel,
+            // so account for this as a full physical refresh
             self.refresh_policy.record_full_refresh();
-
-            return Some(FrameUpdate::new(
-                RefreshRequest::Full,
-                full_physical_region(),
-                rendered.paint_report,
-            ));
-        }
-
-        let refresh = self.refresh_policy.select(refresh_context(rendered));
+            RefreshRequest::Full
+        } else {
+            self.refresh_policy.select(refresh_context(rendered))
+        };
 
         Some(FrameUpdate::new(
             refresh,
             rendered.physical_damage,
+            rendered.damage_has_grayscale,
+            rendered.frame_has_grayscale,
             rendered.paint_report,
         ))
     }
@@ -232,8 +247,17 @@ fn render_invalidation(
 
     let physical_damage = physical_damage(&display, damage)?;
 
+    // framebuffer owns a mutable borrow of `frame`.
+    // release it before querying storage directly.
+    drop(display);
+
+    let damage_has_grayscale = frame.has_grayscale_in(physical_damage);
+    let frame_has_grayscale = frame.has_grayscale();
+
     Some(RenderedFrame {
         physical_damage,
+        damage_has_grayscale,
+        frame_has_grayscale,
         paint_report,
     })
 }
@@ -304,8 +328,4 @@ fn refresh_context(rendered: RenderedFrame) -> RefreshContext {
 
 const fn physical_display_pixels() -> u32 {
     (PHYSICAL_WIDTH as u32) * (PHYSICAL_HEIGHT as u32)
-}
-
-const fn full_physical_region() -> Region {
-    Region::new(0, 0, PHYSICAL_WIDTH as u16, PHYSICAL_HEIGHT as u16)
 }

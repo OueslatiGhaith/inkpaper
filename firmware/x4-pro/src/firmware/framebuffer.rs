@@ -52,6 +52,61 @@ impl FramebufferStorage {
     pub fn has_grayscale(&self) -> bool {
         self.lsb != self.msb
     }
+
+    pub fn has_grayscale_in(&self, region: Region) -> bool {
+        let Some(region) = region.clip_to(PHYSICAL_WIDTH as u16, PHYSICAL_HEIGHT as u16) else {
+            return false;
+        };
+
+        let x_start = region.x as usize;
+        let x_end = x_start + region.width as usize;
+
+        let first_byte = x_start / 8;
+        let last_byte = (x_end - 1) / 8;
+
+        let first_offset = x_start % 8;
+        let last_offset = (x_end - 1) % 8;
+
+        let first_mask = 0xffu8 >> first_offset;
+        let last_mask = 0xffu8 << (7 - last_offset);
+
+        for y in region.y as usize..region.y as usize + region.height as usize {
+            let row_start = y * PHYSICAL_STRIDE;
+
+            if first_byte == last_byte {
+                let mask = first_mask & last_mask;
+                let index = row_start + first_byte;
+
+                if (self.lsb[index] ^ self.msb[index]) & mask != 0 {
+                    return true;
+                }
+
+                continue;
+            }
+
+            let first_index = row_start + first_byte;
+
+            if (self.lsb[first_index] ^ self.msb[first_index]) & first_mask != 0 {
+                return true;
+            }
+
+            for byte in first_byte + 1..last_byte {
+                let index = row_start + byte;
+
+                if self.lsb[index] != self.msb[index] {
+                    return true;
+                }
+            }
+
+            let last_index = row_start + last_byte;
+
+            if (self.lsb[last_index] ^ self.msb[last_index]) & last_mask != 0 {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

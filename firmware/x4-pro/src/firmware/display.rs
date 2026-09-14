@@ -7,7 +7,9 @@ use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC
 use xteink_display_probe::Controller;
 
 use crate::firmware::{
-    framebuffer::FramebufferStorage, presenter::FrameUpdate, refresh_policy::RefreshRequest,
+    framebuffer::{FramebufferStorage, Region},
+    presenter::FrameUpdate,
+    refresh_policy::RefreshRequest,
 };
 
 #[derive(Debug, Format)]
@@ -59,23 +61,18 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        if frame.has_grayscale() {
-            let (lsb, msb) = frame.planes();
+        debug_assert!(!update.damage_has_grayscale() || update.frame_has_grayscale());
 
-            return match self {
-                Self::Ssd1677(panel) => panel
-                    .display_grayscale(bus, delay, lsb, msb, true)
-                    .await
-                    .map_err(Error::Ssd1677),
-                Self::Uc8179(panel) => panel
-                    .display_grayscale(bus, delay, lsb, msb, true)
-                    .await
-                    .map_err(Error::Uc8179),
-                Self::Uc8279(panel) => panel
-                    .display_grayscale(bus, delay, lsb, msb, true)
-                    .await
-                    .map_err(Error::Uc8279),
-            };
+        if update.frame_has_grayscale() {
+            return self
+                .present_grayscale(
+                    bus,
+                    delay,
+                    frame,
+                    update.physical_damage(),
+                    update.damage_has_grayscale(),
+                )
+                .await;
         }
 
         let frame = frame.binary_plane();
@@ -84,6 +81,50 @@ impl X4Panel {
             Self::Ssd1677(panel) => present_ssd1677(panel, bus, delay, frame, update).await,
             Self::Uc8179(panel) => present_uc8179(panel, bus, delay, frame, update).await,
             Self::Uc8279(panel) => present_uc8279(panel, bus, delay, frame, update).await,
+        }
+    }
+
+    async fn present_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        frame: &FramebufferStorage,
+        damage: Region,
+        damage_has_grayscale: bool,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        let (lsb, msb) = frame.planes();
+
+        // keep the distinction explicit:
+        // `true`: this update itself contains four-tone pixels.
+        // `false`: the changed area is binary, but grayscale exists elsewhere on the current frame.
+        // the latter cannot currently go through the generic whole-plane B/W path:
+        // UC8179/UC8279 would collapse existing grayscale outside `damage`.
+        let _ = damage_has_grayscale;
+
+        // TODO:
+        // replace these full-panel fallbacks with controller-specific grayscale window
+        // refreshes once their PTL/RAM-window behavior is hardware validated.
+        // `damage` is deliberately retained at this boundary so adding that support will not require changing Presenter
+        // or FrameUpdate again.
+        let _ = damage;
+
+        match self {
+            Self::Ssd1677(panel) => panel
+                .display_grayscale(bus, delay, lsb, msb, true)
+                .await
+                .map_err(Error::Ssd1677),
+            Self::Uc8179(panel) => panel
+                .display_grayscale(bus, delay, lsb, msb, true)
+                .await
+                .map_err(Error::Uc8179),
+            Self::Uc8279(panel) => panel
+                .display_grayscale(bus, delay, lsb, msb, true)
+                .await
+                .map_err(Error::Uc8279),
         }
     }
 

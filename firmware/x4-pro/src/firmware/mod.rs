@@ -178,15 +178,18 @@ async fn main(spawner: Spawner) -> ! {
     let frame = FRAMEBUFFER.init_with(FramebufferStorage::white);
     let runtime = UI_RUNTIME.init_with(UiRuntime::default);
 
-    runtime.create_root(|_| InkPaperApp::default());
+    runtime.create_root(|_| InkPaperApp::default()).unwrap();
 
     let mut presenter = Presenter::new(runtime);
 
     debug!("building UI frame...");
     let update = presenter.render_initial(runtime, frame);
     let damage = update.physical_damage();
-    defmt::debug!(
-        "initial damage x={} y={} width={} height={}",
+    debug!(
+        "UI update refresh={:?} gray_damage={} gray_frame={} x={} y={} width={} height={}",
+        update.refresh(),
+        update.damage_has_grayscale(),
+        update.frame_has_grayscale(),
         damage.x,
         damage.y,
         damage.width,
