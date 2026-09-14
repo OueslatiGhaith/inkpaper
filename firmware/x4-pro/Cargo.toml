@@ -3,6 +3,10 @@ name = "inkpaper-x4-pro"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+grayscale-validation = []
+
 [dependencies]
 # internal deps
 bm8563 = { path = "../../crates/bm8563", features = ["defmt"] }
@@ -32,6 +36,7 @@ embassy-futures = "0.1.2"
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
 embassy-time = { version = "0.5.1", features = ["defmt", "defmt-timestamp-uptime-ms"] }
 block-device-driver = "0.2.0"
+esp-alloc = { workspace = true, features = ["esp32s3", "global-allocator"] }
 esp-backtrace = { workspace = true, features = ["esp32s3", "panic-handler", "defmt"] }
 esp-bootloader-esp-idf = { workspace = true, features = ["esp32s3", "defmt"] }
 esp-hal = { workspace = true, features = ["esp32s3", "unstable", "defmt"] }

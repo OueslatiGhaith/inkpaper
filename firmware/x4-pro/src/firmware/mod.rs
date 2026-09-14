@@ -40,6 +40,8 @@ mod buttons;
 mod display;
 mod framebuffer;
 mod frontlight;
+#[cfg(feature = "grayscale-validation")]
+mod grayscale_validation;
 mod i2c_bus;
 mod input;
 mod power;
@@ -70,6 +72,9 @@ async fn main(spawner: Spawner) -> ! {
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
+
+    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+    info!("PSRAM allocator initialized");
 
     // establish the board's safe rail state before doing anything else
     let (mut rails, sd_power) =
@@ -176,6 +181,10 @@ async fn main(spawner: Spawner) -> ! {
     info!("display initialized");
 
     let frame = FRAMEBUFFER.init_with(FramebufferStorage::white);
+
+    #[cfg(feature = "grayscale-validation")]
+    grayscale_validation::run(&mut panel, &mut bus, &mut delay, frame).await;
+
     let runtime = UI_RUNTIME.init_with(UiRuntime::default);
 
     runtime.create_root(|_| InkPaperApp::default()).unwrap();

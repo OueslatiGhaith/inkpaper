@@ -1,5 +1,6 @@
 use core::convert::Infallible;
 
+use alloc::{vec, vec::Vec};
 use embedded_graphics::{
     Pixel,
     draw_target::DrawTarget,
@@ -19,31 +20,36 @@ pub const PHYSICAL_STRIDE: usize = PHYSICAL_WIDTH / 8;
 pub const FRAMEBUFFER_LEN: usize = PHYSICAL_STRIDE * PHYSICAL_HEIGHT;
 
 pub struct FramebufferStorage {
-    lsb: [u8; FRAMEBUFFER_LEN],
-    msb: [u8; FRAMEBUFFER_LEN],
+    lsb: Vec<u8>,
+    msb: Vec<u8>,
 }
 
 impl FramebufferStorage {
-    pub const fn white() -> Self {
+    pub fn white() -> Self {
         Self {
-            lsb: [0xff; FRAMEBUFFER_LEN],
-            msb: [0xff; FRAMEBUFFER_LEN],
+            lsb: vec![0xff; FRAMEBUFFER_LEN],
+            msb: vec![0xff; FRAMEBUFFER_LEN],
         }
     }
 
-    pub fn lsb(&self) -> &[u8; FRAMEBUFFER_LEN] {
+    pub fn clear_white(&mut self) {
+        self.lsb.fill(0xff);
+        self.msb.fill(0xff);
+    }
+
+    pub fn lsb(&self) -> &[u8] {
         &self.lsb
     }
 
-    pub fn msb(&self) -> &[u8; FRAMEBUFFER_LEN] {
+    pub fn msb(&self) -> &[u8] {
         &self.msb
     }
 
-    pub fn planes(&self) -> (&[u8; FRAMEBUFFER_LEN], &[u8; FRAMEBUFFER_LEN]) {
+    pub fn planes(&self) -> (&[u8], &[u8]) {
         (&self.lsb, &self.msb)
     }
 
-    pub fn binary_plane(&self) -> &[u8; FRAMEBUFFER_LEN] {
+    pub fn binary_plane(&self) -> &[u8] {
         debug_assert!(!self.has_grayscale());
 
         &self.lsb
@@ -332,7 +338,7 @@ impl DrawTarget for Framebuffer<'_> {
     }
 }
 
-fn fill_plane_region(plane: &mut [u8; FRAMEBUFFER_LEN], region: Region, value: bool) {
+fn fill_plane_region(plane: &mut [u8], region: Region, value: bool) {
     let x_start = region.x as usize;
     let x_end = x_start + region.width as usize;
 

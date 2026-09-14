@@ -14,11 +14,11 @@ heapless = "0.9.3"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 static_cell = "2.1.1"
 # TODO: update when released on crates.io
-esp-backtrace = { git = "https://github.com/esp-rs/esp-hal", rev = "160b107" }
-esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal", rev = "160b107" }
-esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "160b107" }
-esp-println = { git = "https://github.com/esp-rs/esp-hal", rev = "160b107" }
-esp-rtos = { git = "https://github.com/esp-rs/esp-hal", rev = "160b107" }
+esp-alloc = "0.11.0"
+esp-backtrace = "0.20.0"
+esp-bootloader-esp-idf = "0.6.0"
+esp-hal = "1.2.1"
+esp-rtos = "0.4.0"
 
 
 [profile.firmware]
