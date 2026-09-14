@@ -18,7 +18,12 @@ impl RenderOnce for HomeScreen {
                 </div>
 
                 <div class="absolute left-[20px] top-[56px] w-[440px] h-[242px]">
-                    <RecentBookCard title="Book 1" author="Author 1" progress="68%" />
+                    <RecentBookCard
+                        title="Book 1"
+                        author="Author 1"
+                        progress="68%"
+                        selected={true}
+                    />
                 </div>
 
                 <div class="absolute left-[20px] top-[314px] w-[440px]">
