@@ -7,7 +7,10 @@ use std::{
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use roxmltree::{Document, Node};
-use svgtypes::{Length, LengthUnit, NumberListParser, Paint, PathParser, PathSegment};
+use svgtypes::{
+    Length, LengthUnit, NumberListParser, Paint, PathParser, PathSegment, SimplePathSegment,
+    SimplifyingPathParser,
+};
 use syn::LitStr;
 
 const ELLIPSE_KAPPA: f64 = 0.552_284_749_830_793_6;
@@ -628,191 +631,43 @@ fn parse_path(node: Node<'_, '_>) -> Result<Vec<ParsedCommand>, String> {
 fn parse_path_data(data: &str) -> Result<Vec<ParsedCommand>, String> {
     let mut commands = Vec::new();
 
-    let mut current = (0.0f64, 0.0f64);
-    let mut contour_start = (0.0f64, 0.0f64);
-
-    let mut previous_cubic_control = None;
-    let mut previous_quadratic_control = None;
-
-    for segment in PathParser::from(data) {
+    for segment in SimplifyingPathParser::from(data) {
         let segment = segment.map_err(|error| format!("invalid path data: {error}"))?;
 
-        match segment {
-            PathSegment::MoveTo { abs, x, y } => {
-                let to = absolute_point(abs, current, x, y);
-
-                commands.push(ParsedCommand::MoveTo(
-                    checked_f32(to.0, "path x")?,
-                    checked_f32(to.1, "path y")?,
-                ));
-
-                current = to;
-                contour_start = to;
-
-                previous_cubic_control = None;
-                previous_quadratic_control = None;
+        let command = match segment {
+            SimplePathSegment::MoveTo { x, y } => {
+                ParsedCommand::MoveTo(checked_f32(x, "path x")?, checked_f32(y, "path y")?)
             }
 
-            PathSegment::LineTo { abs, x, y } => {
-                let to = absolute_point(abs, current, x, y);
-
-                commands.push(ParsedCommand::LineTo(
-                    checked_f32(to.0, "path x")?,
-                    checked_f32(to.1, "path y")?,
-                ));
-
-                current = to;
-
-                previous_cubic_control = None;
-                previous_quadratic_control = None;
+            SimplePathSegment::LineTo { x, y } => {
+                ParsedCommand::LineTo(checked_f32(x, "path x")?, checked_f32(y, "path y")?)
             }
 
-            PathSegment::HorizontalLineTo { abs, x } => {
-                let x = if abs { x } else { current.0 + x };
-
-                let to = (x, current.1);
-
-                commands.push(ParsedCommand::LineTo(
-                    checked_f32(to.0, "path x")?,
-                    checked_f32(to.1, "path y")?,
-                ));
-
-                current = to;
-
-                previous_cubic_control = None;
-                previous_quadratic_control = None;
-            }
-
-            PathSegment::VerticalLineTo { abs, y } => {
-                let y = if abs { y } else { current.1 + y };
-
-                let to = (current.0, y);
-
-                commands.push(ParsedCommand::LineTo(
-                    checked_f32(to.0, "path x")?,
-                    checked_f32(to.1, "path y")?,
-                ));
-
-                current = to;
-
-                previous_cubic_control = None;
-                previous_quadratic_control = None;
-            }
-
-            PathSegment::CurveTo {
-                abs,
+            SimplePathSegment::CurveTo {
                 x1,
                 y1,
                 x2,
                 y2,
                 x,
                 y,
-            } => {
-                let control_1 = absolute_point(abs, current, x1, y1);
+            } => ParsedCommand::CubicTo {
+                control_1: checked_point((x1, y1), "cubic control 1")?,
+                control_2: checked_point((x2, y2), "cubic control 2")?,
+                to: checked_point((x, y), "cubic endpoint")?,
+            },
 
-                let control_2 = absolute_point(abs, current, x2, y2);
+            SimplePathSegment::Quadratic { x1, y1, x, y } => ParsedCommand::QuadraticTo {
+                control: checked_point((x1, y1), "quadratic control")?,
+                to: checked_point((x, y), "quadratic endpoint")?,
+            },
 
-                let to = absolute_point(abs, current, x, y);
+            SimplePathSegment::ClosePath => ParsedCommand::Close,
+        };
 
-                commands.push(ParsedCommand::CubicTo {
-                    control_1: checked_point(control_1, "cubic control 1")?,
-                    control_2: checked_point(control_2, "cubic control 2")?,
-                    to: checked_point(to, "cubic endpoint")?,
-                });
-
-                current = to;
-
-                previous_cubic_control = Some(control_2);
-
-                previous_quadratic_control = None;
-            }
-
-            PathSegment::SmoothCurveTo { abs, x2, y2, x, y } => {
-                let control_1 = match previous_cubic_control {
-                    Some(previous) => (current.0 * 2.0 - previous.0, current.1 * 2.0 - previous.1),
-
-                    None => current,
-                };
-
-                let control_2 = absolute_point(abs, current, x2, y2);
-
-                let to = absolute_point(abs, current, x, y);
-
-                commands.push(ParsedCommand::CubicTo {
-                    control_1: checked_point(control_1, "smooth cubic control 1")?,
-                    control_2: checked_point(control_2, "smooth cubic control 2")?,
-                    to: checked_point(to, "smooth cubic endpoint")?,
-                });
-
-                current = to;
-
-                previous_cubic_control = Some(control_2);
-
-                previous_quadratic_control = None;
-            }
-
-            PathSegment::Quadratic { abs, x1, y1, x, y } => {
-                let control = absolute_point(abs, current, x1, y1);
-
-                let to = absolute_point(abs, current, x, y);
-
-                commands.push(ParsedCommand::QuadraticTo {
-                    control: checked_point(control, "quadratic control")?,
-                    to: checked_point(to, "quadratic endpoint")?,
-                });
-
-                current = to;
-
-                previous_quadratic_control = Some(control);
-
-                previous_cubic_control = None;
-            }
-
-            PathSegment::SmoothQuadratic { abs, x, y } => {
-                let control = match previous_quadratic_control {
-                    Some(previous) => (current.0 * 2.0 - previous.0, current.1 * 2.0 - previous.1),
-
-                    None => current,
-                };
-
-                let to = absolute_point(abs, current, x, y);
-
-                commands.push(ParsedCommand::QuadraticTo {
-                    control: checked_point(control, "smooth quadratic control")?,
-                    to: checked_point(to, "smooth quadratic endpoint")?,
-                });
-
-                current = to;
-
-                previous_quadratic_control = Some(control);
-
-                previous_cubic_control = None;
-            }
-
-            PathSegment::EllipticalArc { .. } => {
-                return Err("SVG path arc commands (`A`/`a`) are not supported yet".into());
-            }
-
-            PathSegment::ClosePath { .. } => {
-                commands.push(ParsedCommand::Close);
-
-                current = contour_start;
-
-                previous_cubic_control = None;
-                previous_quadratic_control = None;
-            }
-        }
+        commands.push(command);
     }
 
     Ok(commands)
-}
-
-fn absolute_point(absolute: bool, current: (f64, f64), x: f64, y: f64) -> (f64, f64) {
-    if absolute {
-        (x, y)
-    } else {
-        (current.0 + x, current.1 + y)
-    }
 }
 
 fn parse_line(node: Node<'_, '_>) -> Result<Vec<ParsedCommand>, String> {
@@ -1369,10 +1224,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_arc_commands_explicitly() {
-        let error = parse_path_data("M0 0 A10 10 0 0 0 20 20").unwrap_err();
+    fn elliptical_arcs_are_normalized_to_cubic_curves() {
+        let commands = parse_path_data("M0 0 A10 10 0 0 0 20 20").unwrap();
 
-        assert!(error.contains("arc commands"));
+        assert_eq!(commands.first(), Some(&ParsedCommand::MoveTo(0.0, 0.0)),);
+        assert!(
+            commands[1..]
+                .iter()
+                .all(|command| matches!(command, ParsedCommand::CubicTo { .. }))
+        );
+
+        let Some(ParsedCommand::CubicTo { to, .. }) = commands.last() else {
+            panic!("arc must end as a cubic curve");
+        };
+
+        assert_eq!(*to, (20.0, 20.0));
     }
 
     #[test]
@@ -1411,6 +1277,22 @@ mod tests {
         let commands = &svg.paths[0].commands;
 
         assert!(matches!(commands[0], ParsedCommand::MoveTo(..)));
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, ParsedCommand::CubicTo { .. }))
+        );
+        assert_eq!(commands.last(), Some(&ParsedCommand::Close),);
+    }
+
+    #[test]
+    fn parses_crossink_folder_icon_path() {
+        let commands = parse_path_data(
+        "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
+    )
+    .unwrap();
+
+        assert_eq!(commands.first(), Some(&ParsedCommand::MoveTo(20.0, 20.0)),);
         assert!(
             commands
                 .iter()
