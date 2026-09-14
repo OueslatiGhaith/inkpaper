@@ -11,8 +11,8 @@ use inkpaper_ui::{
 
 use crate::firmware::{
     framebuffer::{
-        FRAMEBUFFER_LEN, Framebuffer, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation, PHYSICAL_HEIGHT,
-        PHYSICAL_WIDTH, Region,
+        Framebuffer, FramebufferStorage, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation,
+        PHYSICAL_HEIGHT, PHYSICAL_WIDTH, Region,
     },
     refresh_policy::{RefreshContext, RefreshPolicy, RefreshRequest},
 };
@@ -132,7 +132,7 @@ impl Presenter {
     pub fn render_initial(
         &mut self,
         runtime: &mut UiRuntime,
-        frame: &mut [u8; FRAMEBUFFER_LEN],
+        frame: &mut FramebufferStorage,
     ) -> FrameUpdate {
         let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
 
@@ -145,7 +145,7 @@ impl Presenter {
 
         FrameUpdate::new(
             RefreshRequest::Full,
-            rendered.physical_damage,
+            full_physical_region(),
             rendered.paint_report,
         )
     }
@@ -153,7 +153,7 @@ impl Presenter {
     pub fn render_pending(
         &mut self,
         runtime: &mut UiRuntime,
-        frame: &mut [u8; FRAMEBUFFER_LEN],
+        frame: &mut FramebufferStorage,
     ) -> Option<FrameUpdate> {
         let invalidation = runtime.take_render_invalidation();
         if invalidation.is_none() {
@@ -161,6 +161,19 @@ impl Presenter {
         }
 
         let rendered = render_invalidation(runtime, frame, invalidation)?;
+
+        if frame.has_grayscale() {
+            // the absolute grayscale drivers currently update the whole panel.
+            // Reflect that in both refresh accounting and reported damage
+            self.refresh_policy.record_full_refresh();
+
+            return Some(FrameUpdate::new(
+                RefreshRequest::Full,
+                full_physical_region(),
+                rendered.paint_report,
+            ));
+        }
+
         let refresh = self.refresh_policy.select(refresh_context(rendered));
 
         Some(FrameUpdate::new(
@@ -173,7 +186,7 @@ impl Presenter {
 
 fn render_invalidation(
     runtime: &mut UiRuntime,
-    frame: &mut [u8; FRAMEBUFFER_LEN],
+    frame: &mut FramebufferStorage,
     invalidation: RenderInvalidation,
 ) -> Option<RenderedFrame> {
     if invalidation.is_none() {
@@ -291,4 +304,8 @@ fn refresh_context(rendered: RenderedFrame) -> RefreshContext {
 
 const fn physical_display_pixels() -> u32 {
     (PHYSICAL_WIDTH as u32) * (PHYSICAL_HEIGHT as u32)
+}
+
+const fn full_physical_region() -> Region {
+    Region::new(0, 0, PHYSICAL_WIDTH as u16, PHYSICAL_HEIGHT as u16)
 }

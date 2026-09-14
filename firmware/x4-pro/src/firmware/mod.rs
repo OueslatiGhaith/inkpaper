@@ -15,11 +15,7 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use inkpaper_app::{
-    AppEvent, AppModel, BookSummary, ClockState as AppClockState, InkPaperApp, PlatformAction,
-    clock::TimeOfDay, theme::Theme,
-};
-use inkpaper_ui::prelude::*;
+use inkpaper_app::InkPaperApp;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
 
@@ -27,9 +23,9 @@ use crate::firmware::{
     battery::{BATTERY_UPDATES, BatteryReading, battery_task},
     buttons::{Buttons, button_task},
     display::X4Panel,
-    framebuffer::FRAMEBUFFER_LEN,
+    framebuffer::FramebufferStorage,
     frontlight::{frontlight_off_and_wait, frontlight_task},
-    input::{INPUT_EVENTS, InputEvent},
+    input::{Button, ButtonEdge, INPUT_EVENTS, InputEvent},
     power::PowerRails,
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
     presenter::{Presenter, UiRuntime},
@@ -58,7 +54,7 @@ mod touch;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-static FRAMEBUFFER: StaticCell<[u8; FRAMEBUFFER_LEN]> = StaticCell::new();
+static FRAMEBUFFER: StaticCell<FramebufferStorage> = StaticCell::new();
 static UI_RUNTIME: StaticCell<UiRuntime> = StaticCell::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,14 +175,11 @@ async fn main(spawner: Spawner) -> ! {
     panel.initialize(&mut bus, &mut delay).await.unwrap();
     info!("display initialized");
 
-    let frame = FRAMEBUFFER.init_with(|| [0xff; FRAMEBUFFER_LEN]);
+    let frame = FRAMEBUFFER.init_with(FramebufferStorage::white);
     let runtime = UI_RUNTIME.init_with(UiRuntime::default);
-    runtime.set_global(Theme::EINK).unwrap();
 
-    let model = demo_model();
-    let app = runtime
-        .create_root(move |_| InkPaperApp::new(model))
-        .unwrap();
+    runtime.create_root(|_| InkPaperApp::default());
+
     let mut presenter = Presenter::new(runtime);
 
     debug!("building UI frame...");
@@ -276,17 +269,17 @@ async fn main(spawner: Spawner) -> ! {
         .await
         {
             Either3::First(event) => {
-                action = handle_input_event(runtime, app, event);
+                action = handle_input_event(event);
                 // combine events accumulated while the e-ink panel was busy.
                 while action == InputAction::Continue {
                     let Ok(event) = INPUT_EVENTS.try_receive() else {
                         break;
                     };
-                    action = handle_input_event(runtime, app, event);
+                    action = handle_input_event(event);
                 }
             }
-            Either3::Second(reading) => apply_battery_reading(runtime, app, reading),
-            Either3::Third(state) => apply_rtc_state(runtime, app, state),
+            Either3::Second(reading) => apply_battery_reading(reading),
+            Either3::Third(state) => apply_rtc_state(state),
         }
 
         if action == InputAction::Sleep {
@@ -353,87 +346,45 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
-fn demo_model() -> AppModel {
-    let book = BookSummary::try_new("The Left Hand of Darkness", "Ursula K. Le Guin", 68)
-        .expect("demo book metadata must fit");
-
-    AppModel::new(72, book)
-}
-
 async fn stay_alive() -> ! {
     loop {
         Timer::after(Duration::from_secs(60)).await;
     }
 }
 
-fn handle_input_event(
-    runtime: &mut impl RuntimeApi,
-    app: Entity<InkPaperApp>,
-    event: InputEvent,
-) -> InputAction {
-    let action = InkPaperApp::handle_event(runtime, app, AppEvent::Input(event.into_app()));
-
-    match action {
-        PlatformAction::None => InputAction::Continue,
-        PlatformAction::Suspend => InputAction::Sleep,
-        PlatformAction::LoadReaderPage(request) => {
-            runtime
-                .update(app, |app, cx| {
-                    app.complete_reader_page(
-                        request,
-                        inkpaper_app::reader::PageLoadOutcome::Failed,
-                        cx,
-                    );
-                })
-                .expect("InkPaper application entity must remain alive");
-            InputAction::Continue
+fn handle_input_event(event: InputEvent) -> InputAction {
+    match event {
+        InputEvent::Button(event)
+            if event.button() == Button::Power {} && event.edge() == ButtonEdge::Pressed =>
+        {
+            InputAction::Sleep
         }
-        PlatformAction::LoadReaderChapter(request) => {
-            // TODO: the X4 EPUB file service is not available yet.
-            runtime
-                .update(app, |app, cx| {
-                    app.complete_reader_chapter(
-                        request,
-                        inkpaper_app::reader::ChapterLoadOutcome::Failed,
-                        cx,
-                    )
-                })
-                .expect("InkPaper application entity must remain alive");
-
-            InputAction::Continue
-        }
+        // TODO: route buttons/touch into the app once navigation and interaction are implemented
+        _ => InputAction::Continue,
     }
 }
 
-fn apply_battery_reading(
-    runtime: &mut impl RuntimeApi,
-    app: Entity<InkPaperApp>,
-    reading: BatteryReading,
-) {
+fn apply_battery_reading(reading: BatteryReading) {
     debug!(
         "battery update percent={} millivolts={}",
         reading.percent(),
         reading.millivolts(),
     );
 
-    let action =
-        InkPaperApp::handle_event(runtime, app, AppEvent::BatteryPercent(reading.percent()));
-
-    defmt::debug_assert_eq!(action, PlatformAction::None,);
+    // TODO: update app once app state is introduced
 }
 
-fn apply_rtc_state(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>, state: RtcState) {
-    let state = match state {
-        RtcState::Invalid => AppClockState::Unavailable,
+fn apply_rtc_state(state: RtcState) {
+    match state {
+        RtcState::Invalid => debug!("rtc update invalid"),
         RtcState::Valid(datetime) => {
-            let time = TimeOfDay::new(datetime.hour(), datetime.minute())
-                .expect("BM8563 DateTime guarantees a valid hour and minute");
-
-            AppClockState::Utc(time)
+            debug!(
+                "rtc update hour={} minute={}",
+                datetime.hour(),
+                datetime.minute(),
+            );
         }
-    };
+    }
 
-    let action = InkPaperApp::handle_event(runtime, app, AppEvent::Clock(state));
-
-    defmt::debug_assert_eq!(action, PlatformAction::None,);
+    // TODO: update app once app state is introduced
 }

@@ -6,7 +6,9 @@ use uc8179::{RefreshMode as Uc8179RefreshMode, Uc8179, X4_PRO_800X480 as UC8179_
 use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC8279_X4_PRO};
 use xteink_display_probe::Controller;
 
-use crate::firmware::{presenter::FrameUpdate, refresh_policy::RefreshRequest};
+use crate::firmware::{
+    framebuffer::FramebufferStorage, presenter::FrameUpdate, refresh_policy::RefreshRequest,
+};
 
 #[derive(Debug, Format)]
 pub enum Error<E> {
@@ -50,13 +52,34 @@ impl X4Panel {
         &mut self,
         bus: &mut B,
         delay: &mut D,
-        frame: &[u8],
+        frame: &FramebufferStorage,
         update: FrameUpdate,
     ) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
         D: DelayNs,
     {
+        if frame.has_grayscale() {
+            let (lsb, msb) = frame.planes();
+
+            return match self {
+                Self::Ssd1677(panel) => panel
+                    .display_grayscale(bus, delay, lsb, msb, true)
+                    .await
+                    .map_err(Error::Ssd1677),
+                Self::Uc8179(panel) => panel
+                    .display_grayscale(bus, delay, lsb, msb, true)
+                    .await
+                    .map_err(Error::Uc8179),
+                Self::Uc8279(panel) => panel
+                    .display_grayscale(bus, delay, lsb, msb, true)
+                    .await
+                    .map_err(Error::Uc8279),
+            };
+        }
+
+        let frame = frame.binary_plane();
+
         match self {
             Self::Ssd1677(panel) => present_ssd1677(panel, bus, delay, frame, update).await,
             Self::Uc8179(panel) => present_uc8179(panel, bus, delay, frame, update).await,

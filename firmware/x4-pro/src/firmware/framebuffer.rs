@@ -18,6 +18,42 @@ pub const PHYSICAL_STRIDE: usize = PHYSICAL_WIDTH / 8;
 
 pub const FRAMEBUFFER_LEN: usize = PHYSICAL_STRIDE * PHYSICAL_HEIGHT;
 
+pub struct FramebufferStorage {
+    lsb: [u8; FRAMEBUFFER_LEN],
+    msb: [u8; FRAMEBUFFER_LEN],
+}
+
+impl FramebufferStorage {
+    pub const fn white() -> Self {
+        Self {
+            lsb: [0xff; FRAMEBUFFER_LEN],
+            msb: [0xff; FRAMEBUFFER_LEN],
+        }
+    }
+
+    pub fn lsb(&self) -> &[u8; FRAMEBUFFER_LEN] {
+        &self.lsb
+    }
+
+    pub fn msb(&self) -> &[u8; FRAMEBUFFER_LEN] {
+        &self.msb
+    }
+
+    pub fn planes(&self) -> (&[u8; FRAMEBUFFER_LEN], &[u8; FRAMEBUFFER_LEN]) {
+        (&self.lsb, &self.msb)
+    }
+
+    pub fn binary_plane(&self) -> &[u8; FRAMEBUFFER_LEN] {
+        debug_assert!(!self.has_grayscale());
+
+        &self.lsb
+    }
+
+    pub fn has_grayscale(&self) -> bool {
+        self.lsb != self.msb
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Orientation {
     Portrait,
@@ -108,14 +144,14 @@ impl Region {
 }
 
 pub struct Framebuffer<'a> {
-    buffer: &'a mut [u8; FRAMEBUFFER_LEN],
+    storage: &'a mut FramebufferStorage,
     orientation: Orientation,
 }
 
 impl<'a> Framebuffer<'a> {
-    pub fn new(buffer: &'a mut [u8; FRAMEBUFFER_LEN], orientation: Orientation) -> Self {
+    pub fn new(storage: &'a mut FramebufferStorage, orientation: Orientation) -> Self {
         Self {
-            buffer,
+            storage,
             orientation,
         }
     }
@@ -128,25 +164,11 @@ impl<'a> Framebuffer<'a> {
         self.orientation = orientation;
     }
 
-    pub fn physical_buffer(&self) -> &[u8; FRAMEBUFFER_LEN] {
-        self.buffer
-    }
-
-    pub fn physical_buffer_mut(&mut self) -> &mut [u8; FRAMEBUFFER_LEN] {
-        self.buffer
-    }
-
     pub fn clear_white(&mut self) {
-        self.buffer.fill(0xff);
+        self.storage.lsb.fill(0xff);
+        self.storage.msb.fill(0xff);
     }
 
-    /// coverts a logical damage rectangle into the physical controller-memory rectangle.
-    ///
-    /// the returned physical X range is expanded to complete bytes because the e-paper
-    /// framebuffer and controller window operate on 8 horizontal pixels per byte.
-    ///
-    /// expanding damage is safe: the framebuffer already contains the final state of the
-    /// neighboring pixels
     pub fn physical_damage_region(&self, logical: Region) -> Option<Region> {
         let logical = logical.clip_to(LOGICAL_WIDTH as u16, LOGICAL_HEIGHT as u16)?;
         let physical = self.orientation.map_region(logical);
@@ -154,19 +176,39 @@ impl<'a> Framebuffer<'a> {
         Some(physical.align_x_to_byte())
     }
 
-    fn set_pixel(&mut self, x: u16, y: u16, color: Rgb888) {
+    pub fn get_pixel(&self, point: Point) -> Option<Rgb888> {
+        if !contains_logical_pixel(point) {
+            return None;
+        }
+
+        let x = point.x as u16;
+        let y = point.y as u16;
+
         let (physical_x, physical_y) = self.orientation.map_point(x, y);
+
         let index = physical_y as usize * PHYSICAL_STRIDE + physical_x as usize / 8;
         let mask = 0x80u8 >> (physical_x as usize % 8);
 
-        if dithered_black(color, x, y) {
-            self.buffer[index] &= !mask;
-        } else {
-            self.buffer[index] |= mask;
-        }
+        let lsb = self.storage.lsb[index] & mask != 0;
+        let msb = self.storage.msb[index] & mask != 0;
+
+        let level = u8::from(lsb) | (u8::from(msb) << 1);
+
+        Some(level_color(level))
     }
 
-    fn fill_physical_region(&mut self, region: Region, black: bool) {
+    fn set_pixel(&mut self, x: u16, y: u16, color: Rgb888) {
+        let (physical_x, physical_y) = self.orientation.map_point(x, y);
+        let index = physical_y as usize * PHYSICAL_STRIDE + physical_x as usize / 8;
+
+        let mask = 0x80u8 >> (physical_x as usize % 8);
+        let level = quantize_color(color);
+
+        set_mask(&mut self.storage.lsb[index], mask, level & 0b01 != 0);
+        set_mask(&mut self.storage.msb[index], mask, level & 0b10 != 0);
+    }
+
+    fn fill_physical_region(&mut self, region: Region, level: u8) {
         if region.is_empty() {
             return;
         }
@@ -180,53 +222,8 @@ impl<'a> Framebuffer<'a> {
             "physical region exceeds framebuffer height"
         );
 
-        let x_start = region.x as usize;
-        let x_end = x_start + region.width as usize;
-
-        let first_byte = x_start / 8;
-        let last_byte = (x_end - 1) / 8;
-
-        let first_offset = x_start % 8;
-        let last_offset = (x_end - 1) % 8;
-
-        let first_mask = 0xffu8 >> first_offset;
-        let last_mask = 0xffu8 << (7 - last_offset);
-
-        let full_byte = if black { 0x00 } else { 0xff };
-
-        for physical_y in region.y as usize..region.y as usize + region.height as usize {
-            let row_start = physical_y * PHYSICAL_STRIDE;
-            if first_byte == last_byte {
-                let mask = first_mask & last_mask;
-                apply_mask(&mut self.buffer[row_start + first_byte], mask, black);
-                continue;
-            }
-
-            apply_mask(&mut self.buffer[row_start + first_byte], first_mask, black);
-
-            let middle_start = row_start + first_byte + 1;
-            let middle_end = row_start + last_byte;
-            if middle_start < middle_end {
-                self.buffer[middle_start..middle_end].fill(full_byte);
-            }
-
-            apply_mask(&mut self.buffer[row_start + last_byte], last_mask, black);
-        }
-    }
-
-    pub fn get_pixel(&self, point: Point) -> Option<Rgb888> {
-        if !contains_logical_pixel(point) {
-            return None;
-        }
-
-        let x = point.x as u16;
-        let y = point.y as u16;
-        let (physical_x, physical_y) = self.orientation.map_point(x, y);
-        let index = physical_y as usize * PHYSICAL_STRIDE + physical_x as usize / 8;
-        let mask = 0x80u8 >> (physical_x as usize % 8);
-        let white = self.buffer[index] & mask != 0;
-
-        Some(if white { Rgb888::WHITE } else { Rgb888::BLACK })
+        fill_plane_region(&mut self.storage.lsb, region, level & 0b01 != 0);
+        fill_plane_region(&mut self.storage.msb, region, level & 0b10 != 0);
     }
 }
 
@@ -260,70 +257,94 @@ impl DrawTarget for Framebuffer<'_> {
             return Ok(());
         };
 
-        if let Some(black) = exact_binary_color(color) {
-            let physical = self.orientation.map_region(logical);
-            self.fill_physical_region(physical, black);
-            return Ok(());
-        }
+        let physical = self.orientation.map_region(logical);
 
-        let end_x = logical.x.saturating_add(logical.width);
-        let end_y = logical.y.saturating_add(logical.height);
-
-        for y in logical.y..end_y {
-            for x in logical.x..end_x {
-                self.set_pixel(x, y, color);
-            }
-        }
+        self.fill_physical_region(physical, quantize_color(color));
 
         Ok(())
     }
 
     fn clear(&mut self, color: Self::Color) -> Result<(), Self::Error> {
-        if let Some(black) = exact_binary_color(color) {
-            self.buffer.fill(if black { 0x00 } else { 0xff });
-            return Ok(());
-        }
+        let level = quantize_color(color);
 
-        for y in 0..LOGICAL_HEIGHT as u16 {
-            for x in 0..LOGICAL_WIDTH as u16 {
-                self.set_pixel(x, y, color);
-            }
-        }
+        let lsb = if level & 0b01 != 0 { 0xff } else { 0x00 };
+        let msb = if level & 0b10 != 0 { 0xff } else { 0x00 };
+
+        self.storage.lsb.fill(lsb);
+        self.storage.msb.fill(msb);
 
         Ok(())
     }
 }
 
-const BAYER_4X4: [u8; 16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+fn fill_plane_region(plane: &mut [u8; FRAMEBUFFER_LEN], region: Region, value: bool) {
+    let x_start = region.x as usize;
+    let x_end = x_start + region.width as usize;
 
-fn exact_binary_color(color: Rgb888) -> Option<bool> {
-    match color {
-        Rgb888::BLACK => Some(true),
-        Rgb888::WHITE => Some(false),
-        _ => None,
+    let first_byte = x_start / 8;
+    let last_byte = (x_end - 1) / 8;
+
+    let first_offset = x_start % 8;
+    let last_offset = (x_end - 1) % 8;
+
+    let first_mask = 0xffu8 >> first_offset;
+    let last_mask = 0xffu8 << (7 - last_offset);
+
+    let full_byte = if value { 0xff } else { 0x00 };
+
+    for physical_y in region.y as usize..region.y as usize + region.height as usize {
+        let row_start = physical_y * PHYSICAL_STRIDE;
+
+        if first_byte == last_byte {
+            let mask = first_mask & last_mask;
+
+            set_mask(&mut plane[row_start + first_byte], mask, value);
+
+            continue;
+        }
+
+        set_mask(&mut plane[row_start + first_byte], first_mask, value);
+
+        let middle_start = row_start + first_byte + 1;
+        let middle_end = row_start + last_byte;
+
+        if middle_start < middle_end {
+            plane[middle_start..middle_end].fill(full_byte);
+        }
+
+        set_mask(&mut plane[row_start + last_byte], last_mask, value);
     }
 }
 
-fn dithered_black(color: Rgb888, x: u16, y: u16) -> bool {
-    // rec. 601 integer luminance.
-    // range: 0 .. 255 * 256
+fn quantize_color(color: Rgb888) -> u8 {
+    // rec. 601 luminance in a 256-scaled integer domain.
     let luminance =
         77u32 * u32::from(color.r()) + 150u32 * u32::from(color.g()) + 29u32 * u32::from(color.b());
-    let matrix_x = usize::from(x & 3);
-    let matrix_y = usize::from(y & 3);
-    let rank = u32::from(BAYER_4X4[matrix_y * 4 + matrix_x]);
-    // rank centers: 8, 24, 40, ... 248
-    // expressed in the same 8.8-ish luminance scale as above.
-    let threshold = (rank * 16 + 8) * 256;
 
-    luminance < threshold
+    // convert to 0..255, then round to the nearest of four equally spaced levels:
+    // 0   -> black
+    // 85  -> dark gray
+    // 170 -> light gray
+    // 255 -> white
+    let luminance = (luminance + 128) / 256;
+
+    ((luminance * 3 + 127) / 255) as u8
 }
 
-fn apply_mask(byte: &mut u8, mask: u8, black: bool) {
-    if black {
-        *byte &= !mask;
-    } else {
+fn level_color(level: u8) -> Rgb888 {
+    match level {
+        0 => Rgb888::new(0, 0, 0),
+        1 => Rgb888::new(85, 85, 85),
+        2 => Rgb888::new(170, 170, 170),
+        _ => Rgb888::new(255, 255, 255),
+    }
+}
+
+fn set_mask(byte: &mut u8, mask: u8, value: bool) {
+    if value {
         *byte |= mask;
+    } else {
+        *byte &= !mask;
     }
 }
 
