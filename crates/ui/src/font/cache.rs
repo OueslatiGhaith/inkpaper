@@ -1,10 +1,10 @@
-use crate::px;
+use crate::{FontInstance, px};
 
-use super::{FontId, FontRasterError, GlyphId, GlyphMetrics, registry::FontRegistry};
+use super::{FontRasterError, GlyphId, GlyphMetrics, registry::FontRegistry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct GlyphCacheKey {
-    font: FontId,
+    font: FontInstance,
     glyph: GlyphId,
     size_px: u16,
 }
@@ -22,7 +22,7 @@ impl GlyphCacheSlot {
     const EMPTY: Self = Self {
         valid: false,
         key: GlyphCacheKey {
-            font: FontId::DEFAULT,
+            font: FontInstance::DEFAULT,
             glyph: GlyphId::new(0),
             size_px: 0,
         },
@@ -107,11 +107,13 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
     }
 
     fn slot_index(key: GlyphCacheKey) -> usize {
-        let font = key.font.index();
+        let font = key.font.font().index();
+        let weight = usize::from(key.font.weight().value());
         let glyph = usize::from(key.glyph.value());
         let size = usize::from(key.size_px);
 
         font.wrapping_mul(31)
+            .wrapping_add(weight.wrapping_mul(13))
             .wrapping_add(glyph.wrapping_mul(17))
             .wrapping_add(size)
             % SLOTS
@@ -129,12 +131,16 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
     pub fn get_or_rasterize<const FONTS: usize>(
         &mut self,
         registry: &FontRegistry<'_, FONTS>,
-        font: FontId,
+        font: impl Into<FontInstance>,
         glyph: GlyphId,
         size_px: u16,
     ) -> Result<GlyphBitmap<'_>, GlyphCacheError> {
+        let font = registry
+            .resolve_instance(font.into())
+            .ok_or(GlyphCacheError::MissingFont)?;
+
         let key = GlyphCacheKey {
-            font,
+            font: font.instance(),
             glyph,
             size_px,
         };
@@ -144,10 +150,9 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
                 coverage: &self.storage[offset..offset + len],
                 metrics,
             });
-        };
+        }
 
-        let face = registry.resolve(font).ok_or(GlyphCacheError::MissingFont)?;
-        let metrics = face
+        let metrics = font
             .glyph_metrics(glyph, size_px)
             .ok_or(GlyphCacheError::MissingGlyph)?;
         let required = metrics
@@ -166,7 +171,7 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
             .checked_add(required)
             .ok_or(GlyphCacheError::GlyphTooLarge)?;
 
-        face.rasterize(glyph, size_px, &mut self.storage[offset..end])
+        font.rasterize(glyph, size_px, &mut self.storage[offset..end])
             .map_err(GlyphCacheError::Raster)?;
 
         self.used = end;

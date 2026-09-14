@@ -46,8 +46,8 @@ fn apply_visual_run_positioning<'font, const FONTS: usize>(
 
         // marks are positioned after their base below.
         if let Some(placement) = shaped.mark_placement() {
-            glyphs[index] = ShapedGlyph::new_mark(
-                shaped.font(),
+            glyphs[index] = ShapedGlyph::new_mark_with_instance(
+                shaped.font_instance(),
                 shaped.glyph(),
                 shaped.cluster(),
                 shaped.base_advance(),
@@ -60,16 +60,16 @@ fn apply_visual_run_positioning<'font, const FONTS: usize>(
         }
 
         let cursive = match previous_base {
-            Some(previous) if previous.font() == shaped.font() => {
-                registry.get(shaped.font()).and_then(|face| {
+            Some(previous) if previous.font_instance() == shaped.font_instance() => registry
+                .resolve_instance(shaped.font_instance())
+                .and_then(|face| {
                     face.cursive_attachment(
                         previous.glyph(),
                         shaped.glyph(),
                         size_px,
                         right_to_left,
                     )
-                })
-            }
+                }),
 
             _ => None,
         };
@@ -89,10 +89,12 @@ fn apply_visual_run_positioning<'font, const FONTS: usize>(
             }
             _ => {
                 let kerning = match previous_base {
-                    Some(previous) if previous.font() == shaped.font() => registry
-                        .get(shaped.font())
-                        .map(|face| face.kerning(previous.glyph(), shaped.glyph(), size_px))
-                        .unwrap_or(px(0)),
+                    Some(previous) if previous.font_instance() == shaped.font_instance() => {
+                        registry
+                            .resolve_instance(shaped.font_instance())
+                            .map(|face| face.kerning(previous.glyph(), shaped.glyph(), size_px))
+                            .unwrap_or(px(0))
+                    }
 
                     _ => px(0),
                 };
@@ -172,10 +174,10 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
 
         // prefer mark-to-mark when another mark in this cluster has already been positioned.
         if let Some(parent) = previous_mark
-            && parent.font() == shaped.font()
+            && parent.font_instance() == shaped.font_instance()
         {
             attachment = registry
-                .get(shaped.font())
+                .resolve_instance(shaped.font_instance())
                 .and_then(|face| face.mark_to_mark_offset(parent.glyph(), shaped.glyph(), size_px))
                 .map(|offset| {
                     Offset::new(parent.offset().x + offset.x, parent.offset().y + offset.y)
@@ -186,11 +188,11 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
         // a mark encountered after the consumed alef belongs to the final logical
         // component of that ligature.
         if attachment.is_none()
-            && base.font() == shaped.font()
+            && base.font_instance() == shaped.font_instance()
             && let Some(component) = base.final_ligature_component()
         {
             attachment = registry
-                .get(shaped.font())
+                .resolve_instance(shaped.font_instance())
                 .and_then(|face| {
                     face.mark_to_ligature_offset(base.glyph(), component, shaped.glyph(), size_px)
                 })
@@ -200,9 +202,9 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
         }
 
         // ordinary single-component base.
-        if attachment.is_none() && base.font() == shaped.font() {
+        if attachment.is_none() && base.font_instance() == shaped.font_instance() {
             attachment = registry
-                .get(shaped.font())
+                .resolve_instance(shaped.font_instance())
                 .and_then(|face| face.mark_to_base_offset(base.glyph(), shaped.glyph(), size_px))
                 .map(|offset| {
                     Offset::new(offset.x - base.base_advance(), base.offset().y + offset.y)
@@ -216,8 +218,8 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
             return false;
         };
 
-        let positioned = ShapedGlyph::new_mark(
-            shaped.font(),
+        let positioned = ShapedGlyph::new_mark_with_instance(
+            shaped.font_instance(),
             shaped.glyph(),
             shaped.cluster(),
             shaped.base_advance(),
@@ -241,7 +243,7 @@ fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
     let fallback_offset = Offset::new(Pixels::ZERO - base.base_advance(), base.offset().y);
 
     let Some(base_metrics) = registry
-        .get(base.font())
+        .resolve_instance(base.font_instance())
         .and_then(|face| face.glyph_metrics(base.glyph(), size_px))
     else {
         for mark in marks {
@@ -251,8 +253,8 @@ fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
                 continue;
             };
 
-            *mark = ShapedGlyph::new_mark(
-                shaped.font(),
+            *mark = ShapedGlyph::new_mark_with_instance(
+                shaped.font_instance(),
                 shaped.glyph(),
                 shaped.cluster(),
                 shaped.base_advance(),
@@ -282,7 +284,7 @@ fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
             }
 
             let mark_metrics = registry
-                .get(shaped.font())
+                .resolve_instance(shaped.font_instance())
                 .and_then(|face| face.glyph_metrics(shaped.glyph(), size_px));
 
             let offset = match mark_metrics {
@@ -298,8 +300,8 @@ fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
                 None => fallback_offset,
             };
 
-            *mark = ShapedGlyph::new_mark(
-                shaped.font(),
+            *mark = ShapedGlyph::new_mark_with_instance(
+                shaped.font_instance(),
                 shaped.glyph(),
                 shaped.cluster(),
                 shaped.base_advance(),

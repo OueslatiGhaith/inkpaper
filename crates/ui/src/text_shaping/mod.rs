@@ -1,4 +1,4 @@
-use crate::{FontId, FontRegistry, GlyphId, Offset, Pixels};
+use crate::{FontId, FontInstance, FontProperties, FontRegistry, GlyphId, Offset, Pixels};
 
 use self::arabic::MarkPlacement;
 
@@ -20,7 +20,7 @@ pub enum TextDirection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ShapedGlyph {
-    font: FontId,
+    font: FontInstance,
     glyph: GlyphId,
     /// UTF-8 byte offset in the original input corresponding to the logical cluster that
     /// produced this glyph.
@@ -55,7 +55,7 @@ impl Default for ShapedGlyph {
 
 impl ShapedGlyph {
     pub const EMPTY: Self = Self {
-        font: FontId::DEFAULT,
+        font: FontInstance::DEFAULT,
         glyph: GlyphId::new(0),
         cluster: 0,
         base_advance: Pixels::ZERO,
@@ -67,6 +67,24 @@ impl ShapedGlyph {
 
     pub const fn new(
         font: FontId,
+        glyph: GlyphId,
+        cluster: usize,
+        base_advance: Pixels,
+        offset: Offset,
+        advance: Pixels,
+    ) -> Self {
+        Self::new_with_instance(
+            FontInstance::normal(font),
+            glyph,
+            cluster,
+            base_advance,
+            offset,
+            advance,
+        )
+    }
+
+    pub(crate) const fn new_with_instance(
+        font: FontInstance,
         glyph: GlyphId,
         cluster: usize,
         base_advance: Pixels,
@@ -94,6 +112,26 @@ impl ShapedGlyph {
         offset: Offset,
         advance: Pixels,
     ) -> Self {
+        Self::new_ligature_with_instance(
+            FontInstance::normal(font),
+            glyph,
+            cluster,
+            base_advance,
+            ligature_components,
+            offset,
+            advance,
+        )
+    }
+
+    pub(crate) const fn new_ligature_with_instance(
+        font: FontInstance,
+        glyph: GlyphId,
+        cluster: usize,
+        base_advance: Pixels,
+        ligature_components: u16,
+        offset: Offset,
+        advance: Pixels,
+    ) -> Self {
         Self {
             font,
             glyph,
@@ -108,6 +146,24 @@ impl ShapedGlyph {
 
     const fn new_mark(
         font: FontId,
+        glyph: GlyphId,
+        cluster: usize,
+        base_advance: Pixels,
+        mark_placement: MarkPlacement,
+        offset: Offset,
+    ) -> Self {
+        Self::new_mark_with_instance(
+            FontInstance::normal(font),
+            glyph,
+            cluster,
+            base_advance,
+            mark_placement,
+            offset,
+        )
+    }
+
+    pub(crate) const fn new_mark_with_instance(
+        font: FontInstance,
         glyph: GlyphId,
         cluster: usize,
         base_advance: Pixels,
@@ -140,6 +196,10 @@ impl ShapedGlyph {
     }
 
     pub const fn font(self) -> FontId {
+        self.font.font()
+    }
+
+    pub const fn font_instance(self) -> FontInstance {
         self.font
     }
 
@@ -282,11 +342,23 @@ impl<'a> ShapedRun<'a> {
 /// arabic joining/bidi will replace these rules without changing [`ShapedGlyph`] or
 /// the renderer
 #[derive(Debug, Default, Clone, Copy)]
-pub struct SimpleShaper;
+pub struct SimpleShaper {
+    properties: FontProperties,
+}
 
 impl SimpleShaper {
     pub const fn new() -> Self {
-        Self
+        Self {
+            properties: FontProperties::NORMAL,
+        }
+    }
+
+    pub const fn with_properties(properties: FontProperties) -> Self {
+        Self { properties }
+    }
+
+    pub(crate) const fn font_instance(self, font: FontId) -> FontInstance {
+        FontInstance::new(font, self.properties)
     }
 
     pub fn measure<'font, const FONTS: usize>(

@@ -152,23 +152,26 @@ fn registry_resolves_closest_weight_in_family() {
     let family = registry.register_family().unwrap();
 
     let regular_id = registry
-        .register_face(family, FontWeight::NORMAL, &regular)
+        .register_face_with_weight(family, FontWeight::NORMAL, &regular)
         .unwrap();
 
     let bold_id = registry
-        .register_face(family, FontWeight::BOLD, &bold)
+        .register_face_with_weight(family, FontWeight::BOLD, &bold)
         .unwrap();
 
-    let (resolved_regular, _) = registry
+    let resolved_regular = registry
         .resolve_family_weight(family, FontWeight::MEDIUM)
         .unwrap();
 
-    let (resolved_bold, _) = registry
+    let resolved_bold = registry
         .resolve_family_weight(family, FontWeight::SEMIBOLD)
         .unwrap();
 
-    assert_eq!(resolved_regular, regular_id);
-    assert_eq!(resolved_bold, bold_id);
+    assert_eq!(resolved_regular.id(), regular_id);
+    assert_eq!(resolved_regular.weight(), FontWeight::NORMAL);
+
+    assert_eq!(resolved_bold.id(), bold_id);
+    assert_eq!(resolved_bold.weight(), FontWeight::BOLD);
 }
 
 #[test]
@@ -177,7 +180,126 @@ fn registry_rejects_unregistered_family() {
     let mut registry = FontRegistry::<1>::default();
 
     assert_eq!(
-        registry.register_face(FontFamilyId::new(7), FontWeight::NORMAL, &font),
+        registry.register_face_with_weight(FontFamilyId::new(7), FontWeight::NORMAL, &font,),
         Err(FontRegistryError::InvalidFamily),
     );
+}
+
+struct VariableTestFont;
+
+impl FontFace for VariableTestFont {
+    fn weight_range(&self) -> FontWeightRange {
+        FontWeightRange::new(
+            FontWeight::LIGHT,
+            FontWeight::NORMAL,
+            FontWeight::EXTRA_BOLD,
+        )
+    }
+
+    fn glyph_id(&self, character: char) -> Option<GlyphId> {
+        let value = u32::from(character);
+
+        u16::try_from(value).ok().map(GlyphId::new)
+    }
+
+    fn metrics(&self, size_px: u16) -> FontMetrics {
+        FontMetrics::new(px(i32::from(size_px)), px(0), px(0))
+    }
+
+    fn glyph_metrics(&self, _glyph: GlyphId, _size_px: u16) -> Option<GlyphMetrics> {
+        Some(GlyphMetrics::new(2, 2, px(0), px(-2), px(3)))
+    }
+
+    fn rasterize(
+        &self,
+        _glyph: GlyphId,
+        _size_px: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
+        if coverage.len() < 4 {
+            return Err(FontRasterError::BufferTooSmall);
+        }
+
+        coverage[..4].fill(100);
+
+        Ok(())
+    }
+
+    fn rasterize_with_properties(
+        &self,
+        properties: FontProperties,
+        _glyph: GlyphId,
+        _size_px: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
+        if coverage.len() < 4 {
+            return Err(FontRasterError::BufferTooSmall);
+        }
+
+        let value = u8::try_from(properties.weight().value() / 4).unwrap_or(u8::MAX);
+
+        coverage[..4].fill(value);
+
+        Ok(())
+    }
+}
+
+#[test]
+fn registry_preserves_requested_weight_inside_variable_range() {
+    let font = VariableTestFont;
+
+    let mut registry = FontRegistry::<1>::default();
+
+    let family = registry.register_family().unwrap();
+
+    registry.register_face(family, &font).unwrap();
+
+    let resolved = registry
+        .resolve_family_weight(family, FontWeight::new(650))
+        .unwrap();
+
+    assert_eq!(resolved.weight(), FontWeight::new(650),);
+}
+
+#[test]
+fn glyph_cache_distinguishes_variable_weights() {
+    let font = VariableTestFont;
+
+    let mut registry = FontRegistry::<1>::default();
+
+    let family = registry.register_family().unwrap();
+
+    registry.register_face(family, &font).unwrap();
+
+    let weight_650 = registry
+        .resolve_family_weight(family, FontWeight::new(650))
+        .unwrap()
+        .instance();
+
+    let weight_700 = registry
+        .resolve_family_weight(family, FontWeight::BOLD)
+        .unwrap()
+        .instance();
+
+    let glyph = font.glyph_id('A').unwrap();
+
+    let mut cache = GlyphCache::<4, 16>::default();
+
+    {
+        let bitmap = cache
+            .get_or_rasterize(&registry, weight_650, glyph, 16)
+            .unwrap();
+
+        assert_eq!(bitmap.coverage(), &[162, 162, 162, 162],);
+    }
+
+    {
+        let bitmap = cache
+            .get_or_rasterize(&registry, weight_700, glyph, 16)
+            .unwrap();
+
+        assert_eq!(bitmap.coverage(), &[175, 175, 175, 175],);
+    }
+
+    assert_eq!(cache.used_bytes(), 8);
 }

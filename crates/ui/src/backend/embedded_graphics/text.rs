@@ -1,8 +1,9 @@
 use embedded_graphics::{pixelcolor::Rgb888 as EgRgb888, prelude::DrawTarget as EgDrawTarget};
 
 use crate::{
-    FontFace, FontId, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedTextStyle, ShapeState,
-    ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection, px,
+    FontId, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
+    ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
+    px,
     resources::RuntimeResources,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
@@ -25,8 +26,7 @@ pub(super) fn draw_text_to<
     clip: Rect,
     registry: &FontRegistry<'_, FONTS>,
     resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
-    font_id: FontId,
-    font: &dyn FontFace,
+    font: ResolvedFont<'_>,
     style: ResolvedTextStyle,
     coverage_mode: CoverageMode<D>,
 ) -> Result<(), EmbeddedGraphicsError<D::Error>>
@@ -38,13 +38,15 @@ where
         return Ok(());
     }
 
+    let font_instance = font.instance();
+
     let size_px = font_size_px(style);
     let line_advance = text_line_advance(font, size_px, style);
 
     let baseline_offset = font.metrics(size_px).ascent;
 
     let color = to_rgb888(style.color);
-    let shaper = SimpleShaper::new();
+    let shaper = SimpleShaper::with_properties(font.properties());
 
     let mut y = bounds.origin.y;
     let mut error = None;
@@ -55,9 +57,11 @@ where
         bounds.width(),
         style.max_lines,
         style.overflow,
-        |line, from| shaper.next_cluster_boundary(registry, font_id, size_px, line, from),
-        |line| measure_shaped_line(registry, font_id, size_px, line),
-        |line| measure_shaped_line_with_ellipsis(registry, font_id, size_px, line),
+        |line, from| {
+            shaper.next_cluster_boundary(registry, font_instance.font(), size_px, line, from)
+        },
+        |line| measure_shaped_line(registry, font_instance, size_px, line),
+        |line| measure_shaped_line_with_ellipsis(registry, font_instance.font(), size_px, line),
         |line| {
             if error.is_some() {
                 return;
@@ -68,7 +72,7 @@ where
 
             let text_summary = match shaper.shape_piece_into(
                 registry,
-                font_id,
+                font_instance.font(),
                 size_px,
                 line.text,
                 &mut shape_state,
@@ -87,7 +91,7 @@ where
             if line.ellipsis {
                 let ellipsis_summary = match shaper.shape_piece_into(
                     registry,
-                    font_id,
+                    font_instance.font(),
                     size_px,
                     ELLIPSIS,
                     &mut shape_state,
@@ -171,7 +175,7 @@ where
 {
     for shaped in run.glyphs().iter().copied() {
         let bitmap = resources
-            .glyph_bitmap(shaped.font(), shaped.glyph(), size_px)
+            .glyph_bitmap(shaped.font_instance(), shaped.glyph(), size_px)
             .map_err(EmbeddedGraphicsError::Font)?;
 
         let metrics = bitmap.metrics();
@@ -192,13 +196,15 @@ where
 
 fn measure_shaped_line<const FONTS: usize>(
     registry: &FontRegistry<'_, FONTS>,
-    font: FontId,
+    font: FontInstance,
     size_px: u16,
     text: &str,
 ) -> Pixels {
     let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
 
-    match SimpleShaper::new().measure(registry, font, size_px, text, &mut glyphs) {
+    let shaper = SimpleShaper::with_properties(font.properties());
+
+    match shaper.measure(registry, font.font(), size_px, text, &mut glyphs) {
         Ok(summary) => summary.advance(),
         // textMeasurer cannot currently surface ShapeError.
         // treat an unmeasurable candidate as wider than any available line. Word wrapping
@@ -251,7 +257,7 @@ fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
     }
 }
 
-fn text_line_advance(font: &dyn FontFace, size_px: u16, style: ResolvedTextStyle) -> Pixels {
+fn text_line_advance(font: ResolvedFont<'_>, size_px: u16, style: ResolvedTextStyle) -> Pixels {
     match style.line_height {
         LineHeight::Normal => font.metrics(size_px).line_height().non_negative(),
         LineHeight::Pixels(height) => height.non_negative(),

@@ -1,25 +1,41 @@
-use crate::{FontFamilyId, FontWeight};
+use crate::{
+    FontFamilyId, FontInstance, FontProperties, FontWeight, FontWeightRange, ResolvedFont,
+};
 
 use super::{FontFace, FontId, GlyphId};
 
 #[derive(Clone, Copy)]
 pub struct ResolvedGlyph<'font> {
-    font: FontId,
-    face: &'font dyn FontFace,
+    font: ResolvedFont<'font>,
     glyph: GlyphId,
 }
 
 impl<'font> ResolvedGlyph<'font> {
     pub const fn new(font: FontId, face: &'font dyn FontFace, glyph: GlyphId) -> Self {
-        Self { font, face, glyph }
+        Self {
+            font: ResolvedFont::new(FontInstance::normal(font), face),
+            glyph,
+        }
+    }
+
+    pub(crate) const fn from_resolved_font(font: ResolvedFont<'font>, glyph: GlyphId) -> Self {
+        Self { font, glyph }
     }
 
     pub const fn font(self) -> FontId {
+        self.font.id()
+    }
+
+    pub const fn font_instance(self) -> FontInstance {
+        self.font.instance()
+    }
+
+    pub const fn resolved_font(self) -> ResolvedFont<'font> {
         self.font
     }
 
     pub const fn face(self) -> &'font dyn FontFace {
-        self.face
+        self.font.face()
     }
 
     pub const fn glyph(self) -> GlyphId {
@@ -38,7 +54,7 @@ pub enum FontRegistryError {
 #[derive(Clone, Copy)]
 struct RegisteredFont<'font> {
     family: FontFamilyId,
-    weight: FontWeight,
+    weights: FontWeightRange,
     face: &'font dyn FontFace,
 }
 
@@ -92,13 +108,30 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
             FontFamilyId::DEFAULT
         };
 
-        self.register_face(family, FontWeight::NORMAL, font)
+        self.register_face(family, font)
     }
 
     pub fn register_face(
         &mut self,
         family: FontFamilyId,
+        font: &'font dyn FontFace,
+    ) -> Result<FontId, FontRegistryError> {
+        self.register_face_with_range(family, font.weight_range(), font)
+    }
+
+    pub fn register_face_with_weight(
+        &mut self,
+        family: FontFamilyId,
         weight: FontWeight,
+        font: &'font dyn FontFace,
+    ) -> Result<FontId, FontRegistryError> {
+        self.register_face_with_range(family, FontWeightRange::exact(weight), font)
+    }
+
+    pub fn register_face_with_range(
+        &mut self,
+        family: FontFamilyId,
+        weights: FontWeightRange,
         font: &'font dyn FontFace,
     ) -> Result<FontId, FontRegistryError> {
         if family.index() >= self.family_count {
@@ -114,7 +147,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
         self.fonts[self.len] = Some(RegisteredFont {
             family,
-            weight,
+            weights,
             face: font,
         });
         self.len += 1;
@@ -155,7 +188,17 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         self.resolve_with_id(id).map(|(_, font)| font)
     }
 
-    pub fn resolve_weight(&self, weight: FontWeight) -> Option<(FontId, &'font dyn FontFace)> {
+    pub fn resolve_instance(&self, instance: FontInstance) -> Option<ResolvedFont<'font>> {
+        let entry = self.entry(instance.font())?;
+        let weight = entry.weights.resolve(instance.weight());
+
+        Some(ResolvedFont::new(
+            FontInstance::new(instance.font(), FontProperties::new(weight)),
+            entry.face,
+        ))
+    }
+
+    pub fn resolve_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'font>> {
         self.resolve_family_weight(FontFamilyId::DEFAULT, weight)
     }
 
@@ -163,7 +206,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         &self,
         family: FontFamilyId,
         weight: FontWeight,
-    ) -> Option<(FontId, &'font dyn FontFace)> {
+    ) -> Option<ResolvedFont<'font>> {
         if let Some(resolved) = self.resolve_family_weight_exact(family, weight) {
             return Some(resolved);
         }
@@ -174,15 +217,21 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
             return Some(resolved);
         }
 
-        self.resolve_with_id(FontId::DEFAULT)
+        let entry = self.entry(FontId::DEFAULT)?;
+        let weight = entry.weights.default_weight();
+
+        Some(ResolvedFont::new(
+            FontInstance::new(FontId::DEFAULT, FontProperties::new(weight)),
+            entry.face,
+        ))
     }
 
     fn resolve_family_weight_exact(
         &self,
         family: FontFamilyId,
-        weight: FontWeight,
-    ) -> Option<(FontId, &'font dyn FontFace)> {
-        let mut best = None;
+        requested: FontWeight,
+    ) -> Option<ResolvedFont<'font>> {
+        let mut best: Option<(FontId, FontWeight, u8, u16)> = None;
 
         for index in 0..self.len {
             let Some(entry) = self.fonts[index] else {
@@ -195,52 +244,79 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
             let index = u16::try_from(index).ok()?;
             let id = FontId::new(index);
-            let distance = entry.weight.distance(weight);
 
-            if distance == 0 {
-                return Some((id, entry.face));
-            }
+            let effective = entry.weights.resolve(requested);
+            let distance = entry.weights.distance(requested);
 
-            match best {
-                None => best = Some((id, distance)),
-                Some((_, best_distance)) if distance < best_distance => best = Some((id, distance)),
-                _ => {}
+            let rank = if entry.weights.is_exact() && distance == 0 {
+                0
+            } else if entry.weights.contains(requested) {
+                1
+            } else {
+                2
+            };
+
+            let replace = match best {
+                None => true,
+
+                Some((_, _, best_rank, best_distance)) => {
+                    rank < best_rank || (rank == best_rank && distance < best_distance)
+                }
+            };
+
+            if replace {
+                best = Some((id, effective, rank, distance));
             }
         }
 
-        let (id, _) = best?;
-        let face = self.get(id)?;
+        let (id, effective, _, _) = best?;
+        let entry = self.entry(id)?;
 
-        Some((id, face))
+        Some(ResolvedFont::new(
+            FontInstance::new(id, FontProperties::new(effective)),
+            entry.face,
+        ))
     }
 
-    fn glyph_in_font(&self, font: FontId, character: char) -> Option<ResolvedGlyph<'font>> {
-        let face = self.get(font)?;
-        let glyph = face.glyph_id(character)?;
+    fn glyph_in_font(&self, font: FontInstance, character: char) -> Option<ResolvedGlyph<'font>> {
+        let font = self.resolve_instance(font)?;
+        let glyph = font.glyph_id(character)?;
 
-        Some(ResolvedGlyph::new(font, face, glyph))
+        Some(ResolvedGlyph::from_resolved_font(font, glyph))
     }
 
     pub(crate) fn resolve_character_exact(
         &self,
-        preferred: FontId,
+        preferred: impl Into<FontInstance>,
         character: char,
     ) -> Option<ResolvedGlyph<'font>> {
-        let preferred = self.resolve_id(preferred)?;
+        let preferred = preferred.into();
+
         if let Some(glyph) = self.glyph_in_font(preferred, character) {
             return Some(glyph);
         }
 
-        // registration order is the initial fallback order
-        // this is deliberately simple. We don't need font-family weight-aware fallback
-        // until the app actually requires it
+        let requested_weight = preferred.weight();
+
+        // preserve the existing registration-order fallback semantics.
+        // each fallback face gets the closest instance it can represent for the originally
+        // requested weight.
         for index in 0..self.len {
             let index = u16::try_from(index).ok()?;
-            let font = FontId::new(index);
-            if font == preferred {
+            let id = FontId::new(index);
+
+            if id == preferred.font() {
                 continue;
             }
-            if let Some(glyph) = self.glyph_in_font(font, character) {
+
+            let Some(entry) = self.entry(id) else {
+                continue;
+            };
+
+            let effective_weight = entry.weights.resolve(requested_weight);
+            let candidate = FontInstance::new(id, FontProperties::new(effective_weight));
+
+            if let Some(glyph) = self.glyph_in_font(candidate, character) {
                 return Some(glyph);
             }
         }
@@ -250,9 +326,11 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
     pub fn resolve_glyph(
         &self,
-        preferred: FontId,
+        preferred: impl Into<FontInstance>,
         character: char,
     ) -> Option<ResolvedGlyph<'font>> {
+        let preferred = preferred.into();
+
         if let Some(glyph) = self.resolve_character_exact(preferred, character) {
             return Some(glyph);
         }

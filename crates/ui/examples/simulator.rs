@@ -1408,7 +1408,7 @@ fn main() {
     assert_eq!(body_font_family, FontFamilyId::DEFAULT);
 
     runtime
-        .register_font_face(body_font_family, FontWeight::NORMAL, &BODY_FONT)
+        .register_font_face(body_font_family, &BODY_FONT)
         .expect("body font must fit");
 
     let heading_font_family = runtime
@@ -1416,7 +1416,7 @@ fn main() {
         .expect("heading font family must fit");
 
     runtime
-        .register_font_face(heading_font_family, FontWeight::NORMAL, &HEADING_FONT)
+        .register_font_face(heading_font_family, &HEADING_FONT)
         .expect("heading font must fit");
 
     let text_demo_font_family = runtime_font.map(|font| {
@@ -1425,7 +1425,7 @@ fn main() {
             .expect("text demo font family must fit");
 
         runtime
-            .register_font_face(family, FontWeight::NORMAL, font as &'static dyn FontFace)
+            .register_font_face(family, font as &'static dyn FontFace)
             .expect("text demo font must fit");
 
         family

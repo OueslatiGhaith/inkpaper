@@ -1,6 +1,8 @@
 use core::{convert::Infallible, str::CharIndices};
 
-use crate::{FontId, FontRegistry, Offset, OpenTypeFeature, Pixels, ResolvedGlyph, px};
+use crate::{
+    FontId, FontInstance, FontRegistry, Offset, OpenTypeFeature, Pixels, ResolvedGlyph, px,
+};
 
 use super::{
     ShapeError, ShapeState, ShapeSummary, ShapedGlyph, SimpleShaper,
@@ -26,6 +28,8 @@ impl SimpleShaper {
     where
         F: FnMut(ShapedGlyph) -> Result<(), E>,
     {
+        let preferred_font = self.font_instance(preferred_font);
+
         let mut advance = px(0);
         let mut glyph_count = 0usize;
         let mut characters = text.char_indices();
@@ -241,7 +245,7 @@ fn next_non_transparent_accepts_previous(characters: &CharIndices<'_>) -> bool {
 
 fn resolve_contextual_glyph<'font, const FONTS: usize>(
     registry: &FontRegistry<'font, FONTS>,
-    preferred_font: FontId,
+    preferred_font: FontInstance,
     base_character: char,
     feature: Option<OpenTypeFeature>,
     presentation: Option<char>,
@@ -253,9 +257,14 @@ fn resolve_contextual_glyph<'font, const FONTS: usize>(
     //  the base character.
     if let Some(base) = base
         && let Some(feature) = feature
-        && let Some(glyph) = base.face().single_substitution(feature, base.glyph())
+        && let Some(glyph) = base
+            .resolved_font()
+            .single_substitution(feature, base.glyph())
     {
-        return Some(ResolvedGlyph::new(base.font(), base.face(), glyph));
+        return Some(ResolvedGlyph::from_resolved_font(
+            base.resolved_font(),
+            glyph,
+        ));
     }
 
     // compatibility path for bitmap fonts and fonts which expose Arabic Presentation
@@ -277,7 +286,7 @@ fn resolve_contextual_glyph<'font, const FONTS: usize>(
 
 fn resolve_lam_alef_ligature<'font, const FONTS: usize>(
     registry: &FontRegistry<'font, FONTS>,
-    preferred_font: FontId,
+    preferred_font: FontInstance,
     alef: char,
     joins_previous: bool,
     size_px: u16,
@@ -287,9 +296,9 @@ fn resolve_lam_alef_ligature<'font, const FONTS: usize>(
 
     // resolve lam first, then require alef from that same face. A GSUB ligature cannot span fonts.
     if let Some(lam) = registry.resolve_character_exact(preferred_font, '\u{0644}') {
-        let face = lam.face();
+        let font = lam.resolved_font();
 
-        if let Some(alef_glyph) = face.glyph_id(alef) {
+        if let Some(alef_glyph) = font.glyph_id(alef) {
             let lam_feature = if joins_previous {
                 ARABIC_MEDI_FEATURE
             } else {
@@ -297,29 +306,29 @@ fn resolve_lam_alef_ligature<'font, const FONTS: usize>(
             };
 
             // arabic form substitutions run before rlig in our bounded shaping pipeline.
-            let contextual_lam = face
+            let contextual_lam = font
                 .single_substitution(lam_feature, lam.glyph())
                 .unwrap_or(lam.glyph());
 
-            let contextual_alef = face
+            let contextual_alef = font
                 .single_substitution(ARABIC_FINA_FEATURE, alef_glyph)
                 .unwrap_or(alef_glyph);
 
             let mut ligature =
-                face.ligature_substitution(ARABIC_RLIG_FEATURE, contextual_lam, contextual_alef);
+                font.ligature_substitution(ARABIC_RLIG_FEATURE, contextual_lam, contextual_alef);
 
             // some simpler fonts encode the required ligature directly against cmap
             // glyphs instead of contextual-form outputs.
             if ligature.is_none()
                 && (contextual_lam != lam.glyph() || contextual_alef != alef_glyph)
             {
-                ligature = face.ligature_substitution(ARABIC_RLIG_FEATURE, lam.glyph(), alef_glyph);
+                ligature = font.ligature_substitution(ARABIC_RLIG_FEATURE, lam.glyph(), alef_glyph);
             }
 
             if let Some(glyph) = ligature
-                && face.glyph_advance(glyph, size_px).is_some()
+                && font.glyph_advance(glyph, size_px).is_some()
             {
-                return Some(ResolvedGlyph::new(lam.font(), face, glyph));
+                return Some(ResolvedGlyph::from_resolved_font(font, glyph));
             }
         }
     }
@@ -339,15 +348,21 @@ fn emit_resolved_mark<'font, F, E>(
 where
     F: FnMut(ShapedGlyph) -> Result<(), E>,
 {
-    let font = resolved.font();
-    let face = resolved.face();
+    let font = resolved.resolved_font();
     let glyph = resolved.glyph();
 
-    let Some(base_advance) = face.glyph_advance(glyph, size_px) else {
+    let Some(base_advance) = font.glyph_advance(glyph, size_px) else {
         return Ok(false);
     };
 
-    let shaped = ShapedGlyph::new_mark(font, glyph, cluster, base_advance, placement, Offset::ZERO);
+    let shaped = ShapedGlyph::new_mark_with_instance(
+        font.instance(),
+        glyph,
+        cluster,
+        base_advance,
+        placement,
+        Offset::ZERO,
+    );
 
     visit(shaped)?;
 
@@ -372,16 +387,15 @@ where
 {
     debug_assert!(ligature_components > 1);
 
-    let font = resolved.font();
-    let face = resolved.face();
+    let font = resolved.resolved_font();
     let glyph = resolved.glyph();
 
-    let Some(base_advance) = face.glyph_advance(glyph, size_px) else {
+    let Some(base_advance) = font.glyph_advance(glyph, size_px) else {
         return Ok(false);
     };
 
-    let shaped = ShapedGlyph::new_ligature(
-        font,
+    let shaped = ShapedGlyph::new_ligature_with_instance(
+        font.instance(),
         glyph,
         cluster,
         base_advance,
@@ -409,19 +423,18 @@ fn emit_resolved_glyph<'font, F, E>(
 where
     F: FnMut(ShapedGlyph) -> Result<(), E>,
 {
-    let font = resolved.font();
-    let face = resolved.face();
+    let font = resolved.resolved_font();
     let glyph = resolved.glyph();
 
-    let Some(base_advance) = face.glyph_advance(glyph, size_px) else {
+    let Some(base_advance) = font.glyph_advance(glyph, size_px) else {
         return Ok(false);
     };
 
     // logical shaping produces unpositioned glyphs.
     // pair positioning belongs to the final visual glyph stream, after bidi ordering
     // and mirroring are complete.
-    let shaped = ShapedGlyph::new(
-        font,
+    let shaped = ShapedGlyph::new_with_instance(
+        font.instance(),
         glyph,
         cluster,
         base_advance,

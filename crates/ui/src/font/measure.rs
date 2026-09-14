@@ -1,5 +1,5 @@
 use crate::{
-    FontFace, FontId, FontRegistry, FontResources, LineHeight, Pixels, ResolvedTextStyle,
+    FontInstance, FontRegistry, FontResources, LineHeight, Pixels, ResolvedFont, ResolvedTextStyle,
     ShapeState, ShapedGlyph, SimpleShaper, Size, TextMeasurer, px,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
@@ -14,12 +14,14 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
             return Size::ZERO;
         }
 
-        let (font_id, font) = self
+        let font = self
             .resolve_family_weight(style.font_family, style.font_weight)
             .expect("text measurement requires a default font");
 
+        let font_instance = font.instance();
+
         let registry = self.registry();
-        let shaper = SimpleShaper::new();
+        let shaper = SimpleShaper::with_properties(font.properties());
 
         let size_px = font_size_px(style);
         let glyph_height = font.metrics(size_px).line_height();
@@ -34,9 +36,11 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
             max_size.width,
             style.max_lines,
             style.overflow,
-            |line, from| shaper.next_cluster_boundary(&registry, font_id, size_px, line, from),
-            |line| measure_shaped_line(&registry, font_id, size_px, line),
-            |line| measure_shaped_line_with_ellipsis(&registry, font_id, size_px, line),
+            |line, from| {
+                shaper.next_cluster_boundary(&registry, font_instance.font(), size_px, line, from)
+            },
+            |line| measure_shaped_line(&registry, font_instance, size_px, line),
+            |line| measure_shaped_line_with_ellipsis(&registry, font_instance, size_px, line),
             |line| {
                 longest_line = longest_line.max(line.width);
                 line_count = line_count.saturating_add(1);
@@ -61,42 +65,48 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
 
 pub(crate) fn measure_shaped_line<const FONTS: usize>(
     registry: &FontRegistry<'_, FONTS>,
-    font: FontId,
+    font: FontInstance,
     size_px: u16,
     text: &str,
 ) -> Pixels {
     let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
 
-    match SimpleShaper::new().measure(registry, font, size_px, text, &mut glyphs) {
+    let shaper = SimpleShaper::with_properties(font.properties());
+
+    match shaper.measure(registry, font.font(), size_px, text, &mut glyphs) {
         Ok(summary) => summary.advance(),
         Err(_) => Pixels::MAX,
     }
 }
 
-pub(crate) fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
+fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
     registry: &FontRegistry<'_, FONTS>,
-    font: FontId,
+    font: FontInstance,
     size_px: u16,
     text: &str,
 ) -> Pixels {
-    let shaper = SimpleShaper::new();
-
+    let shaper = SimpleShaper::with_properties(font.properties());
     let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
-
     let mut state = ShapeState::new();
 
-    let text_summary =
-        match shaper.shape_piece_into(registry, font, size_px, text, &mut state, &mut glyphs) {
-            Ok(summary) => summary,
-            Err(_) => return Pixels::MAX,
-        };
+    let text_summary = match shaper.shape_piece_into(
+        registry,
+        font.font(),
+        size_px,
+        text,
+        &mut state,
+        &mut glyphs,
+    ) {
+        Ok(summary) => summary,
+        Err(_) => return Pixels::MAX,
+    };
 
     let text_glyph_count = text_summary.glyph_count();
     let mut glyph_count = text_glyph_count;
 
     let ellipsis_summary = match shaper.shape_piece_into(
         registry,
-        font,
+        font.font(),
         size_px,
         ELLIPSIS,
         &mut state,
@@ -121,7 +131,7 @@ pub(crate) fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
 }
 
 pub(crate) fn text_line_advance(
-    font: &dyn FontFace,
+    font: ResolvedFont<'_>,
     size_px: u16,
     style: ResolvedTextStyle,
 ) -> Pixels {

@@ -1,4 +1,4 @@
-use crate::{FontFamilyId, FontWeight};
+use crate::{FontFamilyId, FontInstance, FontWeight, ResolvedFont};
 
 use super::{
     FontFace, FontId, GlyphId,
@@ -53,17 +53,16 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
     pub fn register_face(
         &mut self,
         family: FontFamilyId,
-        weight: FontWeight,
         font: &'font dyn FontFace,
     ) -> Result<FontId, FontRegistryError> {
-        self.registry.register_face(family, weight, font)
+        self.registry.register_face(family, font)
     }
 
     pub fn resolve(&self, id: FontId) -> Option<(FontId, &'font dyn FontFace)> {
         self.registry.resolve_with_id(id)
     }
 
-    pub fn resolve_weight(&self, weight: FontWeight) -> Option<(FontId, &'font dyn FontFace)> {
+    pub fn resolve_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'font>> {
         self.registry.resolve_weight(weight)
     }
 
@@ -71,23 +70,18 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
         &self,
         family: FontFamilyId,
         weight: FontWeight,
-    ) -> Option<(FontId, &'font dyn FontFace)> {
+    ) -> Option<ResolvedFont<'font>> {
         self.registry.resolve_family_weight(family, weight)
     }
 
     pub fn glyph_bitmap(
         &mut self,
-        font: FontId,
+        font: FontInstance,
         glyph: GlyphId,
         size_px: u16,
     ) -> Result<GlyphBitmap<'_>, GlyphCacheError> {
-        let resolved = self
-            .registry
-            .resolve_id(font)
-            .ok_or(GlyphCacheError::MissingFont)?;
-
         self.cache
-            .get_or_rasterize(&self.registry, resolved, glyph, size_px)
+            .get_or_rasterize(&self.registry, font, glyph, size_px)
     }
 
     pub fn clear_glyph_cache(&mut self) {

@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["embedded-graphics", "ttf", "macros"]
+default = ["embedded-graphics", "ttf", "variable-fonts", "macros"]
 alloc = []
 macros = ["dep:inkpaper-ui-macros"]
 defmt = ["dep:defmt", "heapless/defmt"]
 embedded-graphics = ["dep:embedded-graphics", "embedded-graphics/defmt"]
 ttf = ["dep:ttf-parser"]
+variable-fonts = ["ttf", "ttf-parser/variable-fonts"]
 metrics = []
 
 [dependencies]

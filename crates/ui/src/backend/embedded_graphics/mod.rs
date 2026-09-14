@@ -190,7 +190,7 @@ where
             return Ok(());
         };
 
-        let (font_id, font) = resources
+        let font = resources
             .resolve_font_family_weight(style.font_family, style.font_weight)
             .expect("EmbeddedGraphicsPainter requires a default font");
 
@@ -203,7 +203,6 @@ where
             text_clip,
             &registry,
             resources,
-            font_id,
             font,
             style,
             self.coverage_mode,

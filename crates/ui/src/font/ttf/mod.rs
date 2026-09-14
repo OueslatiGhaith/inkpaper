@@ -1,8 +1,8 @@
 use ttf_parser::{Face, GlyphId as TtfGlyphId};
 
 use crate::{
-    CursiveAttachment, FontData, FontFace, FontMetrics, FontRasterError, GlyphId, GlyphMetrics,
-    Offset, OpenTypeFeature, Pixels, px,
+    CursiveAttachment, FontData, FontFace, FontMetrics, FontProperties, FontRasterError,
+    FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, Pixels, px,
 };
 
 mod gpos;
@@ -56,9 +56,50 @@ impl<'a> TtfFont<'a> {
     fn face(&self) -> Result<Face<'a>, TtfFontError> {
         Face::parse(self.data.bytes(), self.face_index).map_err(|_| TtfFontError::InvalidFont)
     }
+
+    fn face_with_properties(&self, properties: FontProperties) -> Result<Face<'a>, TtfFontError> {
+        let mut face = self.face()?;
+
+        #[cfg(feature = "variable-fonts")]
+        {
+            use ttf_parser::Tag;
+
+            let _ = face.set_variation(
+                Tag::from_bytes(b"wght"),
+                f32::from(properties.weight().value()),
+            );
+        }
+
+        Ok(face)
+    }
 }
 
 impl FontFace for TtfFont<'_> {
+    fn weight_range(&self) -> FontWeightRange {
+        let Ok(face) = self.face() else {
+            return FontWeightRange::default();
+        };
+
+        #[cfg(feature = "variable-fonts")]
+        {
+            use ttf_parser::Tag;
+
+            let weight_tag = Tag::from_bytes(b"wght");
+
+            for axis in face.variation_axes() {
+                if axis.tag == weight_tag {
+                    return FontWeightRange::new(
+                        font_weight_from_f32(axis.min_value),
+                        font_weight_from_f32(axis.def_value),
+                        font_weight_from_f32(axis.max_value),
+                    );
+                }
+            }
+        }
+
+        FontWeightRange::exact(FontWeight::new(face.weight().to_number()))
+    }
+
     fn glyph_id(&self, character: char) -> Option<GlyphId> {
         let face = self.face().ok()?;
         let glyph = face.glyph_index(character)?;
@@ -188,67 +229,266 @@ impl FontFace for TtfFont<'_> {
         size_px: u16,
         coverage: &mut [u8],
     ) -> Result<(), FontRasterError> {
-        if size_px == 0 {
-            return Err(FontRasterError::InvalidSize);
-        }
-
         let face = self.face().map_err(|_| FontRasterError::InvalidFont)?;
-        let glyph = to_ttf_glyph(glyph);
-        let metrics =
-            glyph_metrics_for_face(&face, glyph, size_px).ok_or(FontRasterError::InvalidGlyph)?;
-        let required = metrics
-            .coverage_bytes()
-            .ok_or(FontRasterError::InvalidGlyph)?;
 
-        if coverage.len() < required {
-            return Err(FontRasterError::BufferTooSmall);
-        }
+        rasterize_face(&face, glyph, size_px, coverage)
+    }
 
-        coverage[..required].fill(0);
+    fn rasterize_with_properties(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
+        let face = self
+            .face_with_properties(properties)
+            .map_err(|_| FontRasterError::InvalidFont)?;
 
-        if required == 0 {
-            // whitespace and otehr zero-outline glyphs are valid
-            return Ok(());
-        }
+        rasterize_face(&face, glyph, size_px, coverage)
+    }
 
-        let Some(scale) = font_scale(&face, size_px) else {
-            return Err(FontRasterError::InvalidSize);
+    fn glyph_id_with_properties(
+        &self,
+        properties: FontProperties,
+        character: char,
+    ) -> Option<GlyphId> {
+        let face = self.face_with_properties(properties).ok()?;
+
+        let glyph = face.glyph_index(character)?;
+
+        Some(GlyphId::new(glyph.0))
+    }
+
+    fn metrics_with_properties(&self, properties: FontProperties, size_px: u16) -> FontMetrics {
+        let Ok(face) = self.face_with_properties(properties) else {
+            return FontMetrics::default();
         };
 
-        let width = usize::from(metrics.width);
-        let height = usize::from(metrics.height);
-        let left = metrics.bearing_x.get();
-        let top = metrics.bearing_y.get();
+        let Some(scale) = font_scale(&face, size_px) else {
+            return FontMetrics::default();
+        };
 
-        for row in 0..height {
-            for sub_y in 0..SUPERSAMPLE_Y {
-                let sample_y = row as f32 + (sub_y as f32 + 0.5) / SUPERSAMPLE_Y as f32;
-                let mut scanline = ScanlineBuilder::new(scale, left, top, sample_y);
+        FontMetrics::new(
+            positive_scaled_units(i32::from(face.ascender()), scale),
+            positive_scaled_units(i32::from(face.descender()).saturating_neg(), scale),
+            positive_scaled_units(i32::from(face.line_gap()), scale),
+        )
+    }
 
-                if face.outline_glyph(glyph, &mut scanline).is_none() {
-                    return Err(FontRasterError::Unsupported);
-                }
-                if scanline.overflowed() {
-                    return Err(FontRasterError::OutlineTooComplex);
-                }
+    fn glyph_advance_with_properties(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+    ) -> Option<Pixels> {
+        let face = self.face_with_properties(properties).ok()?;
 
-                scanline.sort_intersections();
+        glyph_advance_for_face(&face, to_ttf_glyph(glyph), size_px)
+    }
 
-                accumulate_scanline(
-                    width,
-                    row,
-                    &mut coverage[..required],
-                    scanline.intersections(),
-                );
-            }
+    fn glyph_metrics_with_properties(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+    ) -> Option<GlyphMetrics> {
+        let face = self.face_with_properties(properties).ok()?;
+
+        glyph_metrics_for_face(&face, to_ttf_glyph(glyph), size_px)
+    }
+
+    fn kerning_with_properties(
+        &self,
+        properties: FontProperties,
+        left: GlyphId,
+        right: GlyphId,
+        size_px: u16,
+    ) -> Pixels {
+        let Ok(face) = self.face_with_properties(properties) else {
+            return px(0);
+        };
+
+        let left = to_ttf_glyph(left);
+        let right = to_ttf_glyph(right);
+
+        if let Some(adjustment) = gpos_kerning_for_face(&face, left, right, size_px) {
+            return adjustment;
         }
 
-        normalize_coverage(&mut coverage[..required]);
+        legacy_kerning_for_face(&face, left, right, size_px).unwrap_or(px(0))
+    }
 
-        Ok(())
+    fn single_substitution_with_properties(
+        &self,
+        properties: FontProperties,
+        feature: OpenTypeFeature,
+        glyph: GlyphId,
+    ) -> Option<GlyphId> {
+        let face = self.face_with_properties(properties).ok()?;
+
+        let substituted = gsub_single_substitution_for_face(&face, feature, to_ttf_glyph(glyph))?;
+
+        Some(GlyphId::new(substituted.0))
+    }
+
+    fn ligature_substitution_with_properties(
+        &self,
+        properties: FontProperties,
+        feature: OpenTypeFeature,
+        first: GlyphId,
+        second: GlyphId,
+    ) -> Option<GlyphId> {
+        let face = self.face_with_properties(properties).ok()?;
+
+        let substituted =
+            gsub_pair_ligature_for_face(&face, feature, to_ttf_glyph(first), to_ttf_glyph(second))?;
+
+        Some(GlyphId::new(substituted.0))
+    }
+
+    fn cursive_attachment_with_properties(
+        &self,
+        properties: FontProperties,
+        visual_left: GlyphId,
+        visual_right: GlyphId,
+        size_px: u16,
+        right_to_left: bool,
+    ) -> Option<CursiveAttachment> {
+        let face = self.face_with_properties(properties).ok()?;
+
+        gpos_cursive_attachment_for_face(
+            &face,
+            to_ttf_glyph(visual_left),
+            to_ttf_glyph(visual_right),
+            size_px,
+            right_to_left,
+        )
+    }
+
+    fn mark_to_base_offset_with_properties(
+        &self,
+        properties: FontProperties,
+        base: GlyphId,
+        mark: GlyphId,
+        size_px: u16,
+    ) -> Option<Offset> {
+        let face = self.face_with_properties(properties).ok()?;
+
+        mark_to_base_offset_for_face(&face, to_ttf_glyph(base), to_ttf_glyph(mark), size_px)
+    }
+
+    fn mark_to_ligature_offset_with_properties(
+        &self,
+        properties: FontProperties,
+        ligature: GlyphId,
+        component: u16,
+        mark: GlyphId,
+        size_px: u16,
+    ) -> Option<Offset> {
+        let face = self.face_with_properties(properties).ok()?;
+
+        mark_to_ligature_offset_for_face(
+            &face,
+            to_ttf_glyph(ligature),
+            component,
+            to_ttf_glyph(mark),
+            size_px,
+        )
+    }
+
+    fn mark_to_mark_offset_with_properties(
+        &self,
+        properties: FontProperties,
+        base_mark: GlyphId,
+        mark: GlyphId,
+        size_px: u16,
+    ) -> Option<Offset> {
+        let face = self.face_with_properties(properties).ok()?;
+
+        mark_to_mark_offset_for_face(&face, to_ttf_glyph(base_mark), to_ttf_glyph(mark), size_px)
     }
 }
 
 fn to_ttf_glyph(glyph: GlyphId) -> TtfGlyphId {
     TtfGlyphId(glyph.value())
+}
+
+fn rasterize_face(
+    face: &Face<'_>,
+    glyph: GlyphId,
+    size_px: u16,
+    coverage: &mut [u8],
+) -> Result<(), FontRasterError> {
+    if size_px == 0 {
+        return Err(FontRasterError::InvalidSize);
+    }
+
+    let glyph = to_ttf_glyph(glyph);
+
+    let metrics =
+        glyph_metrics_for_face(face, glyph, size_px).ok_or(FontRasterError::InvalidGlyph)?;
+
+    let required = metrics
+        .coverage_bytes()
+        .ok_or(FontRasterError::InvalidGlyph)?;
+
+    if coverage.len() < required {
+        return Err(FontRasterError::BufferTooSmall);
+    }
+
+    coverage[..required].fill(0);
+
+    if required == 0 {
+        return Ok(());
+    }
+
+    let Some(scale) = font_scale(face, size_px) else {
+        return Err(FontRasterError::InvalidSize);
+    };
+
+    let width = usize::from(metrics.width);
+    let height = usize::from(metrics.height);
+    let left = metrics.bearing_x.get();
+    let top = metrics.bearing_y.get();
+
+    for row in 0..height {
+        for sub_y in 0..SUPERSAMPLE_Y {
+            let sample_y = row as f32 + (sub_y as f32 + 0.5) / SUPERSAMPLE_Y as f32;
+
+            let mut scanline = ScanlineBuilder::new(scale, left, top, sample_y);
+
+            if face.outline_glyph(glyph, &mut scanline).is_none() {
+                return Err(FontRasterError::Unsupported);
+            }
+
+            if scanline.overflowed() {
+                return Err(FontRasterError::OutlineTooComplex);
+            }
+
+            scanline.sort_intersections();
+
+            accumulate_scanline(
+                width,
+                row,
+                &mut coverage[..required],
+                scanline.intersections(),
+            );
+        }
+    }
+
+    normalize_coverage(&mut coverage[..required]);
+
+    Ok(())
+}
+
+#[cfg(feature = "variable-fonts")]
+fn font_weight_from_f32(value: f32) -> FontWeight {
+    if !value.is_finite() {
+        return FontWeight::NORMAL;
+    }
+
+    let value = value.clamp(1.0, 1000.0).round();
+
+    FontWeight::new(value as u16)
 }

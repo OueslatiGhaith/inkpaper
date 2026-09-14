@@ -1,8 +1,8 @@
 use crate::{
     Context, DamageRegion, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
-    FontRegistryError, FontWeight, FrameBuildError, ImageRegistryError, ImageResource, ImageSource,
-    Offset, PaintReport, Point, RenderInvalidation, ResourcePainter, Runtime, RuntimeResources,
-    Size, TextMeasurer, callback::ListenerInvokeError,
+    FontRegistryError, FrameBuildError, ImageRegistryError, ImageResource, ImageSource, Offset,
+    PaintReport, Point, RenderInvalidation, ResourcePainter, Runtime, RuntimeResources, Size,
+    TextMeasurer, callback::ListenerInvokeError,
 };
 
 /// application-facing runtime operations.
@@ -40,7 +40,6 @@ pub trait ResourceRuntimeApi<'resource> {
     fn register_font_face(
         &mut self,
         family: FontFamilyId,
-        weight: FontWeight,
         font: &'resource dyn FontFace,
     ) -> Result<FontId, FontRegistryError>;
 
@@ -166,10 +165,9 @@ impl<
     fn register_font_face(
         &mut self,
         family: FontFamilyId,
-        weight: FontWeight,
         font: &'resource dyn FontFace,
     ) -> Result<FontId, FontRegistryError> {
-        self.register_font_face(family, weight, font)
+        self.register_font_face(family, font)
     }
 
     fn register_image(
