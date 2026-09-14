@@ -64,9 +64,7 @@ pub async fn run<B, D>(
     if !panel.supports_partial_grayscale() {
         defmt::warn!("grayscale validation: controller does not yet support partial grayscale");
 
-        delay.delay_ms(STEP_DELAY_MS * 3).await;
-
-        return;
+        park(delay).await;
     }
 
     defmt::info!("grayscale validation: starting partial update sequence");
@@ -103,9 +101,9 @@ pub async fn run<B, D>(
         }
     }
 
-    defmt::info!("grayscale validation complete");
+    defmt::info!("grayscale validation complete; parking");
 
-    delay.delay_ms(STEP_DELAY_MS * 2).await;
+    park(delay).await;
 }
 
 fn draw_reference_frame(frame: &mut FramebufferStorage) {
@@ -159,5 +157,14 @@ fn level_name(color: Rgb888) -> &'static str {
         "light"
     } else {
         "white"
+    }
+}
+
+async fn park<D>(delay: &mut D) -> !
+where
+    D: DelayNs,
+{
+    loop {
+        delay.delay_ms(60_000).await;
     }
 }

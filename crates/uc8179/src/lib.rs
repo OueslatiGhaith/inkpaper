@@ -5,7 +5,7 @@ use epd_bus::{BusyPolarity, EpdInterface};
 
 use crate::{
     command::Command,
-    grayscale::{ABSOLUTE_DARK_GRAY_LUT, GRAY_LUTS},
+    grayscale::{ABSOLUTE_DARK_GRAY_LUT, GRAY_LUTS, GRAY_PRE_BW_MID},
 };
 
 mod command;
@@ -17,6 +17,14 @@ const BUSY_ASSERT_SETTLE_MS: u32 = 1;
 const EXTRA_RESET_SETTLE_MS: u32 = 50;
 
 const STREAM_BUFFER_LEN: usize = 128;
+
+const GRAY_LUT_REGISTERS: [Command; 5] = [
+    Command::LutVcom,
+    Command::LutWhite,
+    Command::LutBlackToWhite,
+    Command::LutWhiteToBlack,
+    Command::LutBlack,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -164,12 +172,54 @@ pub enum RefreshMode {
     Fast,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Region {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+}
+
+impl Region {
+    pub const fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub const fn x(self) -> u16 {
+        self.x
+    }
+
+    pub const fn y(self) -> u16 {
+        self.y
+    }
+
+    pub const fn width(self) -> u16 {
+        self.width
+    }
+
+    pub const fn height(self) -> u16 {
+        self.height
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+}
+
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error<E> {
     Bus(E),
     InvalidGeometry,
     InvalidFrameLength { expected: usize, actual: usize },
+    EmptyRegion,
+    RegionOutOfBounds { region: Region },
 }
 
 pub struct Uc8179 {
@@ -179,6 +229,8 @@ pub struct Uc8179 {
 
     need_full_clear: bool,
     old_plane_valid: bool,
+
+    grayscale_on_panel: bool,
 
     dark_background: bool,
 }
@@ -190,12 +242,17 @@ impl Uc8179 {
             screen_on: false,
             need_full_clear: true,
             old_plane_valid: false,
+            grayscale_on_panel: false,
             dark_background: false,
         }
     }
 
     pub const fn config(&self) -> Config {
         self.config
+    }
+
+    pub const fn grayscale_on_panel(&self) -> bool {
+        self.grayscale_on_panel
     }
 
     pub fn set_dark_background(&mut self, enabled: bool) {
@@ -253,6 +310,7 @@ impl Uc8179 {
         self.screen_on = false;
         self.need_full_clear = true;
         self.old_plane_valid = false;
+        self.grayscale_on_panel = false;
 
         Ok(())
     }
@@ -271,9 +329,15 @@ impl Uc8179 {
     {
         self.validate_frame(frame)?;
 
-        let scrub = mode == RefreshMode::Clean;
+        // a caller that bypasses display_grayscale_window() and asks for a Fast B/W update
+        // while grayscale is physically present must not use an ordinary DU transition.
+        let scrub =
+            mode == RefreshMode::Clean || (mode == RefreshMode::Fast && self.grayscale_on_panel);
 
-        let fast = mode == RefreshMode::Fast && !self.need_full_clear && self.old_plane_valid;
+        let fast = mode == RefreshMode::Fast
+            && !self.grayscale_on_panel
+            && !self.need_full_clear
+            && self.old_plane_valid;
 
         // DTM2 is always the NEW frame.
         self.stream_plane(bus, Command::NewPlane, frame, false)
@@ -332,6 +396,7 @@ impl Uc8179 {
 
         self.old_plane_valid = true;
         self.need_full_clear = false;
+        self.grayscale_on_panel = false;
 
         if turn_off {
             self.power_off(bus, delay).await?;
@@ -355,12 +420,6 @@ impl Uc8179 {
         self.validate_frame(lsb)?;
         self.validate_frame(msb)?;
 
-        // unlike SSD1677, the UC8179 grayscale sequence expects the electrophoretic state
-        // to first be conditioned to the B/W base.
-        // for our absolute encoding:
-        // base = LSB & MSB
-        // so only white remains white and every non-white tone belongs to the black side
-        // of the B/W conditioning image.
         self.display_absolute_grayscale_base(bus, delay, lsb, msb)
             .await?;
 
@@ -370,62 +429,96 @@ impl Uc8179 {
         self.stream_plane(bus, Command::NewPlane, msb, false)
             .await?;
 
-        self.command_data(bus, Command::PanelSetting, &self.config.panel_settings.init)
-            .await?;
+        self.activate_grayscale(bus, delay, None).await?;
 
-        const REGISTERS: [Command; 5] = [
-            Command::LutVcom,
-            Command::LutWhite,
-            Command::LutBlackToWhite,
-            Command::LutWhiteToBlack,
-            Command::LutBlack,
-        ];
+        // the selector planes are not a usable DU baseline.
+        // restore the B/W base to both controller planes without another physical refresh.
+        self.restore_grayscale_base(bus, lsb, msb).await?;
 
-        for index in 0..GRAY_LUTS.len() {
-            let data = if index == 3 {
-                &ABSOLUTE_DARK_GRAY_LUT
-            } else {
-                &GRAY_LUTS[index]
-            };
-
-            self.command_data(bus, REGISTERS[index], data).await?;
-        }
-
-        self.command_data(
-            bus,
-            Command::VcomDataInterval,
-            &self.config.vcom_data_interval.active,
-        )
-        .await?;
-
-        if !self.screen_on {
-            self.command(bus, Command::PowerOn).await?;
-
-            self.wait_ready(bus, delay).await?;
-
-            self.screen_on = true;
-        }
-
-        self.command(bus, Command::DisplayRefresh).await?;
-
-        self.wait_ready(bus, delay).await?;
-
-        self.command_data(
-            bus,
-            Command::VcomDataInterval,
-            &self.config.vcom_data_interval.idle,
-        )
-        .await?;
-
-        // selector planes aren't a valid DU baseline.
-        self.need_full_clear = true;
-        self.old_plane_valid = false;
+        self.old_plane_valid = true;
+        self.need_full_clear = false;
+        self.grayscale_on_panel = lsb != msb;
 
         if turn_off {
             self.power_off(bus, delay).await?;
         }
 
         Ok(())
+    }
+
+    pub async fn display_grayscale_window<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+        region: Region,
+        mode: RefreshMode,
+        turn_off: bool,
+    ) -> Result<Region, Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.validate_frame(lsb)?;
+        self.validate_frame(msb)?;
+
+        let region = self.normalize_region(region)?;
+
+        let full = Region::new(0, 0, self.config.width, self.config.visible_height);
+
+        // use the established whole-panel path whenever we do not have a valid previous B/W base.
+        // also use it the first time grayscale appears. This follows the OEM/FreeInk model:
+        // the first AA frame is established normally. Later AA pages can use the PRE_BW_MID transition.
+        if mode != RefreshMode::Fast
+            || self.need_full_clear
+            || !self.old_plane_valid
+            || (!self.grayscale_on_panel && lsb != msb)
+        {
+            self.display_grayscale(bus, delay, lsb, msb, turn_off)
+                .await?;
+
+            return Ok(full);
+        }
+
+        // DTM1 currently contains the preceding frame's clean B/W base. Put the new base into DTM2.
+        self.stream_and_plane(bus, Command::NewPlane, lsb, msb)
+            .await?;
+
+        // drive only the damage rectangle from the previous base to the new base using
+        // XTF_PRE_BW_MID.
+        self.run_grayscale_precondition(bus, delay, region).await?;
+
+        if self.region_has_grayscale(lsb, msb, region) {
+            // our framebuffer already uses UC8179's absolute selector encoding:
+            // black = 00
+            // dark  = 10
+            // light = 01
+            // white = 11
+            self.stream_plane(bus, Command::OldPlane, lsb, false)
+                .await?;
+
+            self.stream_plane(bus, Command::NewPlane, msb, false)
+                .await?;
+
+            // experimental part:
+            // run the short custom grayscale waveform under PTL.
+            self.activate_grayscale(bus, delay, Some(region)).await?;
+        }
+
+        // RAM must once again contain the B/W base, even though
+        // physical grayscale remains visible.
+        self.restore_grayscale_base(bus, lsb, msb).await?;
+
+        self.old_plane_valid = true;
+        self.need_full_clear = false;
+        self.grayscale_on_panel = lsb != msb;
+
+        if turn_off {
+            self.power_off(bus, delay).await?;
+        }
+
+        Ok(region)
     }
 
     pub async fn deep_sleep<B, D>(
@@ -818,5 +911,254 @@ impl Uc8179 {
             (Ok(()), Err(error)) => Err(error),
             (Ok(()), Ok(())) => Ok(()),
         }
+    }
+
+    async fn load_grayscale_luts<B>(&self, bus: &mut B) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        for index in 0..GRAY_LUTS.len() {
+            let data = if index == 3 {
+                &ABSOLUTE_DARK_GRAY_LUT
+            } else {
+                &GRAY_LUTS[index]
+            };
+
+            self.command_data(bus, GRAY_LUT_REGISTERS[index], data)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn activate_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        region: Option<Region>,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        if let Some(region) = region {
+            self.enter_partial_window(bus, region).await?;
+        }
+
+        self.command_data(bus, Command::PanelSetting, &self.config.panel_settings.init)
+            .await?;
+
+        self.load_grayscale_luts(bus).await?;
+
+        self.command_data(
+            bus,
+            Command::VcomDataInterval,
+            &self.config.vcom_data_interval.active,
+        )
+        .await?;
+
+        if !self.screen_on {
+            self.command(bus, Command::PowerOn).await?;
+
+            self.wait_ready(bus, delay).await?;
+
+            self.screen_on = true;
+        }
+
+        self.command(bus, Command::DisplayRefresh).await?;
+
+        self.wait_ready(bus, delay).await?;
+
+        if region.is_some() {
+            self.command(bus, Command::PartialOut).await?;
+        }
+
+        self.command_data(
+            bus,
+            Command::VcomDataInterval,
+            &self.config.vcom_data_interval.idle,
+        )
+        .await
+    }
+
+    async fn run_grayscale_precondition<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        region: Region,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.enter_partial_window(bus, region).await?;
+
+        self.command_data(bus, Command::PanelSetting, &self.config.panel_settings.init)
+            .await?;
+
+        self.command_data(
+            bus,
+            Command::PowerOffSequence,
+            &[self.config.power_off_sequence],
+        )
+        .await?;
+
+        self.command_data(bus, Command::GateScan, &[self.config.gate_scan])
+            .await?;
+
+        self.command_data(
+            bus,
+            Command::VcomDataInterval,
+            &self.config.vcom_data_interval.active,
+        )
+        .await?;
+
+        self.command_data(bus, Command::CascadeControl, &[self.config.cascade_control])
+            .await?;
+
+        self.command_data(bus, Command::Temperature, &[self.config.temperature.fast])
+            .await?;
+
+        for index in 0..GRAY_PRE_BW_MID.len() {
+            self.command_data(bus, GRAY_LUT_REGISTERS[index], &GRAY_PRE_BW_MID[index])
+                .await?;
+        }
+
+        if !self.screen_on {
+            self.command(bus, Command::PowerOn).await?;
+
+            self.wait_ready(bus, delay).await?;
+
+            self.screen_on = true;
+        }
+
+        self.command(bus, Command::DisplayRefresh).await?;
+
+        self.wait_ready(bus, delay).await?;
+
+        self.command(bus, Command::PartialOut).await?;
+
+        self.command_data(
+            bus,
+            Command::VcomDataInterval,
+            &self.config.vcom_data_interval.idle,
+        )
+        .await
+    }
+
+    async fn restore_grayscale_base<B>(
+        &self,
+        bus: &mut B,
+        lsb: &[u8],
+        msb: &[u8],
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        self.stream_and_plane(bus, Command::OldPlane, lsb, msb)
+            .await?;
+        self.stream_and_plane(bus, Command::NewPlane, lsb, msb)
+            .await
+    }
+
+    fn region_has_grayscale(&self, lsb: &[u8], msb: &[u8], region: Region) -> bool {
+        let stride = self.config.width as usize / 8;
+        let x_byte = region.x as usize / 8;
+        let row_bytes = region.width as usize / 8;
+
+        for row in 0..region.height as usize {
+            let start = (region.y as usize + row) * stride + x_byte;
+            let end = start + row_bytes;
+
+            if lsb[start..end] != msb[start..end] {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn normalize_region<E>(&self, region: Region) -> Result<Region, Error<E>> {
+        if region.is_empty() {
+            return Err(Error::EmptyRegion);
+        }
+
+        let right = region.x as u32 + region.width as u32;
+        let bottom = region.y as u32 + region.height as u32;
+        if right > self.config.width as u32 || bottom > self.config.visible_height as u32 {
+            return Err(Error::RegionOutOfBounds { region });
+        }
+
+        let x = region.x & !7;
+        let right = ((right + 7) & !7).min(self.config.width as u32) as u16;
+
+        Ok(Region::new(x, region.y, right - x, region.height))
+    }
+
+    fn partial_window_data(&self, region: Region) -> [u8; 9] {
+        let x_start = region.x;
+        let x_end = region.x + region.width - 1;
+
+        // stream_plane() vertically reverses framebuffer rows.
+        let y_start = self.config.visible_height - region.y - region.height;
+        let y_end = y_start + region.height - 1;
+
+        [
+            (x_start >> 8) as u8,
+            x_start as u8,
+            (x_end >> 8) as u8,
+            (x_end as u8) | 0x07,
+            (y_start >> 8) as u8,
+            y_start as u8,
+            (y_end >> 8) as u8,
+            y_end as u8,
+            0x01,
+        ]
+    }
+
+    async fn enter_partial_window<B>(
+        &self,
+        bus: &mut B,
+        region: Region,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        self.command(bus, Command::PartialIn).await?;
+
+        let window = self.partial_window_data(region);
+
+        self.command_data(bus, Command::PartialWindow, &window)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Region, Uc8179, X4_PRO_800X480};
+
+    #[test]
+    fn partial_region_is_byte_aligned() {
+        let panel = Uc8179::new(X4_PRO_800X480);
+
+        let region = panel
+            .normalize_region::<()>(Region::new(13, 10, 11, 20))
+            .unwrap();
+
+        assert_eq!(region, Region::new(8, 10, 16, 20));
+    }
+
+    #[test]
+    fn partial_window_maps_reversed_rows() {
+        let panel = Uc8179::new(X4_PRO_800X480);
+
+        let region = panel
+            .normalize_region::<()>(Region::new(13, 10, 11, 20))
+            .unwrap();
+
+        assert_eq!(
+            panel.partial_window_data(region),
+            [0x00, 0x08, 0x00, 0x17, 0x01, 0xc2, 0x01, 0xd5, 0x01],
+        );
     }
 }

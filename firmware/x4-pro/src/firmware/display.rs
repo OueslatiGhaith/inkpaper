@@ -2,7 +2,10 @@ use defmt::Format;
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::EpdInterface;
 use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Region as SsdRegion, Ssd1677};
-use uc8179::{RefreshMode as Uc8179RefreshMode, Uc8179, X4_PRO_800X480 as UC8179_X4_PRO};
+use uc8179::{
+    RefreshMode as Uc8179RefreshMode, Region as Uc8179Region, Uc8179,
+    X4_PRO_800X480 as UC8179_X4_PRO,
+};
 use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC8279_X4_PRO};
 use xteink_display_probe::Controller;
 
@@ -61,13 +64,13 @@ impl X4Panel {
     {
         debug_assert!(!update.damage_has_grayscale() || update.frame_has_grayscale());
 
-        let ssd_overlay_active = match self {
+        let grayscale_on_panel = match self {
             Self::Ssd1677(panel) => panel.overlay_grayscale_on_panel(),
-
-            _ => false,
+            Self::Uc8179(panel) => panel.grayscale_on_panel(),
+            Self::Uc8279(_) => false,
         };
 
-        if update.frame_has_grayscale() || ssd_overlay_active {
+        if update.frame_has_grayscale() || grayscale_on_panel {
             return self.present_grayscale(bus, delay, frame, update).await;
         }
 
@@ -92,11 +95,10 @@ impl X4Panel {
         D: DelayNs,
     {
         let (lsb, msb) = frame.planes();
+        let damage = update.physical_damage();
 
         match self {
             Self::Ssd1677(panel) => {
-                let damage = update.physical_damage();
-
                 let mode = match update.refresh() {
                     RefreshRequest::Full => SsdRefreshMode::Full,
                     RefreshRequest::Fast => SsdRefreshMode::Fast,
@@ -116,12 +118,26 @@ impl X4Panel {
                     .map(|_| ())
                     .map_err(Error::Ssd1677)
             }
+            Self::Uc8179(panel) => {
+                let mode = match update.refresh() {
+                    RefreshRequest::Full => Uc8179RefreshMode::Full,
+                    RefreshRequest::Fast => Uc8179RefreshMode::Fast,
+                };
 
-            // these two still use their validated whole-plane absolute paths.
-            Self::Uc8179(panel) => panel
-                .display_grayscale(bus, delay, lsb, msb, true)
-                .await
-                .map_err(Error::Uc8179),
+                panel
+                    .display_grayscale_window(
+                        bus,
+                        delay,
+                        lsb,
+                        msb,
+                        Uc8179Region::new(damage.x, damage.y, damage.width, damage.height),
+                        mode,
+                        true,
+                    )
+                    .await
+                    .map(|_| ())
+                    .map_err(Error::Uc8179)
+            }
             Self::Uc8279(panel) => panel
                 .display_grayscale(bus, delay, lsb, msb, true)
                 .await
@@ -146,7 +162,7 @@ impl X4Panel {
     }
 
     pub const fn supports_partial_grayscale(&self) -> bool {
-        matches!(self, Self::Ssd1677(_))
+        matches!(self, Self::Ssd1677(_) | Self::Uc8179(_))
     }
 }
 
