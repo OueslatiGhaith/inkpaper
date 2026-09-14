@@ -13,11 +13,11 @@ impl RenderOnce for HomeScreen {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
-                <div class="absolute left-0 top-[5px] w-[480px] h-[56px]">
+                <div class="absolute left-0 top-[5px] w-[480px] h-14">
                     <HomeHeader battery="72%" />
                 </div>
 
-                <div class="absolute left-[20px] top-[56px] w-[440px] h-[242px]">
+                <div class="absolute left-5 top-[56px] w-[440px] h-[242px]">
                     <RecentBookCard
                         title="Book 1"
                         author="Author 1"
@@ -26,7 +26,7 @@ impl RenderOnce for HomeScreen {
                     />
                 </div>
 
-                <div class="absolute left-[20px] top-[314px] w-[440px]">
+                <div class="absolute left-5 top-[314px] w-[440px]">
                     <HomeMenu />
                 </div>
             </div>

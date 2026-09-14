@@ -1,3 +1,4 @@
+pub(crate) mod file_row;
 pub(crate) mod header;
 pub(crate) mod home_menu;
 pub(crate) mod icon;

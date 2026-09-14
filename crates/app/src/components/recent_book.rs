@@ -23,29 +23,29 @@ impl RenderOnce for RecentBookCard<'_> {
 
         rsx! {
             <div class="w-full h-full relative rounded-md bg-{background}">
-                <div class="absolute left-[8px] top-[8px] w-[150px] h-[226px] bg-white border-px border-black">
+                <div class="absolute left-2 top-2 w-[150px] h-[226px] bg-white border-px border-black">
                     <div class="absolute left-0 top-[75px] w-[150px] h-[150px] bg-black" />
 
-                    <div class="absolute left-[24px] top-[24px] w-[32px] h-[32px]">
-                        <Icon kind={IconKind::BookOpen} />
+                    <div class="absolute left-[24px] top-[24px] w-8 h-8">
+                        <Icon kind={IconKind::BookOpen} size={px(32)} />
                     </div>
                 </div>
 
                 <div class="absolute left-[174px] top-0 w-[258px] h-[242px] flex flex-col justify-center">
-                    <text class="font-bold text-[12px] leading-[16px] wrap max-lines-3 text-clip">{self.title}</text>
+                    <text class="font-bold text-[12px] leading-4 wrap max-lines-3 text-clip">{self.title}</text>
 
                     <div class="relative w-full h-[18px]">
-                        <div class="absolute left-0 top-[6px] w-full h-[12px]">
-                            <text class="text-[10px] leading-[12px] wrap max-lines-1 text-ellipsis">{self.author}</text>
+                        <div class="absolute left-0 top-1.5 w-full h-3">
+                            <text class="text-[10px] leading-3 wrap max-lines-1 text-ellipsis">{self.author}</text>
                         </div>
                     </div>
 
-                    <div class="relative w-full h-[24px]">
-                        <div class="absolute left-0 top-[8px] w-full h-[12px]">
-                            <text class="font-bold text-[10px] leading-[12px] no-wrap max-lines-1 text-clip">{self.progress}</text>
+                    <div class="relative w-full h-6">
+                        <div class="absolute left-0 top-2 w-full h-3">
+                            <text class="font-bold text-[10px] leading-3 no-wrap max-lines-1 text-clip">{self.progress}</text>
                         </div>
 
-                        <div class="absolute left-0 top-[22px] w-[258px] h-[4px] border-px border-black">
+                        <div class="absolute left-0 top-[22px] w-[258px] h-1 border-px border-black">
                             <div class="absolute left-[1px] top-[1px] w-{progress_fill_width} h-[2px] bg-black" />
                         </div>
                     </div>

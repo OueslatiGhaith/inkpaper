@@ -7,25 +7,34 @@ pub(crate) enum IconKind {
     Transfer,
     Settings,
     BookOpen,
+    BookMarked,
+    ChevronLeft,
+    SlidersHorizontal,
 }
 
 #[component]
 pub(crate) struct Icon {
     kind: IconKind,
+    size: Pixels,
 }
 
 impl RenderOnce for Icon {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let source = match self.kind {
-            IconKind::Folder => include_svg!("assets/icons/folder.svg"),
-            IconKind::Recent => include_svg!("assets/icons/history.svg"),
-            IconKind::Transfer => include_svg!("assets/icons/send-horizontal.svg"),
-            IconKind::Settings => include_svg!("assets/icons/settings-2.svg"),
-            IconKind::BookOpen => include_svg!("assets/icons/book-open.svg"),
+            IconKind::Folder => include_svg!("assets/icons/lucide/folder.svg"),
+            IconKind::Recent => include_svg!("assets/icons/lucide/history.svg"),
+            IconKind::Transfer => include_svg!("assets/icons/lucide/send-horizontal.svg"),
+            IconKind::Settings => include_svg!("assets/icons/lucide/settings-2.svg"),
+            IconKind::BookOpen => include_svg!("assets/icons/lucide/book-open.svg"),
+            IconKind::BookMarked => include_svg!("assets/icons/lucide/book-bookmark.svg"),
+            IconKind::ChevronLeft => include_svg!("assets/icons/lucide/chevron-left.svg"),
+            IconKind::SlidersHorizontal => {
+                include_svg!("assets/icons/lucide/sliders-horizontal.svg")
+            }
         };
 
         svg(source)
-            .size(Size::new(px(32), px(32)))
+            .size(Size::new(self.size, self.size))
             .text_color(Color::BLACK)
     }
 }

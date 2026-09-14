@@ -60,7 +60,7 @@ fn rsx_supports_tailwind_spacing() {
 #[test]
 fn rsx_supports_arbitrary_pixel_values() {
     let tree = rsx! {
-        <div class="w-[240px] h-[160px] p-[10px] gap-[6px] rounded-[7px] border-[3px]" />
+        <div class="w-[240px] h-[160px] p-[10px] gap-1.5 rounded-[7px] border-[3px]" />
     };
 
     assert_into_element(tree);
