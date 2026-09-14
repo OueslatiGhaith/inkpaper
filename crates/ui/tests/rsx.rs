@@ -842,3 +842,16 @@ fn rsx_component_with_children_can_still_be_self_closing() {
 
     assert_into_element(tree);
 }
+
+#[test]
+fn rsx_supports_font_weights() {
+    let tree = rsx! {
+        <div>
+            <text class="font-normal">"Normal"</text>
+            <text class="font-bold">"Bold"</text>
+            <text class="font-[650]">"Variable-like weight"</text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}

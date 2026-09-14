@@ -1,3 +1,5 @@
+use crate::{FontFamilyId, FontWeight};
+
 use super::{FontFace, FontId, GlyphId};
 
 #[derive(Clone, Copy)]
@@ -29,12 +31,22 @@ impl<'font> ResolvedGlyph<'font> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FontRegistryError {
     Full,
+    TooManyFamilies,
+    InvalidFamily,
+}
+
+#[derive(Clone, Copy)]
+struct RegisteredFont<'font> {
+    family: FontFamilyId,
+    weight: FontWeight,
+    face: &'font dyn FontFace,
 }
 
 #[derive(Clone, Copy)]
 pub struct FontRegistry<'font, const FONTS: usize> {
-    fonts: [Option<&'font dyn FontFace>; FONTS],
+    fonts: [Option<RegisteredFont<'font>>; FONTS],
     len: usize,
+    family_count: usize,
 }
 
 impl<const FONTS: usize> Default for FontRegistry<'_, FONTS> {
@@ -42,6 +54,7 @@ impl<const FONTS: usize> Default for FontRegistry<'_, FONTS> {
         Self {
             fonts: [None; FONTS],
             len: 0,
+            family_count: 0,
         }
     }
 }
@@ -59,21 +72,62 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         self.len == 0
     }
 
+    pub const fn family_count(&self) -> usize {
+        self.family_count
+    }
+
+    pub fn register_family(&mut self) -> Result<FontFamilyId, FontRegistryError> {
+        let index =
+            u16::try_from(self.family_count).map_err(|_| FontRegistryError::TooManyFamilies)?;
+
+        self.family_count += 1;
+
+        Ok(FontFamilyId::new(index))
+    }
+
     pub fn register(&mut self, font: &'font dyn FontFace) -> Result<FontId, FontRegistryError> {
+        let family = if self.family_count == 0 {
+            self.register_family()?
+        } else {
+            FontFamilyId::DEFAULT
+        };
+
+        self.register_face(family, FontWeight::NORMAL, font)
+    }
+
+    pub fn register_face(
+        &mut self,
+        family: FontFamilyId,
+        weight: FontWeight,
+        font: &'font dyn FontFace,
+    ) -> Result<FontId, FontRegistryError> {
+        if family.index() >= self.family_count {
+            return Err(FontRegistryError::InvalidFamily);
+        }
+
         if self.len >= FONTS {
             return Err(FontRegistryError::Full);
         }
 
         let index = u16::try_from(self.len).map_err(|_| FontRegistryError::Full)?;
+        let id = FontId::new(index);
 
-        self.fonts[self.len] = Some(font);
+        self.fonts[self.len] = Some(RegisteredFont {
+            family,
+            weight,
+            face: font,
+        });
         self.len += 1;
 
-        Ok(FontId::new(index))
+        Ok(id)
+    }
+
+    fn entry(&self, id: FontId) -> Option<RegisteredFont<'font>> {
+        self.fonts.get(id.index()).copied().flatten()
     }
 
     pub fn get(&self, id: FontId) -> Option<&'font dyn FontFace> {
-        self.fonts.get(id.index()).copied().flatten()
+        self.entry(id).map(|entry| entry.face)
     }
 
     pub fn default_font(&self) -> Option<&'font dyn FontFace> {
@@ -99,6 +153,65 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
     pub fn resolve(&self, id: FontId) -> Option<&'font dyn FontFace> {
         self.resolve_with_id(id).map(|(_, font)| font)
+    }
+
+    pub fn resolve_weight(&self, weight: FontWeight) -> Option<(FontId, &'font dyn FontFace)> {
+        self.resolve_family_weight(FontFamilyId::DEFAULT, weight)
+    }
+
+    pub fn resolve_family_weight(
+        &self,
+        family: FontFamilyId,
+        weight: FontWeight,
+    ) -> Option<(FontId, &'font dyn FontFace)> {
+        if let Some(resolved) = self.resolve_family_weight_exact(family, weight) {
+            return Some(resolved);
+        }
+
+        if family != FontFamilyId::DEFAULT
+            && let Some(resolved) = self.resolve_family_weight_exact(FontFamilyId::DEFAULT, weight)
+        {
+            return Some(resolved);
+        }
+
+        self.resolve_with_id(FontId::DEFAULT)
+    }
+
+    fn resolve_family_weight_exact(
+        &self,
+        family: FontFamilyId,
+        weight: FontWeight,
+    ) -> Option<(FontId, &'font dyn FontFace)> {
+        let mut best = None;
+
+        for index in 0..self.len {
+            let Some(entry) = self.fonts[index] else {
+                continue;
+            };
+
+            if entry.family != family {
+                continue;
+            }
+
+            let index = u16::try_from(index).ok()?;
+            let id = FontId::new(index);
+            let distance = entry.weight.distance(weight);
+
+            if distance == 0 {
+                return Some((id, entry.face));
+            }
+
+            match best {
+                None => best = Some((id, distance)),
+                Some((_, best_distance)) if distance < best_distance => best = Some((id, distance)),
+                _ => {}
+            }
+        }
+
+        let (id, _) = best?;
+        let face = self.get(id)?;
+
+        Some((id, face))
     }
 
     fn glyph_in_font(&self, font: FontId, character: char) -> Option<ResolvedGlyph<'font>> {

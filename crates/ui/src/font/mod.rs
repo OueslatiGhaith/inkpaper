@@ -12,12 +12,64 @@ pub mod ttf;
 mod tests;
 
 pub use cache::{GlyphBitmap, GlyphCache, GlyphCacheError};
-pub(crate) use measure::{
-    SHAPED_LINE_GLYPH_CAPACITY, font_size_px, measure_shaped_line,
-    measure_shaped_line_with_ellipsis, text_line_advance,
-};
 pub use registry::{FontRegistry, FontRegistryError, ResolvedGlyph};
 pub use resources::FontResources;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct FontFamilyId(u16);
+
+impl FontFamilyId {
+    pub const DEFAULT: Self = Self(0);
+
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct FontWeight(u16);
+
+impl FontWeight {
+    pub const THIN: Self = Self(100);
+    pub const EXTRA_LIGHT: Self = Self(200);
+    pub const LIGHT: Self = Self(300);
+    pub const NORMAL: Self = Self(400);
+    pub const MEDIUM: Self = Self(500);
+    pub const SEMIBOLD: Self = Self(600);
+    pub const BOLD: Self = Self(700);
+    pub const EXTRA_BOLD: Self = Self(800);
+    pub const BLACK: Self = Self(900);
+
+    pub const fn new(value: u16) -> Self {
+        Self(if value < 1 {
+            1
+        } else if value > 1000 {
+            1000
+        } else {
+            value
+        })
+    }
+
+    pub const fn value(self) -> u16 {
+        self.0
+    }
+
+    pub(crate) const fn distance(self, other: Self) -> u16 {
+        self.0.abs_diff(other.0)
+    }
+}
+
+impl Default for FontWeight {
+    fn default() -> Self {
+        Self::NORMAL
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

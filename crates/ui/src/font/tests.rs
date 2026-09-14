@@ -135,3 +135,49 @@ fn glyph_larger_than_entire_cache_is_rejected() {
 
     assert!(matches!(result, Err(GlyphCacheError::GlyphTooLarge)));
 }
+
+#[test]
+fn font_weight_clamps_to_opentype_range() {
+    assert_eq!(FontWeight::new(0), FontWeight::new(1));
+    assert_eq!(FontWeight::new(1001), FontWeight::new(1000));
+    assert_eq!(FontWeight::new(650).value(), 650);
+}
+
+#[test]
+fn registry_resolves_closest_weight_in_family() {
+    let regular = TestFont { fill: 10 };
+    let bold = TestFont { fill: 20 };
+
+    let mut registry = FontRegistry::<2>::default();
+    let family = registry.register_family().unwrap();
+
+    let regular_id = registry
+        .register_face(family, FontWeight::NORMAL, &regular)
+        .unwrap();
+
+    let bold_id = registry
+        .register_face(family, FontWeight::BOLD, &bold)
+        .unwrap();
+
+    let (resolved_regular, _) = registry
+        .resolve_family_weight(family, FontWeight::MEDIUM)
+        .unwrap();
+
+    let (resolved_bold, _) = registry
+        .resolve_family_weight(family, FontWeight::SEMIBOLD)
+        .unwrap();
+
+    assert_eq!(resolved_regular, regular_id);
+    assert_eq!(resolved_bold, bold_id);
+}
+
+#[test]
+fn registry_rejects_unregistered_family() {
+    let font = TestFont { fill: 10 };
+    let mut registry = FontRegistry::<1>::default();
+
+    assert_eq!(
+        registry.register_face(FontFamilyId::new(7), FontWeight::NORMAL, &font),
+        Err(FontRegistryError::InvalidFamily),
+    );
+}

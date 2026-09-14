@@ -1,6 +1,6 @@
 pub use text::*;
 
-use crate::{Color, FontId, Invalidation, Length, Pixels, px};
+use crate::{Color, FontFamilyId, FontWeight, Invalidation, Length, Pixels, px};
 
 mod text;
 

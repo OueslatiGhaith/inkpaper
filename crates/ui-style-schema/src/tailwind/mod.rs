@@ -10,6 +10,7 @@ pub enum ValueKind {
     BorderWidth,
     Radius,
     Integer,
+    FontWeight,
     FontSize,
     LineHeight,
     Color,

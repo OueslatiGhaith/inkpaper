@@ -123,6 +123,23 @@ fn emit_arbitrary_value(
 
             Ok(emit_utility_call(receiver, spec, quote! { #value }, span))
         }
+        ArgumentKind::FontWeight => {
+            let value = value.parse::<u16>().map_err(|_| {
+                syn::Error::new(
+                    span,
+                    format!("utility class `{class_name}` requires a font weight"),
+                )
+            })?;
+
+            let value = Literal::u16_unsuffixed(value);
+
+            Ok(emit_utility_call(
+                receiver,
+                spec,
+                quote! { ::inkpaper_ui::FontWeight::new(#value) },
+                span,
+            ))
+        }
         ArgumentKind::Unsupported => Err(syn::Error::new(
             span,
             format!("arbitrary values are not supported for `{class_name}`"),
@@ -173,6 +190,20 @@ fn emit_tailwind_value(
             let value = Literal::u16_unsuffixed(value);
 
             Ok(emit_utility_call(receiver, spec, quote! { #value }, span))
+        }
+        Some(ValueKind::FontWeight) => {
+            let weight = typography::font_weight::resolve(value).ok_or_else(|| {
+                syn::Error::new(span, format!("unknown font weight `{class_name}-{value}`"))
+            })?;
+
+            let weight = Literal::u16_unsuffixed(weight);
+
+            Ok(emit_utility_call(
+                receiver,
+                spec,
+                quote! { ::inkpaper_ui::FontWeight::new(#weight) },
+                span,
+            ))
         }
         Some(ValueKind::FontSize) => {
             let font_size = typography::font_size::resolve(value).ok_or_else(|| {

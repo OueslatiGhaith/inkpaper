@@ -6,6 +6,23 @@ pub struct FontSize {
     pub line_height_px: i32,
 }
 
+pub mod font_weight {
+    pub fn resolve(value: &str) -> Option<u16> {
+        match value {
+            "thin" => Some(100),
+            "extralight" => Some(200),
+            "light" => Some(300),
+            "normal" => Some(400),
+            "medium" => Some(500),
+            "semibold" => Some(600),
+            "bold" => Some(700),
+            "extrabold" => Some(800),
+            "black" => Some(900),
+            _ => None,
+        }
+    }
+}
+
 pub mod font_size {
     use super::FontSize;
 

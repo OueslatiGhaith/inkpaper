@@ -234,8 +234,13 @@ macro_rules! inkpaper_style_schema {
 
                 @text {
                     layout {
-                        font: FontId = FontId::DEFAULT => {
-                            font(font: FontId) => font;
+                        font_family: FontFamilyId = FontFamilyId::DEFAULT => {
+                            font_family(family: FontFamilyId) => family;
+                        },
+
+                        font_weight: FontWeight = FontWeight::NORMAL => {
+                            @tailwind(FontWeight, class = "font")
+                            font_weight(weight: FontWeight) => weight;
                         },
 
                         font_size: Pixels = px(16) => {

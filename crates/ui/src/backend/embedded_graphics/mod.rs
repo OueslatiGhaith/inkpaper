@@ -191,7 +191,7 @@ where
         };
 
         let (font_id, font) = resources
-            .resolve_font(style.font)
+            .resolve_font_family_weight(style.font_family, style.font_weight)
             .expect("EmbeddedGraphicsPainter requires a default font");
 
         let registry = resources.font_registry();

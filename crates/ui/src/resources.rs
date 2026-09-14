@@ -1,7 +1,7 @@
 use crate::{
-    FontFace, FontId, FontRegistry, FontRegistryError, FontResources, GlyphBitmap, GlyphCacheError,
-    GlyphId, ImageId, ImageRegistry, ImageRegistryError, ImageResource, ImageSource,
-    ResolvedTextStyle, Size, TextMeasurer,
+    FontFace, FontFamilyId, FontId, FontRegistry, FontRegistryError, FontResources, FontWeight,
+    GlyphBitmap, GlyphCacheError, GlyphId, ImageId, ImageRegistry, ImageRegistryError,
+    ImageResource, ImageSource, ResolvedTextStyle, Size, TextMeasurer,
 };
 
 pub struct RuntimeResources<
@@ -41,6 +41,19 @@ impl<
         self.fonts.register(font)
     }
 
+    pub fn register_font_family(&mut self) -> Result<FontFamilyId, FontRegistryError> {
+        self.fonts.register_family()
+    }
+
+    pub fn register_font_face(
+        &mut self,
+        family: FontFamilyId,
+        weight: FontWeight,
+        font: &'resource dyn FontFace,
+    ) -> Result<FontId, FontRegistryError> {
+        self.fonts.register_face(family, weight, font)
+    }
+
     pub fn register_image(
         &mut self,
         image: &'resource dyn ImageResource,
@@ -54,6 +67,21 @@ impl<
 
     pub fn resolve_font(&self, id: FontId) -> Option<(FontId, &'resource dyn FontFace)> {
         self.fonts.resolve(id)
+    }
+
+    pub fn resolve_font_weight(
+        &self,
+        weight: FontWeight,
+    ) -> Option<(FontId, &'resource dyn FontFace)> {
+        self.fonts.resolve_weight(weight)
+    }
+
+    pub fn resolve_font_family_weight(
+        &self,
+        family: FontFamilyId,
+        weight: FontWeight,
+    ) -> Option<(FontId, &'resource dyn FontFace)> {
+        self.fonts.resolve_family_weight(family, weight)
     }
 
     pub fn glyph_bitmap(

@@ -824,7 +824,7 @@ fn text_measurement_receives_resolved_text_style() {
     let root = frame
         .mount(
             div()
-                .font(FontId::new(3))
+                .font_weight(FontWeight::SEMIBOLD)
                 .text_color(Color::GREEN)
                 .line_height(px(18))
                 .child("Hello"),
@@ -841,7 +841,7 @@ fn text_measurement_receives_resolved_text_style() {
     assert_eq!(
         measurer.style.get(),
         Some(ResolvedTextStyle {
-            font: FontId::new(3),
+            font_weight: FontWeight::SEMIBOLD,
             color: Color::GREEN,
             line_height: LineHeight::Pixels(px(18)),
             ..Default::default()

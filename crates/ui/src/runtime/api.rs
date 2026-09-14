@@ -1,8 +1,8 @@
 use crate::{
-    Context, DamageRegion, Entity, EntityAccessError, FontFace, FontId, FontRegistryError,
-    FrameBuildError, ImageRegistryError, ImageResource, ImageSource, Offset, PaintReport, Point,
-    RenderInvalidation, ResourcePainter, Runtime, RuntimeResources, Size, TextMeasurer,
-    callback::ListenerInvokeError,
+    Context, DamageRegion, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
+    FontRegistryError, FontWeight, FrameBuildError, ImageRegistryError, ImageResource, ImageSource,
+    Offset, PaintReport, Point, RenderInvalidation, ResourcePainter, Runtime, RuntimeResources,
+    Size, TextMeasurer, callback::ListenerInvokeError,
 };
 
 /// application-facing runtime operations.
@@ -35,8 +35,14 @@ pub trait RuntimeApi {
 }
 
 pub trait ResourceRuntimeApi<'resource> {
-    fn register_font(&mut self, font: &'resource dyn FontFace)
-    -> Result<FontId, FontRegistryError>;
+    fn register_font_family(&mut self) -> Result<FontFamilyId, FontRegistryError>;
+
+    fn register_font_face(
+        &mut self,
+        family: FontFamilyId,
+        weight: FontWeight,
+        font: &'resource dyn FontFace,
+    ) -> Result<FontId, FontRegistryError>;
 
     fn register_image(
         &mut self,
@@ -153,11 +159,17 @@ impl<
         RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
     >
 {
-    fn register_font(
+    fn register_font_family(&mut self) -> Result<FontFamilyId, FontRegistryError> {
+        self.register_font_family()
+    }
+
+    fn register_font_face(
         &mut self,
+        family: FontFamilyId,
+        weight: FontWeight,
         font: &'resource dyn FontFace,
     ) -> Result<FontId, FontRegistryError> {
-        self.register_font(font)
+        self.register_font_face(family, weight, font)
     }
 
     fn register_image(

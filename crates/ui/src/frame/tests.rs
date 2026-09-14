@@ -1337,7 +1337,7 @@ fn explicit_text_element_preserves_text_style_overrides() {
     let node = frame
         .mount(
             text("Hello")
-                .font(FontId::new(2))
+                .font_weight(FontWeight::BOLD)
                 .text_color(Color::RED)
                 .line_height(px(18)),
             cx,
@@ -1345,7 +1345,10 @@ fn explicit_text_element_preserves_text_style_overrides() {
         .unwrap();
 
     assert_eq!(node_text(&frame, node), "Hello");
-    assert_eq!(frame.node(node).text_style.font, Some(FontId::new(2)));
+    assert_eq!(
+        frame.node(node).text_style.font_weight,
+        Some(FontWeight::BOLD)
+    );
     assert_eq!(frame.node(node).text_style.color, Some(Color::RED));
     assert_eq!(
         frame.node(node).text_style.line_height,
@@ -1362,13 +1365,13 @@ fn text_style_resolves_through_nested_elements() {
     let root = frame
         .mount(
             div()
-                .font(FontId::new(1))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(Color::WHITE)
                 .line_height(px(14))
                 .child(
                     div()
                         .text_color(Color::RED)
-                        .child(text("Hello").font(FontId::new(2))),
+                        .child(text("Hello").font_weight(FontWeight::BOLD)),
                 ),
             cx,
         )
@@ -1382,7 +1385,7 @@ fn text_style_resolves_through_nested_elements() {
     assert_eq!(
         frame.node(text_node).effective_text_style,
         ResolvedTextStyle {
-            font: FontId::new(2),
+            font_weight: FontWeight::BOLD,
             color: Color::RED,
             line_height: LineHeight::Pixels(px(14)),
             ..Default::default()

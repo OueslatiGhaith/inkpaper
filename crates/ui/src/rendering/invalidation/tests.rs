@@ -374,7 +374,7 @@ fn focused_text_color_change_requires_paint_only() {
 }
 
 #[test]
-fn focused_font_change_requires_layout() {
+fn focused_font_weight_change_requires_layout() {
     struct App;
     impl App {
         fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}
@@ -385,8 +385,8 @@ fn focused_font_change_requires_layout() {
             div().child(
                 div()
                     .id("button")
-                    .font(FontId::new(0))
-                    .when_focused(|style| style.font(FontId::new(1)))
+                    .font_weight(FontWeight::NORMAL)
+                    .when_focused(|style| style.font_weight(FontWeight::BOLD))
                     .on_activate(cx.listener(Self::clicked))
                     .child("Button"),
             )

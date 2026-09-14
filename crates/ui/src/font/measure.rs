@@ -15,7 +15,7 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
         }
 
         let (font_id, font) = self
-            .resolve(style.font)
+            .resolve_family_weight(style.font_family, style.font_weight)
             .expect("text measurement requires a default font");
 
         let registry = self.registry();

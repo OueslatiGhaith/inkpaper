@@ -100,11 +100,16 @@ impl ImageDrawable for DemoImage {
 struct Header {
     title: &'static str,
     subtitle: &'static str,
+    font_family: FontFamilyId,
 }
 
 impl Header {
-    fn new(title: &'static str, subtitle: &'static str) -> Self {
-        Self { title, subtitle }
+    fn new(title: &'static str, subtitle: &'static str, font_family: FontFamilyId) -> Self {
+        Self {
+            title,
+            subtitle,
+            font_family,
+        }
     }
 }
 
@@ -120,7 +125,7 @@ impl Render for Header {
             .rounded(px(6))
             .child(
                 text(self.title)
-                    .font(FontId::new(1))
+                    .font_family(self.font_family)
                     .text_color(Color::WHITE),
             )
             .child(
@@ -357,23 +362,27 @@ struct App {
     header: Entity<Header>,
     counter: Entity<Counter>,
     show_details: bool,
-    text_demo_font: Option<FontId>,
+    heading_font_family: FontFamilyId,
+    text_demo_font_family: Option<FontFamilyId>,
     demo_image: ImageSource,
 }
 
 impl App {
     fn new(
         cx: &mut Context<Self>,
-        text_demo_font: Option<FontId>,
+        heading_font_family: FontFamilyId,
+        text_demo_font_family: Option<FontFamilyId>,
         demo_image: ImageSource,
     ) -> Self {
-        let subtitle = if text_demo_font.is_some() {
+        let subtitle = if text_demo_font_family.is_some() {
             "Feature gallery - Arabic shaping, bidi and cluster-aware layout enabled. Mouse wheel scrolls; Tab/arrows move focus."
         } else {
             "Feature gallery - pass a TTF/OTF path on the command line to enable the Arabic shaping + cluster layout demo."
         };
 
-        let header = cx.new(|_| Header::new("InkPaper UI", subtitle)).unwrap();
+        let header = cx
+            .new(|_| Header::new("InkPaper UI", subtitle, heading_font_family))
+            .unwrap();
 
         let counter = cx.new(|_| Counter::new()).unwrap();
 
@@ -381,7 +390,8 @@ impl App {
             header,
             counter,
             show_details: false,
-            text_demo_font,
+            heading_font_family,
+            text_demo_font_family,
             demo_image,
         }
     }
@@ -394,7 +404,7 @@ impl App {
     }
 }
 
-fn text_styling_section() -> impl IntoElement {
+fn text_styling_section(heading_font_family: FontFamilyId) -> impl IntoElement {
     div()
         .w_full()
         .p(px(8))
@@ -416,7 +426,7 @@ fn text_styling_section() -> impl IntoElement {
                 .child("Inherited green text and custom line height")
                 .child(
                     text("Local override on the child")
-                    .text_color(Color::rgb(230, 167, 87)),
+                        .text_color(Color::rgb(230, 167, 87)),
                 ),
         )
         .child(
@@ -426,17 +436,9 @@ fn text_styling_section() -> impl IntoElement {
                 .bg(Color::rgb(27, 31, 41))
                 .rounded(px(4))
                 .child(
-                    text(
-                        "Secondary 10x20 font",
-                    )
-                    .font(FontId::new(1))
-                    .text_color(
-                        Color::rgb(
-                            126,
-                            172,
-                            235,
-                        ),
-                    ),
+                    text("Secondary 10x20 font")
+                        .font_family(heading_font_family)
+                        .text_color(Color::rgb(126, 172, 235)),
                 ),
         )
         .child(
@@ -463,8 +465,8 @@ fn text_styling_section() -> impl IntoElement {
                 .rounded(px(4))
                 .child(
                     text("Centered line\nsecond line")
-                    .text_center()
-                    .text_color(Color::rgb(126, 172, 235)),
+                        .text_center()
+                        .text_color(Color::rgb(126, 172, 235)),
                 ),
         )
 }
@@ -912,7 +914,7 @@ fn positioning_section(demo_click: Listener<ActivateEvent>) -> impl IntoElement 
         )
 }
 
-fn text_shaping_section(font: FontId) -> impl IntoElement {
+fn text_shaping_section(font_family: FontFamilyId) -> impl IntoElement {
     div()
         .w_full()
         .p(px(8))
@@ -947,7 +949,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "مرحبا InkPaper — الصفحة 123",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(20))
                     .text_color(
                         Color::rgb(
@@ -982,7 +984,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "مرحبا (InkPaper 123) — [كتاب جديد]",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(20))
                     .text_color(
                         Color::rgb(
@@ -996,7 +998,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "InkPaper (مرحبا) — page [42]",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(20))
                     .text_color(
                         Color::rgb(
@@ -1031,7 +1033,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "AVATAR To WA — مرحبا",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(22))
                     .text_color(
                         Color::rgb(
@@ -1045,7 +1047,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "مرحبا — AVATAR To WA",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(22))
                     .text_color(
                         Color::rgb(
@@ -1079,7 +1081,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "لالالالالالالالا",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(22))
                     .wrap()
                     .text_color(
@@ -1114,7 +1116,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "بَبَبَبَبَبَبَبَ",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(22))
                     .wrap()
                     .text_color(
@@ -1149,7 +1151,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "لالالالالالالالالا",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(22))
                     .no_wrap()
                     .max_lines(1)
@@ -1186,7 +1188,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "AVAVAVAV To WA — مرحبا",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(22))
                     .no_wrap()
                     .max_lines(1)
@@ -1214,7 +1216,7 @@ fn text_shaping_section(font: FontId) -> impl IntoElement {
                     text(
                         "مرحبا — AVAVAVAV To WA",
                     )
-                    .font(font)
+                    .font_family(font_family)
                     .font_size(px(22))
                     .no_wrap()
                     .max_lines(1)
@@ -1235,7 +1237,8 @@ impl Render for App {
         let demo_click = cx.listener(Self::demo_clicked);
 
         let toggle_details = cx.listener(Self::toggle_details);
-        let text_demo_font = self.text_demo_font;
+        let heading_font_family = self.heading_font_family;
+        let text_demo_font_family = self.text_demo_font_family;
         let demo_image = self.demo_image;
 
         div()
@@ -1250,9 +1253,9 @@ impl Render for App {
             .child(self.header)
             .child(self.counter)
             .child(conditional_section(self.show_details, toggle_details))
-            .child(text_styling_section())
-            .when(text_demo_font.is_some(), |page| {
-                page.child(text_shaping_section(text_demo_font.unwrap()))
+            .child(text_styling_section(heading_font_family))
+            .when(text_demo_font_family.is_some(), |page| {
+                page.child(text_shaping_section(text_demo_font_family.unwrap()))
             })
             .child(images_section(demo_image))
             .child(alignment_section())
@@ -1388,7 +1391,6 @@ fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
 
 fn main() {
     let runtime_font = runtime_font_from_args();
-    let text_demo_font = runtime_font.map(|_| FontId::new(2));
 
     let mut runtime = RuntimeBuilder::default()
         .entities::<16_384, 32>()
@@ -1396,32 +1398,45 @@ fn main() {
         .frame::<512, 8_192>()
         .element_states::<256>()
         .globals::<2_048, 8>()
-        .render_resources::<2, 128, { 16 * 1024 }, 1>()
+        .render_resources::<3, 128, { 16 * 1024 }, 1>()
         .build();
 
-    let runtime_font = runtime_font.map(|font| font as &'static dyn FontFace);
+    let body_font_family = runtime
+        .register_font_family()
+        .expect("body font family must fit");
 
-    assert_eq!(runtime.register_font(&BODY_FONT).unwrap(), FontId::DEFAULT);
-    assert_eq!(
-        runtime.register_font(&HEADING_FONT).unwrap(),
-        FontId::new(1),
-    );
+    assert_eq!(body_font_family, FontFamilyId::DEFAULT);
 
-    if let Some(runtime_font) = runtime_font {
-        assert_eq!(
-            runtime
-                .register_font(runtime_font as &'static dyn FontFace,)
-                .unwrap(),
-            FontId::new(2),
-        );
-    }
+    runtime
+        .register_font_face(body_font_family, FontWeight::NORMAL, &BODY_FONT)
+        .expect("body font must fit");
+
+    let heading_font_family = runtime
+        .register_font_family()
+        .expect("heading font family must fit");
+
+    runtime
+        .register_font_face(heading_font_family, FontWeight::NORMAL, &HEADING_FONT)
+        .expect("heading font must fit");
+
+    let text_demo_font_family = runtime_font.map(|font| {
+        let family = runtime
+            .register_font_family()
+            .expect("text demo font family must fit");
+
+        runtime
+            .register_font_face(family, FontWeight::NORMAL, font as &'static dyn FontFace)
+            .expect("text demo font must fit");
+
+        family
+    });
 
     let demo_image = runtime
         .register_image(&DEMO_IMAGE_RESOURCE)
         .expect("demo image slot must fit");
 
     runtime
-        .create_root(|cx| App::new(cx, text_demo_font, demo_image))
+        .create_root(|cx| App::new(cx, heading_font_family, text_demo_font_family, demo_image))
         .unwrap();
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 

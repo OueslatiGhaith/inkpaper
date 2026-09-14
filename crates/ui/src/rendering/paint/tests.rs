@@ -407,7 +407,7 @@ fn painting_receives_resolved_text_style() {
     let root = frame
         .mount(
             div()
-                .font(FontId::new(1))
+                .font_weight(FontWeight::BOLD)
                 .text_color(Color::WHITE)
                 .line_height(px(16))
                 .child(text("Hello").text_color(Color::RED)),
@@ -426,7 +426,7 @@ fn painting_receives_resolved_text_style() {
             bounds: Rect::new(Point::ZERO, Size::new(px(30), px(10))),
             length: "Hello".len(),
             style: ResolvedTextStyle {
-                font: FontId::new(1),
+                font_weight: FontWeight::BOLD,
                 color: Color::RED,
                 line_height: LineHeight::Pixels(px(16)),
                 ..Default::default()

@@ -1115,3 +1115,16 @@ fn rejects_image_utility_on_svg() {
             .contains("utility class `grayscale` is not valid on <svg>")
     );
 }
+
+#[test]
+fn expands_font_weight_utilities() {
+    let result = expand_rsx(quote! {
+        <div>
+            <text class="font-normal">"Normal"</text>
+            <text class="font-bold">"Bold"</text>
+            <text class="font-[650]">"Custom"</text>
+        </div>
+    });
+
+    assert!(result.is_ok());
+}

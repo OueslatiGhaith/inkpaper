@@ -14,6 +14,7 @@ pub enum ArgumentKind {
     None,
     Pixels,
     U16,
+    FontWeight,
     Unsupported,
 }
 
@@ -53,6 +54,7 @@ fn classify_argument_type(argument: &str) -> ArgumentKind {
             ArgumentKind::Pixels
         }
         "u16" => ArgumentKind::U16,
+        "FontWeight" => ArgumentKind::FontWeight,
         _ => ArgumentKind::Unsupported,
     }
 }

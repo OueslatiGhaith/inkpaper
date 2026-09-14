@@ -1,3 +1,5 @@
+use crate::FontWeight;
+
 use super::*;
 
 #[derive(Default)]
@@ -127,10 +129,11 @@ fn generated_paint_methods_preserve_existing_behavior() {
 
 #[test]
 fn generated_text_methods_preserve_existing_behavior() {
-    let font = FontId::new(7);
+    let family = FontFamilyId::new(3);
 
     let styled = TestStyled::default()
-        .font(font)
+        .font_family(family)
+        .font_weight(FontWeight::BOLD)
         .font_size(px(0))
         .text_color(Color::GREEN)
         .line_height(px(20))
@@ -148,7 +151,8 @@ fn generated_text_methods_preserve_existing_behavior() {
         .text_clip()
         .text_ellipsis();
 
-    assert_eq!(styled.style.text.font, Some(font));
+    assert_eq!(styled.style.text.font_family, Some(family));
+    assert_eq!(styled.style.text.font_weight, Some(FontWeight::BOLD));
     assert_eq!(styled.style.text.font_size, Some(px(1)));
     assert_eq!(styled.style.text.color, Some(Color::GREEN));
     assert_eq!(styled.style.text.line_height, Some(LineHeight::Normal));

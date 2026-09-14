@@ -4,9 +4,9 @@ use core::{any::TypeId, cell::Cell};
 use crate::PerformanceMetrics;
 use crate::{
     ActivateEvent, Context, DamageRegion, Entity, EntityAccessError, EntityAllocError, EntityArena,
-    EventTarget, FontFace, FontId, FontRegistryError, FrameArena, ImageRegistryError,
-    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintReport,
-    Point, Render, RenderInvalidation, ResourcePainter, Size, TextMeasurer,
+    EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FontWeight, FrameArena,
+    ImageRegistryError, ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId,
+    Offset, PaintReport, Point, Render, RenderInvalidation, ResourcePainter, Size, TextMeasurer,
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     entity::create_entity,
@@ -1015,6 +1015,19 @@ impl<
         font: &'resource dyn FontFace,
     ) -> Result<FontId, FontRegistryError> {
         self.resources.register_font(font)
+    }
+
+    pub fn register_font_family(&mut self) -> Result<FontFamilyId, FontRegistryError> {
+        self.resources.register_font_family()
+    }
+
+    pub fn register_font_face(
+        &mut self,
+        family: FontFamilyId,
+        weight: FontWeight,
+        font: &'resource dyn FontFace,
+    ) -> Result<FontId, FontRegistryError> {
+        self.resources.register_font_face(family, weight, font)
     }
 
     pub fn register_image(

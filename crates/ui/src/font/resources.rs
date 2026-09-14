@@ -1,3 +1,5 @@
+use crate::{FontFamilyId, FontWeight};
+
 use super::{
     FontFace, FontId, GlyphId,
     cache::{GlyphBitmap, GlyphCache, GlyphCacheError},
@@ -44,8 +46,33 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
         self.registry.register(font)
     }
 
+    pub fn register_family(&mut self) -> Result<FontFamilyId, FontRegistryError> {
+        self.registry.register_family()
+    }
+
+    pub fn register_face(
+        &mut self,
+        family: FontFamilyId,
+        weight: FontWeight,
+        font: &'font dyn FontFace,
+    ) -> Result<FontId, FontRegistryError> {
+        self.registry.register_face(family, weight, font)
+    }
+
     pub fn resolve(&self, id: FontId) -> Option<(FontId, &'font dyn FontFace)> {
         self.registry.resolve_with_id(id)
+    }
+
+    pub fn resolve_weight(&self, weight: FontWeight) -> Option<(FontId, &'font dyn FontFace)> {
+        self.registry.resolve_weight(weight)
+    }
+
+    pub fn resolve_family_weight(
+        &self,
+        family: FontFamilyId,
+        weight: FontWeight,
+    ) -> Option<(FontId, &'font dyn FontFace)> {
+        self.registry.resolve_family_weight(family, weight)
     }
 
     pub fn glyph_bitmap(

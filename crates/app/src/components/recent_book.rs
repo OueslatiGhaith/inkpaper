@@ -1,9 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-use crate::{
-    components::icon::{Icon, IconKind, IconProps},
-    typography::{UI_BOLD_FONT_ID, UI_REGULAR_FONT_ID},
-};
+use crate::components::icon::{Icon, IconKind, IconProps};
 
 #[component]
 pub(crate) struct RecentBookCard<'a> {
@@ -35,17 +32,17 @@ impl RenderOnce for RecentBookCard<'_> {
                 </div>
 
                 <div class="absolute left-[174px] top-0 w-[258px] h-[242px] flex flex-col justify-center">
-                    <text class="font-{UI_BOLD_FONT_ID} text-[12px] leading-[16px] wrap max-lines-3 text-clip">{self.title}</text>
+                    <text class="font-bold text-[12px] leading-[16px] wrap max-lines-3 text-clip">{self.title}</text>
 
                     <div class="relative w-full h-[18px]">
                         <div class="absolute left-0 top-[6px] w-full h-[12px]">
-                            <text class="font-{UI_REGULAR_FONT_ID} text-[10px] leading-[12px] wrap max-lines-1 text-ellipsis">{self.author}</text>
+                            <text class="text-[10px] leading-[12px] wrap max-lines-1 text-ellipsis">{self.author}</text>
                         </div>
                     </div>
 
                     <div class="relative w-full h-[24px]">
                         <div class="absolute left-0 top-[8px] w-full h-[12px]">
-                            <text class="font-{UI_BOLD_FONT_ID} text-[10px] leading-[12px] no-wrap max-lines-1 text-clip">{self.progress}</text>
+                            <text class="font-bold text-[10px] leading-[12px] no-wrap max-lines-1 text-clip">{self.progress}</text>
                         </div>
 
                         <div class="absolute left-0 top-[22px] w-[258px] h-[4px] border-px border-black">
