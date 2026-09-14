@@ -67,11 +67,11 @@ pub mod prelude {
         ImageSource, IntoElement, Invalidation, LineHeight, Listener, MountCx, MountError,
         NoChildren, NodeId, Offset, OnEvent, PaintCx, PaintReport, ParentElement,
         ParentElementChildrenExt, PathCommand, PathFill, PathStroke, Pixels, Point, Rect, Render,
-        RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourcePainter, Runtime, RuntimeApi,
-        RuntimeBuilder, Size, StatefulInteractiveElementExt, StrokeCap, StrokeJoin, Style, Styled,
-        Svg, SvgFill, SvgPaint, SvgPath, SvgSource, SvgStroke, SvgViewBox, TextAlign, TextMaxLines,
-        TextOverflow, TextStyled, TextWrap, VectorPath, VectorPoint, canvas, div, image, px, svg,
-        text,
+        RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourcePainter, ResourceRuntimeApi,
+        Runtime, RuntimeApi, RuntimeBuilder, Size, StatefulInteractiveElementExt, StrokeCap,
+        StrokeJoin, Style, Styled, Svg, SvgFill, SvgPaint, SvgPath, SvgSource, SvgStroke,
+        SvgViewBox, TextAlign, TextMaxLines, TextOverflow, TextStyled, TextWrap, VectorPath,
+        VectorPoint, canvas, div, image, px, svg, text,
     };
 
     #[cfg(feature = "macros")]

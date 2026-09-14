@@ -1,4 +1,4 @@
-use inkpaper_ui::prelude::*;
+use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::screens::home::{HomeScreen, HomeScreenProps};
 
@@ -7,6 +7,14 @@ pub struct InkPaperApp;
 impl Default for InkPaperApp {
     fn default() -> Self {
         Self
+    }
+}
+
+impl InkPaperApp {
+    pub fn register_resources<'resource>(
+        runtime: &mut impl ResourceRuntimeApi<'resource>,
+    ) -> Result<(), FontRegistryError> {
+        crate::typography::register(runtime)
     }
 }
 

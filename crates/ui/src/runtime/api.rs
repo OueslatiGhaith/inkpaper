@@ -1,6 +1,7 @@
 use crate::{
-    Context, DamageRegion, Entity, EntityAccessError, FrameBuildError, Offset, PaintReport, Point,
-    RenderInvalidation, ResourcePainter, Runtime, Size, TextMeasurer,
+    Context, DamageRegion, Entity, EntityAccessError, FontFace, FontId, FontRegistryError,
+    FrameBuildError, ImageRegistryError, ImageResource, ImageSource, Offset, PaintReport, Point,
+    RenderInvalidation, ResourcePainter, Runtime, RuntimeResources, Size, TextMeasurer,
     callback::ListenerInvokeError,
 };
 
@@ -31,6 +32,16 @@ pub trait RuntimeApi {
     fn cancel_activation(&mut self);
 
     fn scroll_at(&mut self, position: Point, delta: Offset) -> bool;
+}
+
+pub trait ResourceRuntimeApi<'resource> {
+    fn register_font(&mut self, font: &'resource dyn FontFace)
+    -> Result<FontId, FontRegistryError>;
+
+    fn register_image(
+        &mut self,
+        image: &'resource dyn ImageResource,
+    ) -> Result<ImageSource, ImageRegistryError>;
 }
 
 /// platform-facing rendering operations.
@@ -110,6 +121,50 @@ impl<
 
     fn scroll_at(&mut self, position: Point, delta: Offset) -> bool {
         self.scroll_at(position, delta)
+    }
+}
+
+impl<
+    'resource,
+    const EB: usize,
+    const ES: usize,
+    const CB: usize,
+    const CS: usize,
+    const FN: usize,
+    const FT: usize,
+    const ST: usize,
+    const GB: usize,
+    const GS: usize,
+    const FONTS: usize,
+    const GLYPH_SLOTS: usize,
+    const GLYPH_BYTES: usize,
+    const IMAGES: usize,
+> ResourceRuntimeApi<'resource>
+    for Runtime<
+        EB,
+        ES,
+        CB,
+        CS,
+        FN,
+        FT,
+        ST,
+        GB,
+        GS,
+        RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+    >
+{
+    fn register_font(
+        &mut self,
+        font: &'resource dyn FontFace,
+    ) -> Result<FontId, FontRegistryError> {
+        self.register_font(font)
+    }
+
+    fn register_image(
+        &mut self,
+        image: &'resource dyn ImageResource,
+    ) -> Result<ImageSource, ImageRegistryError> {
+        self.register_image(image)
     }
 }
 

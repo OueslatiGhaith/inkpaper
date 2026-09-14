@@ -1,11 +1,7 @@
-use embedded_graphics::{
-    geometry::Point as EgPoint,
-    mono_font::ascii::{FONT_6X10, FONT_10X20},
-    pixelcolor::Rgb888,
-};
+use embedded_graphics::{geometry::Point as EgPoint, pixelcolor::Rgb888};
 use inkpaper_ui::{
     RuntimeResources,
-    backend::{CoverageMode, EmbeddedGraphicsPainter, MonoFontFace},
+    backend::{CoverageMode, EmbeddedGraphicsPainter},
     prelude::*,
 };
 
@@ -19,9 +15,6 @@ use crate::firmware::{
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
 const DISPLAY_BOUNDS: Rect = Rect::new(Point::ZERO, DISPLAY_SIZE);
-
-static BODY_FONT: MonoFontFace = MonoFontFace::ascii(&FONT_6X10);
-static HEADING_FONT: MonoFontFace = MonoFontFace::ascii(&FONT_10X20);
 
 const UI_ENTITY_BYTES: usize = 4_096;
 const UI_ENTITY_SLOTS: usize = 8;
@@ -123,28 +116,12 @@ impl FrameUpdate {
     }
 }
 
+#[derive(Default)]
 pub struct Presenter {
     refresh_policy: RefreshPolicy,
 }
 
 impl Presenter {
-    pub fn new(runtime: &mut UiRuntime) -> Self {
-        let body = runtime
-            .register_font(&BODY_FONT)
-            .expect("body font slot must fit");
-
-        let heading = runtime
-            .register_font(&HEADING_FONT)
-            .expect("heading font slot must fit");
-
-        defmt::assert_eq!(body, FontId::DEFAULT);
-        defmt::assert_eq!(heading, FontId::new(1));
-
-        Self {
-            refresh_policy: RefreshPolicy::default(),
-        }
-    }
-
     pub fn render_initial(
         &mut self,
         runtime: &mut UiRuntime,

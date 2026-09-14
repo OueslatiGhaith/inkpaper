@@ -35,10 +35,14 @@ pub struct TtfFont<'a> {
 }
 
 impl<'a> TtfFont<'a> {
+    pub const fn from_data(data: FontData<'a>, face_index: u32) -> Self {
+        Self { data, face_index }
+    }
+
     pub fn parse(data: FontData<'a>, face_index: u32) -> Result<Self, TtfFontError> {
         Face::parse(data.bytes(), face_index).map_err(|_| TtfFontError::InvalidFont)?;
 
-        Ok(Self { data, face_index })
+        Ok(Self::from_data(data, face_index))
     }
 
     pub const fn data(self) -> FontData<'a> {

@@ -187,9 +187,10 @@ async fn main(spawner: Spawner) -> ! {
 
     let runtime = UI_RUNTIME.init_with(UiRuntime::default);
 
+    InkPaperApp::register_resources(runtime).unwrap();
     runtime.create_root(|_| InkPaperApp::default()).unwrap();
 
-    let mut presenter = Presenter::new(runtime);
+    let mut presenter = Presenter::default();
 
     debug!("building UI frame...");
     let update = presenter.render_initial(runtime, frame);

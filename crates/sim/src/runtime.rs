@@ -23,6 +23,6 @@ pub(crate) type SimulatorRuntime<'resources> = Runtime<
     RuntimeResources<'resources, 2, 128, { 16 * 1024 }, 1>,
 >;
 
-pub(crate) fn new_runtime<'resources>() -> Box<SimulatorRuntime<'resources>> {
-    Box::new(SimulatorRuntime::default())
+pub(crate) fn new_runtime<'resources>() -> SimulatorRuntime<'resources> {
+    SimulatorRuntime::default()
 }

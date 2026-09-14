@@ -9,9 +9,7 @@ alloc = ["inkpaper-ui/alloc"]
 defmt = ["inkpaper-app/defmt", "inkpaper-ui/defmt"]
 
 [dependencies]
-clap = { version = "4.6.6", features = ["derive"] }
 embedded-graphics = { workspace = true }
 embedded-graphics-simulator = { workspace = true }
 inkpaper-app = { path = "../app" }
 inkpaper-ui = { path = "../ui", features = ["embedded-graphics", "ttf"] }
-static_cell = { workspace = true }
