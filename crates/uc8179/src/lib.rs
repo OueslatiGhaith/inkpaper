@@ -446,6 +446,11 @@ impl Uc8179 {
         Ok(())
     }
 
+    /// performs a damage-scoped four-level grayscale update.
+    ///
+    /// the UC8179 PTL-scoped PRE_BW_MID + grayscale sequence was validated on XTEINK X4 Pro
+    /// hardware with static grayscale content outside the update region.
+    #[allow(clippy::too_many_arguments)]
     pub async fn display_grayscale_window<B, D>(
         &mut self,
         bus: &mut B,
@@ -501,8 +506,7 @@ impl Uc8179 {
             self.stream_plane(bus, Command::NewPlane, msb, false)
                 .await?;
 
-            // experimental part:
-            // run the short custom grayscale waveform under PTL.
+            // run the short custom grayscale waveform only over the damage window.
             self.activate_grayscale(bus, delay, Some(region)).await?;
         }
 
@@ -538,6 +542,7 @@ impl Uc8179 {
 
         self.need_full_clear = true;
         self.old_plane_valid = false;
+        self.grayscale_on_panel = false;
 
         Ok(())
     }
@@ -877,7 +882,7 @@ impl Uc8179 {
                 for index in 0..len {
                     let source_index = row_start + offset + index;
 
-                    buffer[index] = lhs[source_index] & rhs[source_index];
+                    buffer[index] = grayscale_base_byte(lhs[source_index], rhs[source_index]);
                 }
 
                 if let Err(error) = bus.stream_data(&buffer[..len]).await.map_err(Error::Bus) {
@@ -1133,9 +1138,28 @@ impl Uc8179 {
     }
 }
 
+const fn grayscale_base_byte(lsb: u8, msb: u8) -> u8 {
+    lsb & msb
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Region, Uc8179, X4_PRO_800X480};
+    use super::{Error, Region, Uc8179, X4_PRO_800X480, grayscale_base_byte};
+
+    #[test]
+    fn absolute_grayscale_maps_to_expected_bw_base() {
+        // black: 00 -> black base
+        assert_eq!(grayscale_base_byte(0x00, 0x00,), 0x00,);
+
+        // dark: 10 -> black base
+        assert_eq!(grayscale_base_byte(0xff, 0x00,), 0x00,);
+
+        // light: 01 -> black base
+        assert_eq!(grayscale_base_byte(0x00, 0xff,), 0x00,);
+
+        // white: 11 -> white base
+        assert_eq!(grayscale_base_byte(0xff, 0xff,), 0xff,);
+    }
 
     #[test]
     fn partial_region_is_byte_aligned() {
@@ -1145,7 +1169,34 @@ mod tests {
             .normalize_region::<()>(Region::new(13, 10, 11, 20))
             .unwrap();
 
-        assert_eq!(region, Region::new(8, 10, 16, 20));
+        assert_eq!(region, Region::new(8, 10, 16, 20,),);
+    }
+
+    #[test]
+    fn partial_region_rejects_empty_region() {
+        let panel = Uc8179::new(X4_PRO_800X480);
+
+        let result = panel.normalize_region::<()>(Region::new(10, 10, 0, 20));
+
+        assert!(matches!(result, Err(Error::EmptyRegion),));
+    }
+
+    #[test]
+    fn partial_region_rejects_out_of_bounds_region() {
+        let panel = Uc8179::new(X4_PRO_800X480);
+
+        let region = Region::new(760, 100, 80, 40);
+
+        let result = panel.normalize_region::<()>(region);
+
+        assert!(matches!(
+            result,
+            Err(
+                Error::RegionOutOfBounds {
+                    region: actual,
+                }
+            ) if actual == region
+        ));
     }
 
     #[test]
@@ -1157,8 +1208,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            panel.partial_window_data(region),
+            panel.partial_window_data(region,),
             [0x00, 0x08, 0x00, 0x17, 0x01, 0xc2, 0x01, 0xd5, 0x01],
+        );
+    }
+
+    #[test]
+    fn full_partial_window_covers_visible_panel() {
+        let panel = Uc8179::new(X4_PRO_800X480);
+
+        let region = Region::new(0, 0, 800, 480);
+
+        assert_eq!(
+            panel.partial_window_data(region,),
+            [0x00, 0x00, 0x03, 0x1f, 0x00, 0x00, 0x01, 0xdf, 0x01],
         );
     }
 }
