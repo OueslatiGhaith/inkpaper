@@ -3,9 +3,13 @@
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::{BusyPolarity, EpdInterface};
 
-use crate::command::Command;
+use crate::{
+    command::Command,
+    grayscale::{ABSOLUTE_DARK_GRAY_LUT, GRAY_LUTS},
+};
 
 mod command;
+mod grayscale;
 
 const BUSY_POLARITY: BusyPolarity = BusyPolarity::ActiveLow;
 
@@ -336,6 +340,94 @@ impl Uc8179 {
         Ok(())
     }
 
+    pub async fn display_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+        turn_off: bool,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.validate_frame(lsb)?;
+        self.validate_frame(msb)?;
+
+        // unlike SSD1677, the UC8179 grayscale sequence expects the electrophoretic state
+        // to first be conditioned to the B/W base.
+        // for our absolute encoding:
+        // base = LSB & MSB
+        // so only white remains white and every non-white tone belongs to the black side
+        // of the B/W conditioning image.
+        self.display_absolute_grayscale_base(bus, delay, lsb, msb)
+            .await?;
+
+        self.stream_plane(bus, Command::OldPlane, lsb, false)
+            .await?;
+
+        self.stream_plane(bus, Command::NewPlane, msb, false)
+            .await?;
+
+        self.command_data(bus, Command::PanelSetting, &self.config.panel_settings.init)
+            .await?;
+
+        const REGISTERS: [Command; 5] = [
+            Command::LutVcom,
+            Command::LutWhite,
+            Command::LutBlackToWhite,
+            Command::LutWhiteToBlack,
+            Command::LutBlack,
+        ];
+
+        for index in 0..GRAY_LUTS.len() {
+            let data = if index == 3 {
+                &ABSOLUTE_DARK_GRAY_LUT
+            } else {
+                &GRAY_LUTS[index]
+            };
+
+            self.command_data(bus, REGISTERS[index], data).await?;
+        }
+
+        self.command_data(
+            bus,
+            Command::VcomDataInterval,
+            &self.config.vcom_data_interval.active,
+        )
+        .await?;
+
+        if !self.screen_on {
+            self.command(bus, Command::PowerOn).await?;
+
+            self.wait_ready(bus, delay).await?;
+
+            self.screen_on = true;
+        }
+
+        self.command(bus, Command::DisplayRefresh).await?;
+
+        self.wait_ready(bus, delay).await?;
+
+        self.command_data(
+            bus,
+            Command::VcomDataInterval,
+            &self.config.vcom_data_interval.idle,
+        )
+        .await?;
+
+        // selector planes aren't a valid DU baseline.
+        self.need_full_clear = true;
+        self.old_plane_valid = false;
+
+        if turn_off {
+            self.power_off(bus, delay).await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn deep_sleep<B, D>(
         &mut self,
         bus: &mut B,
@@ -622,5 +714,109 @@ impl Uc8179 {
         }
 
         Ok(())
+    }
+
+    async fn display_absolute_grayscale_base<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.stream_and_plane(bus, Command::NewPlane, lsb, msb)
+            .await?;
+
+        self.fill_white_plane(bus, Command::OldPlane).await?;
+
+        self.configure_refresh(bus, false).await?;
+
+        if !self.screen_on {
+            self.command(bus, Command::PowerOn).await?;
+
+            self.wait_ready(bus, delay).await?;
+
+            self.screen_on = true;
+        }
+
+        self.command(bus, Command::DisplayRefresh).await?;
+
+        self.wait_ready(bus, delay).await?;
+
+        self.command_data(
+            bus,
+            Command::VcomDataInterval,
+            &self.config.vcom_data_interval.idle,
+        )
+        .await
+    }
+
+    async fn stream_and_plane<B>(
+        &self,
+        bus: &mut B,
+        command: Command,
+        lhs: &[u8],
+        rhs: &[u8],
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        let row_bytes = self.config.width as usize / 8;
+
+        self.command(bus, command).await?;
+
+        bus.begin_data_stream().await.map_err(Error::Bus)?;
+
+        let mut result = Ok(());
+        let mut buffer = [0u8; STREAM_BUFFER_LEN];
+
+        for row in (0..self.config.visible_height as usize).rev() {
+            let row_start = row * row_bytes;
+
+            let mut offset = 0;
+
+            while offset < row_bytes {
+                let len = (row_bytes - offset).min(buffer.len());
+
+                for index in 0..len {
+                    let source_index = row_start + offset + index;
+
+                    buffer[index] = lhs[source_index] & rhs[source_index];
+                }
+
+                if let Err(error) = bus.stream_data(&buffer[..len]).await.map_err(Error::Bus) {
+                    result = Err(error);
+                    break;
+                }
+
+                offset += len;
+            }
+
+            if result.is_err() {
+                break;
+            }
+        }
+
+        if result.is_ok() {
+            let padding_rows = self.config.addressed_height - self.config.visible_height;
+
+            for _ in 0..padding_rows {
+                if let Err(error) = self.stream_white_row(bus, row_bytes).await {
+                    result = Err(error);
+                    break;
+                }
+            }
+        }
+
+        let end_result = bus.end_data_stream().map_err(Error::Bus);
+
+        match (result, end_result) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Ok(()),
+        }
     }
 }

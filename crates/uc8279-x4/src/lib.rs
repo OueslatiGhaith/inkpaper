@@ -3,9 +3,10 @@
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::{BusyPolarity, EpdInterface};
 
-use crate::command::Command;
+use crate::{command::Command, grayscale::QUALITY_GRAYSCALE_LUTS};
 
 mod command;
+mod grayscale;
 
 const BUSY_POLARITY: BusyPolarity = BusyPolarity::ActiveLow;
 
@@ -330,6 +331,77 @@ impl Uc8279X4 {
         Ok(())
     }
 
+    pub async fn display_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+        turn_off: bool,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.validate_frame(lsb)?;
+        self.validate_frame(msb)?;
+
+        self.display_absolute_grayscale_base(bus, delay, lsb, msb)
+            .await?;
+
+        // UC8279-X4 uses inverted RAM polarity for the absolute selector planes.
+        self.stream_plane(bus, Command::OldPlane, lsb, true).await?;
+        self.stream_plane(bus, Command::NewPlane, msb, true).await?;
+
+        self.write_register(
+            bus,
+            Command::PanelSetting,
+            &self.config.panel_settings.external_lut,
+        )
+        .await?;
+
+        // the factory quality waveform uses the BW/WB registers in exchanged order on this panel.
+        const REGISTERS: [Command; 5] = [
+            Command::LutVcom,
+            Command::LutWhite,
+            Command::LutWhiteToBlack,
+            Command::LutBlackToWhite,
+            Command::LutBlack,
+        ];
+
+        for index in 0..QUALITY_GRAYSCALE_LUTS.len() {
+            self.write_register(bus, REGISTERS[index], &QUALITY_GRAYSCALE_LUTS[index])
+                .await?;
+        }
+
+        self.write_register(bus, Command::VcomDataInterval, &[self.config.vcom.full])
+            .await?;
+
+        self.power_on_if_needed(bus, delay).await?;
+
+        // PON reloads MTP state on this controller, so the external-LUT PSR must be reasserted
+        // immediately before DRF.
+        self.write_register(
+            bus,
+            Command::PanelSetting,
+            &self.config.panel_settings.external_lut,
+        )
+        .await?;
+
+        self.command(bus, Command::DisplayRefresh).await?;
+
+        self.wait_ready(bus, delay).await?;
+
+        self.need_full_clear = true;
+        self.old_plane_valid = false;
+
+        if turn_off {
+            self.power_off(bus, delay).await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn deep_sleep<B, D>(
         &mut self,
         bus: &mut B,
@@ -636,6 +708,87 @@ impl Uc8279X4 {
                 expected,
                 actual: frame.len(),
             });
+        }
+
+        Ok(())
+    }
+
+    async fn display_absolute_grayscale_base<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.stream_and_plane(bus, Command::NewPlane, lsb, msb)
+            .await?;
+
+        self.fill_white_plane(bus, Command::OldPlane).await?;
+
+        self.configure_refresh(bus, false).await?;
+
+        self.power_on_if_needed(bus, delay).await?;
+
+        self.write_register(
+            bus,
+            Command::PanelSetting,
+            &self.config.panel_settings.otp_lut,
+        )
+        .await?;
+
+        self.command(bus, Command::DisplayRefresh).await?;
+
+        self.wait_ready(bus, delay).await
+    }
+
+    async fn stream_and_plane<B>(
+        &self,
+        bus: &mut B,
+        command: Command,
+        lhs: &[u8],
+        rhs: &[u8],
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        let row_bytes = self.config.width as usize / 8;
+
+        self.command(bus, command).await?;
+
+        for _ in 0..self.config.gate_offset {
+            self.write_white_row(bus, row_bytes).await?;
+        }
+
+        let mut buffer = [0u8; STREAM_BUFFER_LEN];
+
+        for row in 0..self.config.visible_height as usize {
+            let row_start = row * row_bytes;
+
+            let mut offset = 0;
+
+            while offset < row_bytes {
+                let len = (row_bytes - offset).min(buffer.len());
+
+                for index in 0..len {
+                    let source_index = row_start + offset + index;
+
+                    buffer[index] = lhs[source_index] & rhs[source_index];
+                }
+
+                bus.data(&buffer[..len]).await.map_err(Error::Bus)?;
+
+                offset += len;
+            }
+        }
+
+        let visible_end = self.config.gate_offset + self.config.visible_height;
+
+        for _ in visible_end..self.config.addressed_height {
+            self.write_white_row(bus, row_bytes).await?;
         }
 
         Ok(())

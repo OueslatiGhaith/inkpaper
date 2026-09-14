@@ -3,9 +3,13 @@
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::{BusyPolarity, EpdInterface};
 
-use crate::command::Command;
+use crate::{
+    command::Command,
+    grayscale::{FACTORY_GRAYSCALE_BORDER, FACTORY_GRAYSCALE_LUT},
+};
 
 mod command;
+mod grayscale;
 
 const BUSY_POLARITY: BusyPolarity = BusyPolarity::ActiveHigh;
 
@@ -14,6 +18,7 @@ const DATA_ENTRY_X_INCREMENT_Y_DECREMENT: u8 = 0x01;
 const DISPLAY_UPDATE_NORMAL: u8 = 0x00;
 const DISPLAY_UPDATE_BYPASS_RED: u8 = 0x40;
 const AUTO_WRITE_PATTERN: u8 = 0xf7;
+const GRAYSCALE_STREAM_CHUNK: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -336,6 +341,90 @@ impl Ssd1677 {
                 .await?;
 
             self.write_plane(bus, Command::WriteRedRam, frame).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn display_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+        turn_off: bool,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.validate_frame(lsb)?;
+        self.validate_frame(msb)?;
+
+        self.set_full_ram_area(bus).await?;
+
+        // the public absolute encoding is
+        // back         = 00
+        // dark gray    = 10
+        // light gray   = 01
+        // white        = 11
+        // the SSD1677 factory bank uses the opposite polarity:
+        // black = 11, white = 00
+        // complement both planes during transfer
+        self.write_inverted_plane(bus, Command::WriteBlackWhiteRam, lsb)
+            .await?;
+        self.write_inverted_plane(bus, Command::WriteBlackWhiteRam, msb)
+            .await?;
+
+        self.load_factory_grayscale_lut(bus).await?;
+
+        self.command_data(bus, Command::BorderWaveform, &[FACTORY_GRAYSCALE_BORDER])
+            .await?;
+
+        // RED RAM must participate in the refresh
+        self.command_data(
+            bus,
+            Command::DisplayUpdateControl1,
+            &[DISPLAY_UPDATE_NORMAL],
+        )
+        .await?;
+
+        // factory absolute grayscale activation:
+        // CLOCK_ON | ANALOG_ON | MODE_SELECT | DISPLAY_START
+        self.command_data(bus, Command::DisplayUpdateControl2, &[0xcc])
+            .await?;
+        self.command(bus, Command::MasterActivation).await?;
+
+        bus.wait_busy(BUSY_POLARITY, delay)
+            .await
+            .map_err(Error::Bus)?;
+
+        self.screen_on = true;
+
+        // grayscale leaves intermediate electrophoretic state behind.
+        // the next ordinary B/W paint must not use a differential FAST update against
+        // those selector planes
+        self.needs_initial_clean = true;
+
+        if turn_off {
+            self.command_data(
+                bus,
+                Command::BorderWaveform,
+                &[self.config.border_waveform_init],
+            )
+            .await?;
+
+            self.command_data(bus, Command::DisplayUpdateControl2, &[0x03])
+                .await?;
+            self.command(bus, Command::MasterActivation).await?;
+
+            delay.delay_ms(200).await;
+
+            bus.wait_busy(BUSY_POLARITY, delay)
+                .await
+                .map_err(Error::Bus)?;
+
+            self.screen_on = false;
         }
 
         Ok(())
@@ -682,5 +771,49 @@ impl Ssd1677 {
         }
 
         Ok(region)
+    }
+
+    async fn write_inverted_plane<B>(
+        &self,
+        bus: &mut B,
+        command: Command,
+        frame: &[u8],
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        self.command(bus, command).await?;
+
+        let mut buffer = [0u8; GRAYSCALE_STREAM_CHUNK];
+
+        for source in frame.chunks(GRAYSCALE_STREAM_CHUNK) {
+            for index in 0..source.len() {
+                buffer[index] = !source[index];
+            }
+
+            bus.data(&buffer[..source.len()])
+                .await
+                .map_err(Error::Bus)?;
+        }
+
+        Ok(())
+    }
+
+    async fn load_factory_grayscale_lut<B>(&self, bus: &mut B) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        self.command_data(bus, Command::WriteLut, &FACTORY_GRAYSCALE_LUT[..105])
+            .await?;
+        self.command_data(bus, Command::GateVoltage, &[FACTORY_GRAYSCALE_LUT[105]])
+            .await?;
+        self.command_data(
+            bus,
+            Command::SourceVoltage,
+            &FACTORY_GRAYSCALE_LUT[106..109],
+        )
+        .await?;
+        self.command_data(bus, Command::WriteVcom, &[FACTORY_GRAYSCALE_LUT[109]])
+            .await
     }
 }

@@ -15,6 +15,12 @@ pub(crate) enum Command {
     DisplayRefresh = 0x12,
     NewPlane = 0x13,
 
+    LutVcom = 0x20,
+    LutWhite = 0x21,
+    LutBlackToWhite = 0x22,
+    LutWhiteToBlack = 0x23,
+    LutBlack = 0x24,
+
     VcomDataInterval = 0x50,
     Resolution = 0x61,
     GateSourceStart = 0x65,
