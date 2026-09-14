@@ -1,4 +1,4 @@
-use crate::{Color, Pixels};
+use crate::Color;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct VectorPoint {
@@ -156,7 +156,10 @@ pub enum StrokeJoin {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PathStroke {
-    pub width: Pixels,
+    /// stroke width in output pixels.
+    ///
+    /// unlike layout `Pixels`, vector strokes may have fractional widths.
+    pub width: f32,
     pub color: Color,
     pub cap: StrokeCap,
     pub join: StrokeJoin,
@@ -164,7 +167,7 @@ pub struct PathStroke {
 }
 
 impl PathStroke {
-    pub const fn new(width: Pixels, color: Color) -> Self {
+    pub const fn new(width: f32, color: Color) -> Self {
         Self {
             width,
             color,

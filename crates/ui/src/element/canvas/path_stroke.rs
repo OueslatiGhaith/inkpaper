@@ -1,10 +1,10 @@
 use crate::{
-    AffineTransform, CanvasPainter, Color, PathCommand, PathFill, PathStroke, Point, StrokeCap,
-    StrokeJoin, VectorPath, VectorPoint, px,
+    AffineTransform, CanvasPainter, Color, PathCommand, PathFill, PathStroke, StrokeCap,
+    StrokeJoin, VectorPath, VectorPoint,
 };
 
 use super::{
-    path::{FlattenedPathSink, flatten_path, round_to_i32},
+    path::{FlattenedPathSink, flatten_path},
     path_fill::paint_filled_path,
 };
 
@@ -96,13 +96,21 @@ pub(super) fn paint_stroked_path<P>(
 ) where
     P: CanvasPainter + ?Sized,
 {
-    if path.is_empty() || stroke.width.is_non_positive() {
+    if path.is_empty() || stroke_radius(stroke).is_none() {
         return;
     }
 
     let mut sink = StrokeSink::new(painter, stroke);
 
     flatten_path(path, transform, &mut sink);
+}
+
+fn stroke_radius(stroke: PathStroke) -> Option<f32> {
+    if !stroke.width.is_finite() || stroke.width <= 0.0 {
+        return None;
+    }
+
+    Some(stroke.width / 2.0)
 }
 
 fn paint_segment<P>(painter: &mut P, segment: Segment, stroke: PathStroke)
@@ -113,11 +121,9 @@ where
         return;
     };
 
-    let radius = stroke.width.get() as f32 / 2.0;
-
-    if radius <= 0.0 {
+    let Some(radius) = stroke_radius(stroke) else {
         return;
-    }
+    };
 
     let normal = VectorPoint::new(-direction.y * radius, direction.x * radius);
 
@@ -212,11 +218,9 @@ fn paint_cap<P>(painter: &mut P, segment: Segment, start: bool, stroke: PathStro
 where
     P: CanvasPainter + ?Sized,
 {
-    let radius = stroke.width.get() as f32 / 2.0;
-
-    if radius <= 0.0 {
+    let Some(radius) = stroke_radius(stroke) else {
         return;
-    }
+    };
 
     match stroke.cap {
         StrokeCap::Butt => {}
@@ -276,18 +280,18 @@ where
         return;
     }
 
+    let Some(radius) = stroke_radius(stroke) else {
+        return;
+    };
+
     let vertex = previous.to;
 
     match stroke.join {
         StrokeJoin::Round => {
-            let radius = stroke.width.get() as f32 / 2.0;
-
             fill_disk(painter, vertex, radius, stroke.color);
         }
 
         StrokeJoin::Bevel => {
-            let radius = stroke.width.get() as f32 / 2.0;
-
             let (outer_previous, outer_next) = outer_join_points(
                 vertex,
                 previous_direction,
@@ -322,11 +326,9 @@ fn paint_miter_join<P>(
 ) where
     P: CanvasPainter + ?Sized,
 {
-    let radius = stroke.width.get() as f32 / 2.0;
-
-    if radius <= 0.0 {
+    let Some(radius) = stroke_radius(stroke) else {
         return;
-    }
+    };
 
     let (outer_previous, outer_next) = outer_join_points(
         vertex,
@@ -517,7 +519,7 @@ mod tests {
         painter.stroke_path(
             VectorPath::new(&COMMANDS),
             AffineTransform::IDENTITY,
-            PathStroke::new(px(3), Color::BLACK),
+            PathStroke::new(3.0, Color::BLACK),
         );
 
         assert!(!painter.fills.is_empty());
@@ -542,7 +544,7 @@ mod tests {
         painter.stroke_path(
             VectorPath::new(&COMMANDS),
             AffineTransform::IDENTITY,
-            PathStroke::new(px(4), Color::BLACK).with_cap(StrokeCap::Round),
+            PathStroke::new(4.0, Color::BLACK).with_cap(StrokeCap::Round),
         );
 
         assert_eq!(painted_bounds(&painter), Some((2, 2, 10, 6)),);
@@ -560,7 +562,7 @@ mod tests {
         painter.stroke_path(
             VectorPath::new(&COMMANDS),
             AffineTransform::IDENTITY,
-            PathStroke::new(px(4), Color::BLACK).with_cap(StrokeCap::Square),
+            PathStroke::new(4.0, Color::BLACK).with_cap(StrokeCap::Square),
         );
 
         assert_eq!(painted_bounds(&painter), Some((2, 2, 10, 6)),);
@@ -579,7 +581,7 @@ mod tests {
         painter.stroke_path(
             VectorPath::new(&COMMANDS),
             AffineTransform::IDENTITY,
-            PathStroke::new(px(4), Color::BLACK).with_join(StrokeJoin::Bevel),
+            PathStroke::new(4.0, Color::BLACK).with_join(StrokeJoin::Bevel),
         );
 
         assert!(!painter.fills.is_empty());
@@ -598,9 +600,34 @@ mod tests {
         painter.stroke_path(
             VectorPath::new(&COMMANDS),
             AffineTransform::IDENTITY,
-            PathStroke::new(px(4), Color::BLACK).with_join(StrokeJoin::Miter),
+            PathStroke::new(4.0, Color::BLACK).with_join(StrokeJoin::Miter),
         );
 
         assert!(!painter.fills.is_empty());
+    }
+
+    #[test]
+    fn fractional_stroke_width_is_not_rounded_before_rasterization() {
+        const COMMANDS: [PathCommand; 2] = [
+            PathCommand::MoveTo(VectorPoint::new(2.0, 1.0)),
+            PathCommand::LineTo(VectorPoint::new(2.0, 9.0)),
+        ];
+
+        let mut painter = RecordingPainter::default();
+
+        painter.stroke_path(
+            VectorPath::new(&COMMANDS),
+            AffineTransform::IDENTITY,
+            PathStroke::new(8.0 / 3.0, Color::BLACK),
+        );
+
+        assert!(!painter.fills.is_empty());
+
+        for rect in &painter.fills {
+            assert_eq!(rect.origin.x, px(1),);
+            assert_eq!(rect.size.width, px(2),);
+        }
+
+        assert_eq!(painted_bounds(&painter), Some((1, 1, 3, 9)),);
     }
 }

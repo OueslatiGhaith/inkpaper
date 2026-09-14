@@ -1,6 +1,6 @@
 use crate::{
-    AffineTransform, CanvasPainter, Color, PaintReport, Painter, PathFill, PathStroke, Pixels,
-    Rect, ResolvedTextStyle, SvgSource, SvgViewBox, px,
+    AffineTransform, CanvasPainter, Color, PaintReport, Painter, PathFill, PathStroke, Rect,
+    ResolvedTextStyle, SvgSource, SvgViewBox,
 };
 
 pub(super) fn paint_svg<P>(
@@ -55,7 +55,7 @@ fn draw_svg(
         if let Some(stroke) = path.stroke {
             let width = scaled_stroke_width(stroke.width, scale);
 
-            if width.is_non_positive() {
+            if width <= 0.0 {
                 continue;
             }
 
@@ -111,24 +111,18 @@ fn view_box_transform(view_box: SvgViewBox, bounds: Rect) -> Option<(AffineTrans
     ))
 }
 
-fn scaled_stroke_width(width: f32, scale: f32) -> Pixels {
+fn scaled_stroke_width(width: f32, scale: f32) -> f32 {
     if !width.is_finite() || !scale.is_finite() || width <= 0.0 || scale <= 0.0 {
-        return px(0);
+        return 0.0;
     }
 
     let scaled = width * scale;
 
     if !scaled.is_finite() || scaled <= 0.0 {
-        return px(0);
+        return 0.0;
     }
 
-    if scaled >= i32::MAX as f32 {
-        return px(i32::MAX);
-    }
-
-    let rounded = (scaled + 0.5) as i32;
-
-    px(rounded.max(1))
+    scaled
 }
 
 #[cfg(test)]
@@ -137,7 +131,7 @@ mod tests {
 
     use crate::{
         Color, PathCommand, Pixels, Point, Size, StrokeCap, StrokeJoin, SvgPaint, SvgPath,
-        SvgStroke, VectorPath, VectorPoint,
+        SvgStroke, VectorPath, VectorPoint, px,
     };
 
     use super::*;
@@ -225,5 +219,15 @@ mod tests {
             .unwrap();
 
         assert_eq!((min_x, min_y, max_x, max_y,), (0, 4, 20, 6,),);
+    }
+
+    #[test]
+    fn svg_preserves_fractional_scaled_stroke_width() {
+        let width = scaled_stroke_width(2.0, 32.0 / 24.0);
+
+        assert!(
+            (width - 2.666_666_7).abs() < 0.000_001,
+            "expected 2.6666667px, got {width}",
+        );
     }
 }
