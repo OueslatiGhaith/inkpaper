@@ -1,6 +1,7 @@
 use defmt::Format;
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::EpdInterface;
+use inkpaper_ui::backend::EInkTone;
 use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Region as SsdRegion, Ssd1677};
 use uc8179::{
     RefreshMode as Uc8179RefreshMode, Region as Uc8179Region, Uc8179,
@@ -10,7 +11,9 @@ use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC
 use xteink_display_probe::Controller;
 
 use crate::firmware::{
-    framebuffer::FramebufferStorage, presenter::FrameUpdate, refresh_policy::RefreshRequest,
+    framebuffer::FramebufferStorage,
+    presenter::FrameUpdate,
+    refresh_policy::{BinaryUpdateMode, EInkCapabilities, GrayscaleUpdateMode, RefreshRequest},
 };
 
 #[derive(Debug, Format)]
@@ -62,30 +65,17 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        debug_assert!(!update.damage_has_grayscale() || update.frame_has_grayscale());
+        match update.presentation_tone() {
+            EInkTone::Gray4 => self.present_grayscale(bus, delay, frame, update).await,
+            EInkTone::Binary => {
+                let frame = frame.binary_plane();
 
-        let grayscale_on_panel = match self {
-            Self::Ssd1677(panel) => panel.overlay_grayscale_on_panel(),
-            Self::Uc8179(panel) => panel.grayscale_on_panel(),
-            Self::Uc8279(_) => false,
-        };
-
-        let damage_needs_grayscale = update.damage_has_grayscale();
-
-        let existing_grayscale_requires_preservation = (update.frame_has_grayscale()
-            || grayscale_on_panel)
-            && !self.supports_binary_update_over_grayscale();
-
-        if damage_needs_grayscale || existing_grayscale_requires_preservation {
-            return self.present_grayscale(bus, delay, frame, update).await;
-        }
-
-        let frame = frame.binary_plane();
-
-        match self {
-            Self::Ssd1677(panel) => present_ssd1677(panel, bus, delay, frame, update).await,
-            Self::Uc8179(panel) => present_uc8179(panel, bus, delay, frame, update).await,
-            Self::Uc8279(panel) => present_uc8279(panel, bus, delay, frame, update).await,
+                match self {
+                    Self::Ssd1677(panel) => present_ssd1677(panel, bus, delay, frame, update).await,
+                    Self::Uc8179(panel) => present_uc8179(panel, bus, delay, frame, update).await,
+                    Self::Uc8279(panel) => present_uc8279(panel, bus, delay, frame, update).await,
+                }
+            }
         }
     }
 
@@ -167,12 +157,20 @@ impl X4Panel {
         }
     }
 
-    pub const fn supports_partial_grayscale(&self) -> bool {
-        matches!(self, Self::Ssd1677(_) | Self::Uc8179(_))
-    }
+    pub const fn capabilities(&self) -> EInkCapabilities {
+        match self {
+            Self::Ssd1677(_) => {
+                EInkCapabilities::new(BinaryUpdateMode::Window, GrayscaleUpdateMode::Window)
+            }
 
-    pub const fn supports_binary_update_over_grayscale(&self) -> bool {
-        matches!(self, Self::Ssd1677(_))
+            Self::Uc8179(_) => {
+                EInkCapabilities::new(BinaryUpdateMode::FullPlane, GrayscaleUpdateMode::Window)
+            }
+
+            Self::Uc8279(_) => {
+                EInkCapabilities::new(BinaryUpdateMode::FullPlane, GrayscaleUpdateMode::FullPlane)
+            }
+        }
     }
 }
 

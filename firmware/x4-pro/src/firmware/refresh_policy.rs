@@ -8,6 +8,52 @@ pub enum RefreshRequest {
     Fast,
 }
 
+#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryUpdateMode {
+    FullPlane,
+    Window,
+}
+
+#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
+pub enum GrayscaleUpdateMode {
+    FullPlane,
+    Window,
+}
+
+#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
+pub struct EInkCapabilities {
+    binary_update: BinaryUpdateMode,
+    grayscale_update: GrayscaleUpdateMode,
+}
+
+impl EInkCapabilities {
+    pub const fn new(
+        binary_update: BinaryUpdateMode,
+        grayscale_update: GrayscaleUpdateMode,
+    ) -> Self {
+        Self {
+            binary_update,
+            grayscale_update,
+        }
+    }
+
+    pub const fn binary_update(self) -> BinaryUpdateMode {
+        self.binary_update
+    }
+
+    pub const fn grayscale_update(self) -> GrayscaleUpdateMode {
+        self.grayscale_update
+    }
+
+    pub const fn supports_partial_grayscale(self) -> bool {
+        matches!(self.grayscale_update, GrayscaleUpdateMode::Window)
+    }
+
+    pub const fn can_binary_update_over_grayscale(self) -> bool {
+        matches!(self.binary_update, BinaryUpdateMode::Window)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RefreshContext {
     full_damage: bool,

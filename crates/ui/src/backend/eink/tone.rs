@@ -13,6 +13,55 @@ pub enum EInkUiMode {
     BinaryDither,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum EInkTone {
+    #[default]
+    Binary,
+    Gray4,
+}
+
+impl EInkTone {
+    pub const fn has_native_gray(self) -> bool {
+        matches!(self, Self::Gray4)
+    }
+
+    pub(super) const fn merged(self, other: Self) -> Self {
+        if self.has_native_gray() || other.has_native_gray() {
+            Self::Gray4
+        } else {
+            Self::Binary
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct EInkPaintReport {
+    tone: EInkTone,
+}
+
+impl EInkPaintReport {
+    pub const fn tone(self) -> EInkTone {
+        self.tone
+    }
+
+    pub const fn has_native_gray(self) -> bool {
+        self.tone.has_native_gray()
+    }
+
+    pub(super) fn include(&mut self, tone: EInkTone) {
+        self.tone = self.tone.merged(tone);
+    }
+}
+
+pub(super) fn gray2_tone(color: Gray2) -> EInkTone {
+    match color.luma() {
+        0 | 3 => EInkTone::Binary,
+        _ => EInkTone::Gray4,
+    }
+}
+
 pub(super) struct BinaryDitherTarget<'a, D> {
     target: &'a mut D,
 }
@@ -138,5 +187,29 @@ mod tests {
 
         assert!(black > 0);
         assert!(white > 0);
+    }
+
+    #[test]
+    fn eink_paint_report_promotes_to_gray4() {
+        let mut report = EInkPaintReport::default();
+
+        assert_eq!(report.tone(), EInkTone::Binary);
+
+        report.include(EInkTone::Binary);
+        assert_eq!(report.tone(), EInkTone::Binary);
+
+        report.include(EInkTone::Gray4);
+        assert_eq!(report.tone(), EInkTone::Gray4);
+
+        report.include(EInkTone::Binary);
+        assert_eq!(report.tone(), EInkTone::Gray4);
+    }
+
+    #[test]
+    fn gray2_tone_distinguishes_binary_and_native_gray() {
+        assert_eq!(gray2_tone(Gray2::new(0)), EInkTone::Binary);
+        assert_eq!(gray2_tone(Gray2::new(1)), EInkTone::Gray4);
+        assert_eq!(gray2_tone(Gray2::new(2)), EInkTone::Gray4);
+        assert_eq!(gray2_tone(Gray2::new(3)), EInkTone::Binary);
     }
 }

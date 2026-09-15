@@ -1,9 +1,13 @@
+use core::cell::Cell;
+
 use embedded_graphics::{
-    Pixel as EgPixel, geometry::Point as EgPoint, prelude::DrawTarget as EgDrawTarget,
+    Pixel as EgPixel, geometry::Point as EgPoint, pixelcolor::GrayColor,
+    prelude::DrawTarget as EgDrawTarget,
 };
 
 use crate::{
-    ImagePaint, ImageResource, Rect, fitted_image_bounds, process_image_pixel, sample_image,
+    ImagePaint, ImageResource, Rect, backend::eink::EInkTone, fitted_image_bounds,
+    process_image_pixel, sample_image,
 };
 
 use super::{Gray2, coverage::color_to_gray2};
@@ -14,7 +18,7 @@ pub(super) fn draw_image_to<D>(
     bounds: Rect,
     paint: ImagePaint,
     clip: Option<Rect>,
-) -> Result<(), D::Error>
+) -> Result<EInkTone, D::Error>
 where
     D: EgDrawTarget<Color = Gray2>,
 {
@@ -27,14 +31,14 @@ where
         || destination.width().is_non_positive()
         || destination.height().is_non_positive()
     {
-        return Ok(());
+        return Ok(EInkTone::Binary);
     }
 
     let Some(visible) = (match clip {
         Some(clip) => destination.intersection(clip),
         None => Some(destination),
     }) else {
-        return Ok(());
+        return Ok(EInkTone::Binary);
     };
 
     let source_width = u32::try_from(source_size.width.get()).unwrap_or(0);
@@ -45,7 +49,7 @@ where
 
     if source_width == 0 || source_height == 0 || destination_width == 0 || destination_height == 0
     {
-        return Ok(());
+        return Ok(EInkTone::Binary);
     }
 
     let destination_x = destination.x().get();
@@ -55,6 +59,9 @@ where
     let top = visible.y().get();
     let right = visible.right().get();
     let bottom = visible.bottom().get();
+
+    let tone = Cell::new(EInkTone::Binary);
+    let tone_ref = &tone;
 
     let pixels = (top..bottom).flat_map(|y| {
         (left..right).filter_map(move |x| {
@@ -77,9 +84,17 @@ where
 
             let color = process_image_pixel(color, paint, x, y);
 
-            Some(EgPixel(EgPoint::new(x, y), color_to_gray2(color)))
+            let gray = color_to_gray2(color);
+
+            if matches!(gray.luma(), 1 | 2) {
+                tone_ref.set(EInkTone::Gray4);
+            }
+
+            Some(EgPixel(EgPoint::new(x, y), gray))
         })
     });
 
-    target.draw_iter(pixels)
+    target.draw_iter(pixels)?;
+
+    Ok(tone.get())
 }

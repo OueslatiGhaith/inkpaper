@@ -12,7 +12,9 @@ use embedded_graphics::{
 use crate::{
     BoxPaint, CanvasPainter, Color, DamageRegion, GlyphCacheError, ImagePaint, ImageSource,
     Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError, Size,
-    backend::eink::tone::BinaryDitherTarget, px, resources::RuntimeResources,
+    backend::eink::tone::{BinaryDitherTarget, gray2_tone},
+    px,
+    resources::RuntimeResources,
 };
 
 mod canvas;
@@ -22,7 +24,7 @@ mod text;
 mod tone;
 
 pub use coverage::EInkCoverageMode;
-pub use tone::EInkUiMode;
+pub use tone::{EInkPaintReport, EInkTone, EInkUiMode};
 
 pub use embedded_graphics::pixelcolor::Gray2;
 
@@ -45,6 +47,7 @@ where
     target: &'target mut D,
     coverage_mode: EInkCoverageMode<D>,
     ui_mode: EInkUiMode,
+    report: EInkPaintReport,
 }
 
 impl<'target, D> EInkPainter<'target, D>
@@ -56,6 +59,7 @@ where
             target,
             coverage_mode: EInkCoverageMode::BinaryThreshold,
             ui_mode: EInkUiMode::NativeGray2,
+            report: EInkPaintReport::default(),
         }
     }
 
@@ -73,11 +77,24 @@ where
         self.target
     }
 
+    pub const fn report(&self) -> EInkPaintReport {
+        self.report
+    }
+
+    fn record_native_ui_color(&mut self, color: Color) {
+        if self.ui_mode != EInkUiMode::NativeGray2 {
+            return;
+        }
+
+        self.report.include(gray2_tone(color_to_gray2(color)));
+    }
+
     pub fn clear_damage(&mut self, damage: DamageRegion, color: Color) -> Result<(), D::Error> {
         if damage.is_none() {
             return Ok(());
         }
 
+        self.record_native_ui_color(color);
         let color = color_to_gray2(color);
 
         if damage.is_full() {
@@ -117,6 +134,14 @@ where
         paint: BoxPaint,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
+        if let Some(background) = paint.background {
+            self.record_native_ui_color(background);
+        }
+
+        if let Some(border) = paint.border {
+            self.record_native_ui_color(border.color);
+        }
+
         let result = match self.ui_mode {
             EInkUiMode::NativeGray2 => {
                 if let Some(clip) = clip {
@@ -182,6 +207,12 @@ where
             EInkUiMode::BinaryDither => EInkCoverageMode::OrderedDither4x4,
         };
 
+        if self.ui_mode == EInkUiMode::NativeGray2 {
+            // canvas callbacks can paint arbitrary colors and coverage. Conservatively
+            // report Gray4 in native mode.
+            self.report.include(EInkTone::Gray4);
+        }
+
         let mut painter = EInkCanvasPainter::new(
             self.target,
             bounds.origin,
@@ -232,6 +263,16 @@ where
             EInkUiMode::BinaryDither => EInkCoverageMode::OrderedDither4x4,
         };
 
+        if self.ui_mode == EInkUiMode::NativeGray2 {
+            self.record_native_ui_color(style.color);
+
+            if matches!(self.coverage_mode, EInkCoverageMode::AlphaBlend { .. }) {
+                // partial glyph coverage can create intermediate Gray2 output even
+                // for a binary foreground color.
+                self.report.include(EInkTone::Gray4);
+            }
+        }
+
         draw_text_to(
             self.target,
             text,
@@ -276,7 +317,12 @@ where
             return Ok(());
         };
 
-        draw_image_to(self.target, image, bounds, paint, Some(clip)).map_err(EInkError::Target)
+        let tone = draw_image_to(self.target, image, bounds, paint, Some(clip))
+            .map_err(EInkError::Target)?;
+
+        self.report.include(tone);
+
+        Ok(())
     }
 }
 

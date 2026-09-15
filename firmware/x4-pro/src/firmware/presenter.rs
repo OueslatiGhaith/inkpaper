@@ -1,6 +1,6 @@
 use inkpaper_ui::{
     RuntimeResources,
-    backend::{EInkPainter, EInkUiMode},
+    backend::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
     prelude::*,
 };
 
@@ -9,7 +9,7 @@ use crate::firmware::{
         Framebuffer, FramebufferStorage, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation,
         PHYSICAL_HEIGHT, PHYSICAL_WIDTH, Region,
     },
-    refresh_policy::{RefreshContext, RefreshPolicy, RefreshRequest},
+    refresh_policy::{EInkCapabilities, RefreshContext, RefreshPolicy, RefreshRequest},
 };
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
@@ -56,17 +56,25 @@ pub type UiRuntime = Runtime<
 #[derive(Debug, Clone, Copy)]
 struct RenderedFrame {
     physical_damage: Region,
-    damage_has_grayscale: bool,
-    frame_has_grayscale: bool,
+    eink_report: EInkPaintReport,
     paint_report: PaintReport,
+}
+
+impl RenderedFrame {
+    const fn is_full_damage(self) -> bool {
+        self.physical_damage.x == 0
+            && self.physical_damage.y == 0
+            && self.physical_damage.width == PHYSICAL_WIDTH as u16
+            && self.physical_damage.height == PHYSICAL_HEIGHT as u16
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameUpdate {
     refresh: RefreshRequest,
     physical_damage: Region,
-    damage_has_grayscale: bool,
-    frame_has_grayscale: bool,
+    eink_report: EInkPaintReport,
+    presentation_tone: EInkTone,
     paint_report: PaintReport,
 }
 
@@ -74,15 +82,15 @@ impl FrameUpdate {
     pub const fn new(
         refresh: RefreshRequest,
         physical_damage: Region,
-        damage_has_grayscale: bool,
-        frame_has_grayscale: bool,
+        eink_report: EInkPaintReport,
+        presentation_tone: EInkTone,
         paint_report: PaintReport,
     ) -> Self {
         Self {
             refresh,
             physical_damage,
-            damage_has_grayscale,
-            frame_has_grayscale,
+            eink_report,
+            presentation_tone,
             paint_report,
         }
     }
@@ -95,12 +103,12 @@ impl FrameUpdate {
         self.physical_damage
     }
 
-    pub const fn damage_has_grayscale(self) -> bool {
-        self.damage_has_grayscale
+    pub const fn eink_report(self) -> EInkPaintReport {
+        self.eink_report
     }
 
-    pub const fn frame_has_grayscale(self) -> bool {
-        self.frame_has_grayscale
+    pub const fn presentation_tone(self) -> EInkTone {
+        self.presentation_tone
     }
 
     pub const fn paint_report(self) -> PaintReport {
@@ -115,9 +123,18 @@ impl FrameUpdate {
     }
 }
 
-#[derive(Default)]
 pub struct Presenter {
     refresh_policy: RefreshPolicy,
+    panel_tone: EInkTone,
+}
+
+impl Default for Presenter {
+    fn default() -> Self {
+        Self {
+            refresh_policy: RefreshPolicy::default(),
+            panel_tone: EInkTone::Binary,
+        }
+    }
 }
 
 impl Presenter {
@@ -135,11 +152,14 @@ impl Presenter {
         // reset history so subsequent updates begin from a clean panel
         self.refresh_policy.record_full_refresh();
 
+        let tone = rendered.eink_report.tone();
+        self.panel_tone = tone;
+
         FrameUpdate::new(
             RefreshRequest::Full,
             rendered.physical_damage,
-            rendered.damage_has_grayscale,
-            rendered.frame_has_grayscale,
+            rendered.eink_report,
+            tone,
             rendered.paint_report,
         )
     }
@@ -148,7 +168,7 @@ impl Presenter {
         &mut self,
         runtime: &mut UiRuntime,
         frame: &mut FramebufferStorage,
-        partial_grayscale_supported: bool,
+        capabilities: EInkCapabilities,
     ) -> Option<FrameUpdate> {
         let invalidation = runtime.take_render_invalidation();
         if invalidation.is_none() {
@@ -157,20 +177,63 @@ impl Presenter {
 
         let rendered = render_invalidation(runtime, frame, invalidation)?;
 
-        let refresh = if rendered.frame_has_grayscale && !partial_grayscale_supported {
-            self.refresh_policy.record_full_refresh();
-            RefreshRequest::Full
-        } else {
-            self.refresh_policy.select(refresh_context(rendered))
-        };
+        let presentation_tone = self.presentation_tone(rendered.eink_report.tone(), capabilities);
+
+        let refresh =
+            if presentation_tone == EInkTone::Gray4 && !capabilities.supports_partial_grayscale() {
+                self.refresh_policy.record_full_refresh();
+                RefreshRequest::Full
+            } else {
+                self.refresh_policy.select(refresh_context(rendered))
+            };
+
+        self.record_presented_frame(rendered, presentation_tone);
 
         Some(FrameUpdate::new(
             refresh,
             rendered.physical_damage,
-            rendered.damage_has_grayscale,
-            rendered.frame_has_grayscale,
+            rendered.eink_report,
+            presentation_tone,
             rendered.paint_report,
         ))
+    }
+
+    fn presentation_tone(&self, damage_tone: EInkTone, capabilities: EInkCapabilities) -> EInkTone {
+        if damage_tone == EInkTone::Gray4 {
+            return EInkTone::Gray4;
+        }
+
+        if self.panel_tone == EInkTone::Gray4 && !capabilities.can_binary_update_over_grayscale() {
+            return EInkTone::Gray4;
+        }
+
+        EInkTone::Binary
+    }
+
+    fn record_presented_frame(&mut self, rendered: RenderedFrame, presentation_tone: EInkTone) {
+        if rendered.is_full_damage() {
+            // the entire framebuffer now descrines the panel, regardless of which waveform
+            // was required to get there
+            self.panel_tone = rendered.eink_report.tone();
+            return;
+        }
+
+        if rendered.eink_report.tone() == EInkTone::Gray4 {
+            self.panel_tone = EInkTone::Gray4;
+            return;
+        }
+
+        if self.panel_tone == EInkTone::Binary {
+            self.panel_tone = EInkTone::Binary;
+            return;
+        }
+
+        // a binary partial update can remove some existing gray, but without tracking
+        // tone spatially we cannot prove it removed the last gray pixel. Stay conservative.
+        // `presentation_tone` is intentionally consumed here: either a binary window
+        // preserved gray elsewhere, or a grayscale presentation preserved/replayed it.
+        let _ = presentation_tone;
+        self.panel_tone = EInkTone::Gray4;
     }
 }
 
@@ -190,7 +253,7 @@ fn render_invalidation(
 
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
 
-    let paint_report = {
+    let (paint_report, eink_report) = {
         let mut painter = EInkPainter::new(&mut display).with_ui_mode(EInkUiMode::BinaryDither);
 
         match invalidation.kind() {
@@ -210,10 +273,15 @@ fn render_invalidation(
         }
 
         painter.clear_damage(damage, Color::WHITE).unwrap();
-        runtime
+
+        let paint_report = runtime
             .paint_with_damage(damage, &mut painter)
             .unwrap()
-            .expect("painting requires a mounted root")
+            .expect("painting requires a mounted root");
+
+        let eink_report = painter.report();
+
+        (paint_report, eink_report)
     };
 
     let physical_damage = physical_damage(&display, damage)?;
@@ -222,13 +290,9 @@ fn render_invalidation(
     // release it before querying storage directly.
     drop(display);
 
-    let damage_has_grayscale = frame.has_grayscale_in(physical_damage);
-    let frame_has_grayscale = frame.has_grayscale();
-
     Some(RenderedFrame {
         physical_damage,
-        damage_has_grayscale,
-        frame_has_grayscale,
+        eink_report,
         paint_report,
     })
 }

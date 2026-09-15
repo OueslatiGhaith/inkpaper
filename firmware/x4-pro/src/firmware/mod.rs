@@ -197,10 +197,10 @@ async fn main(spawner: Spawner) -> ! {
     let update = presenter.render_initial(runtime, frame);
     let damage = update.physical_damage();
     debug!(
-        "UI update refresh={:?} gray_damage={} gray_frame={} x={} y={} width={} height={}",
+        "UI update refresh={:?} tone={:?} presentation={:?} x={} y={} width={} height={}",
         update.refresh(),
-        update.damage_has_grayscale(),
-        update.frame_has_grayscale(),
+        update.eink_report().tone(),
+        update.presentation_tone(),
         damage.x,
         damage.y,
         damage.width,
@@ -343,9 +343,7 @@ async fn main(spawner: Spawner) -> ! {
 
         service_app_requests(runtime, app).await;
 
-        let Some(update) =
-            presenter.render_pending(runtime, frame, panel.supports_partial_grayscale())
-        else {
+        let Some(update) = presenter.render_pending(runtime, frame, panel.capabilities()) else {
             continue;
         };
 
