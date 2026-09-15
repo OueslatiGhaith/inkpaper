@@ -4,10 +4,12 @@ use inkpaper_ui::{FontRegistryError, prelude::*};
 use crate::{
     BrowseListing, BrowseRequest,
     browser::BrowserState,
+    reader::ReaderState,
     screens::{
         browse_files::{BrowseFilesScreen, BrowseFilesScreenProps},
         file_transfer::{FileTransferScreen, FileTransferScreenProps},
         home::{HomeScreen, HomeScreenProps},
+        reader::{ReaderScreen, ReaderScreenProps},
         recent_books::{RecentBooksScreen, RecentBooksScreenProps},
         settings::{SettingsScreen, SettingsScreenProps},
     },
@@ -17,6 +19,7 @@ use crate::{
 enum Screen {
     Home,
     BrowseFiles,
+    Reader,
     RecentBooks,
     FileTransfer,
     Settings,
@@ -25,6 +28,7 @@ enum Screen {
 pub struct InkPaperApp {
     screen: Screen,
     browser: BrowserState,
+    reader: ReaderState,
 }
 
 impl Default for InkPaperApp {
@@ -32,6 +36,7 @@ impl Default for InkPaperApp {
         Self {
             screen: Screen::Home,
             browser: BrowserState::default(),
+            reader: ReaderState::default(),
         }
     }
 }
@@ -99,23 +104,49 @@ impl InkPaperApp {
         }
     }
 
+    fn reader_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.navigate(Screen::BrowseFiles, cx);
+    }
+
     fn activate_browse_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
         if self.browser.request_entry(index) {
             cx.notify();
+            return;
         }
 
-        // TODO: opening files belongs to the reader
+        let Some(file) = self.browser.file_at(index) else {
+            return;
+        };
+
+        // EPUB is the first reader format. Other file types remain visible in Browse Files
+        // but intentionally do nothing until their corresponding reader/viewer exists.
+        if !file.is_epub() {
+            return;
+        }
+
+        let (path, title) = file.into_reader_parts();
+
+        self.reader.open(path, title);
+
+        self.navigate(Screen::Reader, cx);
     }
 }
 
 impl Render for InkPaperApp {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         let browse_files = cx.listener(Self::show_browse_files);
+
         let recent_books = cx.listener(Self::show_recent_books);
+
         let file_transfer = cx.listener(Self::show_file_transfer);
+
         let settings = cx.listener(Self::show_settings);
+
         let home = cx.listener(Self::show_home);
+
         let browse_back = cx.listener(Self::browse_back);
+
+        let reader_back = cx.listener(Self::reader_back);
 
         let browse_entry_listeners = if self.screen == Screen::BrowseFiles {
             (0..self.browser.entries().len())
@@ -148,6 +179,12 @@ impl Render for InkPaperApp {
                     revision={self.browser.revision()}
                     error={self.browser.error()}
                     on_back={browse_back}
+                />
+            {:else if self.screen == Screen::Reader}
+                <ReaderScreen
+                    title={self.reader.title()}
+                    path={self.reader.path()}
+                    on_back={reader_back}
                 />
             {:else if self.screen == Screen::RecentBooks}
                 <RecentBooksScreen

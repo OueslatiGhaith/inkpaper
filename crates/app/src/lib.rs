@@ -5,6 +5,7 @@ extern crate alloc;
 mod app;
 mod browser;
 mod components;
+mod reader;
 mod screens;
 mod typography;
 

@@ -53,6 +53,34 @@ impl BrowseEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BrowseFile {
+    path: String,
+    name: String,
+}
+
+impl BrowseFile {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) fn title(&self) -> &str {
+        split_name_extension(&self.name).0
+    }
+
+    pub(crate) fn is_epub(&self) -> bool {
+        split_name_extension(&self.name)
+            .1
+            .eq_ignore_ascii_case(".epub")
+    }
+
+    pub(crate) fn into_reader_parts(self) -> (String, String) {
+        let title = split_name_extension(&self.name).0.to_owned();
+
+        (self.path, title)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowseListing {
     path: String,
     entries: Vec<BrowseEntry>,
@@ -179,6 +207,19 @@ impl BrowserState {
     pub(crate) fn apply_error(&mut self) {
         self.error = true;
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub(crate) fn file_at(&self, index: usize) -> Option<BrowseFile> {
+        let entry = self.entries.get(index)?;
+
+        if entry.kind != BrowseEntryKind::File {
+            return None;
+        }
+
+        Some(BrowseFile {
+            path: join_path(&self.path, &entry.name),
+            name: entry.name.clone(),
+        })
     }
 }
 
