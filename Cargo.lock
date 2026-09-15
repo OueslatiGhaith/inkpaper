@@ -1676,7 +1676,9 @@ version = "0.1.0"
 dependencies = [
  "embedded-graphics",
  "embedded-graphics-simulator",
+ "futures-lite",
  "inkpaper-app",
+ "inkpaper-epub",
  "inkpaper-ui",
 ]
 
@@ -1741,6 +1743,7 @@ dependencies = [
  "hadris-io",
  "heapless 0.9.3",
  "inkpaper-app",
+ "inkpaper-epub",
  "inkpaper-ui",
  "rtt-target",
  "sdio",

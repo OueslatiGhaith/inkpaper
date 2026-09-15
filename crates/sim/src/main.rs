@@ -6,7 +6,11 @@ use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     sdl2::{Keycode, MouseButton},
 };
-use inkpaper_app::{BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp};
+use futures_lite::future;
+use inkpaper_app::{
+    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderDocument, ReaderRequest,
+};
+use inkpaper_epub::Epub;
 use inkpaper_ui::{
     backend::{CoverageMode, EmbeddedGraphicsPainter},
     prelude::*,
@@ -14,10 +18,12 @@ use inkpaper_ui::{
 
 use crate::{
     gesture::{PointerGesture, PointerRelease, wheel_scroll_offset},
+    host_epub::HostFileSource,
     runtime::new_runtime,
 };
 
 mod gesture;
+mod host_epub;
 mod runtime;
 
 const DISPLAY_WIDTH: u32 = 480;
@@ -105,23 +111,56 @@ fn ui_point(point: EgPoint) -> Point {
 
 fn service_app_requests(runtime: &impl RuntimeApi, app: Entity<InkPaperApp>) {
     loop {
-        let request = runtime
-            .update(app, |app, _| app.take_browse_request())
+        let (browse_request, reader_request) = runtime
+            .update(app, |app, _| {
+                (app.take_browse_request(), app.take_reader_request())
+            })
             .expect("app root must be available");
 
-        let Some(request) = request else {
+        if browse_request.is_none() && reader_request.is_none() {
             return;
-        };
+        }
 
-        match request {
-            BrowseRequest::ListDirectory(path) => match simulator_listing(&path) {
-                Some(listing) => runtime
-                    .update(app, move |app, cx| app.apply_browse_listing(listing, cx))
-                    .expect("app root must be available"),
-                None => runtime
-                    .update(app, |app, cx| app.apply_browse_error(cx))
-                    .expect("app root must be available"),
-            },
+        if let Some(request) = browse_request {
+            match request {
+                BrowseRequest::ListDirectory(path) => match simulator_listing(&path) {
+                    Some(listing) => {
+                        runtime
+                            .update(app, move |app, cx| {
+                                app.apply_browse_listing(listing, cx);
+                            })
+                            .expect("app root must be available");
+                    }
+                    None => {
+                        runtime
+                            .update(app, |app, cx| {
+                                app.apply_browse_error(cx);
+                            })
+                            .expect("app root must be available");
+                    }
+                },
+            }
+        }
+
+        if let Some(request) = reader_request {
+            match request {
+                ReaderRequest::OpenEpub(path) => match simulator_reader_document(path.clone()) {
+                    Some(document) => {
+                        runtime
+                            .update(app, move |app, cx| {
+                                app.apply_reader_document(document, cx);
+                            })
+                            .expect("app root must be available");
+                    }
+                    None => {
+                        runtime
+                            .update(app, move |app, cx| {
+                                app.apply_reader_error(path, cx);
+                            })
+                            .expect("app root must be available");
+                    }
+                },
+            }
         }
     }
 }
@@ -131,6 +170,7 @@ fn simulator_listing(path: &str) -> Option<BrowseListing> {
         "/" => vec![
             BrowseEntry::directory("Books"),
             BrowseEntry::directory("Documents"),
+            BrowseEntry::directory("Fixtures"),
             BrowseEntry::directory("Read"),
             BrowseEntry::file("A Fire Upon the Deep.epub"),
             BrowseEntry::file("Blindsight.epub"),
@@ -164,12 +204,50 @@ fn simulator_listing(path: &str) -> Option<BrowseListing> {
             BrowseEntry::file("Cloud Computing.pdf"),
         ],
 
+        "/Fixtures" => vec![
+            BrowseEntry::file("book-boundaries.epub"),
+            BrowseEntry::file("broken-chapter.epub"),
+            BrowseEntry::file("broken-image.epub"),
+        ],
+
         "/Read" => vec![],
 
         _ => return None,
     };
 
     Some(BrowseListing::new(path, entries))
+}
+
+fn simulator_reader_document(path: String) -> Option<ReaderDocument> {
+    let file_name = path.strip_prefix("/Fixtures/")?;
+
+    if !matches!(
+        file_name,
+        "book-boundaries.epub" | "broken-chapter.epub" | "broken-image.epub"
+    ) {
+        return None;
+    }
+
+    let host_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(file_name);
+
+    let source = HostFileSource::open(&host_path).ok()?;
+
+    let epub = future::block_on(Epub::open(source)).ok()?;
+
+    let package = epub.package();
+
+    Some(ReaderDocument::new(
+        path,
+        epub.metadata().title().map(String::from),
+        epub.metadata().creators().to_vec(),
+        String::from(package.path().as_str()),
+        package
+            .spine_manifest_item(0)
+            .map(|item| String::from(item.path().as_str())),
+        epub.spine().items().len(),
+    ))
 }
 
 fn main() {

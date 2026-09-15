@@ -11,5 +11,7 @@ defmt = ["inkpaper-app/defmt", "inkpaper-ui/defmt"]
 [dependencies]
 embedded-graphics = { workspace = true }
 embedded-graphics-simulator = { workspace = true }
+futures-lite = { workspace = true }
 inkpaper-app = { path = "../app" }
 inkpaper-ui = { path = "../ui", features = ["embedded-graphics", "ttf"] }
+inkpaper-epub = { path = "../epub" }

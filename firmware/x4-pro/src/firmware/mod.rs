@@ -15,7 +15,9 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use inkpaper_app::{BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp};
+use inkpaper_app::{
+    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderDocument, ReaderRequest,
+};
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
@@ -464,51 +466,101 @@ fn apply_rtc_state(state: RtcState) {
 
 async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>) {
     loop {
-        let request = match runtime.update(app, |app, _| app.take_browse_request()) {
-            Ok(request) => request,
+        let requests = match runtime.update(app, |app, _| {
+            (app.take_browse_request(), app.take_reader_request())
+        }) {
+            Ok(requests) => requests,
             Err(_) => {
-                warn!("failed to read app request");
-                return;
+                return warn!("failed to read app requests");
             }
         };
 
-        let Some(request) = request else {
+        let (browse_request, reader_request) = requests;
+
+        if browse_request.is_none() && reader_request.is_none() {
             return;
-        };
+        }
 
-        match request {
-            BrowseRequest::ListDirectory(path) => {
-                match storage::list_directory_and_wait(&path).await {
-                    Some(entries) => {
-                        let entries = entries
-                            .into_iter()
-                            .map(|entry| {
-                                let (name, is_directory) = entry.into_parts();
-                                if is_directory {
-                                    BrowseEntry::directory(name)
-                                } else {
-                                    BrowseEntry::file(name)
-                                }
-                            })
-                            .collect();
+        if let Some(request) = browse_request {
+            match request {
+                BrowseRequest::ListDirectory(path) => {
+                    match storage::list_directory_and_wait(&path).await {
+                        Some(entries) => {
+                            let entries = entries
+                                .into_iter()
+                                .map(|entry| {
+                                    let (name, is_directory) = entry.into_parts();
 
-                        let listing = BrowseListing::new(path, entries);
+                                    if is_directory {
+                                        BrowseEntry::directory(name)
+                                    } else {
+                                        BrowseEntry::file(name)
+                                    }
+                                })
+                                .collect();
 
-                        if runtime
-                            .update(app, move |app, cx| app.apply_browse_listing(listing, cx))
-                            .is_err()
-                        {
-                            warn!("failed to apply browse listing");
-                            return;
+                            let listing = BrowseListing::new(path, entries);
+
+                            if runtime
+                                .update(app, move |app, cx| {
+                                    app.apply_browse_listing(listing, cx);
+                                })
+                                .is_err()
+                            {
+                                return warn!("failed to apply browse listing");
+                            }
+                        }
+                        None => {
+                            if runtime
+                                .update(app, |app, cx| {
+                                    app.apply_browse_error(cx);
+                                })
+                                .is_err()
+                            {
+                                return warn!("failed to apply browse error");
+                            }
                         }
                     }
-                    None => {
-                        if runtime
-                            .update(app, |app, cx| app.apply_browse_error(cx))
-                            .is_err()
-                        {
-                            warn!("failed to apply browse error");
-                            return;
+                }
+            }
+        }
+
+        if let Some(request) = reader_request {
+            match request {
+                ReaderRequest::OpenEpub(path) => {
+                    match storage::read_epub_metadata_and_wait(&path).await {
+                        Some(metadata) => {
+                            let (title, creators, package_path, first_spine_path, spine_len) =
+                                metadata.into_parts();
+
+                            let document = ReaderDocument::new(
+                                path,
+                                title,
+                                creators,
+                                package_path,
+                                first_spine_path,
+                                spine_len,
+                            );
+
+                            if runtime
+                                .update(app, move |app, cx| {
+                                    app.apply_reader_document(document, cx);
+                                })
+                                .is_err()
+                            {
+                                return warn!("failed to apply reader document");
+                            }
+                        }
+
+                        None => {
+                            if runtime
+                                .update(app, move |app, cx| {
+                                    app.apply_reader_error(path, cx);
+                                })
+                                .is_err()
+                            {
+                                return warn!("failed to apply reader error");
+                            }
                         }
                     }
                 }

@@ -1,8 +1,8 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
-    BrowseListing, BrowseRequest,
+    BrowseListing, BrowseRequest, ReaderDocument, ReaderRequest,
     browser::BrowserState,
     reader::ReaderState,
     screens::{
@@ -130,22 +130,44 @@ impl InkPaperApp {
 
         self.navigate(Screen::Reader, cx);
     }
+
+    pub fn take_reader_request(&mut self) -> Option<ReaderRequest> {
+        self.reader.take_request()
+    }
+
+    pub fn apply_reader_document(
+        &mut self,
+        document: ReaderDocument,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let changed = self.reader.apply_document(document);
+
+        if changed {
+            cx.notify();
+        }
+
+        changed
+    }
+
+    pub fn apply_reader_error(&mut self, path: String, cx: &mut Context<'_, Self>) -> bool {
+        let changed = self.reader.apply_error(&path);
+
+        if changed {
+            cx.notify();
+        }
+
+        changed
+    }
 }
 
 impl Render for InkPaperApp {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         let browse_files = cx.listener(Self::show_browse_files);
-
         let recent_books = cx.listener(Self::show_recent_books);
-
         let file_transfer = cx.listener(Self::show_file_transfer);
-
         let settings = cx.listener(Self::show_settings);
-
         let home = cx.listener(Self::show_home);
-
         let browse_back = cx.listener(Self::browse_back);
-
         let reader_back = cx.listener(Self::reader_back);
 
         let browse_entry_listeners = if self.screen == Screen::BrowseFiles {
@@ -183,6 +205,9 @@ impl Render for InkPaperApp {
             {:else if self.screen == Screen::Reader}
                 <ReaderScreen
                     title={self.reader.title()}
+                    creator={self.reader.creator()}
+                    status={self.reader.status()}
+                    detail={self.reader.detail()}
                     path={self.reader.path()}
                     on_back={reader_back}
                 />

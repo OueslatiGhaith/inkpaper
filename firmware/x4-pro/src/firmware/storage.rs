@@ -20,6 +20,7 @@ use hadris_io::{
     Error as HadrisError, ErrorKind as HadrisErrorKind, Result as HadrisResult, SeekFrom,
     r#async::{Read as HadrisRead, Seek as HadrisSeek},
 };
+use inkpaper_epub::{Epub, EpubSource};
 use sdio::{BlockDevice, MmcBus, sd::Card};
 
 use crate::firmware::power::SdPower;
@@ -42,11 +43,14 @@ static ROOT_LIST_DONE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static DIRECTORY_LIST_DONE: Signal<CriticalSectionRawMutex, Option<Vec<StorageEntry>>> =
     Signal::new();
+static EPUB_METADATA_DONE: Signal<CriticalSectionRawMutex, Option<StorageEpubMetadata>> =
+    Signal::new();
 
 #[derive(Debug)]
 enum Command {
     ListRoot,
     ListDirectory(String),
+    ReadEpubMetadata(String),
     Shutdown,
 }
 
@@ -59,6 +63,88 @@ pub struct StorageEntry {
 impl StorageEntry {
     pub fn into_parts(self) -> (String, bool) {
         (self.name, self.is_directory)
+    }
+}
+
+#[derive(Debug)]
+pub struct StorageEpubMetadata {
+    title: Option<String>,
+    creators: Vec<String>,
+    package_path: String,
+    first_spine_path: Option<String>,
+    spine_len: usize,
+}
+
+impl StorageEpubMetadata {
+    pub fn into_parts(self) -> (Option<String>, Vec<String>, String, Option<String>, usize) {
+        (
+            self.title,
+            self.creators,
+            self.package_path,
+            self.first_spine_path,
+            self.spine_len,
+        )
+    }
+}
+
+#[derive(Debug)]
+enum FatEpubSourceError {
+    Storage(hadris_fat::Error),
+    UnexpectedEof,
+}
+
+struct FatEpubSource<'a, D>
+where
+    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
+{
+    reader: hadris_fat::r#async::read::FileReader<'a, D>,
+    len: u64,
+}
+
+impl<'a, D> FatEpubSource<'a, D>
+where
+    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
+{
+    fn new(reader: hadris_fat::r#async::read::FileReader<'a, D>) -> Self {
+        let len = reader.size() as u64;
+
+        Self { reader, len }
+    }
+}
+
+impl<D> EpubSource for FatEpubSource<'_, D>
+where
+    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
+{
+    type Error = FatEpubSourceError;
+
+    async fn len(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.len)
+    }
+
+    async fn read_exact_at(&mut self, offset: u64, buffer: &mut [u8]) -> Result<(), Self::Error> {
+        self.reader
+            .seek(SeekFrom::Start(offset))
+            .await
+            .map_err(FatEpubSourceError::Storage)?;
+
+        let mut read = 0usize;
+
+        while read < buffer.len() {
+            let count = self
+                .reader
+                .read(&mut buffer[read..])
+                .await
+                .map_err(FatEpubSourceError::Storage)?;
+
+            if count == 0 {
+                return Err(FatEpubSourceError::UnexpectedEof);
+            }
+
+            read += count;
+        }
+
+        Ok(())
     }
 }
 
@@ -84,6 +170,14 @@ pub async fn list_directory_and_wait(path: &str) -> Option<Vec<StorageEntry>> {
         .send(Command::ListDirectory(String::from(path)))
         .await;
     DIRECTORY_LIST_DONE.wait().await
+}
+
+pub async fn read_epub_metadata_and_wait(path: &str) -> Option<StorageEpubMetadata> {
+    EPUB_METADATA_DONE.reset();
+    COMMANDS
+        .send(Command::ReadEpubMetadata(String::from(path)))
+        .await;
+    EPUB_METADATA_DONE.wait().await
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,7 +329,7 @@ pub async fn storage_task(
     mut sd_power: SdPower<'static>,
 ) {
     info!("storage service starting");
-    debug!("SDMMC configuration slot=1 clk_gpio=41 cmd_gpio=42 data0_gpio=40 enable_gpio=5",);
+    debug!("SDMMC configuration slot=1 clk_gpio=41 cmd_gpio=42 data0_gpio=40 enable_gpio=5");
 
     let controller = match SdHostController::new(sdhost, Config::default()) {
         Ok(controller) => controller,
@@ -366,6 +460,10 @@ where
                 let entries = list_directory(filesystem, &path).await;
                 DIRECTORY_LIST_DONE.signal(entries);
             }
+            Command::ReadEpubMetadata(path) => {
+                let metadata = read_epub_metadata(filesystem, &path).await;
+                EPUB_METADATA_DONE.signal(metadata);
+            }
             Command::Shutdown => {
                 debug!("storage shutdown requested");
                 return;
@@ -384,6 +482,7 @@ async fn serve_unavailable(sd_power: &mut SdPower<'_>) {
         match COMMANDS.receive().await {
             Command::ListRoot => ROOT_LIST_DONE.signal(false),
             Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(None),
+            Command::ReadEpubMetadata(_) => EPUB_METADATA_DONE.signal(None),
             Command::Shutdown => {
                 // GPIO5 is already HIGH, but establish it explicitly before
                 // acknowledging the power path
@@ -423,7 +522,7 @@ where
         let name = logged_entry_name(&entry);
 
         if entry.is_directory() {
-            debug!("root entry kind=directory name={}", name.as_str(),);
+            debug!("root entry kind=directory name={}", name.as_str());
         } else {
             debug!(
                 "root entry kind=file name={} bytes={}",
@@ -435,7 +534,7 @@ where
         count += 1;
     }
 
-    info!("root directory listed entries={}", count,);
+    info!("root directory listed entries={}", count);
 
     true
 }
@@ -469,7 +568,7 @@ where
         let entry = match result {
             Ok(DirectoryEntry::Entry(entry)) => entry,
             Err(error) => {
-                warn!("directory read failed path={} error={:?}", path, error,);
+                warn!("directory read failed path={} error={:?}", path, error);
                 return None;
             }
         };
@@ -488,6 +587,53 @@ where
     debug!("directory listed path={} entries={}", path, output.len());
 
     Some(output)
+}
+
+async fn read_epub_metadata<D>(filesystem: &FatVolume<D>, path: &str) -> Option<StorageEpubMetadata>
+where
+    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
+{
+    debug!("opening EPUB metadata path={}", path);
+
+    let reader = match filesystem.open_file_path(path).await {
+        Ok(reader) => reader,
+        Err(error) => {
+            warn!("EPUB file open failed path={} error={:?}", path, error);
+            return None;
+        }
+    };
+
+    let source = FatEpubSource::new(reader);
+
+    let epub = match Epub::open(source).await {
+        Ok(epub) => epub,
+        Err(_) => {
+            warn!("EPUB parse failed path={}", path);
+            return None;
+        }
+    };
+
+    let package = epub.package();
+
+    let title = epub.metadata().title().map(String::from);
+    let creators = epub.metadata().creators().to_vec();
+    let package_path = String::from(package.path().as_str());
+
+    let first_spine_path = package
+        .spine_manifest_item(0)
+        .map(|item| String::from(item.path().as_str()));
+
+    let spine_len = epub.spine().items().len();
+
+    info!("EPUB opened path={} spine_items={}", path, spine_len);
+
+    Some(StorageEpubMetadata {
+        title,
+        creators,
+        package_path,
+        first_spine_path,
+        spine_len,
+    })
 }
 
 fn owned_entry_name(entry: &FileEntry) -> String {
@@ -524,7 +670,7 @@ fn logged_entry_name(entry: &FileEntry) -> heapless::String<LOGGED_FILE_NAME_BYT
         return output;
     }
 
-    let _ = write!(output, "<OEM {:02x?}>", entry.short_name().raw_bytes(),);
+    let _ = write!(output, "<OEM {:02x?}>", entry.short_name().raw_bytes());
 
     output
 }
