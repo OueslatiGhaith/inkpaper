@@ -488,7 +488,7 @@ fn font_weight_from_f32(value: f32) -> FontWeight {
         return FontWeight::NORMAL;
     }
 
-    let value = value.clamp(1.0, 1000.0).round();
+    let value = value.clamp(1.0, 1000.0);
 
-    FontWeight::new(value as u16)
+    FontWeight::new((value + 0.5) as u16)
 }
