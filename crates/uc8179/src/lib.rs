@@ -543,49 +543,43 @@ impl Uc8179 {
 
         let region = self.normalize_region(region)?;
 
-        // this path relies on the same clean B/W baseline established by the grayscale-window
-        // implementation. If that baseline isn't available, fall back to the proven general path.
+        // This path relies on the clean B/W baseline established by the grayscale-window
+        // implementation.
         if self.need_full_clear || !self.old_plane_valid || !self.grayscale_on_panel {
             return self
                 .display_grayscale_window(bus, delay, lsb, msb, region, RefreshMode::Fast, turn_off)
                 .await;
         }
 
-        // the caller expects a binary-only damage region. Keep this defensive check so a
-        // future renderer bug cannot silently skip a required grayscale selector pass.
+        // a binary-preserving update is valid only if the damaged region itself contains
+        // no native Gray4 pixels.
         if self.region_has_grayscale(lsb, msb, region) {
             return self
                 .display_grayscale_window(bus, delay, lsb, msb, region, RefreshMode::Fast, turn_off)
                 .await;
         }
 
-        // DTM1 contains the previous clean B/W base.
-        // put the new clean B/W base in DTM2. For our 2-bit framebuffer:
-        // black = 00 -> base 0
-        // dark  = 10 -> base 0
-        // light = 01 -> base 0
-        // white = 11 -> base 1
-        self.stream_and_plane(bus, Command::NewPlane, lsb, msb)
+        // DTM1 currently contains the preceding clean B/W base.
+        // only replace DTM2 inside the damaged window. PTL causes the controller's DTM
+        // write pointer to consume exactly the supplied window payload rather than
+        // a complete screen.
+        self.stream_and_plane_window(bus, Command::NewPlane, lsb, msb, region)
             .await?;
 
-        // physically transition only the damaged window from the old B/W base to the new
-        // B/W base. This is the OEM XTF_PRE_BW_MID path already validated by
-        // display_grayscale_window().
+        // physically transition only that same region from the previous B/W base to
+        // the new one using XTF_PRE_BW_MID.
         self.run_grayscale_precondition(bus, delay, region).await?;
 
-        // unlike display_grayscale_window(), no grayscale selector waveform ran:
-        // DTM2 still contains the correct new B/W base.
-        // only DTM1 needs to be updated so both controller planes once again contain
-        // the baseline required by the next differential update.
-        self.stream_and_plane(bus, Command::OldPlane, lsb, msb)
+        // no Gray4 selector waveform ran, so DTM2 still contains the correct new baseline.
+        // update only the corresponding DTM1 window so both controller planes agree
+        // again for the next differential transition.
+        self.stream_and_plane_window(bus, Command::OldPlane, lsb, msb, region)
             .await?;
 
         self.old_plane_valid = true;
         self.need_full_clear = false;
 
-        // this operation deliberately preserves grayscale outside the update window.
-        // Stay conservative until a later full-frame update proves that all physical
-        // grayscale has been removed.
+        // native grayscale outside the updated window was deliberately left untouched.
         self.grayscale_on_panel = true;
 
         if turn_off {
@@ -988,6 +982,85 @@ impl Uc8179 {
         }
     }
 
+    async fn stream_and_plane_window<B>(
+        &self,
+        bus: &mut B,
+        command: Command,
+        lhs: &[u8],
+        rhs: &[u8],
+        region: Region,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        let region = self.normalize_region(region)?;
+
+        let stride = self.config.width as usize / 8;
+
+        let first_byte = region.x as usize / 8;
+        let row_bytes = region.width as usize / 8;
+
+        debug_assert!(region.x.is_multiple_of(8));
+        debug_assert!(region.width.is_multiple_of(8));
+        debug_assert!(row_bytes > 0);
+
+        self.enter_partial_window(bus, region).await?;
+
+        self.command(bus, command).await?;
+
+        bus.begin_data_stream().await.map_err(Error::Bus)?;
+
+        let mut result = Ok(());
+        let mut buffer = [0u8; STREAM_BUFFER_LEN];
+
+        let first_row = region.y as usize;
+        let end_row = first_row + region.height as usize;
+
+        // UC8179/X4 Pro panel memory order is vertically reversed.
+        //
+        // partial_window_data() performs the same transformation for PTL, so the payload
+        // must follow the same order as stream_and_plane():
+        // bottom framebuffer row first, top framebuffer row last.
+        for row in (first_row..end_row).rev() {
+            let row_start = row * stride + first_byte;
+
+            let mut offset = 0;
+
+            while offset < row_bytes {
+                let len = (row_bytes - offset).min(buffer.len());
+
+                for index in 0..len {
+                    let source_index = row_start + offset + index;
+
+                    buffer[index] = grayscale_base_byte(lhs[source_index], rhs[source_index]);
+                }
+
+                if let Err(error) = bus.stream_data(&buffer[..len]).await.map_err(Error::Bus) {
+                    result = Err(error);
+                    break;
+                }
+
+                offset += len;
+            }
+
+            if result.is_err() {
+                break;
+            }
+        }
+
+        let end_result = bus.end_data_stream().map_err(Error::Bus);
+
+        // always attempt to leave partial mode after opening it.
+        let partial_out_result = self.command(bus, Command::PartialOut).await;
+
+        match (result, end_result, partial_out_result) {
+            (Err(error), _, _) => Err(error),
+            (Ok(()), Err(error), _) => Err(error),
+            (Ok(()), Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(()), Ok(())) => Ok(()),
+        }
+    }
+
     async fn load_grayscale_luts<B>(&self, bus: &mut B) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
@@ -1212,23 +1285,29 @@ const fn grayscale_base_byte(lsb: u8, msb: u8) -> u8 {
     lsb & msb
 }
 
+const fn region_buffer_len(region: Region) -> usize {
+    region.width as usize * region.height as usize / 8
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::region_buffer_len;
+
     use super::{Error, Region, Uc8179, X4_PRO_800X480, grayscale_base_byte};
 
     #[test]
     fn absolute_grayscale_maps_to_expected_bw_base() {
         // black: 00 -> black base
-        assert_eq!(grayscale_base_byte(0x00, 0x00,), 0x00,);
+        assert_eq!(grayscale_base_byte(0x00, 0x00), 0x00);
 
         // dark: 10 -> black base
-        assert_eq!(grayscale_base_byte(0xff, 0x00,), 0x00,);
+        assert_eq!(grayscale_base_byte(0xff, 0x00), 0x00);
 
         // light: 01 -> black base
-        assert_eq!(grayscale_base_byte(0x00, 0xff,), 0x00,);
+        assert_eq!(grayscale_base_byte(0x00, 0xff), 0x00);
 
         // white: 11 -> white base
-        assert_eq!(grayscale_base_byte(0xff, 0xff,), 0xff,);
+        assert_eq!(grayscale_base_byte(0xff, 0xff), 0xff);
     }
 
     #[test]
@@ -1239,7 +1318,7 @@ mod tests {
             .normalize_region::<()>(Region::new(13, 10, 11, 20))
             .unwrap();
 
-        assert_eq!(region, Region::new(8, 10, 16, 20,),);
+        assert_eq!(region, Region::new(8, 10, 16, 20));
     }
 
     #[test]
@@ -1248,7 +1327,7 @@ mod tests {
 
         let result = panel.normalize_region::<()>(Region::new(10, 10, 0, 20));
 
-        assert!(matches!(result, Err(Error::EmptyRegion),));
+        assert!(matches!(result, Err(Error::EmptyRegion)));
     }
 
     #[test]
@@ -1278,7 +1357,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            panel.partial_window_data(region,),
+            panel.partial_window_data(region),
             [0x00, 0x08, 0x00, 0x17, 0x01, 0xc2, 0x01, 0xd5, 0x01],
         );
     }
@@ -1290,8 +1369,20 @@ mod tests {
         let region = Region::new(0, 0, 800, 480);
 
         assert_eq!(
-            panel.partial_window_data(region,),
+            panel.partial_window_data(region),
             [0x00, 0x00, 0x03, 0x1f, 0x00, 0x00, 0x01, 0xdf, 0x01],
         );
+    }
+
+    #[test]
+    fn partial_region_payload_contains_only_window_bytes() {
+        let panel = Uc8179::new(X4_PRO_800X480);
+
+        let region = panel
+            .normalize_region::<()>(Region::new(13, 10, 11, 20))
+            .unwrap();
+
+        assert_eq!(region, Region::new(8, 10, 16, 20));
+        assert_eq!(region_buffer_len(region), 40);
     }
 }
