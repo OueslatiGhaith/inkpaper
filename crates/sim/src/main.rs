@@ -12,8 +12,12 @@ use inkpaper_ui::{
     prelude::*,
 };
 
-use crate::runtime::new_runtime;
+use crate::{
+    gesture::{PointerGesture, PointerRelease, wheel_scroll_offset},
+    runtime::new_runtime,
+};
 
+mod gesture;
 mod runtime;
 
 const DISPLAY_WIDTH: u32 = 480;
@@ -128,8 +132,17 @@ fn simulator_listing(path: &str) -> Option<BrowseListing> {
             BrowseEntry::directory("Books"),
             BrowseEntry::directory("Documents"),
             BrowseEntry::directory("Read"),
+            BrowseEntry::file("A Fire Upon the Deep.epub"),
+            BrowseEntry::file("Blindsight.epub"),
+            BrowseEntry::file("Children of Time.epub"),
             BrowseEntry::file("Dune.epub"),
+            BrowseEntry::file("Foundation.epub"),
+            BrowseEntry::file("Hyperion.epub"),
+            BrowseEntry::file("Neuromancer.epub"),
             BrowseEntry::file("Project Hail Mary.epub"),
+            BrowseEntry::file("Snow Crash.epub"),
+            BrowseEntry::file("The Dispossessed.epub"),
+            BrowseEntry::file("The Left Hand of Darkness.epub"),
             BrowseEntry::file("The Three-Body Problem.epub"),
         ],
 
@@ -176,6 +189,10 @@ fn main() {
 
     let mut window = Window::new("InkPaper", &output_settings);
 
+    let mut pointer = PointerGesture::default();
+    let mut mouse_position =
+        Point::new(px(DISPLAY_WIDTH as i32 / 2), px(DISPLAY_HEIGHT as i32 / 2));
+
     'running: loop {
         window.update(&display);
 
@@ -187,16 +204,53 @@ fn main() {
                     mouse_btn: MouseButton::Left,
                     point,
                 } => {
-                    runtime.begin_activation_at(ui_point(point));
+                    mouse_position = ui_point(point);
+
+                    pointer.begin(mouse_position);
+                    runtime.begin_activation_at(mouse_position);
+                }
+
+                SimulatorEvent::MouseMove { point } => {
+                    mouse_position = ui_point(point);
+
+                    if let Some(update) = pointer.move_to(mouse_position) {
+                        if update.started {
+                            runtime.cancel_activation();
+                        }
+
+                        runtime.scroll_at(update.origin, update.delta);
+                    }
                 }
 
                 SimulatorEvent::MouseButtonUp {
                     mouse_btn: MouseButton::Left,
                     point,
                 } => {
-                    runtime
-                        .complete_activation_at(ui_point(point))
-                        .expect("UI activation callback failed");
+                    mouse_position = ui_point(point);
+
+                    match pointer.finish(mouse_position) {
+                        PointerRelease::None => {
+                            runtime.cancel_activation();
+                        }
+
+                        PointerRelease::Tap(position) => {
+                            runtime
+                                .complete_activation_at(position)
+                                .expect("UI activation callback failed");
+                        }
+
+                        PointerRelease::Drag { origin, delta } => {
+                            runtime.cancel_activation();
+                            runtime.scroll_at(origin, delta);
+                        }
+                    }
+                }
+
+                SimulatorEvent::MouseWheel {
+                    scroll_delta,
+                    direction,
+                } => {
+                    runtime.scroll_at(mouse_position, wheel_scroll_offset(scroll_delta, direction));
                 }
 
                 SimulatorEvent::KeyDown {
@@ -233,7 +287,7 @@ fn main() {
                 }
 
                 SimulatorEvent::KeyDown {
-                    keycode: Keycode::Escape,
+                    keycode: Keycode::Home,
                     repeat: false,
                     ..
                 } => {

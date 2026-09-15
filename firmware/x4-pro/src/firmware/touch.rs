@@ -13,6 +13,34 @@ use crate::firmware::{
 };
 
 const POLL_INTERVAL_MS: u64 = 10;
+const DRAG_THRESHOLD_PX: u16 = 12;
+
+#[derive(Debug, Clone, Copy)]
+struct ActiveTouch {
+    origin: TouchPosition,
+    position: TouchPosition,
+    dragged: bool,
+}
+
+impl ActiveTouch {
+    fn new(position: TouchPosition) -> Self {
+        Self {
+            origin: position,
+            position,
+            dragged: false,
+        }
+    }
+
+    fn update(&mut self, position: TouchPosition) {
+        self.position = position;
+        if self.dragged {
+            return;
+        }
+
+        self.dragged = self.origin.x().abs_diff(position.x()) >= DRAG_THRESHOLD_PX
+            || self.origin.y().abs_diff(position.y()) >= DRAG_THRESHOLD_PX;
+    }
+}
 
 pub struct TouchController<'d, I2C> {
     driver: Gt911<I2C>,
@@ -106,7 +134,7 @@ where
 
 #[embassy_executor::task]
 pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
-    let mut active_touch = None;
+    let mut active_touch: Option<ActiveTouch> = None;
     let mut home_pressed = false;
     let mut consecutive_errors = 0u16;
 
@@ -117,7 +145,7 @@ pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
 
                 let home = frame.home_key();
                 if home && !home_pressed {
-                    home_pressed = true
+                    home_pressed = true;
                 } else if !home && home_pressed {
                     home_pressed = false;
                     INPUT_EVENTS
@@ -127,26 +155,34 @@ pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
 
                 let next_touch = frame.first_point().map(logical_position);
 
-                match (active_touch, next_touch) {
-                    (None, Some(position)) => {
-                        active_touch = Some(position);
-                        INPUT_EVENTS
-                            .send(InputEvent::Touch(TouchEvent::Down(position)))
-                            .await;
+                match next_touch {
+                    Some(position) => {
+                        if let Some(active) = active_touch.as_mut() {
+                            active.update(position);
+                        } else {
+                            active_touch = Some(ActiveTouch::new(position));
+
+                            INPUT_EVENTS
+                                .send(InputEvent::Touch(TouchEvent::Down(position)))
+                                .await;
+                        }
                     }
-                    (Some(_), Some(position)) => {
-                        // track the latest coordinate, but deliberately don't emite Move
-                        // yet. Updating an e-ink panel on every finger-motion sample
-                        // is not a good default
-                        active_touch = Some(position);
+                    None => {
+                        let Some(active) = active_touch.take() else {
+                            continue;
+                        };
+
+                        let event = if active.dragged {
+                            TouchEvent::Drag {
+                                origin: active.origin,
+                                position: active.position,
+                            }
+                        } else {
+                            TouchEvent::Up(active.position)
+                        };
+
+                        INPUT_EVENTS.send(InputEvent::Touch(event)).await;
                     }
-                    (Some(position), None) => {
-                        active_touch = None;
-                        INPUT_EVENTS
-                            .send(InputEvent::Touch(TouchEvent::Up(position)))
-                            .await;
-                    }
-                    (None, None) => {}
                 }
             }
             Ok(None) => consecutive_errors = 0,

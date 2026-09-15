@@ -62,6 +62,10 @@ impl TouchPosition {
 pub enum TouchEvent {
     Down(TouchPosition),
     Up(TouchPosition),
+    Drag {
+        origin: TouchPosition,
+        position: TouchPosition,
+    },
     /// short press of the capacitive Home pad.
     HomeTap,
 }

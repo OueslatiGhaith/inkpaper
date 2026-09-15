@@ -422,6 +422,19 @@ fn handle_input_event(
             InputAction::Continue
         }
 
+        InputEvent::Touch(TouchEvent::Drag { origin, position }) => {
+            runtime.cancel_activation();
+
+            let origin = ui_point(origin);
+            let position = ui_point(position);
+
+            // finger moving upward means scrolling farther down the content, hence
+            // `origin - position` rather than `position - origin`
+            runtime.scroll_at(origin, origin - position);
+
+            InputAction::Continue
+        }
+
         _ => InputAction::Continue,
     }
 }
