@@ -1,6 +1,6 @@
 use inkpaper_ui::{FontRegistryError, prelude::*};
 
-use crate::screens::browse_files::{BrowseFilesScreen, BrowseFilesScreenProps};
+use crate::screens::recent_books::{RecentBooksScreen, RecentBooksScreenProps};
 
 pub struct InkPaperApp;
 
@@ -23,7 +23,7 @@ impl Render for InkPaperApp {
         // TODO: screen selection, navigation, and app behavior
 
         rsx! {
-            <BrowseFilesScreen />
+            <RecentBooksScreen />
         }
     }
 }

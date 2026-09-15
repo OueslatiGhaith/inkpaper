@@ -19,13 +19,13 @@ impl RenderOnce for HomeHeader<'_> {
 }
 
 #[component]
-pub(crate) struct FileBrowserHeader<'a> {
+pub(crate) struct BackHeader<'a> {
     title: &'a str,
     battery: &'a str,
     charging: bool,
 }
 
-impl RenderOnce for FileBrowserHeader<'_> {
+impl RenderOnce for BackHeader<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-full h-full relative">
@@ -40,6 +40,27 @@ impl RenderOnce for FileBrowserHeader<'_> {
                         {self.title}
                     </text>
                 </div>
+            </div>
+        }
+    }
+}
+
+#[component]
+pub(crate) struct FileBrowserHeader<'a> {
+    title: &'a str,
+    battery: &'a str,
+    charging: bool,
+}
+
+impl RenderOnce for FileBrowserHeader<'_> {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        rsx! {
+            <div class="w-full h-full relative">
+                <BackHeader
+                    title={self.title}
+                    battery={self.battery}
+                    charging={self.charging}
+                />
 
                 <div class="absolute right-3.5 top-[26px] w-6 h-6">
                     <Icon kind={IconKind::SlidersHorizontal} size={px(24)} />
