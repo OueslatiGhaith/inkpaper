@@ -11,18 +11,20 @@ use embedded_graphics::{
 
 use crate::{
     BoxPaint, CanvasPainter, Color, DamageRegion, GlyphCacheError, ImagePaint, ImageSource,
-    Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError, Size, px,
-    resources::RuntimeResources,
+    Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError, Size,
+    backend::eink::tone::BinaryDitherTarget, px, resources::RuntimeResources,
 };
 
 mod canvas;
 mod coverage;
 mod image;
 mod text;
-
-pub use embedded_graphics::pixelcolor::Gray2;
+mod tone;
 
 pub use coverage::EInkCoverageMode;
+pub use tone::EInkUiMode;
+
+pub use embedded_graphics::pixelcolor::Gray2;
 
 use canvas::EInkCanvasPainter;
 use coverage::color_to_gray2;
@@ -42,6 +44,7 @@ where
 {
     target: &'target mut D,
     coverage_mode: EInkCoverageMode<D>,
+    ui_mode: EInkUiMode,
 }
 
 impl<'target, D> EInkPainter<'target, D>
@@ -52,11 +55,17 @@ where
         Self {
             target,
             coverage_mode: EInkCoverageMode::BinaryThreshold,
+            ui_mode: EInkUiMode::NativeGray2,
         }
     }
 
     pub fn with_coverage_mode(mut self, coverage_mode: EInkCoverageMode<D>) -> Self {
         self.coverage_mode = coverage_mode;
+        self
+    }
+
+    pub fn with_ui_mode(mut self, ui_mode: EInkUiMode) -> Self {
+        self.ui_mode = ui_mode;
         self
     }
 
@@ -108,13 +117,31 @@ where
         paint: BoxPaint,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
-        let result = if let Some(clip) = clip {
-            let clip = to_embedded_rect(clip);
-            let mut clipped = self.target.clipped(&clip);
+        let result = match self.ui_mode {
+            EInkUiMode::NativeGray2 => {
+                if let Some(clip) = clip {
+                    let clip = to_embedded_rect(clip);
+                    let mut clipped = self.target.clipped(&clip);
 
-            draw_box_to(&mut clipped, bounds, paint)
-        } else {
-            draw_box_to(self.target, bounds, paint)
+                    draw_box_to(&mut clipped, bounds, paint)
+                } else {
+                    draw_box_to(self.target, bounds, paint)
+                }
+            }
+
+            EInkUiMode::BinaryDither => {
+                if let Some(clip) = clip {
+                    let clip = to_embedded_rect(clip);
+                    let mut clipped = self.target.clipped(&clip);
+                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
+
+                    draw_box_to(&mut dithered, bounds, paint)
+                } else {
+                    let mut dithered = BinaryDitherTarget::new(self.target);
+
+                    draw_box_to(&mut dithered, bounds, paint)
+                }
+            }
         };
 
         result.map_err(EInkError::Target)
@@ -150,8 +177,18 @@ where
 
         let local_bounds = Rect::new(Point::ZERO, bounds.size);
 
-        let mut painter =
-            EInkCanvasPainter::new(self.target, bounds.origin, canvas_clip, self.coverage_mode);
+        let coverage_mode = match self.ui_mode {
+            EInkUiMode::NativeGray2 => self.coverage_mode,
+            EInkUiMode::BinaryDither => EInkCoverageMode::OrderedDither4x4,
+        };
+
+        let mut painter = EInkCanvasPainter::new(
+            self.target,
+            bounds.origin,
+            canvas_clip,
+            coverage_mode,
+            self.ui_mode,
+        );
 
         draw(local_bounds, &mut painter);
 
@@ -190,6 +227,11 @@ where
 
         let registry = resources.font_registry();
 
+        let coverage_mode = match self.ui_mode {
+            EInkUiMode::NativeGray2 => self.coverage_mode,
+            EInkUiMode::BinaryDither => EInkCoverageMode::OrderedDither4x4,
+        };
+
         draw_text_to(
             self.target,
             text,
@@ -199,7 +241,7 @@ where
             resources,
             font,
             style,
-            self.coverage_mode,
+            coverage_mode,
         )
     }
 

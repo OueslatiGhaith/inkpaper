@@ -5,7 +5,7 @@ mod embedded_graphics;
 mod mono_font;
 
 #[cfg(feature = "eink")]
-pub use eink::{EInkCoverageMode, EInkError, EInkPainter, Gray2};
+pub use eink::{EInkCoverageMode, EInkError, EInkPainter, EInkUiMode, Gray2};
 
 #[cfg(feature = "embedded-graphics")]
 pub use embedded_graphics::{

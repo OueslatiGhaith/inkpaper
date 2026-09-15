@@ -1,7 +1,6 @@
-use embedded_graphics::geometry::Point as EgPoint;
 use inkpaper_ui::{
     RuntimeResources,
-    backend::{EInkCoverageMode, EInkPainter, Gray2},
+    backend::{EInkPainter, EInkUiMode},
     prelude::*,
 };
 
@@ -192,8 +191,7 @@ fn render_invalidation(
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
 
     let paint_report = {
-        let mut painter = EInkPainter::new(&mut display)
-            .with_coverage_mode(EInkCoverageMode::alpha_blend(read_framebuffer_pixel));
+        let mut painter = EInkPainter::new(&mut display).with_ui_mode(EInkUiMode::BinaryDither);
 
         match invalidation.kind() {
             Invalidation::None => return None,
@@ -280,10 +278,6 @@ fn ui_rect_to_region(rect: Rect) -> Option<Region> {
         u16::try_from(width).ok()?,
         u16::try_from(height).ok()?,
     ))
-}
-
-fn read_framebuffer_pixel(framebuffer: &Framebuffer<'_>, point: EgPoint) -> Option<Gray2> {
-    framebuffer.get_pixel(point)
 }
 
 fn refresh_context(rendered: RenderedFrame) -> RefreshContext {

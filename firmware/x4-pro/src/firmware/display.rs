@@ -70,7 +70,13 @@ impl X4Panel {
             Self::Uc8279(_) => false,
         };
 
-        if update.frame_has_grayscale() || grayscale_on_panel {
+        let damage_needs_grayscale = update.damage_has_grayscale();
+
+        let existing_grayscale_requires_preservation = (update.frame_has_grayscale()
+            || grayscale_on_panel)
+            && !self.supports_binary_update_over_grayscale();
+
+        if damage_needs_grayscale || existing_grayscale_requires_preservation {
             return self.present_grayscale(bus, delay, frame, update).await;
         }
 
@@ -163,6 +169,10 @@ impl X4Panel {
 
     pub const fn supports_partial_grayscale(&self) -> bool {
         matches!(self, Self::Ssd1677(_) | Self::Uc8179(_))
+    }
+
+    pub const fn supports_binary_update_over_grayscale(&self) -> bool {
+        matches!(self, Self::Ssd1677(_))
     }
 }
 

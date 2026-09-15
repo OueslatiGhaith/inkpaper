@@ -8,7 +8,10 @@ use embedded_graphics::{
     },
 };
 
-use crate::{CanvasPainter, Color, Pixels, Point, Rect};
+use crate::{
+    CanvasPainter, Color, Pixels, Point, Rect,
+    backend::eink::{BinaryDitherTarget, EInkUiMode, tone::binary_dither_gray2},
+};
 
 use super::{
     EInkCoverageMode, Gray2,
@@ -24,6 +27,7 @@ where
     origin: Point,
     clip: Rect,
     coverage_mode: EInkCoverageMode<D>,
+    ui_mode: EInkUiMode,
     error: Option<D::Error>,
 }
 
@@ -36,12 +40,14 @@ where
         origin: Point,
         clip: Rect,
         coverage_mode: EInkCoverageMode<D>,
+        ui_mode: EInkUiMode,
     ) -> Self {
         Self {
             target,
             origin,
             clip,
             coverage_mode,
+            ui_mode,
             error: None,
         }
     }
@@ -88,7 +94,19 @@ where
         let result = {
             let mut clipped = self.target.clipped(&clip);
 
-            to_embedded_rect(rect).into_styled(style).draw(&mut clipped)
+            match self.ui_mode {
+                EInkUiMode::NativeGray2 => {
+                    to_embedded_rect(rect).into_styled(style).draw(&mut clipped)
+                }
+
+                EInkUiMode::BinaryDither => {
+                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
+
+                    to_embedded_rect(rect)
+                        .into_styled(style)
+                        .draw(&mut dithered)
+                }
+            }
         };
 
         self.record(result);
@@ -117,7 +135,18 @@ where
         let result = {
             let mut clipped = self.target.clipped(&clip);
 
-            to_embedded_rect(rect).into_styled(style).draw(&mut clipped)
+            match self.ui_mode {
+                EInkUiMode::NativeGray2 => {
+                    to_embedded_rect(rect).into_styled(style).draw(&mut clipped)
+                }
+                EInkUiMode::BinaryDither => {
+                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
+
+                    to_embedded_rect(rect)
+                        .into_styled(style)
+                        .draw(&mut dithered)
+                }
+            }
         };
 
         self.record(result);
@@ -140,9 +169,20 @@ where
         let result = {
             let mut clipped = self.target.clipped(&clip);
 
-            EgLine::new(to_embedded_point(start), to_embedded_point(end))
-                .into_styled(style)
-                .draw(&mut clipped)
+            match self.ui_mode {
+                EInkUiMode::NativeGray2 => {
+                    EgLine::new(to_embedded_point(start), to_embedded_point(end))
+                        .into_styled(style)
+                        .draw(&mut clipped)
+                }
+                EInkUiMode::BinaryDither => {
+                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
+
+                    EgLine::new(to_embedded_point(start), to_embedded_point(end))
+                        .into_styled(style)
+                        .draw(&mut dithered)
+                }
+            }
         };
 
         self.record(result);
@@ -165,9 +205,20 @@ where
         let result = {
             let mut clipped = self.target.clipped(&clip);
 
-            EgCircle::with_center(to_embedded_point(center), diameter)
-                .into_styled(style)
-                .draw(&mut clipped)
+            match self.ui_mode {
+                EInkUiMode::NativeGray2 => {
+                    EgCircle::with_center(to_embedded_point(center), diameter)
+                        .into_styled(style)
+                        .draw(&mut clipped)
+                }
+                EInkUiMode::BinaryDither => {
+                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
+
+                    EgCircle::with_center(to_embedded_point(center), diameter)
+                        .into_styled(style)
+                        .draw(&mut dithered)
+                }
+            }
         };
 
         self.record(result);
@@ -196,9 +247,20 @@ where
         let result = {
             let mut clipped = self.target.clipped(&clip);
 
-            EgCircle::with_center(to_embedded_point(center), diameter)
-                .into_styled(style)
-                .draw(&mut clipped)
+            match self.ui_mode {
+                EInkUiMode::NativeGray2 => {
+                    EgCircle::with_center(to_embedded_point(center), diameter)
+                        .into_styled(style)
+                        .draw(&mut clipped)
+                }
+                EInkUiMode::BinaryDither => {
+                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
+
+                    EgCircle::with_center(to_embedded_point(center), diameter)
+                        .into_styled(style)
+                        .draw(&mut dithered)
+                }
+            }
         };
 
         self.record(result);
@@ -230,7 +292,7 @@ where
                     return;
                 }
 
-                color_to_gray2(color)
+                binary_dither_gray2(color_to_gray2(color), point)
             }
             EInkCoverageMode::AlphaBlend { read_pixel } => {
                 if coverage == u8::MAX {

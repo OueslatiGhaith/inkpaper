@@ -5,7 +5,7 @@ use embedded_graphics::{
     prelude::DrawTarget as EgDrawTarget,
 };
 
-use crate::{Color, GlyphBitmap, Luminance, Point, Rect};
+use crate::{Color, GlyphBitmap, Luminance, Point, Rect, backend::eink::tone::binary_dither_gray2};
 
 use super::EInkError;
 
@@ -139,7 +139,7 @@ where
                         return None;
                     }
 
-                    Some(EgPixel(point, foreground))
+                    Some(EgPixel(point, binary_dither_gray2(foreground, point)))
                 });
 
             target.draw_iter(pixels).map_err(EInkError::Target)
