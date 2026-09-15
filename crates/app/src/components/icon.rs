@@ -16,8 +16,13 @@ pub(crate) enum IconKind {
     BatteryMedium,
     BatteryLow,
     BatteryWarning,
+    Wifi,
+    Library,
+    RadioTower,
+    Usb,
+    NearbyTransfer,
+    ReadingStats,
 }
-
 #[component]
 pub(crate) struct Icon {
     kind: IconKind,
@@ -46,6 +51,16 @@ impl RenderOnce for Icon {
             IconKind::BatteryLow => include_svg!("assets/icons/lucide/battery-low.svg"),
             IconKind::BatteryWarning => {
                 include_svg!("assets/icons/lucide/battery-warning.svg")
+            }
+            IconKind::Wifi => include_svg!("assets/icons/lucide/wifi.svg"),
+            IconKind::Library => include_svg!("assets/icons/lucide/library-big.svg"),
+            IconKind::RadioTower => include_svg!("assets/icons/lucide/radio-tower.svg"),
+            IconKind::Usb => include_svg!("assets/icons/lucide/usb.svg"),
+            IconKind::NearbyTransfer => {
+                include_svg!("assets/icons/lucide/chevrons-left-right-ellipsis.svg")
+            }
+            IconKind::ReadingStats => {
+                include_svg!("assets/icons/lucide/chart-no-axes-column-increasing.svg")
             }
         };
 
