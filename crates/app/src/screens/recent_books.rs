@@ -6,7 +6,9 @@ use crate::components::{
 };
 
 #[component]
-pub(crate) struct RecentBooksScreen;
+pub(crate) struct RecentBooksScreen {
+    on_back: Listener<ActivateEvent>,
+}
 
 impl RenderOnce for RecentBooksScreen {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
@@ -17,6 +19,7 @@ impl RenderOnce for RecentBooksScreen {
                         title="Recent Books"
                         battery="72%"
                         charging={false}
+                        on_back={self.on_back}
                     />
                 </div>
 

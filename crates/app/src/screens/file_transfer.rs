@@ -7,7 +7,9 @@ use crate::components::{
 };
 
 #[component]
-pub(crate) struct FileTransferScreen;
+pub(crate) struct FileTransferScreen {
+    on_back: Listener<ActivateEvent>,
+}
 
 impl RenderOnce for FileTransferScreen {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
@@ -18,6 +20,7 @@ impl RenderOnce for FileTransferScreen {
                         title="File Transfer"
                         battery="72%"
                         charging={false}
+                        on_back={self.on_back}
                     />
                 </div>
 

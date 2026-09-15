@@ -4,6 +4,7 @@ use embedded_graphics::{
 };
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
+    sdl2::{Keycode, MouseButton},
 };
 use inkpaper_app::InkPaperApp;
 use inkpaper_ui::{
@@ -67,13 +68,44 @@ where
     paint_ui(runtime, display, DamageRegion::full());
 }
 
+fn render_pending_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
+where
+    R: RenderRuntimeApi,
+    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
+        ResourcePainter<R::Resources>,
+{
+    let invalidation = runtime.take_render_invalidation();
+
+    match invalidation.kind() {
+        Invalidation::None => return,
+        Invalidation::Paint => {}
+        Invalidation::Layout => {
+            runtime
+                .layout(DISPLAY_SIZE)
+                .expect("layout requires a mounted root");
+        }
+        Invalidation::Rebuild => {
+            runtime.rebuild().expect("UI rebuild failed");
+            runtime
+                .layout(DISPLAY_SIZE)
+                .expect("rebuilt UI must have a root");
+        }
+    }
+
+    paint_ui(runtime, display, invalidation.damage());
+}
+
+fn ui_point(point: EgPoint) -> Point {
+    Point::new(px(point.x), px(point.y))
+}
+
 fn main() {
     let mut runtime = new_runtime();
 
     InkPaperApp::register_resources(&mut runtime).expect("InkPaper resources must fit");
 
-    let _app = runtime
-        .create_root(|_| InkPaperApp)
+    let app = runtime
+        .create_root(|_| InkPaperApp::default())
         .expect("InkPaper application root must fit");
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
@@ -88,9 +120,72 @@ fn main() {
         window.update(&display);
 
         for event in window.events() {
-            if matches!(event, SimulatorEvent::Quit) {
-                break 'running;
+            match event {
+                SimulatorEvent::Quit => break 'running,
+
+                SimulatorEvent::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    point,
+                } => {
+                    runtime.begin_activation_at(ui_point(point));
+                }
+
+                SimulatorEvent::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    point,
+                } => {
+                    runtime
+                        .complete_activation_at(ui_point(point))
+                        .expect("UI activation callback failed");
+                }
+
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Up | Keycode::Left,
+                    repeat: false,
+                    ..
+                } => {
+                    runtime.focus_previous();
+                }
+
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Down | Keycode::Right | Keycode::Tab,
+                    repeat: false,
+                    ..
+                } => {
+                    runtime.focus_next();
+                }
+
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Return | Keycode::Space,
+                    repeat: false,
+                    ..
+                } => {
+                    runtime.begin_focused_activation();
+                }
+
+                SimulatorEvent::KeyUp {
+                    keycode: Keycode::Return | Keycode::Space,
+                    ..
+                } => {
+                    runtime
+                        .complete_focused_activation()
+                        .expect("UI activation callback failed");
+                }
+
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Escape,
+                    repeat: false,
+                    ..
+                } => {
+                    runtime
+                        .update(app, |app, cx| app.navigate_home(cx))
+                        .expect("application root must remain available");
+                }
+
+                _ => {}
             }
+
+            render_pending_ui(&mut runtime, &mut display);
         }
     }
 }

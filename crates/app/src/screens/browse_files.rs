@@ -6,14 +6,21 @@ use crate::components::{
 };
 
 #[component]
-pub(crate) struct BrowseFilesScreen;
+pub(crate) struct BrowseFilesScreen {
+    on_back: Listener<ActivateEvent>,
+}
 
 impl RenderOnce for BrowseFilesScreen {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
                 <div class="absolute left-0 top-[5px] w-[480px] h-[77px]">
-                    <FileBrowserHeader title="SD Card" battery="72%" charging={false} />
+                    <FileBrowserHeader
+                        title="SD Card"
+                        battery="72%"
+                        charging={false}
+                        on_back={self.on_back}
+                    />
                 </div>
 
                 <div class="absolute left-0 top-[98px] w-[480px] flex flex-col">

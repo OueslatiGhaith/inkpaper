@@ -23,6 +23,7 @@ pub(crate) struct BackHeader<'a> {
     title: &'a str,
     battery: &'a str,
     charging: bool,
+    on_back: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for BackHeader<'_> {
@@ -31,7 +32,11 @@ impl RenderOnce for BackHeader<'_> {
             <div class="w-full h-full relative">
                 <BatteryStatus battery={self.battery} charging={self.charging} />
 
-                <div class="absolute left-2.5 top-[22px] w-8 h-8">
+                <div
+                    id="back"
+                    on:activate={self.on_back}
+                    class="absolute left-0 top-3 w-[52px] h-[52px] flex items-center justify-center focus:bg-[#aaaaaa]"
+                >
                     <Icon kind={IconKind::ChevronLeft} size={px(32)} />
                 </div>
 
@@ -50,6 +55,7 @@ pub(crate) struct FileBrowserHeader<'a> {
     title: &'a str,
     battery: &'a str,
     charging: bool,
+    on_back: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for FileBrowserHeader<'_> {
@@ -60,6 +66,7 @@ impl RenderOnce for FileBrowserHeader<'_> {
                     title={self.title}
                     battery={self.battery}
                     charging={self.charging}
+                    on_back={self.on_back}
                 />
 
                 <div class="absolute right-3.5 top-[26px] w-6 h-6">

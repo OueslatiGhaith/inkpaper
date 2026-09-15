@@ -16,6 +16,7 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use inkpaper_app::InkPaperApp;
+use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
 
@@ -25,7 +26,7 @@ use crate::firmware::{
     display::X4Panel,
     framebuffer::FramebufferStorage,
     frontlight::{frontlight_off_and_wait, frontlight_task},
-    input::{Button, ButtonEdge, INPUT_EVENTS, InputEvent},
+    input::{Button, ButtonEdge, INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
     power::PowerRails,
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
     presenter::{Presenter, UiRuntime},
@@ -188,7 +189,7 @@ async fn main(spawner: Spawner) -> ! {
     let runtime = UI_RUNTIME.init_with(UiRuntime::default);
 
     InkPaperApp::register_resources(runtime).unwrap();
-    runtime.create_root(|_| InkPaperApp::default()).unwrap();
+    let app = runtime.create_root(|_| InkPaperApp::default()).unwrap();
 
     let mut presenter = Presenter::default();
 
@@ -282,13 +283,15 @@ async fn main(spawner: Spawner) -> ! {
         .await
         {
             Either3::First(event) => {
-                action = handle_input_event(event);
+                action = handle_input_event(runtime, app, event);
                 // combine events accumulated while the e-ink panel was busy.
-                while action == InputAction::Continue {
+                while action == InputAction::Continue
+                    && runtime.invalidation() != Invalidation::Rebuild
+                {
                     let Ok(event) = INPUT_EVENTS.try_receive() else {
                         break;
                     };
-                    action = handle_input_event(event);
+                    action = handle_input_event(runtime, app, event);
                 }
             }
             Either3::Second(reading) => apply_battery_reading(reading),
@@ -367,16 +370,62 @@ async fn stay_alive() -> ! {
     }
 }
 
-fn handle_input_event(event: InputEvent) -> InputAction {
+fn handle_input_event(
+    runtime: &mut UiRuntime,
+    app: Entity<InkPaperApp>,
+    event: InputEvent,
+) -> InputAction {
     match event {
         InputEvent::Button(event)
             if event.button() == Button::Power && event.edge() == ButtonEdge::Pressed =>
         {
             InputAction::Sleep
         }
-        // TODO: route buttons/touch into the app once navigation and interaction are implemented
+
+        InputEvent::Button(event)
+            if event.button() == Button::Left && event.edge() == ButtonEdge::Pressed =>
+        {
+            runtime.focus_previous();
+            InputAction::Continue
+        }
+
+        InputEvent::Button(event)
+            if event.button() == Button::Right && event.edge() == ButtonEdge::Pressed =>
+        {
+            runtime.focus_next();
+            InputAction::Continue
+        }
+
+        InputEvent::Touch(TouchEvent::Down(position)) => {
+            runtime.begin_activation_at(ui_point(position));
+            InputAction::Continue
+        }
+
+        InputEvent::Touch(TouchEvent::Up(position)) => {
+            if runtime.complete_activation_at(ui_point(position)).is_err() {
+                warn!("touch activation callback failed");
+            }
+
+            InputAction::Continue
+        }
+
+        InputEvent::Touch(TouchEvent::HomeTap) => {
+            if runtime
+                .update(app, |app, cx| app.navigate_home(cx))
+                .is_err()
+            {
+                warn!("failed to navigate home");
+            }
+
+            InputAction::Continue
+        }
+
         _ => InputAction::Continue,
     }
+}
+
+fn ui_point(position: TouchPosition) -> Point {
+    Point::new(px(i32::from(position.x())), px(i32::from(position.y())))
 }
 
 fn apply_battery_reading(reading: BatteryReading) {

@@ -7,7 +7,12 @@ use crate::components::{
 };
 
 #[component]
-pub(crate) struct HomeScreen;
+pub(crate) struct HomeScreen {
+    on_browse_files: Listener<ActivateEvent>,
+    on_recent_books: Listener<ActivateEvent>,
+    on_file_transfer: Listener<ActivateEvent>,
+    on_settings: Listener<ActivateEvent>,
+}
 
 impl RenderOnce for HomeScreen {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
@@ -27,7 +32,12 @@ impl RenderOnce for HomeScreen {
                 </div>
 
                 <div class="absolute left-5 top-[314px] w-[440px]">
-                    <HomeMenu />
+                    <HomeMenu
+                        on_browse_files={self.on_browse_files}
+                        on_recent_books={self.on_recent_books}
+                        on_file_transfer={self.on_file_transfer}
+                        on_settings={self.on_settings}
+                    />
                 </div>
             </div>
         }

@@ -9,7 +9,9 @@ use crate::components::{
 };
 
 #[component]
-pub(crate) struct SettingsScreen;
+pub(crate) struct SettingsScreen {
+    on_back: Listener<ActivateEvent>,
+}
 
 impl RenderOnce for SettingsScreen {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
@@ -20,9 +22,9 @@ impl RenderOnce for SettingsScreen {
                         title="Settings"
                         battery="72%"
                         charging={false}
+                        on_back={self.on_back}
                     />
 
-                    // CrossInk shows the synced date in the root Settings header.
                     // TODO: replace with RTC-backed date once app state is wired.
                     <div class="absolute right-3 top-6">
                         <text class="text-xl">{"15/09/2026"}</text>
