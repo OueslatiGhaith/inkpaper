@@ -5,9 +5,10 @@ use embedded_graphics::{
     Pixel,
     draw_target::DrawTarget,
     geometry::{OriginDimensions, Point, Size},
-    pixelcolor::{Rgb888, RgbColor},
+    pixelcolor::GrayColor,
     primitives::Rectangle,
 };
+use inkpaper_ui::backend::Gray2;
 
 pub const PHYSICAL_WIDTH: usize = 800;
 pub const PHYSICAL_HEIGHT: usize = 480;
@@ -237,7 +238,7 @@ impl<'a> Framebuffer<'a> {
         Some(physical.align_x_to_byte())
     }
 
-    pub fn get_pixel(&self, point: Point) -> Option<Rgb888> {
+    pub fn get_pixel(&self, point: Point) -> Option<Gray2> {
         if !contains_logical_pixel(point) {
             return None;
         }
@@ -255,15 +256,16 @@ impl<'a> Framebuffer<'a> {
 
         let level = u8::from(lsb) | (u8::from(msb) << 1);
 
-        Some(level_color(level))
+        Some(Gray2::new(level))
     }
 
-    fn set_pixel(&mut self, x: u16, y: u16, color: Rgb888) {
+    fn set_pixel(&mut self, x: u16, y: u16, color: Gray2) {
         let (physical_x, physical_y) = self.orientation.map_point(x, y);
         let index = physical_y as usize * PHYSICAL_STRIDE + physical_x as usize / 8;
 
         let mask = 0x80u8 >> (physical_x as usize % 8);
-        let level = quantize_color(color);
+
+        let level = color.luma();
 
         set_mask(&mut self.storage.lsb[index], mask, level & 0b01 != 0);
         set_mask(&mut self.storage.msb[index], mask, level & 0b10 != 0);
@@ -295,7 +297,7 @@ impl OriginDimensions for Framebuffer<'_> {
 }
 
 impl DrawTarget for Framebuffer<'_> {
-    type Color = Rgb888;
+    type Color = Gray2;
     type Error = Infallible;
 
     fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
@@ -320,13 +322,13 @@ impl DrawTarget for Framebuffer<'_> {
 
         let physical = self.orientation.map_region(logical);
 
-        self.fill_physical_region(physical, quantize_color(color));
+        self.fill_physical_region(physical, color.luma());
 
         Ok(())
     }
 
     fn clear(&mut self, color: Self::Color) -> Result<(), Self::Error> {
-        let level = quantize_color(color);
+        let level = color.luma();
 
         let lsb = if level & 0b01 != 0 { 0xff } else { 0x00 };
         let msb = if level & 0b10 != 0 { 0xff } else { 0x00 };
@@ -374,30 +376,6 @@ fn fill_plane_region(plane: &mut [u8], region: Region, value: bool) {
         }
 
         set_mask(&mut plane[row_start + last_byte], last_mask, value);
-    }
-}
-
-fn quantize_color(color: Rgb888) -> u8 {
-    // rec. 601 luminance in a 256-scaled integer domain.
-    let luminance =
-        77u32 * u32::from(color.r()) + 150u32 * u32::from(color.g()) + 29u32 * u32::from(color.b());
-
-    // convert to 0..255, then round to the nearest of four equally spaced levels:
-    // 0   -> black
-    // 85  -> dark gray
-    // 170 -> light gray
-    // 255 -> white
-    let luminance = (luminance + 128) / 256;
-
-    ((luminance * 3 + 127) / 255) as u8
-}
-
-fn level_color(level: u8) -> Rgb888 {
-    match level {
-        0 => Rgb888::new(0, 0, 0),
-        1 => Rgb888::new(85, 85, 85),
-        2 => Rgb888::new(170, 170, 170),
-        _ => Rgb888::new(255, 255, 255),
     }
 }
 
