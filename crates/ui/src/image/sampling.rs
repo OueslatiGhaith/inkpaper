@@ -185,9 +185,9 @@ fn sample_area(
             let weight = u128::from(x_weight) * u128::from(y_weight);
 
             total_weight += weight;
-            red += u128::from(color.r) * weight;
-            green += u128::from(color.g) * weight;
-            blue += u128::from(color.b) * weight;
+            red += u128::from(color.r()) * weight;
+            green += u128::from(color.g()) * weight;
+            blue += u128::from(color.b()) * weight;
         }
     }
 
@@ -240,9 +240,9 @@ fn bilinear_axis(destination: u32, source_len: u32, destination_len: u32) -> (u3
 
 fn lerp_color(first: Color, second: Color, fraction: u16) -> Color {
     Color::rgb(
-        lerp_channel(first.r, second.r, fraction),
-        lerp_channel(first.g, second.g, fraction),
-        lerp_channel(first.b, second.b, fraction),
+        lerp_channel(first.r(), second.r(), fraction),
+        lerp_channel(first.g(), second.g(), fraction),
+        lerp_channel(first.b(), second.b(), fraction),
     )
 }
 

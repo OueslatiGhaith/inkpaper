@@ -65,7 +65,7 @@ pub mod prelude {
         GlobalRef, GlobalSetError, IdentifiableElementExt, Image, ImageColorMode, ImageDither,
         ImageFit, ImageId, ImagePaint, ImagePosition, ImageRegistry, ImageRegistryError,
         ImageResource, ImageSampling, ImageSource, IntoElement, Invalidation, LineHeight, Listener,
-        MountCx, MountError, NoChildren, NodeId, Offset, OnEvent, PaintCx, PaintReport,
+        Luminance, MountCx, MountError, NoChildren, NodeId, Offset, OnEvent, PaintCx, PaintReport,
         ParentElement, ParentElementChildrenExt, PathCommand, PathFill, PathStroke, Pixels, Point,
         Rect, Render, RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourcePainter,
         ResourceRuntimeApi, Runtime, RuntimeApi, RuntimeBuilder, Size,

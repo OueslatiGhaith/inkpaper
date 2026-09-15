@@ -99,3 +99,14 @@ fn empty_image_registry_has_zero_registered_images() {
     assert!(registry.is_empty());
     assert!(registry.get(ImageId::new(0)).is_none());
 }
+
+#[test]
+fn image_resource_derives_luminance_from_rgb_pixels() {
+    let image = SolidImage {
+        size: Size::new(px(1), px(1)),
+        color: Color::RED,
+    };
+
+    assert_eq!(image.luminance(0, 0), Some(Luminance::new(77)));
+    assert_eq!(image.luminance(1, 0), None);
+}

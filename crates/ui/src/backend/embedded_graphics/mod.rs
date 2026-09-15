@@ -259,7 +259,7 @@ where
 }
 
 fn to_rgb888(color: Color) -> EgRgb888 {
-    EgRgb888::new(color.r, color.g, color.b)
+    EgRgb888::new(color.r(), color.g(), color.b())
 }
 
 fn to_embedded_rect(rect: Rect) -> EgRectangle {

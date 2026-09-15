@@ -1,4 +1,4 @@
-use crate::{Color, ImageColorMode, ImageDither, ImagePaint};
+use crate::{Color, ImageColorMode, ImageDither, ImagePaint, Luminance};
 
 #[rustfmt::skip]
 const BAYER_2X2: [u8; 4] = [
@@ -17,10 +17,7 @@ const BAYER_4X4: [u8; 16] = [
 pub(crate) fn process_image_pixel(color: Color, paint: ImagePaint, x: i32, y: i32) -> Color {
     match paint.color_mode {
         ImageColorMode::Color => process_color(color, paint),
-        ImageColorMode::Grayscale => {
-            let luminance = adjusted_luminance(color, paint);
-            Color::rgb(luminance, luminance, luminance)
-        }
+        ImageColorMode::Grayscale => Color::gray(adjusted_luminance(color, paint)),
         ImageColorMode::Monochrome => {
             let luminance = adjusted_luminance(color, paint);
 
@@ -34,9 +31,9 @@ pub(crate) fn process_image_pixel(color: Color, paint: ImagePaint, x: i32, y: i3
 }
 
 fn process_color(color: Color, paint: ImagePaint) -> Color {
-    let mut red = adjust_channel(color.r, paint.brightness, paint.contrast);
-    let mut green = adjust_channel(color.g, paint.brightness, paint.contrast);
-    let mut blue = adjust_channel(color.b, paint.brightness, paint.contrast);
+    let mut red = adjust_channel(color.r(), paint.brightness, paint.contrast);
+    let mut green = adjust_channel(color.g(), paint.brightness, paint.contrast);
+    let mut blue = adjust_channel(color.b(), paint.brightness, paint.contrast);
 
     if paint.invert {
         red = 255 - red;
@@ -47,24 +44,14 @@ fn process_color(color: Color, paint: ImagePaint) -> Color {
     Color::rgb(red, green, blue)
 }
 
-fn adjusted_luminance(color: Color, paint: ImagePaint) -> u8 {
-    let luminance = luminance(color);
-    let adjusted = adjust_channel(luminance, paint.brightness, paint.contrast);
+fn adjusted_luminance(color: Color, paint: ImagePaint) -> Luminance {
+    let adjusted = adjust_channel(color.luminance().get(), paint.brightness, paint.contrast);
 
     if paint.invert {
-        255 - adjusted
+        Luminance::new(255 - adjusted)
     } else {
-        adjusted
+        Luminance::new(adjusted)
     }
-}
-
-fn luminance(color: Color) -> u8 {
-    // Rec. 601 integer luminance.
-    // the coefficients sum to 256, which lets us stay entirely in fixed-point integer arithmetic.
-    let value =
-        77u32 * u32::from(color.r) + 150u32 * u32::from(color.g) + 29u32 * u32::from(color.b) + 128;
-
-    u8::try_from(value / 256).unwrap_or(u8::MAX)
 }
 
 fn adjust_channel(value: u8, brightness: i16, contrast: u16) -> u8 {
@@ -75,15 +62,21 @@ fn adjust_channel(value: u8, brightness: i16, contrast: u16) -> u8 {
     u8::try_from(adjusted.clamp(0, 255)).unwrap_or(if adjusted < 0 { 0 } else { 255 })
 }
 
-fn dithered_black(luminance: u8, dither: ImageDither, x: i32, y: i32) -> bool {
+fn dithered_black(luminance: Luminance, dither: ImageDither, x: i32, y: i32) -> bool {
     match dither {
-        ImageDither::Threshold => luminance < 128,
+        ImageDither::Threshold => luminance.get() < 128,
         ImageDither::Bayer2x2 => ordered_dither_black(luminance, x, y, &BAYER_2X2, 2),
         ImageDither::Bayer4x4 => ordered_dither_black(luminance, x, y, &BAYER_4X4, 4),
     }
 }
 
-fn ordered_dither_black(luminance: u8, x: i32, y: i32, matrix: &[u8], matrix_size: i32) -> bool {
+fn ordered_dither_black(
+    luminance: Luminance,
+    x: i32,
+    y: i32,
+    matrix: &[u8],
+    matrix_size: i32,
+) -> bool {
     let matrix_x = usize::try_from(x.rem_euclid(matrix_size)).unwrap_or(0);
     let matrix_y = usize::try_from(y.rem_euclid(matrix_size)).unwrap_or(0);
     let matrix_size_usize = usize::try_from(matrix_size).unwrap_or(1);
@@ -95,7 +88,7 @@ fn ordered_dither_black(luminance: u8, x: i32, y: i32, matrix: &[u8], matrix_siz
     // 8, 24, 40, ... 248
     let threshold = ((rank * 2 + 1) * 256) / (levels * 2);
 
-    u32::from(luminance) < threshold
+    u32::from(luminance.get()) < threshold
 }
 
 #[cfg(test)]

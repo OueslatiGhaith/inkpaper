@@ -1,4 +1,4 @@
-use crate::{Color, Size};
+use crate::{Color, Luminance, Size};
 
 mod processing;
 mod registry;
@@ -54,4 +54,12 @@ pub trait ImageResource {
     /// coordinates are relative to the image origin and use integer pixel coordinates.
     /// Implementations should return `None` for coordinates outside the image bounds
     fn pixel(&self, x: u32, y: u32) -> Option<Color>;
+
+    /// returns the luminance of one source pixel
+    ///
+    /// the default implementation derives luminance from `pixel()`. Resources with a native
+    /// grayscale representation can override this to void reconstructing RGB values
+    fn luminance(&self, x: u32, y: u32) -> Option<Luminance> {
+        self.pixel(x, y).map(Color::luminance)
+    }
 }
