@@ -36,7 +36,7 @@ impl RenderOnce for FileBrowserHeader<'_> {
                 </div>
 
                 <div class="absolute left-[60px] top-3 h-[52px] flex items-center">
-                    <text class="font-bold text-[12px] leading-4 no-wrap max-lines-1 text-ellipsis">
+                    <text class="font-bold text-2xl no-wrap max-lines-1 text-ellipsis">
                         {self.title}
                     </text>
                 </div>
@@ -61,8 +61,8 @@ impl RenderOnce for BatteryStatus<'_> {
 
         rsx! {
             <div class="absolute top-0 right-[18px] flex items-center gap-1">
-                <text class="text-[10px] leading-3">{self.battery}</text>
-                <Icon kind={icon} size={px(20)} />
+                <text class="text-base">{self.battery}</text>
+                <Icon kind={icon} size={px(24)} />
             </div>
         }
     }

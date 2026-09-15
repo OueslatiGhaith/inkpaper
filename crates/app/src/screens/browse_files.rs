@@ -61,11 +61,11 @@ impl RenderOnce for BrowseFilesScreen {
                     />
                 </div>
 
-                <div class="absolute left-0 top-[772px] w-[480px] h-7">
+                <div class="absolute left-0 bottom-0 w-[480px] h-10">
                     <div class="absolute left-0 top-0 w-full h-[3px] bg-black" />
 
-                    <div class="absolute left-5 top-[10px] h-3">
-                        <text class="text-[10px] leading-3 no-wrap max-lines-1 text-clip">"/"</text>
+                    <div class="absolute left-5 top-3">
+                        <text class="text-base no-wrap max-lines-1 text-clip">"/"</text>
                     </div>
                 </div>
             </div>

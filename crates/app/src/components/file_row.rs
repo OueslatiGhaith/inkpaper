@@ -30,21 +30,21 @@ impl RenderOnce for FileRow<'_> {
         };
 
         rsx! {
-            <div class="w-full h-9 relative">
-                <div class="absolute left-5 top-0 w-[440px] h-9 rounded-md bg-{background}" />
+            <div class="w-full h-16 relative">
+                <div class="absolute left-5 top-0 w-[440px] h-16 rounded-md bg-{background}" />
 
-                <div class="absolute left-7 top-1.5 w-6 h-6">
+                <div class="absolute left-7 top-0 h-16 flex items-center">
                     <Icon kind={icon} size={px(24)} />
                 </div>
 
-                <div class="absolute left-[60px] top-3 w-[330px] h-3">
-                    <text class="text-[10px] leading-3 no-wrap max-lines-1 text-ellipsis">
+                <div class="absolute left-[60px] top-0 w-[330px] h-16 flex items-center">
+                    <text class="text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.name}
                     </text>
                 </div>
 
-                <div class="absolute right-7 top-3 h-3">
-                    <text class="text-[10px] leading-3 no-wrap max-lines-1 text-clip">
+                <div class="absolute right-7 top-0 h-16 flex items-center">
+                    <text class="text-xl no-wrap max-lines-1 text-clip">
                         {self.extension}
                     </text>
                 </div>

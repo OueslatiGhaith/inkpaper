@@ -27,9 +27,9 @@ struct HomeMenuRow {
 impl RenderOnce for HomeMenuRow {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
-            <div class="w-full h-14 flex items-center pl-4 gap-[10px]">
+            <div class="w-full h-14 flex items-center pl-4 gap-2.5">
                 <Icon kind={self.icon} size={px(32)} />
-                <text class="text-[12px] leading-4">{self.label}</text>
+                <text class="text-2xl">{self.label}</text>
             </div>
         }
     }
