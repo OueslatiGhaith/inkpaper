@@ -15,7 +15,7 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use inkpaper_app::InkPaperApp;
+use inkpaper_app::{BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp};
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
@@ -341,6 +341,8 @@ async fn main(spawner: Spawner) -> ! {
             stay_alive().await;
         }
 
+        service_app_requests(runtime, app).await;
+
         let Some(update) =
             presenter.render_pending(runtime, frame, panel.supports_partial_grayscale())
         else {
@@ -424,10 +426,6 @@ fn handle_input_event(
     }
 }
 
-fn ui_point(position: TouchPosition) -> Point {
-    Point::new(px(i32::from(position.x())), px(i32::from(position.y())))
-}
-
 fn apply_battery_reading(reading: BatteryReading) {
     debug!(
         "battery update percent={} millivolts={}",
@@ -451,4 +449,63 @@ fn apply_rtc_state(state: RtcState) {
     }
 
     // TODO: update app once app state is introduced
+}
+
+async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>) {
+    loop {
+        let request = match runtime.update(app, |app, _| app.take_browse_request()) {
+            Ok(request) => request,
+            Err(_) => {
+                warn!("failed to read app request");
+                return;
+            }
+        };
+
+        let Some(request) = request else {
+            return;
+        };
+
+        match request {
+            BrowseRequest::ListDirectory(path) => {
+                match storage::list_directory_and_wait(&path).await {
+                    Some(entries) => {
+                        let entries = entries
+                            .into_iter()
+                            .map(|entry| {
+                                let (name, is_directory) = entry.into_parts();
+                                if is_directory {
+                                    BrowseEntry::directory(name)
+                                } else {
+                                    BrowseEntry::file(name)
+                                }
+                            })
+                            .collect();
+
+                        let listing = BrowseListing::new(path, entries);
+
+                        if runtime
+                            .update(app, move |app, cx| app.apply_browse_listing(listing, cx))
+                            .is_err()
+                        {
+                            warn!("failed to apply browse listing");
+                            return;
+                        }
+                    }
+                    None => {
+                        if runtime
+                            .update(app, |app, cx| app.apply_browse_error(cx))
+                            .is_err()
+                        {
+                            warn!("failed to apply browse error");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn ui_point(position: TouchPosition) -> Point {
+    Point::new(px(i32::from(position.x())), px(i32::from(position.y())))
 }

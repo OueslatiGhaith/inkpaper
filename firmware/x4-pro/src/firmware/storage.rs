@@ -1,4 +1,9 @@
 use aligned::{A4, Aligned};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 use block_device_driver::BlockDevice as RawBlockDevice;
 use core::fmt::Write as _;
 use defmt::{Debug2Format, debug, error, info, warn};
@@ -35,11 +40,26 @@ static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = C
 static READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static ROOT_LIST_DONE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static DIRECTORY_LIST_DONE: Signal<CriticalSectionRawMutex, Option<Vec<StorageEntry>>> =
+    Signal::new();
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 enum Command {
     ListRoot,
+    ListDirectory(String),
     Shutdown,
+}
+
+#[derive(Debug)]
+pub struct StorageEntry {
+    name: String,
+    is_directory: bool,
+}
+
+impl StorageEntry {
+    pub fn into_parts(self) -> (String, bool) {
+        (self.name, self.is_directory)
+    }
 }
 
 pub async fn wait_ready() -> bool {
@@ -56,6 +76,14 @@ pub async fn shutdown_and_wait() {
     SHUTDOWN_DONE.reset();
     COMMANDS.send(Command::Shutdown).await;
     SHUTDOWN_DONE.wait().await;
+}
+
+pub async fn list_directory_and_wait(path: &str) -> Option<Vec<StorageEntry>> {
+    DIRECTORY_LIST_DONE.reset();
+    COMMANDS
+        .send(Command::ListDirectory(String::from(path)))
+        .await;
+    DIRECTORY_LIST_DONE.wait().await
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -334,6 +362,10 @@ where
                 let success = list_root(filesystem).await;
                 ROOT_LIST_DONE.signal(success);
             }
+            Command::ListDirectory(path) => {
+                let entries = list_directory(filesystem, &path).await;
+                DIRECTORY_LIST_DONE.signal(entries);
+            }
             Command::Shutdown => {
                 debug!("storage shutdown requested");
                 return;
@@ -351,6 +383,7 @@ async fn serve_unavailable(sd_power: &mut SdPower<'_>) {
     loop {
         match COMMANDS.receive().await {
             Command::ListRoot => ROOT_LIST_DONE.signal(false),
+            Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(None),
             Command::Shutdown => {
                 // GPIO5 is already HIGH, but establish it explicitly before
                 // acknowledging the power path
@@ -405,6 +438,68 @@ where
     info!("root directory listed entries={}", count,);
 
     true
+}
+
+async fn list_directory<D>(filesystem: &FatVolume<D>, path: &str) -> Option<Vec<StorageEntry>>
+where
+    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
+{
+    debug!("listing directory path={}", path);
+
+    let directory = if path == "/" {
+        filesystem.root_dir()
+    } else {
+        match filesystem.open_dir_path(path).await {
+            Ok(dir) => dir,
+            Err(error) => {
+                warn!("directory open failed path={} error={:?}", path, error);
+                return None;
+            }
+        }
+    };
+
+    let mut iterator = directory.entries();
+    let mut output = Vec::new();
+
+    loop {
+        let Some(result) = iterator.next_entry().await else {
+            break;
+        };
+
+        let entry = match result {
+            Ok(DirectoryEntry::Entry(entry)) => entry,
+            Err(error) => {
+                warn!("directory read failed path={} error={:?}", path, error,);
+                return None;
+            }
+        };
+
+        let name = owned_entry_name(&entry);
+        if name == "." || name == ".." {
+            continue;
+        }
+
+        output.push(StorageEntry {
+            name,
+            is_directory: entry.is_directory(),
+        });
+    }
+
+    debug!("directory listed path={} entries={}", path, output.len());
+
+    Some(output)
+}
+
+fn owned_entry_name(entry: &FileEntry) -> String {
+    if let Some(name) = entry.long_name() {
+        return name.to_string();
+    }
+
+    if let Ok(name) = entry.short_name().try_as_str() {
+        return String::from(name);
+    }
+
+    format!("<OEM {:02x?}>", entry.short_name().raw_bytes())
 }
 
 fn logged_entry_name(entry: &FileEntry) -> heapless::String<LOGGED_FILE_NAME_BYTES> {

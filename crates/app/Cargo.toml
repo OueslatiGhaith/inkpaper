@@ -8,4 +8,4 @@ default = []
 defmt = ["inkpaper-ui/defmt"]
 
 [dependencies]
-inkpaper-ui = { path = "../ui" }
+inkpaper-ui = { path = "../ui", features = ["alloc"] }

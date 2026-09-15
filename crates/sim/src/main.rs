@@ -6,7 +6,7 @@ use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     sdl2::{Keycode, MouseButton},
 };
-use inkpaper_app::InkPaperApp;
+use inkpaper_app::{BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp};
 use inkpaper_ui::{
     backend::{CoverageMode, EmbeddedGraphicsPainter},
     prelude::*,
@@ -99,6 +99,66 @@ fn ui_point(point: EgPoint) -> Point {
     Point::new(px(point.x), px(point.y))
 }
 
+fn service_app_requests(runtime: &impl RuntimeApi, app: Entity<InkPaperApp>) {
+    loop {
+        let request = runtime
+            .update(app, |app, _| app.take_browse_request())
+            .expect("app root must be available");
+
+        let Some(request) = request else {
+            return;
+        };
+
+        match request {
+            BrowseRequest::ListDirectory(path) => match simulator_listing(&path) {
+                Some(listing) => runtime
+                    .update(app, move |app, cx| app.apply_browse_listing(listing, cx))
+                    .expect("app root must be available"),
+                None => runtime
+                    .update(app, |app, cx| app.apply_browse_error(cx))
+                    .expect("app root must be available"),
+            },
+        }
+    }
+}
+
+fn simulator_listing(path: &str) -> Option<BrowseListing> {
+    let entries = match path {
+        "/" => vec![
+            BrowseEntry::directory("Books"),
+            BrowseEntry::directory("Documents"),
+            BrowseEntry::directory("Read"),
+            BrowseEntry::file("Dune.epub"),
+            BrowseEntry::file("Project Hail Mary.epub"),
+            BrowseEntry::file("The Three-Body Problem.epub"),
+        ],
+
+        "/Books" => vec![
+            BrowseEntry::directory("Sci-Fi"),
+            BrowseEntry::file("Neuromancer.epub"),
+            BrowseEntry::file("The Dispossessed.epub"),
+            BrowseEntry::file("Hyperion.epub"),
+        ],
+
+        "/Books/Sci-Fi" => vec![
+            BrowseEntry::file("Children of Time.epub"),
+            BrowseEntry::file("The Left Hand of Darkness.epub"),
+            BrowseEntry::file("Foundation.epub"),
+        ],
+
+        "/Documents" => vec![
+            BrowseEntry::file("Distributed Systems.pdf"),
+            BrowseEntry::file("Cloud Computing.pdf"),
+        ],
+
+        "/Read" => vec![],
+
+        _ => return None,
+    };
+
+    Some(BrowseListing::new(path, entries))
+}
+
 fn main() {
     let mut runtime = new_runtime();
 
@@ -185,6 +245,7 @@ fn main() {
                 _ => {}
             }
 
+            service_app_requests(&runtime, app);
             render_pending_ui(&mut runtime, &mut display);
         }
     }

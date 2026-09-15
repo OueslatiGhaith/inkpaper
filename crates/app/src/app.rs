@@ -1,4 +1,17 @@
+use alloc::vec::Vec;
 use inkpaper_ui::{FontRegistryError, prelude::*};
+
+use crate::{
+    BrowseListing, BrowseRequest,
+    browser::BrowserState,
+    screens::{
+        browse_files::{BrowseFilesScreen, BrowseFilesScreenProps},
+        file_transfer::{FileTransferScreen, FileTransferScreenProps},
+        home::{HomeScreen, HomeScreenProps},
+        recent_books::{RecentBooksScreen, RecentBooksScreenProps},
+        settings::{SettingsScreen, SettingsScreenProps},
+    },
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -11,12 +24,14 @@ enum Screen {
 
 pub struct InkPaperApp {
     screen: Screen,
+    browser: BrowserState,
 }
 
 impl Default for InkPaperApp {
     fn default() -> Self {
         Self {
             screen: Screen::Home,
+            browser: BrowserState::default(),
         }
     }
 }
@@ -41,7 +56,22 @@ impl InkPaperApp {
         self.navigate(Screen::Home, cx);
     }
 
+    pub fn take_browse_request(&mut self) -> Option<BrowseRequest> {
+        self.browser.take_request()
+    }
+
+    pub fn apply_browse_listing(&mut self, listing: BrowseListing, cx: &mut Context<'_, Self>) {
+        self.browser.apply_listing(listing);
+        cx.notify();
+    }
+
+    pub fn apply_browse_error(&mut self, cx: &mut Context<'_, Self>) {
+        self.browser.apply_error();
+        cx.notify();
+    }
+
     fn show_browse_files(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.browser.request_current_directory();
         self.navigate(Screen::BrowseFiles, cx);
     }
 
@@ -60,6 +90,22 @@ impl InkPaperApp {
     fn show_home(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.navigate_home(cx);
     }
+
+    fn browse_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        if self.browser.request_parent() {
+            cx.notify();
+        } else {
+            self.navigate_home(cx);
+        }
+    }
+
+    fn activate_browse_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+        if self.browser.request_entry(index) {
+            cx.notify();
+        }
+
+        // TODO: opening files belongs to the reader
+    }
 }
 
 impl Render for InkPaperApp {
@@ -69,29 +115,50 @@ impl Render for InkPaperApp {
         let file_transfer = cx.listener(Self::show_file_transfer);
         let settings = cx.listener(Self::show_settings);
         let home = cx.listener(Self::show_home);
+        let browse_back = cx.listener(Self::browse_back);
+
+        let browse_entry_listeners = if self.screen == Screen::BrowseFiles {
+            (0..self.browser.entries().len())
+                .map(|index| {
+                    cx.listener(
+                        move |app: &mut Self, _: &ActivateEvent, cx: &mut Context<'_, Self>| {
+                            app.activate_browse_entry(index, cx);
+                        },
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         rsx! {
             {#if self.screen == Screen::Home}
-                <crate::screens::home::HomeScreen
+                <HomeScreen
                     on_browse_files={browse_files}
                     on_recent_books={recent_books}
                     on_file_transfer={file_transfer}
                     on_settings={settings}
                 />
             {:else if self.screen == Screen::BrowseFiles}
-                <crate::screens::browse_files::BrowseFilesScreen
-                    on_back={home}
+                <BrowseFilesScreen
+                    title={self.browser.title()}
+                    path={self.browser.path()}
+                    entries={self.browser.entries()}
+                    entry_listeners={browse_entry_listeners}
+                    revision={self.browser.revision()}
+                    error={self.browser.error()}
+                    on_back={browse_back}
                 />
             {:else if self.screen == Screen::RecentBooks}
-                <crate::screens::recent_books::RecentBooksScreen
+                <RecentBooksScreen
                     on_back={home}
                 />
             {:else if self.screen == Screen::FileTransfer}
-                <crate::screens::file_transfer::FileTransferScreen
+                <FileTransferScreen
                     on_back={home}
                 />
             {:else}
-                <crate::screens::settings::SettingsScreen
+                <SettingsScreen
                     on_back={home}
                 />
             {/if}
