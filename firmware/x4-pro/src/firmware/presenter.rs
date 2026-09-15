@@ -9,7 +9,9 @@ use crate::firmware::{
         Framebuffer, FramebufferStorage, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation,
         PHYSICAL_HEIGHT, PHYSICAL_WIDTH, Region,
     },
-    refresh_policy::{EInkCapabilities, RefreshContext, RefreshPolicy, RefreshRequest},
+    refresh_policy::{
+        BinaryOverGrayMode, EInkCapabilities, RefreshContext, RefreshPolicy, RefreshRequest,
+    },
 };
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
@@ -69,12 +71,28 @@ impl RenderedFrame {
     }
 }
 
+#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
+pub enum PresentationMode {
+    Binary,
+    BinaryPreservingGray,
+    Gray4,
+}
+
+impl PresentationMode {
+    pub const fn tone(self) -> EInkTone {
+        match self {
+            Self::Binary | Self::BinaryPreservingGray => EInkTone::Binary,
+            Self::Gray4 => EInkTone::Gray4,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameUpdate {
     refresh: RefreshRequest,
     physical_damage: Region,
     eink_report: EInkPaintReport,
-    presentation_tone: EInkTone,
+    presentation: PresentationMode,
     paint_report: PaintReport,
 }
 
@@ -83,14 +101,14 @@ impl FrameUpdate {
         refresh: RefreshRequest,
         physical_damage: Region,
         eink_report: EInkPaintReport,
-        presentation_tone: EInkTone,
+        presentation: PresentationMode,
         paint_report: PaintReport,
     ) -> Self {
         Self {
             refresh,
             physical_damage,
             eink_report,
-            presentation_tone,
+            presentation,
             paint_report,
         }
     }
@@ -107,8 +125,12 @@ impl FrameUpdate {
         self.eink_report
     }
 
+    pub const fn presentation(self) -> PresentationMode {
+        self.presentation
+    }
+
     pub const fn presentation_tone(self) -> EInkTone {
-        self.presentation_tone
+        self.presentation.tone()
     }
 
     pub const fn paint_report(self) -> PaintReport {
@@ -155,11 +177,16 @@ impl Presenter {
         let tone = rendered.eink_report.tone();
         self.panel_tone = tone;
 
+        let presentation = match tone {
+            EInkTone::Binary => PresentationMode::Binary,
+            EInkTone::Gray4 => PresentationMode::Gray4,
+        };
+
         FrameUpdate::new(
             RefreshRequest::Full,
             rendered.physical_damage,
             rendered.eink_report,
-            tone,
+            presentation,
             rendered.paint_report,
         )
     }
@@ -177,40 +204,53 @@ impl Presenter {
 
         let rendered = render_invalidation(runtime, frame, invalidation)?;
 
-        let presentation_tone = self.presentation_tone(rendered.eink_report.tone(), capabilities);
+        let presentation = self.presentation_mode(rendered, capabilities);
 
-        let refresh =
-            if presentation_tone == EInkTone::Gray4 && !capabilities.supports_partial_grayscale() {
-                self.refresh_policy.record_full_refresh();
-                RefreshRequest::Full
-            } else {
-                self.refresh_policy.select(refresh_context(rendered))
-            };
+        let refresh = if presentation == PresentationMode::Gray4
+            && !capabilities.supports_partial_grayscale()
+        {
+            self.refresh_policy.record_full_refresh();
 
-        self.record_presented_frame(rendered, presentation_tone);
+            RefreshRequest::Full
+        } else {
+            self.refresh_policy.select(refresh_context(rendered))
+        };
+
+        self.record_presented_frame(rendered);
 
         Some(FrameUpdate::new(
             refresh,
             rendered.physical_damage,
             rendered.eink_report,
-            presentation_tone,
+            presentation,
             rendered.paint_report,
         ))
     }
 
-    fn presentation_tone(&self, damage_tone: EInkTone, capabilities: EInkCapabilities) -> EInkTone {
-        if damage_tone == EInkTone::Gray4 {
-            return EInkTone::Gray4;
+    fn presentation_mode(
+        &self,
+        rendered: RenderedFrame,
+        capabilities: EInkCapabilities,
+    ) -> PresentationMode {
+        if rendered.eink_report.tone() == EInkTone::Gray4 {
+            return PresentationMode::Gray4;
         }
 
-        if self.panel_tone == EInkTone::Gray4 && !capabilities.can_binary_update_over_grayscale() {
-            return EInkTone::Gray4;
+        // a complete binary repaint overwrites every physical pixel, so there is no
+        // previous grayscale to preserve.
+        if rendered.is_full_damage() || self.panel_tone == EInkTone::Binary {
+            return PresentationMode::Binary;
         }
 
-        EInkTone::Binary
+        match capabilities.binary_over_gray() {
+            BinaryOverGrayMode::NativeWindow | BinaryOverGrayMode::PreconditionedWindow => {
+                PresentationMode::BinaryPreservingGray
+            }
+            BinaryOverGrayMode::Unsupported => PresentationMode::Gray4,
+        }
     }
 
-    fn record_presented_frame(&mut self, rendered: RenderedFrame, presentation_tone: EInkTone) {
+    fn record_presented_frame(&mut self, rendered: RenderedFrame) {
         if rendered.is_full_damage() {
             // the entire framebuffer now descrines the panel, regardless of which waveform
             // was required to get there
@@ -228,11 +268,9 @@ impl Presenter {
             return;
         }
 
-        // a binary partial update can remove some existing gray, but without tracking
-        // tone spatially we cannot prove it removed the last gray pixel. Stay conservative.
-        // `presentation_tone` is intentionally consumed here: either a binary window
-        // preserved gray elsewhere, or a grayscale presentation preserved/replayed it.
-        let _ = presentation_tone;
+        // a partial binary update might remove the last grayscale area, but without
+        // spatial tone tracking we cannot prove that cheaply.
+        // keep the conservative state until a full binary frame is presented.
         self.panel_tone = EInkTone::Gray4;
     }
 }

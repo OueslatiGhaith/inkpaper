@@ -15,6 +15,13 @@ pub enum BinaryUpdateMode {
 }
 
 #[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOverGrayMode {
+    Unsupported,
+    NativeWindow,
+    PreconditionedWindow,
+}
+
+#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
 pub enum GrayscaleUpdateMode {
     FullPlane,
     Window,
@@ -23,22 +30,29 @@ pub enum GrayscaleUpdateMode {
 #[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
 pub struct EInkCapabilities {
     binary_update: BinaryUpdateMode,
+    binary_over_gray: BinaryOverGrayMode,
     grayscale_update: GrayscaleUpdateMode,
 }
 
 impl EInkCapabilities {
     pub const fn new(
         binary_update: BinaryUpdateMode,
+        binary_over_gray: BinaryOverGrayMode,
         grayscale_update: GrayscaleUpdateMode,
     ) -> Self {
         Self {
             binary_update,
+            binary_over_gray,
             grayscale_update,
         }
     }
 
     pub const fn binary_update(self) -> BinaryUpdateMode {
         self.binary_update
+    }
+
+    pub const fn binary_over_gray(self) -> BinaryOverGrayMode {
+        self.binary_over_gray
     }
 
     pub const fn grayscale_update(self) -> GrayscaleUpdateMode {
@@ -50,7 +64,7 @@ impl EInkCapabilities {
     }
 
     pub const fn can_binary_update_over_grayscale(self) -> bool {
-        matches!(self.binary_update, BinaryUpdateMode::Window)
+        !matches!(self.binary_over_gray, BinaryOverGrayMode::Unsupported)
     }
 }
 

@@ -197,10 +197,10 @@ async fn main(spawner: Spawner) -> ! {
     let update = presenter.render_initial(runtime, frame);
     let damage = update.physical_damage();
     debug!(
-        "UI update refresh={:?} tone={:?} presentation={:?} x={} y={} width={} height={}",
+        "UI update refresh={:?} damage_tone={:?} presentation={:?} x={} y={} width={} height={}",
         update.refresh(),
         update.eink_report().tone(),
-        update.presentation_tone(),
+        update.presentation(),
         damage.x,
         damage.y,
         damage.width,

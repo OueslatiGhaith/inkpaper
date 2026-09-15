@@ -525,6 +525,76 @@ impl Uc8179 {
         Ok(region)
     }
 
+    pub async fn display_binary_window_preserving_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+        region: Region,
+        turn_off: bool,
+    ) -> Result<Region, Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.validate_frame(lsb)?;
+        self.validate_frame(msb)?;
+
+        let region = self.normalize_region(region)?;
+
+        // this path relies on the same clean B/W baseline established by the grayscale-window
+        // implementation. If that baseline isn't available, fall back to the proven general path.
+        if self.need_full_clear || !self.old_plane_valid || !self.grayscale_on_panel {
+            return self
+                .display_grayscale_window(bus, delay, lsb, msb, region, RefreshMode::Fast, turn_off)
+                .await;
+        }
+
+        // the caller expects a binary-only damage region. Keep this defensive check so a
+        // future renderer bug cannot silently skip a required grayscale selector pass.
+        if self.region_has_grayscale(lsb, msb, region) {
+            return self
+                .display_grayscale_window(bus, delay, lsb, msb, region, RefreshMode::Fast, turn_off)
+                .await;
+        }
+
+        // DTM1 contains the previous clean B/W base.
+        // put the new clean B/W base in DTM2. For our 2-bit framebuffer:
+        // black = 00 -> base 0
+        // dark  = 10 -> base 0
+        // light = 01 -> base 0
+        // white = 11 -> base 1
+        self.stream_and_plane(bus, Command::NewPlane, lsb, msb)
+            .await?;
+
+        // physically transition only the damaged window from the old B/W base to the new
+        // B/W base. This is the OEM XTF_PRE_BW_MID path already validated by
+        // display_grayscale_window().
+        self.run_grayscale_precondition(bus, delay, region).await?;
+
+        // unlike display_grayscale_window(), no grayscale selector waveform ran:
+        // DTM2 still contains the correct new B/W base.
+        // only DTM1 needs to be updated so both controller planes once again contain
+        // the baseline required by the next differential update.
+        self.stream_and_plane(bus, Command::OldPlane, lsb, msb)
+            .await?;
+
+        self.old_plane_valid = true;
+        self.need_full_clear = false;
+
+        // this operation deliberately preserves grayscale outside the update window.
+        // Stay conservative until a later full-frame update proves that all physical
+        // grayscale has been removed.
+        self.grayscale_on_panel = true;
+
+        if turn_off {
+            self.power_off(bus, delay).await?;
+        }
+
+        Ok(region)
+    }
+
     pub async fn deep_sleep<B, D>(
         &mut self,
         bus: &mut B,

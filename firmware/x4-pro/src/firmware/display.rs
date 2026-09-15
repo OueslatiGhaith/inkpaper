@@ -1,7 +1,6 @@
 use defmt::Format;
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::EpdInterface;
-use inkpaper_ui::backend::EInkTone;
 use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Region as SsdRegion, Ssd1677};
 use uc8179::{
     RefreshMode as Uc8179RefreshMode, Region as Uc8179Region, Uc8179,
@@ -12,8 +11,10 @@ use xteink_display_probe::Controller;
 
 use crate::firmware::{
     framebuffer::FramebufferStorage,
-    presenter::FrameUpdate,
-    refresh_policy::{BinaryUpdateMode, EInkCapabilities, GrayscaleUpdateMode, RefreshRequest},
+    presenter::{FrameUpdate, PresentationMode},
+    refresh_policy::{
+        BinaryOverGrayMode, BinaryUpdateMode, EInkCapabilities, GrayscaleUpdateMode, RefreshRequest,
+    },
 };
 
 #[derive(Debug, Format)]
@@ -65,9 +66,13 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        match update.presentation_tone() {
-            EInkTone::Gray4 => self.present_grayscale(bus, delay, frame, update).await,
-            EInkTone::Binary => {
+        match update.presentation() {
+            PresentationMode::Gray4 => self.present_grayscale(bus, delay, frame, update).await,
+            PresentationMode::BinaryPreservingGray => {
+                self.present_binary_preserving_gray(bus, delay, frame, update)
+                    .await
+            }
+            PresentationMode::Binary => {
                 let frame = frame.binary_plane();
 
                 match self {
@@ -141,6 +146,70 @@ impl X4Panel {
         }
     }
 
+    async fn present_binary_preserving_gray<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        frame: &FramebufferStorage,
+        update: FrameUpdate,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        // a requested maintenance/full refresh should use the established grayscale-preserving
+        // full path rather than the short differential window waveform.
+        if update.refresh() == RefreshRequest::Full {
+            return self.present_grayscale(bus, delay, frame, update).await;
+        }
+
+        let (lsb, msb) = frame.planes();
+        let damage = update.physical_damage();
+
+        match self {
+            Self::Ssd1677(panel) => {
+                // the SSD1677 grayscale-window implementation already handles a binary-only
+                // damaged region without disturbing grayscale elsewhere.
+                panel
+                    .display_grayscale_window(
+                        bus,
+                        delay,
+                        lsb,
+                        msb,
+                        SsdRegion::new(damage.x, damage.y, damage.width, damage.height),
+                        SsdRefreshMode::Fast,
+                        true,
+                    )
+                    .await
+                    .map(|_| ())
+                    .map_err(Error::Ssd1677)
+            }
+
+            Self::Uc8179(panel) => panel
+                .display_binary_window_preserving_grayscale(
+                    bus,
+                    delay,
+                    lsb,
+                    msb,
+                    Uc8179Region::new(damage.x, damage.y, damage.width, damage.height),
+                    true,
+                )
+                .await
+                .map(|_| ())
+                .map_err(Error::Uc8179),
+
+            Self::Uc8279(panel) => {
+                // this branch should not normally be selected because the UC8279 capability
+                // says  BinaryOverGrayMode::Unsupported.
+                // preserve correctness if that invariant is ever broken.
+                panel
+                    .display_grayscale(bus, delay, lsb, msb, true)
+                    .await
+                    .map_err(Error::Uc8279)
+            }
+        }
+    }
+
     pub async fn deep_sleep<B, D>(
         &mut self,
         bus: &mut B,
@@ -159,17 +228,21 @@ impl X4Panel {
 
     pub const fn capabilities(&self) -> EInkCapabilities {
         match self {
-            Self::Ssd1677(_) => {
-                EInkCapabilities::new(BinaryUpdateMode::Window, GrayscaleUpdateMode::Window)
-            }
-
-            Self::Uc8179(_) => {
-                EInkCapabilities::new(BinaryUpdateMode::FullPlane, GrayscaleUpdateMode::Window)
-            }
-
-            Self::Uc8279(_) => {
-                EInkCapabilities::new(BinaryUpdateMode::FullPlane, GrayscaleUpdateMode::FullPlane)
-            }
+            Self::Ssd1677(_) => EInkCapabilities::new(
+                BinaryUpdateMode::Window,
+                BinaryOverGrayMode::NativeWindow,
+                GrayscaleUpdateMode::Window,
+            ),
+            Self::Uc8179(_) => EInkCapabilities::new(
+                BinaryUpdateMode::FullPlane,
+                BinaryOverGrayMode::PreconditionedWindow,
+                GrayscaleUpdateMode::Window,
+            ),
+            Self::Uc8279(_) => EInkCapabilities::new(
+                BinaryUpdateMode::FullPlane,
+                BinaryOverGrayMode::Unsupported,
+                GrayscaleUpdateMode::FullPlane,
+            ),
         }
     }
 }
