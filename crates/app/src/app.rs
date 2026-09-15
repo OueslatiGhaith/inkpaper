@@ -21,7 +21,7 @@ impl Render for InkPaperApp {
         // TODO: screen selection, navigation, and app behavior
 
         rsx! {
-            <crate::screens::file_transfer::FileTransferScreen />
+            <crate::screens::settings::SettingsScreen />
         }
     }
 }

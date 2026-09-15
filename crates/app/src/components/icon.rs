@@ -10,6 +10,7 @@ pub(crate) enum IconKind {
     BookOpen,
     BookMarked,
     ChevronLeft,
+    ChevronRight,
     SlidersHorizontal,
     BatteryCharging,
     BatteryFull,
@@ -40,6 +41,7 @@ impl RenderOnce for Icon {
             IconKind::BookOpen => include_svg!("assets/icons/lucide/book-open.svg"),
             IconKind::BookMarked => include_svg!("assets/icons/lucide/book-bookmark.svg"),
             IconKind::ChevronLeft => include_svg!("assets/icons/lucide/chevron-left.svg"),
+            IconKind::ChevronRight => include_svg!("assets/icons/lucide/chevron-right.svg"),
             IconKind::SlidersHorizontal => {
                 include_svg!("assets/icons/lucide/sliders-horizontal.svg")
             }
