@@ -55,6 +55,8 @@ static DIRECTORY_LIST_DONE: Signal<CriticalSectionRawMutex, Option<Vec<StorageEn
     Signal::new();
 static EPUB_DOCUMENT_DONE: Signal<CriticalSectionRawMutex, Option<ReaderDocument>> = Signal::new();
 static EPUB_CHAPTER_DONE: Signal<CriticalSectionRawMutex, Option<ReaderChapter>> = Signal::new();
+static READING_HISTORY_DONE: Signal<CriticalSectionRawMutex, Option<Vec<ReadingProgress>>> =
+    Signal::new();
 
 #[derive(Debug)]
 enum Command {
@@ -66,10 +68,10 @@ enum Command {
         from: SpineIndex,
         direction: ReaderChapterDirection,
     },
+    LoadReadingHistory,
     UpdateReadingProgress(ReadingProgress),
     Shutdown,
 }
-
 #[derive(Debug)]
 pub struct StorageEntry {
     name: String,
@@ -228,6 +230,12 @@ pub async fn update_reading_progress(progress: ReadingProgress) {
     COMMANDS
         .send(Command::UpdateReadingProgress(progress))
         .await;
+}
+
+pub async fn reading_history_and_wait() -> Option<Vec<ReadingProgress>> {
+    READING_HISTORY_DONE.reset();
+    COMMANDS.send(Command::LoadReadingHistory).await;
+    READING_HISTORY_DONE.wait().await
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -846,6 +854,9 @@ where
 
                 EPUB_CHAPTER_DONE.signal(chapter);
             }
+            Command::LoadReadingHistory => {
+                READING_HISTORY_DONE.signal(Some(reading_history.entries().to_vec()));
+            }
             Command::UpdateReadingProgress(progress) => {
                 reading_history.record(progress);
                 reading_history_dirty = true;
@@ -881,6 +892,7 @@ async fn serve_unavailable(sd_power: &mut SdPower<'_>) {
             Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(None),
             Command::LoadEpub(_) => EPUB_DOCUMENT_DONE.signal(None),
             Command::LoadEpubChapter { .. } => EPUB_CHAPTER_DONE.signal(None),
+            Command::LoadReadingHistory => READING_HISTORY_DONE.signal(None),
             Command::UpdateReadingProgress(_) => {}
             Command::Shutdown => {
                 // GPIO5 is already HIGH, but establish it explicitly before

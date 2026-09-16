@@ -15,7 +15,9 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use inkpaper_app::{BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderRequest};
+use inkpaper_app::{
+    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderRequest, RecentBooksRequest,
+};
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
@@ -493,7 +495,11 @@ fn apply_rtc_state(state: RtcState) {
 async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>) {
     loop {
         let requests = match runtime.update(app, |app, _| {
-            (app.take_browse_request(), app.take_reader_request())
+            (
+                app.take_browse_request(),
+                app.take_reader_request(),
+                app.take_recent_books_request(),
+            )
         }) {
             Ok(requests) => requests,
             Err(_) => {
@@ -501,9 +507,9 @@ async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>)
             }
         };
 
-        let (browse_request, reader_request) = requests;
+        let (browse_request, reader_request, recent_books_request) = requests;
 
-        if browse_request.is_none() && reader_request.is_none() {
+        if browse_request.is_none() && reader_request.is_none() && recent_books_request.is_none() {
             return;
         }
 
@@ -611,6 +617,34 @@ async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>)
                 ReaderRequest::UpdateProgress(progress) => {
                     storage::update_reading_progress(progress).await;
                 }
+            }
+        }
+
+        if let Some(request) = recent_books_request {
+            match request {
+                RecentBooksRequest::Load => match storage::reading_history_and_wait().await {
+                    Some(entries) => {
+                        if runtime
+                            .update(app, move |app, cx| {
+                                app.apply_recent_books(entries, cx);
+                            })
+                            .is_err()
+                        {
+                            return warn!("failed to apply recent books");
+                        }
+                    }
+
+                    None => {
+                        if runtime
+                            .update(app, |app, cx| {
+                                app.apply_recent_books_error(cx);
+                            })
+                            .is_err()
+                        {
+                            return warn!("failed to apply recent-books error");
+                        }
+                    }
+                },
             }
         }
     }

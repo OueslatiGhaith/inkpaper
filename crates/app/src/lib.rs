@@ -8,6 +8,7 @@ mod components;
 mod reader;
 mod reader_page;
 mod reading_history;
+mod recent_books;
 mod screens;
 mod typography;
 
@@ -20,5 +21,6 @@ pub use reader::{
 pub use reading_history::{
     MAX_READING_HISTORY_ENTRIES, ReadingHistory, ReadingHistoryError, ReadingProgress,
 };
+pub use recent_books::RecentBooksRequest;
 
 pub use inkpaper_epub::SpineIndex;

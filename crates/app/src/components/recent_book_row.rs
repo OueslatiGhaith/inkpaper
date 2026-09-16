@@ -4,34 +4,31 @@ use crate::components::icon::{Icon, IconKind, IconProps};
 
 #[component]
 pub(crate) struct RecentBookRow<'a> {
+    id: usize,
     title: &'a str,
-    author: &'a str,
-    selected: bool,
+    subtitle: &'a str,
+    on_activate: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for RecentBookRow<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let background = if self.selected {
-            Color::rgb(170, 170, 170)
-        } else {
-            Color::WHITE
-        };
-
         rsx! {
-            <div class="w-full h-16 relative">
-                <div class="absolute left-5 top-0 w-[440px] h-16 rounded-md bg-{background}" />
-
-                <div class="absolute left-7 top-0 h-16 flex items-center">
+            <div
+                id={("recent-book-row", self.id)}
+                on:activate={self.on_activate}
+                class="ml-5 w-[440px] h-16 relative rounded-md focus:bg-[#aaaaaa]"
+            >
+                <div class="absolute left-2 top-0 h-16 flex items-center">
                     <Icon kind={IconKind::Book} size={px(28)} />
                 </div>
 
-                <div class="absolute left-16 top-0 w-[388px] h-16 flex flex-col justify-center">
+                <div class="absolute left-11 top-0 w-[388px] h-16 flex flex-col justify-center">
                     <text class="font-bold text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.title}
                     </text>
 
                     <text class="text-base no-wrap max-lines-1 text-ellipsis">
-                        {self.author}
+                        {self.subtitle}
                     </text>
                 </div>
             </div>

@@ -35,6 +35,39 @@ impl ReadingProgress {
     pub const fn position(&self) -> ReadingPosition {
         self.position
     }
+
+    pub fn display_title(&self) -> &str {
+        epub_title_from_path(&self.path)
+    }
+
+    pub fn display_subtitle(&self) -> &str {
+        parent_path(&self.path)
+    }
+}
+
+fn epub_title_from_path(path: &str) -> &str {
+    let name = path
+        .rsplit('/')
+        .find(|segment| !segment.is_empty())
+        .unwrap_or(path);
+
+    let Some(suffix_start) = name.len().checked_sub(5) else {
+        return name;
+    };
+
+    let is_epub = name
+        .get(suffix_start..)
+        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".epub"));
+
+    if is_epub { &name[..suffix_start] } else { name }
+}
+
+fn parent_path(path: &str) -> &str {
+    match path.rfind('/') {
+        Some(0) => "/",
+        Some(index) => &path[..index],
+        None => "",
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,5 +342,26 @@ mod tests {
             history.resume_position("/book.epub", Some("book-a")),
             Some(ReadingPosition::default()),
         );
+    }
+
+    #[test]
+    fn recent_book_display_name_comes_from_real_path() {
+        let progress = ReadingProgress::new(
+            String::from("/Books/Sci-Fi/The Left Hand of Darkness.EPUB"),
+            None,
+            ReadingPosition::default(),
+        );
+
+        assert_eq!(progress.display_title(), "The Left Hand of Darkness");
+        assert_eq!(progress.display_subtitle(), "/Books/Sci-Fi");
+    }
+
+    #[test]
+    fn root_level_recent_book_uses_root_as_subtitle() {
+        let progress =
+            ReadingProgress::new(String::from("/Dune.epub"), None, ReadingPosition::default());
+
+        assert_eq!(progress.display_title(), "Dune");
+        assert_eq!(progress.display_subtitle(), "/");
     }
 }

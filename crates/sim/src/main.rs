@@ -11,7 +11,8 @@ use embedded_graphics_simulator::{
 use futures_lite::future;
 use inkpaper_app::{
     BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderChapter, ReaderChapterDirection,
-    ReaderDocument, ReaderRequest, ReaderSession, ReadingHistory, ReadingProgress, SpineIndex,
+    ReaderDocument, ReaderRequest, ReaderSession, ReadingHistory, ReadingProgress,
+    RecentBooksRequest, SpineIndex,
 };
 use inkpaper_ui::{
     backend::{CoverageMode, EmbeddedGraphicsPainter},
@@ -188,6 +189,10 @@ impl SimulatorReaderService {
 
         let _ = std::fs::rename(temporary, &self.history_path);
     }
+
+    fn recent_books(&self) -> Vec<ReadingProgress> {
+        self.history.entries().to_vec()
+    }
 }
 
 fn simulator_history_path() -> PathBuf {
@@ -210,13 +215,17 @@ fn service_app_requests(
     reader_service: &mut SimulatorReaderService,
 ) {
     loop {
-        let (browse_request, reader_request) = runtime
+        let (browse_request, reader_request, recent_books_request) = runtime
             .update(app, |app, _| {
-                (app.take_browse_request(), app.take_reader_request())
+                (
+                    app.take_browse_request(),
+                    app.take_reader_request(),
+                    app.take_recent_books_request(),
+                )
             })
             .expect("app root must be available");
 
-        if browse_request.is_none() && reader_request.is_none() {
+        if browse_request.is_none() && reader_request.is_none() && recent_books_request.is_none() {
             return;
         }
 
@@ -286,6 +295,20 @@ fn service_app_requests(
 
                 ReaderRequest::UpdateProgress(progress) => {
                     reader_service.update_progress(progress);
+                }
+            }
+        }
+
+        if let Some(request) = recent_books_request {
+            match request {
+                RecentBooksRequest::Load => {
+                    let entries = reader_service.recent_books();
+
+                    runtime
+                        .update(app, move |app, cx| {
+                            app.apply_recent_books(entries, cx);
+                        })
+                        .expect("app root must be available");
                 }
             }
         }

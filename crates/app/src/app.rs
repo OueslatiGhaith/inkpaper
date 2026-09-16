@@ -4,9 +4,10 @@ use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
     BrowseListing, BrowseRequest, ReaderChapter, ReaderChapterDirection, ReaderDocument,
-    ReaderRequest,
+    ReaderRequest, ReadingProgress, RecentBooksRequest,
     browser::BrowserState,
     reader::ReaderState,
+    recent_books::RecentBooksState,
     screens::{
         browse_files::{BrowseFilesScreen, BrowseFilesScreenProps},
         file_transfer::{FileTransferScreen, FileTransferScreenProps},
@@ -31,6 +32,9 @@ pub struct InkPaperApp {
     screen: Screen,
     browser: BrowserState,
     reader: ReaderState,
+    recent_books: RecentBooksState,
+
+    reader_return: Screen,
 }
 
 impl Default for InkPaperApp {
@@ -39,6 +43,8 @@ impl Default for InkPaperApp {
             screen: Screen::Home,
             browser: BrowserState::default(),
             reader: ReaderState::default(),
+            recent_books: RecentBooksState::default(),
+            reader_return: Screen::BrowseFiles,
         }
     }
 }
@@ -83,6 +89,7 @@ impl InkPaperApp {
     }
 
     fn show_recent_books(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.recent_books.request_load();
         self.navigate(Screen::RecentBooks, cx);
     }
 
@@ -107,7 +114,13 @@ impl InkPaperApp {
     }
 
     fn reader_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.navigate(Screen::BrowseFiles, cx);
+        let target = self.reader_return;
+
+        if target == Screen::RecentBooks {
+            self.recent_books.request_load();
+        }
+
+        self.navigate(target, cx);
     }
 
     fn activate_browse_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
@@ -127,6 +140,8 @@ impl InkPaperApp {
         }
 
         let (path, title) = file.into_reader_parts();
+
+        self.reader_return = Screen::BrowseFiles;
 
         self.reader.open(path, title);
 
@@ -234,6 +249,40 @@ impl InkPaperApp {
 
         true
     }
+
+    fn activate_recent_book(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+        let Some(entry) = self.recent_books.entry(index) else {
+            return;
+        };
+
+        let path = String::from(entry.path());
+
+        let title = String::from(entry.display_title());
+
+        self.reader_return = Screen::RecentBooks;
+
+        self.reader.open(path, title);
+
+        self.navigate(Screen::Reader, cx);
+    }
+
+    pub fn take_recent_books_request(&mut self) -> Option<RecentBooksRequest> {
+        self.recent_books.take_request()
+    }
+
+    pub fn apply_recent_books(
+        &mut self,
+        entries: Vec<ReadingProgress>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.recent_books.apply_entries(entries);
+        cx.notify();
+    }
+
+    pub fn apply_recent_books_error(&mut self, cx: &mut Context<'_, Self>) {
+        self.recent_books.apply_error();
+        cx.notify();
+    }
 }
 
 impl Render for InkPaperApp {
@@ -257,6 +306,20 @@ impl Render for InkPaperApp {
                     cx.listener(
                         move |app: &mut Self, _: &ActivateEvent, cx: &mut Context<'_, Self>| {
                             app.activate_browse_entry(index, cx);
+                        },
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let recent_book_listeners = if self.screen == Screen::RecentBooks {
+            (0..self.recent_books.entries().len())
+                .map(|index| {
+                    cx.listener(
+                        move |app: &mut Self, _: &ActivateEvent, cx: &mut Context<'_, Self>| {
+                            app.activate_recent_book(index, cx);
                         },
                     )
                 })
@@ -301,6 +364,10 @@ impl Render for InkPaperApp {
                 />
             {:else if self.screen == Screen::RecentBooks}
                 <RecentBooksScreen
+                    entries={self.recent_books.entries()}
+                    entry_listeners={recent_book_listeners}
+                    revision={self.recent_books.revision()}
+                    error={self.recent_books.error()}
                     on_back={home}
                 />
             {:else if self.screen == Screen::FileTransfer}
