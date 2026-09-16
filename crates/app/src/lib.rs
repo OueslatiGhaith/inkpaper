@@ -12,4 +12,9 @@ mod typography;
 
 pub use app::InkPaperApp;
 pub use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
-pub use reader::{ReaderDocument, ReaderLoadError, ReaderRequest, load_reader_document};
+pub use reader::{
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderLoadError, ReaderRequest,
+    load_adjacent_reader_chapter, load_reader_document,
+};
+
+pub use inkpaper_epub::SpineIndex;

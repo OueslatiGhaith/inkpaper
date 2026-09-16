@@ -18,9 +18,20 @@ const READER_FONT_SIZE: u16 = 20;
 const READER_BLOCK_SPACING: u16 = 8;
 const READER_SHAPING_GLYPHS: usize = 128;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReaderChapterDirection {
+    Previous,
+    Next,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReaderRequest {
     OpenEpub(String),
+    LoadAdjacentChapter {
+        path: String,
+        from: SpineIndex,
+        direction: ReaderChapterDirection,
+    },
 }
 
 #[derive(Debug)]
@@ -33,38 +44,64 @@ pub enum ReaderLoadError<E> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReaderChapter {
+    chapter_path: String,
+    spine: SpineIndex,
+    pagination: Pagination<'static>,
+}
+
+impl ReaderChapter {
+    fn new(chapter_path: String, spine: SpineIndex, pagination: Pagination<'static>) -> Self {
+        Self {
+            chapter_path,
+            spine,
+            pagination,
+        }
+    }
+
+    pub fn chapter_path(&self) -> &str {
+        &self.chapter_path
+    }
+
+    pub const fn spine(&self) -> SpineIndex {
+        self.spine
+    }
+
+    pub fn page_count(&self) -> usize {
+        self.pagination.len()
+    }
+
+    pub fn page(&self, index: usize) -> Option<&Page<'static>> {
+        self.pagination.pages().get(index)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReaderDocument {
     path: String,
     title: Option<String>,
     creators: Vec<String>,
     package_path: String,
-    chapter_path: String,
-    spine: SpineIndex,
     spine_len: usize,
-    pagination: Pagination<'static>,
+    chapter: ReaderChapter,
 }
 
 impl ReaderDocument {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         path: String,
         title: Option<String>,
         creators: Vec<String>,
         package_path: String,
-        chapter_path: String,
-        spine: SpineIndex,
         spine_len: usize,
-        pagination: Pagination<'static>,
+        chapter: ReaderChapter,
     ) -> Self {
         Self {
             path,
             title,
             creators,
             package_path,
-            chapter_path,
-            spine,
             spine_len,
-            pagination,
+            chapter,
         }
     }
 
@@ -85,11 +122,11 @@ impl ReaderDocument {
     }
 
     pub fn chapter_path(&self) -> &str {
-        &self.chapter_path
+        self.chapter.chapter_path()
     }
 
     pub const fn spine(&self) -> SpineIndex {
-        self.spine
+        self.chapter.spine()
     }
 
     pub const fn spine_len(&self) -> usize {
@@ -97,16 +134,20 @@ impl ReaderDocument {
     }
 
     pub fn page_count(&self) -> usize {
-        self.pagination.len()
+        self.chapter.page_count()
     }
 
     pub fn page(&self, index: usize) -> Option<&Page<'static>> {
-        self.pagination.pages().get(index)
+        self.chapter.page(index)
     }
 
     pub fn first_page(&self) -> &Page<'static> {
         self.page(0)
             .expect("reader document always contains a page")
+    }
+
+    fn replace_chapter(&mut self, chapter: ReaderChapter) {
+        self.chapter = chapter;
     }
 }
 
@@ -130,88 +171,141 @@ where
     let mut epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
 
     let title = epub.metadata().title().map(String::from);
+
     let creators = epub.metadata().creators().to_vec();
+
     let package_path = String::from(epub.package().path().as_str());
+
     let spine_len = epub.spine().items().len();
 
     for index in 0..spine_len {
-        let linear = epub
-            .spine()
-            .items()
-            .get(index)
-            .is_some_and(|item| item.linear());
-
-        if !linear {
-            continue;
+        if let Some(chapter) = load_readable_chapter_at(&mut epub, index).await? {
+            return Ok(ReaderDocument::new(
+                path,
+                title,
+                creators,
+                package_path,
+                spine_len,
+                chapter,
+            ));
         }
-
-        let is_xhtml = epub
-            .package()
-            .spine_manifest_item(index)
-            .is_some_and(|item| item.media_type() == "application/xhtml+xml");
-
-        if !is_xhtml {
-            continue;
-        }
-
-        let Some(chapter) = epub
-            .load_spine_chapter(index)
-            .await
-            .map_err(ReaderLoadError::Epub)?
-        else {
-            continue;
-        };
-
-        // cover/front-matter XHTML frequently contains only an image. Skip those for now.
-        if chapter.content_len() == ContentOffset::ZERO {
-            continue;
-        }
-
-        let styles = epub
-            .load_chapter_styles(&chapter)
-            .await
-            .map_err(ReaderLoadError::Epub)?;
-
-        let spine = SpineIndex::try_from_usize(index).ok_or(ReaderLoadError::SpineIndexOverflow)?;
-
-        let chapter_path = String::from(chapter.path().as_str());
-
-        // keep the shaping scratch out of the async state across EPUB I/O awaits.
-        let mut measurer = ReaderMeasurer::new().map_err(ReaderLoadError::FontRegistry)?;
-
-        let pagination = paginate_chapter(
-            &chapter,
-            &styles,
-            spine,
-            reader_viewport(),
-            reader_settings(),
-            &mut measurer,
-        )
-        .map_err(ReaderLoadError::Shape)?;
-
-        // a chapter can contain textual source while CSS hides all of it.
-        // don't choose such a chapter as the first thing the reader displays.
-        if pagination
-            .pages()
-            .iter()
-            .all(|page| page.items().is_empty())
-        {
-            continue;
-        }
-
-        return Ok(ReaderDocument::new(
-            path,
-            title,
-            creators,
-            package_path,
-            chapter_path,
-            spine,
-            spine_len,
-            pagination.into_owned(),
-        ));
     }
 
     Err(ReaderLoadError::NoReadableChapter)
+}
+
+pub async fn load_adjacent_reader_chapter<S>(
+    source: S,
+    from: SpineIndex,
+    direction: ReaderChapterDirection,
+) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
+where
+    S: EpubSource,
+{
+    let mut epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
+
+    let spine_len = epub.spine().items().len();
+
+    let from = from.as_usize().ok_or(ReaderLoadError::SpineIndexOverflow)?;
+
+    if from >= spine_len {
+        return Ok(None);
+    }
+
+    match direction {
+        ReaderChapterDirection::Next => {
+            for index in from.saturating_add(1)..spine_len {
+                if let Some(chapter) = load_readable_chapter_at(&mut epub, index).await? {
+                    return Ok(Some(chapter));
+                }
+            }
+        }
+
+        ReaderChapterDirection::Previous => {
+            for index in (0..from).rev() {
+                if let Some(chapter) = load_readable_chapter_at(&mut epub, index).await? {
+                    return Ok(Some(chapter));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+async fn load_readable_chapter_at<S>(
+    epub: &mut Epub<S>,
+    index: usize,
+) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
+where
+    S: EpubSource,
+{
+    let linear = epub
+        .spine()
+        .items()
+        .get(index)
+        .is_some_and(|item| item.linear());
+
+    if !linear {
+        return Ok(None);
+    }
+
+    let is_xhtml = epub
+        .package()
+        .spine_manifest_item(index)
+        .is_some_and(|item| item.media_type() == "application/xhtml+xml");
+
+    if !is_xhtml {
+        return Ok(None);
+    }
+
+    let Some(chapter) = epub
+        .load_spine_chapter(index)
+        .await
+        .map_err(ReaderLoadError::Epub)?
+    else {
+        return Ok(None);
+    };
+
+    // image-only covers/front matter are deferred until EPUB image rendering is implemented.
+    if chapter.content_len() == ContentOffset::ZERO {
+        return Ok(None);
+    }
+
+    let styles = epub
+        .load_chapter_styles(&chapter)
+        .await
+        .map_err(ReaderLoadError::Epub)?;
+
+    let spine = SpineIndex::try_from_usize(index).ok_or(ReaderLoadError::SpineIndexOverflow)?;
+
+    let chapter_path = String::from(chapter.path().as_str());
+
+    let mut measurer = ReaderMeasurer::new().map_err(ReaderLoadError::FontRegistry)?;
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        spine,
+        reader_viewport(),
+        reader_settings(),
+        &mut measurer,
+    )
+    .map_err(ReaderLoadError::Shape)?;
+
+    if pagination
+        .pages()
+        .iter()
+        .all(|page| page.items().is_empty())
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(ReaderChapter::new(
+        chapter_path,
+        spine,
+        pagination.into_owned(),
+    )))
 }
 
 struct ReaderMeasurer {
@@ -289,11 +383,18 @@ impl TextMeasurer for ReaderMeasurer {
 
 impl ImageMeasurer for ReaderMeasurer {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingChapterRequest {
+    from: SpineIndex,
+    direction: ReaderChapterDirection,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct ReaderState {
     path: String,
     fallback_title: String,
     pending: Option<ReaderRequest>,
+    pending_chapter: Option<PendingChapterRequest>,
     document: Option<ReaderDocument>,
     page_index: usize,
     failed: bool,
@@ -302,6 +403,8 @@ pub(crate) struct ReaderState {
 impl ReaderState {
     pub(crate) fn open(&mut self, path: String, fallback_title: String) {
         self.pending = Some(ReaderRequest::OpenEpub(path.clone()));
+
+        self.pending_chapter = None;
         self.path = path;
         self.fallback_title = fallback_title;
         self.document = None;
@@ -319,6 +422,7 @@ impl ReaderState {
         }
 
         self.document = Some(document);
+        self.pending_chapter = None;
         self.page_index = 0;
         self.failed = false;
 
@@ -331,20 +435,101 @@ impl ReaderState {
         }
 
         self.document = None;
+        self.pending_chapter = None;
         self.page_index = 0;
         self.failed = true;
 
         true
     }
 
-    pub(crate) fn previous_page(&mut self) -> bool {
-        if self.document.is_none() || self.page_index == 0 {
+    pub(crate) fn apply_chapter(
+        &mut self,
+        path: &str,
+        from: SpineIndex,
+        direction: ReaderChapterDirection,
+        chapter: ReaderChapter,
+    ) -> bool {
+        if path != self.path {
             return false;
         }
 
-        self.page_index -= 1;
+        let expected = PendingChapterRequest { from, direction };
+
+        if self.pending_chapter != Some(expected) {
+            return false;
+        }
+
+        let Some(document) = self.document.as_mut() else {
+            self.pending_chapter = None;
+            return false;
+        };
+
+        if document.spine() != from {
+            self.pending_chapter = None;
+            return false;
+        }
+
+        let valid_direction = match direction {
+            ReaderChapterDirection::Next => chapter.spine() > from,
+
+            ReaderChapterDirection::Previous => chapter.spine() < from,
+        };
+
+        if !valid_direction {
+            self.pending_chapter = None;
+            return false;
+        }
+
+        document.replace_chapter(chapter);
+
+        self.page_index = match direction {
+            ReaderChapterDirection::Next => 0,
+
+            ReaderChapterDirection::Previous => document.page_count().saturating_sub(1),
+        };
+
+        self.pending_chapter = None;
+        self.failed = false;
 
         true
+    }
+
+    pub(crate) fn finish_chapter_request(
+        &mut self,
+        path: &str,
+        from: SpineIndex,
+        direction: ReaderChapterDirection,
+    ) -> bool {
+        if path != self.path {
+            return false;
+        }
+
+        let expected = PendingChapterRequest { from, direction };
+
+        if self.pending_chapter != Some(expected) {
+            return false;
+        }
+
+        self.pending_chapter = None;
+
+        true
+    }
+
+    pub(crate) fn previous_page(&mut self) -> bool {
+        let Some(document) = self.document.as_ref() else {
+            return false;
+        };
+
+        if self.page_index > 0 {
+            self.page_index -= 1;
+            return true;
+        }
+
+        let from = document.spine();
+
+        self.request_adjacent_chapter(from, ReaderChapterDirection::Previous);
+
+        false
     }
 
     pub(crate) fn next_page(&mut self) -> bool {
@@ -352,15 +537,36 @@ impl ReaderState {
             return false;
         };
 
+        let page_count = document.page_count();
+
+        let from = document.spine();
+
         let next = self.page_index.saturating_add(1);
 
-        if next >= document.page_count() {
-            return false;
+        if next < page_count {
+            self.page_index = next;
+            return true;
         }
 
-        self.page_index = next;
+        self.request_adjacent_chapter(from, ReaderChapterDirection::Next);
 
-        true
+        false
+    }
+
+    fn request_adjacent_chapter(&mut self, from: SpineIndex, direction: ReaderChapterDirection) {
+        if self.pending_chapter.is_some() {
+            return;
+        }
+
+        let request = PendingChapterRequest { from, direction };
+
+        self.pending_chapter = Some(request);
+
+        self.pending = Some(ReaderRequest::LoadAdjacentChapter {
+            path: self.path.clone(),
+            from,
+            direction,
+        });
     }
 
     pub(crate) fn path(&self) -> &str {
@@ -487,5 +693,49 @@ mod tests {
 
         assert_eq!(state.page_index, 0);
         assert!(!state.previous_page());
+    }
+
+    #[test]
+    fn next_chapter_request_replaces_chapter_and_lands_on_first_page() {
+        let path = String::from("/Fixtures/book-boundaries.epub");
+
+        let source = SliceSource::new(include_bytes!("../../../fixtures/book-boundaries.epub"));
+
+        let document = future::block_on(load_reader_document(path.clone(), source)).unwrap();
+
+        let from = document.spine();
+
+        let next_spine = SpineIndex::new(from.get().saturating_add(1));
+
+        let next_chapter = ReaderChapter::new(
+            String::from("Text/next.xhtml"),
+            next_spine,
+            document.chapter.pagination.clone(),
+        );
+
+        let last_page = document.page_count().saturating_sub(1);
+
+        let mut state = ReaderState::default();
+
+        state.open(path.clone(), String::from("book-boundaries"));
+
+        assert!(state.apply_document(document));
+
+        state.page_index = last_page;
+
+        assert!(!state.next_page());
+        assert_eq!(
+            state.take_request(),
+            Some(ReaderRequest::LoadAdjacentChapter {
+                path: path.clone(),
+                from,
+                direction: ReaderChapterDirection::Next,
+            }),
+        );
+
+        assert!(state.apply_chapter(&path, from, ReaderChapterDirection::Next, next_chapter));
+        assert_eq!(state.page_index, 0);
+        assert_eq!(state.document.as_ref().unwrap().spine(), next_spine);
+        assert!(state.page().is_some());
     }
 }

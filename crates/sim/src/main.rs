@@ -8,8 +8,8 @@ use embedded_graphics_simulator::{
 };
 use futures_lite::future;
 use inkpaper_app::{
-    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderDocument, ReaderRequest,
-    load_reader_document,
+    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderChapter, ReaderChapterDirection,
+    ReaderDocument, ReaderRequest, SpineIndex, load_adjacent_reader_chapter, load_reader_document,
 };
 use inkpaper_ui::{
     backend::{CoverageMode, EmbeddedGraphicsPainter},
@@ -131,6 +131,7 @@ fn service_app_requests(runtime: &impl RuntimeApi, app: Entity<InkPaperApp>) {
                             })
                             .expect("app root must be available");
                     }
+
                     None => {
                         runtime
                             .update(app, |app, cx| {
@@ -152,10 +153,33 @@ fn service_app_requests(runtime: &impl RuntimeApi, app: Entity<InkPaperApp>) {
                             })
                             .expect("app root must be available");
                     }
+
                     None => {
                         runtime
                             .update(app, move |app, cx| {
                                 app.apply_reader_error(path, cx);
+                            })
+                            .expect("app root must be available");
+                    }
+                },
+
+                ReaderRequest::LoadAdjacentChapter {
+                    path,
+                    from,
+                    direction,
+                } => match simulator_reader_chapter(&path, from, direction) {
+                    Some(chapter) => {
+                        runtime
+                            .update(app, move |app, cx| {
+                                app.apply_reader_chapter(path, from, direction, chapter, cx);
+                            })
+                            .expect("app root must be available");
+                    }
+
+                    None => {
+                        runtime
+                            .update(app, move |app, _| {
+                                app.finish_reader_chapter_request(path, from, direction);
                             })
                             .expect("app root must be available");
                     }
@@ -219,6 +243,24 @@ fn simulator_listing(path: &str) -> Option<BrowseListing> {
 }
 
 fn simulator_reader_document(path: String) -> Option<ReaderDocument> {
+    let source = simulator_epub_source(&path)?;
+
+    future::block_on(load_reader_document(path, source)).ok()
+}
+
+fn simulator_reader_chapter(
+    path: &str,
+    from: SpineIndex,
+    direction: ReaderChapterDirection,
+) -> Option<ReaderChapter> {
+    let source = simulator_epub_source(path)?;
+
+    future::block_on(load_adjacent_reader_chapter(source, from, direction))
+        .ok()
+        .flatten()
+}
+
+fn simulator_epub_source(path: &str) -> Option<HostFileSource> {
     let file_name = path.strip_prefix("/Fixtures/")?;
 
     if !matches!(
@@ -232,9 +274,7 @@ fn simulator_reader_document(path: String) -> Option<ReaderDocument> {
         .join("../../fixtures")
         .join(file_name);
 
-    let source = HostFileSource::open(&host_path).ok()?;
-
-    future::block_on(load_reader_document(path, source)).ok()
+    HostFileSource::open(&host_path).ok()
 }
 
 fn main() {

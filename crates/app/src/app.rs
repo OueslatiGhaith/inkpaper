@@ -1,8 +1,10 @@
 use alloc::{string::String, vec::Vec};
+use inkpaper_epub::SpineIndex;
 use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
-    BrowseListing, BrowseRequest, ReaderDocument, ReaderRequest,
+    BrowseListing, BrowseRequest, ReaderChapter, ReaderChapterDirection, ReaderDocument,
+    ReaderRequest,
     browser::BrowserState,
     reader::ReaderState,
     screens::{
@@ -147,6 +149,32 @@ impl InkPaperApp {
         }
 
         changed
+    }
+
+    pub fn apply_reader_chapter(
+        &mut self,
+        path: String,
+        from: SpineIndex,
+        direction: ReaderChapterDirection,
+        chapter: ReaderChapter,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let changed = self.reader.apply_chapter(&path, from, direction, chapter);
+
+        if changed {
+            cx.notify();
+        }
+
+        changed
+    }
+
+    pub fn finish_reader_chapter_request(
+        &mut self,
+        path: String,
+        from: SpineIndex,
+        direction: ReaderChapterDirection,
+    ) -> bool {
+        self.reader.finish_chapter_request(&path, from, direction)
     }
 
     pub fn apply_reader_error(&mut self, path: String, cx: &mut Context<'_, Self>) -> bool {

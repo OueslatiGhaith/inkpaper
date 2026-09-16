@@ -20,7 +20,10 @@ use hadris_io::{
     Error as HadrisError, ErrorKind as HadrisErrorKind, Result as HadrisResult, SeekFrom,
     r#async::{Read as HadrisRead, Seek as HadrisSeek},
 };
-use inkpaper_app::{ReaderDocument, load_reader_document};
+use inkpaper_app::{
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, SpineIndex,
+    load_adjacent_reader_chapter, load_reader_document,
+};
 use inkpaper_epub::EpubSource;
 use sdio::{BlockDevice, MmcBus, sd::Card};
 
@@ -45,12 +48,18 @@ static SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static DIRECTORY_LIST_DONE: Signal<CriticalSectionRawMutex, Option<Vec<StorageEntry>>> =
     Signal::new();
 static EPUB_DOCUMENT_DONE: Signal<CriticalSectionRawMutex, Option<ReaderDocument>> = Signal::new();
+static EPUB_CHAPTER_DONE: Signal<CriticalSectionRawMutex, Option<ReaderChapter>> = Signal::new();
 
 #[derive(Debug)]
 enum Command {
     ListRoot,
     ListDirectory(String),
     LoadEpub(String),
+    LoadEpubChapter {
+        path: String,
+        from: SpineIndex,
+        direction: ReaderChapterDirection,
+    },
     Shutdown,
 }
 
@@ -155,6 +164,22 @@ pub async fn load_epub_document_and_wait(path: &str) -> Option<ReaderDocument> {
     EPUB_DOCUMENT_DONE.reset();
     COMMANDS.send(Command::LoadEpub(String::from(path))).await;
     EPUB_DOCUMENT_DONE.wait().await
+}
+
+pub async fn load_epub_chapter_and_wait(
+    path: &str,
+    from: SpineIndex,
+    direction: ReaderChapterDirection,
+) -> Option<ReaderChapter> {
+    EPUB_CHAPTER_DONE.reset();
+    COMMANDS
+        .send(Command::LoadEpubChapter {
+            path: String::from(path),
+            from,
+            direction,
+        })
+        .await;
+    EPUB_CHAPTER_DONE.wait().await
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,6 +466,14 @@ where
                 let document = load_epub_document(filesystem, &path).await;
                 EPUB_DOCUMENT_DONE.signal(document);
             }
+            Command::LoadEpubChapter {
+                path,
+                from,
+                direction,
+            } => {
+                let chapter = load_epub_chapter(filesystem, &path, from, direction).await;
+                EPUB_CHAPTER_DONE.signal(chapter);
+            }
             Command::Shutdown => {
                 debug!("storage shutdown requested");
                 return;
@@ -460,6 +493,7 @@ async fn serve_unavailable(sd_power: &mut SdPower<'_>) {
             Command::ListRoot => ROOT_LIST_DONE.signal(false),
             Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(None),
             Command::LoadEpub(_) => EPUB_DOCUMENT_DONE.signal(None),
+            Command::LoadEpubChapter { .. } => EPUB_CHAPTER_DONE.signal(None),
             Command::Shutdown => {
                 // GPIO5 is already HIGH, but establish it explicitly before
                 // acknowledging the power path
@@ -595,6 +629,49 @@ where
         }
         Err(_) => {
             warn!("EPUB reader load failed path={}", path);
+            None
+        }
+    }
+}
+
+async fn load_epub_chapter<D>(
+    filesystem: &FatVolume<D>,
+    path: &str,
+    from: SpineIndex,
+    direction: ReaderChapterDirection,
+) -> Option<ReaderChapter>
+where
+    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
+{
+    debug!(
+        "opening adjacent EPUB chapter path={} from={}",
+        path,
+        from.get(),
+    );
+
+    let reader = match filesystem.open_file_path(path).await {
+        Ok(reader) => reader,
+        Err(error) => {
+            warn!(
+                "EPUB chapter file open failed path={} error={:?}",
+                path, error,
+            );
+
+            return None;
+        }
+    };
+
+    let source = FatEpubSource::new(reader);
+
+    match load_adjacent_reader_chapter(source, from, direction).await {
+        Ok(chapter) => chapter,
+        Err(_) => {
+            warn!(
+                "EPUB adjacent chapter load failed path={} from={}",
+                path,
+                from.get(),
+            );
+
             None
         }
     }

@@ -581,6 +581,34 @@ async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>)
                         }
                     }
                 }
+
+                ReaderRequest::LoadAdjacentChapter {
+                    path,
+                    from,
+                    direction,
+                } => match storage::load_epub_chapter_and_wait(&path, from, direction).await {
+                    Some(chapter) => {
+                        if runtime
+                            .update(app, move |app, cx| {
+                                app.apply_reader_chapter(path, from, direction, chapter, cx);
+                            })
+                            .is_err()
+                        {
+                            return warn!("failed to apply reader chapter");
+                        }
+                    }
+
+                    None => {
+                        if runtime
+                            .update(app, move |app, _| {
+                                app.finish_reader_chapter_request(path, from, direction);
+                            })
+                            .is_err()
+                        {
+                            return warn!("failed to finish reader chapter request");
+                        }
+                    }
+                },
             }
         }
     }
