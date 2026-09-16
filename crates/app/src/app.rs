@@ -218,6 +218,22 @@ impl InkPaperApp {
 
         true
     }
+
+    fn activate_toggle_reader_controls(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.reader_toggle_controls(cx);
+    }
+
+    fn reader_toggle_controls(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if self.screen != Screen::Reader {
+            return false;
+        }
+
+        if self.reader.toggle_controls() {
+            cx.notify();
+        }
+
+        true
+    }
 }
 
 impl Render for InkPaperApp {
@@ -227,11 +243,13 @@ impl Render for InkPaperApp {
         let file_transfer = cx.listener(Self::show_file_transfer);
         let settings = cx.listener(Self::show_settings);
         let home = cx.listener(Self::show_home);
+
         let browse_back = cx.listener(Self::browse_back);
         let reader_back = cx.listener(Self::reader_back);
 
         let reader_previous_page = cx.listener(Self::activate_previous_reader_page);
         let reader_next_page = cx.listener(Self::activate_next_reader_page);
+        let reader_toggle_controls = cx.listener(Self::activate_toggle_reader_controls);
 
         let browse_entry_listeners = if self.screen == Screen::BrowseFiles {
             (0..self.browser.entries().len())
@@ -273,7 +291,11 @@ impl Render for InkPaperApp {
                     detail={self.reader.detail()}
                     path={self.reader.path()}
                     page={self.reader.page()}
+                    page_label={self.reader.page_label()}
+                    section_label={self.reader.section_label()}
+                    controls_visible={self.reader.controls_visible()}
                     on_previous_page={reader_previous_page}
+                    on_toggle_controls={reader_toggle_controls}
                     on_next_page={reader_next_page}
                     on_back={reader_back}
                 />

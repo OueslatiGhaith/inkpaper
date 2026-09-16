@@ -1,11 +1,11 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 
 use inkpaper_epub::{
     ContentOffset, Epub, EpubSource, Error as EpubError, FontWeight as ReaderFontWeight, SpineIndex,
 };
 use inkpaper_reader::{
-    ImageMeasurer, Page, Pagination, ReaderSettings, TextMeasurer, TextStyle as ReaderTextStyle,
-    Viewport, paginate_chapter,
+    ImageMeasurer, Page, Pagination, ReaderSettings, ReadingPosition, TextMeasurer,
+    TextStyle as ReaderTextStyle, Viewport, paginate_chapter,
 };
 use inkpaper_ui::{
     FontFamilyId, FontRegistry, FontRegistryError, FontWeight as UiFontWeight, ResolvedFont,
@@ -441,6 +441,13 @@ struct PendingChapterRequest {
 }
 
 #[derive(Debug, Default)]
+struct ReaderChromeState {
+    controls_visible: bool,
+    page_label: String,
+    section_label: String,
+}
+
+#[derive(Debug, Default)]
 pub(crate) struct ReaderState {
     path: String,
     fallback_title: String,
@@ -449,6 +456,7 @@ pub(crate) struct ReaderState {
     document: Option<ReaderDocument>,
     page_index: usize,
     failed: bool,
+    chrome: ReaderChromeState,
 }
 
 impl ReaderState {
@@ -461,6 +469,7 @@ impl ReaderState {
         self.document = None;
         self.page_index = 0;
         self.failed = false;
+        self.chrome = ReaderChromeState::default();
     }
 
     pub(crate) fn take_request(&mut self) -> Option<ReaderRequest> {
@@ -476,6 +485,8 @@ impl ReaderState {
         self.pending_chapter = None;
         self.page_index = 0;
         self.failed = false;
+        self.chrome.controls_visible = false;
+        self.refresh_chrome();
 
         true
     }
@@ -489,6 +500,7 @@ impl ReaderState {
         self.pending_chapter = None;
         self.page_index = 0;
         self.failed = true;
+        self.chrome = ReaderChromeState::default();
 
         true
     }
@@ -541,6 +553,8 @@ impl ReaderState {
 
         self.pending_chapter = None;
         self.failed = false;
+        self.chrome.controls_visible = false;
+        self.refresh_chrome();
 
         true
     }
@@ -573,6 +587,9 @@ impl ReaderState {
 
         if self.page_index > 0 {
             self.page_index -= 1;
+            self.chrome.controls_visible = false;
+            self.refresh_chrome();
+
             return true;
         }
 
@@ -596,6 +613,9 @@ impl ReaderState {
 
         if next < page_count {
             self.page_index = next;
+            self.chrome.controls_visible = false;
+            self.refresh_chrome();
+
             return true;
         }
 
@@ -618,6 +638,32 @@ impl ReaderState {
             from,
             direction,
         });
+    }
+
+    pub(crate) fn toggle_controls(&mut self) -> bool {
+        if self.document.is_none() {
+            return false;
+        }
+
+        self.chrome.controls_visible = !self.chrome.controls_visible;
+
+        true
+    }
+
+    pub(crate) fn controls_visible(&self) -> bool {
+        self.chrome.controls_visible
+    }
+
+    pub(crate) fn reading_position(&self) -> Option<ReadingPosition> {
+        self.page().map(Page::position)
+    }
+
+    pub(crate) fn page_label(&self) -> &str {
+        &self.chrome.page_label
+    }
+
+    pub(crate) fn section_label(&self) -> &str {
+        &self.chrome.section_label
     }
 
     pub(crate) fn path(&self) -> &str {
@@ -661,6 +707,60 @@ impl ReaderState {
         };
 
         document.chapter_path()
+    }
+
+    fn refresh_chrome(&mut self) {
+        self.chrome.page_label.clear();
+        self.chrome.section_label.clear();
+
+        let Some(document) = self.document.as_ref() else {
+            return;
+        };
+
+        let Some(page) = document.page(self.page_index) else {
+            return;
+        };
+
+        let page_count = document.page_count();
+
+        if page_count == 0 {
+            return;
+        }
+
+        let page_number = self.page_index.saturating_add(1).min(page_count);
+
+        let chapter_end = document
+            .page(page_count.saturating_sub(1))
+            .map(Page::end_position);
+
+        let chapter_percent = match chapter_end {
+            Some(end) => {
+                let current_offset = page.position().location().offset().get();
+                let end_offset = end.location().offset().get();
+
+                if end_offset == 0 {
+                    0
+                } else {
+                    let current = current_offset.min(end_offset);
+
+                    u8::try_from((u128::from(current) * 100) / u128::from(end_offset))
+                        .unwrap_or(100)
+                        .min(100)
+                }
+            }
+
+            None => 0,
+        };
+
+        let section_number = document.spine().get().saturating_add(1);
+
+        self.chrome.page_label = format!("{} / {}", page_number, page_count,);
+        self.chrome.section_label = format!(
+            "S {} / {}  {}%",
+            section_number,
+            document.spine_len(),
+            chapter_percent,
+        );
     }
 }
 
@@ -809,5 +909,58 @@ mod tests {
         );
 
         assert!(adjacent.is_ok());
+    }
+
+    #[test]
+    fn reader_chrome_tracks_the_current_reading_position() {
+        let path = String::from("/Fixtures/book-boundaries.epub");
+
+        let source = SliceSource::new(include_bytes!("../../../fixtures/book-boundaries.epub"));
+
+        let document = future::block_on(load_reader_document(path.clone(), source)).unwrap();
+
+        let page_count = document.page_count();
+
+        let expected_position = document.first_page().position();
+
+        let mut state = ReaderState::default();
+
+        state.open(path, String::from("book-boundaries"));
+
+        assert!(state.apply_document(document));
+
+        let expected_page_label = format!("1 / {}", page_count);
+
+        assert_eq!(state.page_label(), expected_page_label.as_str(),);
+
+        assert_eq!(state.reading_position(), Some(expected_position),);
+
+        assert!(state.section_label().starts_with("S "),);
+    }
+
+    #[test]
+    fn reader_controls_toggle_only_after_a_book_is_loaded() {
+        let mut state = ReaderState::default();
+
+        assert!(!state.toggle_controls());
+        assert!(!state.controls_visible());
+
+        let path = String::from("/Fixtures/book-boundaries.epub");
+
+        let source = SliceSource::new(include_bytes!("../../../fixtures/book-boundaries.epub"));
+
+        let document = future::block_on(load_reader_document(path.clone(), source)).unwrap();
+
+        state.open(path, String::from("book-boundaries"));
+
+        assert!(state.apply_document(document));
+
+        assert!(!state.controls_visible());
+
+        assert!(state.toggle_controls());
+        assert!(state.controls_visible());
+
+        assert!(state.toggle_controls());
+        assert!(!state.controls_visible());
     }
 }

@@ -9,8 +9,7 @@ use embedded_graphics_simulator::{
 use futures_lite::future;
 use inkpaper_app::{
     BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderChapter, ReaderChapterDirection,
-    ReaderDocument, ReaderRequest, ReaderSession, SpineIndex, load_adjacent_reader_chapter,
-    load_reader_document,
+    ReaderDocument, ReaderRequest, ReaderSession, SpineIndex,
 };
 use inkpaper_ui::{
     backend::{CoverageMode, EmbeddedGraphicsPainter},
