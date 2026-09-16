@@ -309,3 +309,25 @@ fn progress_snapshot_contains_epub_metadata_and_book_progress() {
 
     assert_eq!(entry.progress(), expected_progress);
 }
+
+#[test]
+fn broken_epub_image_does_not_make_text_unreadable() {
+    let source = SliceSource::new(include_bytes!("../../../../fixtures/broken-image.epub"));
+
+    let document = future::block_on(load_reader_document(
+        String::from("/Fixtures/broken-image.epub"),
+        source,
+    ))
+    .unwrap();
+
+    assert!(document.page_count() > 0);
+
+    assert!(
+        document
+            .first_page()
+            .items()
+            .iter()
+            .any(|item| { matches!(item, inkpaper_reader::PageItem::Text(_)) }),
+        "a broken optional image must not discard readable text",
+    );
+}

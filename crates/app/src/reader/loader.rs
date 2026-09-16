@@ -4,7 +4,7 @@ use inkpaper_epub::{ContentOffset, Epub, EpubSource, Error as EpubError, SpineIn
 use inkpaper_reader::{ReadingPosition, paginate_chapter};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
-use crate::reader::progress::BookProgressMap;
+use crate::reader::{images::load_chapter_image_metrics, progress::BookProgressMap};
 
 use super::{
     document::{ReaderChapter, ReaderDocument},
@@ -267,9 +267,8 @@ where
         return Ok(None);
     };
 
-    // Image-only covers/front matter are
-    // deferred until EPUB image rendering
-    // is implemented.
+    // keep image-only covers/front matter skipped until pixel rendering lands.
+    // mixed text/image chapters can now be paginated with correct image bounds.
     if chapter.content_len() == ContentOffset::ZERO {
         return Ok(None);
     }
@@ -279,11 +278,13 @@ where
         .await
         .map_err(ReaderLoadError::Epub)?;
 
+    let image_metrics = load_chapter_image_metrics(epub, &chapter).await;
+
     let spine = SpineIndex::try_from_usize(index).ok_or(ReaderLoadError::SpineIndexOverflow)?;
 
     let chapter_path = String::from(chapter.path().as_str());
 
-    let mut measurer = ReaderMeasurer::new().map_err(ReaderLoadError::FontRegistry)?;
+    let mut measurer = ReaderMeasurer::new(image_metrics).map_err(ReaderLoadError::FontRegistry)?;
 
     let pagination = paginate_chapter(
         &chapter,

@@ -1,6 +1,7 @@
 use inkpaper_reader::{ReaderSettings, Viewport};
 
 mod document;
+mod images;
 mod loader;
 mod measurer;
 mod progress;

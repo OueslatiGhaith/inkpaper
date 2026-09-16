@@ -1,19 +1,22 @@
-use inkpaper_epub::FontWeight as ReaderFontWeight;
+use inkpaper_epub::{ChapterImage, FontWeight as ReaderFontWeight, ImageDimensions};
 use inkpaper_reader::{ImageMeasurer, TextMeasurer, TextStyle as ReaderTextStyle};
 use inkpaper_ui::{
     FontFamilyId, FontRegistry, FontRegistryError, FontWeight as UiFontWeight, ResolvedFont,
     ShapeError, ShapedGlyph, SimpleShaper,
 };
 
+use crate::reader::images::ChapterImageMetrics;
+
 const READER_SHAPING_GLYPHS: usize = 128;
 
 pub(super) struct ReaderMeasurer {
     fonts: FontRegistry<'static, 1>,
     glyphs: [ShapedGlyph; READER_SHAPING_GLYPHS],
+    images: ChapterImageMetrics,
 }
 
 impl ReaderMeasurer {
-    pub(super) fn new() -> Result<Self, FontRegistryError> {
+    pub(super) fn new(images: ChapterImageMetrics) -> Result<Self, FontRegistryError> {
         let mut fonts = FontRegistry::default();
 
         let family = fonts.register_family()?;
@@ -23,13 +26,13 @@ impl ReaderMeasurer {
         Ok(Self {
             fonts,
             glyphs: [ShapedGlyph::EMPTY; READER_SHAPING_GLYPHS],
+            images,
         })
     }
 
     fn resolve_font(&self, style: ReaderTextStyle) -> ResolvedFont<'static> {
         let weight = match style.font_weight() {
             ReaderFontWeight::Normal => UiFontWeight::NORMAL,
-
             ReaderFontWeight::Bold => UiFontWeight::BOLD,
         };
 
@@ -84,4 +87,8 @@ impl TextMeasurer for ReaderMeasurer {
     }
 }
 
-impl ImageMeasurer for ReaderMeasurer {}
+impl ImageMeasurer for ReaderMeasurer {
+    fn image_dimensions(&mut self, image: &ChapterImage) -> Option<ImageDimensions> {
+        self.images.dimensions(image.path())
+    }
+}
