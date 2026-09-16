@@ -2,7 +2,7 @@ use alloc::{format, string::String};
 use inkpaper_epub::SpineIndex;
 use inkpaper_reader::{Page, ReadingPosition};
 
-use crate::{ReaderChapter, ReaderDocument, ReadingProgress};
+use crate::{ReaderChapter, ReaderDocument, ReadingHistoryEntry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReaderChapterDirection {
@@ -20,7 +20,7 @@ pub enum ReaderRequest {
         direction: ReaderChapterDirection,
     },
 
-    UpdateProgress(ReadingProgress),
+    UpdateProgress(ReadingHistoryEntry),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,14 +374,27 @@ impl ReaderState {
         );
     }
 
-    pub(crate) fn current_progress(&self) -> Option<ReadingProgress> {
+    pub(crate) fn current_progress(&self) -> Option<ReadingHistoryEntry> {
         let document = self.document.as_ref()?;
 
         let page = document.page(self.page_index)?;
 
-        Some(ReadingProgress::new(
+        let title = document
+            .title()
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or(&self.fallback_title);
+
+        let creator = document
+            .creators()
+            .iter()
+            .find(|creator| !creator.trim().is_empty())
+            .cloned();
+
+        Some(ReadingHistoryEntry::new(
             self.path.clone(),
             document.identifier().map(String::from),
+            String::from(title),
+            creator,
             page.position(),
         ))
     }

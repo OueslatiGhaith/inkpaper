@@ -6,7 +6,7 @@ use embassy_sync::{
 use hadris_fat::r#async::FatVolume;
 use hadris_io::r#async::{Read as HadrisRead, Seek as HadrisSeek, Write as HadrisWrite};
 use inkpaper_app::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderSession, ReadingProgress,
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderSession, ReadingHistoryEntry,
     SpineIndex,
 };
 
@@ -26,7 +26,7 @@ static DIRECTORY_LIST_DONE: Signal<CriticalSectionRawMutex, Option<Vec<StorageEn
     Signal::new();
 static EPUB_DOCUMENT_DONE: Signal<CriticalSectionRawMutex, Option<ReaderDocument>> = Signal::new();
 static EPUB_CHAPTER_DONE: Signal<CriticalSectionRawMutex, Option<ReaderChapter>> = Signal::new();
-static READING_HISTORY_DONE: Signal<CriticalSectionRawMutex, Option<Vec<ReadingProgress>>> =
+static READING_HISTORY_DONE: Signal<CriticalSectionRawMutex, Option<Vec<ReadingHistoryEntry>>> =
     Signal::new();
 
 #[derive(Debug)]
@@ -40,7 +40,7 @@ enum Command {
         direction: ReaderChapterDirection,
     },
     LoadReadingHistory,
-    UpdateReadingProgress(ReadingProgress),
+    UpdateReadingProgress(ReadingHistoryEntry),
     Shutdown,
 }
 
@@ -106,13 +106,11 @@ pub async fn load_epub_chapter_and_wait(
     EPUB_CHAPTER_DONE.wait().await
 }
 
-pub async fn update_reading_progress(progress: ReadingProgress) {
-    COMMANDS
-        .send(Command::UpdateReadingProgress(progress))
-        .await;
+pub async fn update_reading_progress(entry: ReadingHistoryEntry) {
+    COMMANDS.send(Command::UpdateReadingProgress(entry)).await;
 }
 
-pub async fn reading_history_and_wait() -> Option<Vec<ReadingProgress>> {
+pub async fn reading_history_and_wait() -> Option<Vec<ReadingHistoryEntry>> {
     READING_HISTORY_DONE.reset();
     COMMANDS.send(Command::LoadReadingHistory).await;
     READING_HISTORY_DONE.wait().await

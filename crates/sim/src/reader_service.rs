@@ -73,8 +73,8 @@ impl SimulatorReaderService {
             .flatten()
     }
 
-    pub(super) fn update_progress(&mut self, progress: ReadingProgress) {
-        self.history.record(progress);
+    pub(super) fn update_progress(&mut self, entry: ReadingHistoryEntry) {
+        self.history.record(entry);
 
         let Ok(encoded) = self.history.encode() else {
             return;
@@ -89,7 +89,7 @@ impl SimulatorReaderService {
         let _ = std::fs::rename(temporary, &self.history_path);
     }
 
-    pub(super) fn recent_books(&self) -> Vec<ReadingProgress> {
+    pub(super) fn recent_books(&self) -> Vec<ReadingHistoryEntry> {
         self.history.entries().to_vec()
     }
 }

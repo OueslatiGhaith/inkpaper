@@ -257,3 +257,51 @@ fn reader_session_reopens_at_saved_position() {
         target_position,
     );
 }
+
+#[test]
+fn progress_snapshot_contains_epub_metadata() {
+    let path = String::from("/Fixtures/book-boundaries.epub");
+
+    let fallback_title = String::from("book-boundaries");
+
+    let source = SliceSource::new(include_bytes!("../../../../fixtures/book-boundaries.epub"));
+
+    let document = future::block_on(load_reader_document(path.clone(), source)).unwrap();
+
+    let expected_title = String::from(
+        document
+            .title()
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or(&fallback_title),
+    );
+
+    let expected_creator = document
+        .creators()
+        .iter()
+        .find(|creator| !creator.trim().is_empty())
+        .cloned();
+
+    let expected_identifier = document.identifier().map(String::from);
+
+    let expected_position = document.first_page().position();
+
+    let mut state = ReaderState::default();
+
+    state.open(path.clone(), fallback_title);
+
+    assert!(state.apply_document(document));
+
+    let Some(ReaderRequest::UpdateProgress(entry)) = state.take_request() else {
+        panic!("applying a document must queue reading progress");
+    };
+
+    assert_eq!(entry.path(), path);
+
+    assert_eq!(entry.identifier(), expected_identifier.as_deref());
+
+    assert_eq!(entry.title(), expected_title);
+
+    assert_eq!(entry.creator(), expected_creator.as_deref());
+
+    assert_eq!(entry.position(), expected_position);
+}

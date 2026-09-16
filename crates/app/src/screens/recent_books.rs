@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    ReadingProgress,
+    ReadingHistoryEntry,
     components::{
         header::{BackHeader, BackHeaderProps},
         recent_book_row::{RecentBookRow, RecentBookRowProps},
@@ -12,7 +12,7 @@ use crate::{
 
 #[component]
 pub(crate) struct RecentBooksScreen<'a> {
-    entries: &'a [ReadingProgress],
+    entries: &'a [ReadingHistoryEntry],
     entry_listeners: Vec<Listener<ActivateEvent>>,
     revision: u64,
     error: bool,
@@ -62,7 +62,7 @@ impl RenderOnce for RecentBooksScreen<'_> {
 
 #[component]
 struct RecentBookList<'a> {
-    entries: &'a [ReadingProgress],
+    entries: &'a [ReadingHistoryEntry],
     listeners: Vec<Listener<ActivateEvent>>,
     revision: u64,
 }

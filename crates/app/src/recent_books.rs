@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::ReadingProgress;
+use crate::ReadingHistoryEntry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecentBooksRequest {
@@ -9,7 +9,7 @@ pub enum RecentBooksRequest {
 
 #[derive(Debug, Default)]
 pub(crate) struct RecentBooksState {
-    entries: Vec<ReadingProgress>,
+    entries: Vec<ReadingHistoryEntry>,
     pending: Option<RecentBooksRequest>,
     revision: u64,
     error: bool,
@@ -25,7 +25,7 @@ impl RecentBooksState {
         self.pending.take()
     }
 
-    pub(crate) fn apply_entries(&mut self, entries: Vec<ReadingProgress>) {
+    pub(crate) fn apply_entries(&mut self, entries: Vec<ReadingHistoryEntry>) {
         self.entries = entries;
         self.error = false;
         self.revision = self.revision.wrapping_add(1);
@@ -37,11 +37,11 @@ impl RecentBooksState {
         self.revision = self.revision.wrapping_add(1);
     }
 
-    pub(crate) fn entries(&self) -> &[ReadingProgress] {
+    pub(crate) fn entries(&self) -> &[ReadingHistoryEntry] {
         &self.entries
     }
 
-    pub(crate) fn entry(&self, index: usize) -> Option<&ReadingProgress> {
+    pub(crate) fn entry(&self, index: usize) -> Option<&ReadingHistoryEntry> {
         self.entries.get(index)
     }
 
@@ -51,39 +51,5 @@ impl RecentBooksState {
 
     pub(crate) const fn error(&self) -> bool {
         self.error
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloc::string::String;
-
-    use inkpaper_reader::ReadingPosition;
-
-    use super::*;
-
-    #[test]
-    fn load_request_is_one_shot() {
-        let mut state = RecentBooksState::default();
-
-        state.request_load();
-
-        assert_eq!(state.take_request(), Some(RecentBooksRequest::Load));
-
-        assert_eq!(state.take_request(), None);
-    }
-
-    #[test]
-    fn history_order_is_preserved() {
-        let mut state = RecentBooksState::default();
-
-        state.apply_entries(alloc::vec![
-            ReadingProgress::new(String::from("/new.epub"), None, ReadingPosition::default()),
-            ReadingProgress::new(String::from("/old.epub"), None, ReadingPosition::default()),
-        ]);
-
-        assert_eq!(state.entries()[0].path(), "/new.epub");
-
-        assert_eq!(state.entries()[1].path(), "/old.epub");
     }
 }

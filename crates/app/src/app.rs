@@ -4,7 +4,7 @@ use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
     BrowseListing, BrowseRequest, ReaderChapter, ReaderChapterDirection, ReaderDocument,
-    ReaderRequest, ReadingProgress, RecentBooksRequest,
+    ReaderRequest, ReadingHistoryEntry, RecentBooksRequest,
     browser::BrowserState,
     reader::ReaderState,
     recent_books::RecentBooksState,
@@ -272,7 +272,7 @@ impl InkPaperApp {
 
     pub fn apply_recent_books(
         &mut self,
-        entries: Vec<ReadingProgress>,
+        entries: Vec<ReadingHistoryEntry>,
         cx: &mut Context<'_, Self>,
     ) {
         self.recent_books.apply_entries(entries);
