@@ -45,21 +45,54 @@ where
     }
 }
 
-pub struct Text<'a> {
-    pub text: &'a str,
-    pub(crate) style: TextStyle,
+pub enum TextContent<'a> {
+    Borrowed(&'a str),
+    #[cfg(feature = "alloc")]
+    Owned(alloc::string::String),
 }
 
-impl<'a> Text<'a> {
-    pub fn new(text: &'a str) -> Self {
-        Self {
-            text,
-            style: TextStyle::default(),
+impl TextContent<'_> {
+    pub fn as_str(&self) -> &str {
+        match self {
+            TextContent::Borrowed(value) => value,
+            #[cfg(feature = "alloc")]
+            TextContent::Owned(value) => value.as_str(),
         }
     }
 }
 
-pub fn text(value: &str) -> Text<'_> {
+impl<'a> From<&'a str> for TextContent<'a> {
+    fn from(value: &'a str) -> Self {
+        Self::Borrowed(value)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'a> From<alloc::string::String> for TextContent<'a> {
+    fn from(value: alloc::string::String) -> Self {
+        Self::Owned(value)
+    }
+}
+
+pub struct Text<'a> {
+    pub content: TextContent<'a>,
+    pub(crate) style: TextStyle,
+}
+
+impl<'a> Text<'a> {
+    pub fn new(content: impl Into<TextContent<'a>>) -> Self {
+        Self {
+            content: content.into(),
+            style: TextStyle::default(),
+        }
+    }
+
+    pub fn content(&self) -> &str {
+        self.content.as_str()
+    }
+}
+
+pub fn text<'a>(value: impl Into<TextContent<'a>>) -> Text<'a> {
     Text::new(value)
 }
 
@@ -71,12 +104,21 @@ impl TextStyled for Text<'_> {
 
 impl Element for Text<'_> {
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
-        cx.push_text(self.text, self.style)
+        cx.push_text(self.content.as_str(), self.style)
     }
 }
 
 impl<'a> IntoElement for &'a str {
     type Element = Text<'a>;
+
+    fn into_element(self) -> Self::Element {
+        Text::new(self)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl IntoElement for alloc::string::String {
+    type Element = Text<'static>;
 
     fn into_element(self) -> Self::Element {
         Text::new(self)

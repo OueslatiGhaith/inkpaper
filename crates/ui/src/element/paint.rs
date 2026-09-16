@@ -64,13 +64,15 @@ impl<'a> PaintCx<'a> {
 
     /// paints text inside explicit bounds, inheriting the canvas's text style
     pub fn draw_text(&mut self, bounds: Rect, text: Text<'_>) {
-        if text.text.is_empty() {
+        let content = text.content.as_str();
+
+        if content.is_empty() {
             return;
         }
 
         if let Some((bounds, clip)) = self.destination(bounds) {
             self.sink
-                .text(bounds, clip, text.text, text.style.resolve(self.text_style));
+                .text(bounds, clip, content, text.style.resolve(self.text_style));
         }
     }
 

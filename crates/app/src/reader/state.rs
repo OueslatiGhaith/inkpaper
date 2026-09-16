@@ -326,9 +326,9 @@ impl ReaderState {
             return;
         };
 
-        let Some(page) = document.page(self.page_index) else {
+        if document.page(self.page_index).is_none() {
             return;
-        };
+        }
 
         let page_count = document.page_count();
 
@@ -338,39 +338,17 @@ impl ReaderState {
 
         let page_number = self.page_index.saturating_add(1).min(page_count);
 
-        let chapter_end = document
-            .page(page_count.saturating_sub(1))
-            .map(Page::end_position);
-
-        let chapter_percent = match chapter_end {
-            Some(end) => {
-                let current_offset = page.position().location().offset().get();
-
-                let end_offset = end.location().offset().get();
-
-                if end_offset == 0 {
-                    0
-                } else {
-                    let current = current_offset.min(end_offset);
-
-                    u8::try_from((u128::from(current) * 100) / u128::from(end_offset))
-                        .unwrap_or(100)
-                        .min(100)
-                }
-            }
-
-            None => 0,
-        };
+        let book_progress = document.progress_at_page(self.page_index);
 
         let section_number = document.spine().get().saturating_add(1);
 
-        self.chrome.page_label = format!("{} / {}", page_number, page_count);
+        self.chrome.page_label = format!("{} / {}", page_number, page_count,);
 
         self.chrome.section_label = format!(
-            "S {} / {}  {}%",
+            "{}%  S {} / {}",
+            book_progress.percent(),
             section_number,
             document.spine_len(),
-            chapter_percent,
         );
     }
 
@@ -396,6 +374,7 @@ impl ReaderState {
             String::from(title),
             creator,
             page.position(),
+            document.progress_at_page(self.page_index),
         ))
     }
 

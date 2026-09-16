@@ -197,7 +197,7 @@ fn reader_chrome_tracks_the_current_reading_position() {
 
     assert_eq!(state.reading_position(), Some(expected_position));
 
-    assert!(state.section_label().starts_with("S "));
+    assert!(state.section_label().contains("%  S "));
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn reader_session_reopens_at_saved_position() {
 }
 
 #[test]
-fn progress_snapshot_contains_epub_metadata() {
+fn progress_snapshot_contains_epub_metadata_and_book_progress() {
     let path = String::from("/Fixtures/book-boundaries.epub");
 
     let fallback_title = String::from("book-boundaries");
@@ -285,6 +285,8 @@ fn progress_snapshot_contains_epub_metadata() {
 
     let expected_position = document.first_page().position();
 
+    let expected_progress = document.progress_at_page(0);
+
     let mut state = ReaderState::default();
 
     state.open(path.clone(), fallback_title);
@@ -304,4 +306,6 @@ fn progress_snapshot_contains_epub_metadata() {
     assert_eq!(entry.creator(), expected_creator.as_deref());
 
     assert_eq!(entry.position(), expected_position);
+
+    assert_eq!(entry.progress(), expected_progress);
 }

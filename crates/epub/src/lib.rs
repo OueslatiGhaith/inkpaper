@@ -149,6 +149,31 @@ where
         Ok(Some(bytes))
     }
 
+    pub async fn spine_resource_sizes(&mut self) -> Result<Vec<Option<u64>>, Error<S::Error>> {
+        let spine_len = self.package.spine().items().len();
+
+        let mut paths = Vec::with_capacity(spine_len);
+        let mut path_indices = Vec::with_capacity(spine_len);
+
+        for index in 0..spine_len {
+            match self.package.spine_manifest_item(index) {
+                Some(item) => {
+                    path_indices.push(Some(paths.len()));
+
+                    paths.push(item.path().clone());
+                }
+                None => path_indices.push(None),
+            }
+        }
+
+        let sizes = self.archive.uncompressed_sizes(&paths).await?;
+
+        Ok(path_indices
+            .into_iter()
+            .map(|index| index.and_then(|index| sizes[index]))
+            .collect())
+    }
+
     pub fn into_source(self) -> S {
         self.archive.into_source()
     }

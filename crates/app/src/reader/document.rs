@@ -3,6 +3,8 @@ use alloc::{string::String, vec::Vec};
 use inkpaper_epub::SpineIndex;
 use inkpaper_reader::{Page, Pagination, ReadingPosition};
 
+use crate::{BookProgress, reader::progress::BookProgressMap};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReaderChapter {
     chapter_path: String,
@@ -57,6 +59,7 @@ pub struct ReaderDocument {
     creators: Vec<String>,
     package_path: String,
     spine_len: usize,
+    progress: BookProgressMap,
     chapter: ReaderChapter,
     opening_page_index: usize,
 }
@@ -70,6 +73,7 @@ impl ReaderDocument {
         creators: Vec<String>,
         package_path: String,
         spine_len: usize,
+        progress: BookProgressMap,
         chapter: ReaderChapter,
         opening_page_index: usize,
     ) -> Self {
@@ -80,6 +84,7 @@ impl ReaderDocument {
             creators,
             package_path,
             spine_len,
+            progress,
             chapter,
             opening_page_index,
         }
@@ -142,5 +147,23 @@ impl ReaderDocument {
     #[cfg(test)]
     pub(super) fn chapter(&self) -> &ReaderChapter {
         &self.chapter
+    }
+
+    pub fn progress_at_page(&self, index: usize) -> BookProgress {
+        let Some(page) = self.page(index) else {
+            return BookProgress::ZERO;
+        };
+
+        let Some(chapter_end) = self.page(self.page_count().saturating_sub(1)) else {
+            return BookProgress::ZERO;
+        };
+
+        self.progress.at(
+            self.spine(),
+            // progress represents content consumed through the visible page,
+            // so use the page end.
+            page.end_position().location().offset(),
+            chapter_end.end_position().location().offset(),
+        )
     }
 }

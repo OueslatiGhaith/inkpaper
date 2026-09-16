@@ -4,6 +4,8 @@ use inkpaper_epub::{ContentOffset, Epub, EpubSource, Error as EpubError, SpineIn
 use inkpaper_reader::{ReadingPosition, paginate_chapter};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
+use crate::reader::progress::BookProgressMap;
+
 use super::{
     document::{ReaderChapter, ReaderDocument},
     measurer::ReaderMeasurer,
@@ -26,6 +28,7 @@ where
 {
     path: String,
     epub: Epub<S>,
+    progress: BookProgressMap,
 }
 
 impl<S> ReaderSession<S>
@@ -33,9 +36,14 @@ where
     S: EpubSource,
 {
     pub async fn open(path: String, source: S) -> Result<Self, ReaderLoadError<S::Error>> {
-        let epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
+        let mut epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
+        let progress = load_book_progress_map(&mut epub).await?;
 
-        Ok(Self { path, epub })
+        Ok(Self {
+            path,
+            epub,
+            progress,
+        })
     }
 
     pub fn path(&self) -> &str {
@@ -54,7 +62,13 @@ where
         &mut self,
         position: Option<ReadingPosition>,
     ) -> Result<ReaderDocument, ReaderLoadError<S::Error>> {
-        load_reader_document_from_epub(self.path.clone(), &mut self.epub, position).await
+        load_reader_document_from_epub(
+            self.path.clone(),
+            &mut self.epub,
+            self.progress.clone(),
+            position,
+        )
+        .await
     }
 
     pub async fn load_adjacent_chapter(
@@ -94,6 +108,7 @@ where
 async fn load_reader_document_from_epub<S>(
     path: String,
     epub: &mut Epub<S>,
+    progress: BookProgressMap,
     resume: Option<ReadingPosition>,
 ) -> Result<ReaderDocument, ReaderLoadError<S::Error>>
 where
@@ -123,6 +138,7 @@ where
             creators,
             package_path,
             spine_len,
+            progress,
             chapter,
             opening_page_index,
         ));
@@ -137,6 +153,7 @@ where
                 creators,
                 package_path,
                 spine_len,
+                progress,
                 chapter,
                 0,
             ));
@@ -181,6 +198,39 @@ where
     }
 
     Ok(None)
+}
+
+async fn load_book_progress_map<S>(
+    epub: &mut Epub<S>,
+) -> Result<BookProgressMap, ReaderLoadError<S::Error>>
+where
+    S: EpubSource,
+{
+    let sizes = epub
+        .spine_resource_sizes()
+        .await
+        .map_err(ReaderLoadError::Epub)?;
+
+    let weights = sizes.into_iter().enumerate().map(|(index, size)| {
+        let linear = epub
+            .spine()
+            .items()
+            .get(index)
+            .is_some_and(|item| item.linear());
+
+        let xhtml = epub
+            .package()
+            .spine_manifest_item(index)
+            .is_some_and(|item| item.media_type() == "application/xhtml+xml");
+
+        if linear && xhtml {
+            size.unwrap_or(0)
+        } else {
+            0
+        }
+    });
+
+    Ok(BookProgressMap::from_weights(weights))
 }
 
 async fn load_readable_chapter_at<S>(

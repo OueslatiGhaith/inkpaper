@@ -1,12 +1,13 @@
+use inkpaper_reader::{ReaderSettings, Viewport};
+
 mod document;
 mod loader;
 mod measurer;
+mod progress;
 mod state;
 
 #[cfg(test)]
 mod tests;
-
-use inkpaper_reader::{ReaderSettings, Viewport};
 
 pub use document::{ReaderChapter, ReaderDocument};
 pub use loader::{

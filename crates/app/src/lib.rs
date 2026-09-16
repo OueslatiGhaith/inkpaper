@@ -18,8 +18,8 @@ pub use reader::{
     ReaderSession, load_adjacent_reader_chapter, load_reader_document,
 };
 pub use reading_history::{
-    MAX_READING_HISTORY_ENTRIES, ReadingHistory, ReadingHistoryEntry, ReadingHistoryError,
-    ReadingHistoryRequest,
+    BookProgress, MAX_READING_HISTORY_ENTRIES, ReadingHistory, ReadingHistoryEntry,
+    ReadingHistoryError, ReadingHistoryRequest,
 };
 
 pub use inkpaper_epub::SpineIndex;

@@ -527,3 +527,20 @@ fn push_u16(output: &mut std::vec::Vec<u8>, value: u16) {
 fn push_u32(output: &mut std::vec::Vec<u8>, value: u32) {
     output.extend_from_slice(&value.to_le_bytes());
 }
+
+#[test]
+fn reports_uncompressed_spine_resource_sizes() {
+    let bytes = build_test_epub(DEFLATED);
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let sizes = future::block_on(epub.spine_resource_sizes()).unwrap();
+
+    assert_eq!(
+        sizes,
+        vec![
+            Some(b"<html><body><p>One</p></body></html>".len() as u64),
+            Some(b"<html><body><p>Two</p></body></html>".len() as u64),
+        ],
+    );
+}

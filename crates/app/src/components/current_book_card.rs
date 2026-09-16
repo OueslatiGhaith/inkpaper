@@ -1,16 +1,28 @@
+use alloc::format;
+
 use inkpaper_ui::prelude::*;
 
-use crate::components::icon::{Icon, IconKind, IconProps};
+use crate::{
+    BookProgress,
+    components::icon::{Icon, IconKind, IconProps},
+};
 
 #[component]
 pub(crate) struct CurrentBookCard<'a> {
     title: &'a str,
     subtitle: &'a str,
+    progress: BookProgress,
     on_activate: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for CurrentBookCard<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let progress_label = format!("{}%", self.progress.percent());
+
+        // 258 px outer width with one-pixel borders leaves a 256 px interior.
+        let filled_width = u32::from(self.progress.basis_points()) * 256 / 10_000;
+        let progress_fill_width = px(filled_width as i32);
+
         rsx! {
             <div
                 id="home-current-book"
@@ -37,9 +49,15 @@ impl RenderOnce for CurrentBookCard<'_> {
                         {self.subtitle}
                     </text>
 
-                    <text class="font-bold text-xl no-wrap max-lines-1 text-clip">
-                        {"Continue reading"}
-                    </text>
+                    <div class=" w-full flex flex-col gap-1">
+                        <text class="font-bold text-xl no-wrap max-lines-1 text-clip">
+                            {progress_label}
+                        </text>
+
+                        <div class=" relative w-full h-1 border-px border-black">
+                            <div class="absolute left-px top-px w-{progress_fill_width} h-[2px] bg-black" />
+                        </div>
+                    </div>
                 </div>
             </div>
         }

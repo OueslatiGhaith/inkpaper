@@ -1,4 +1,4 @@
-use alloc::{vec, vec::Vec};
+use alloc::{string::String, vec, vec::Vec};
 use miniz_oxide::inflate::decompress_to_vec_with_limit;
 
 use crate::{
@@ -22,12 +22,37 @@ const MAX_EOCD_SEARCH: usize = EOCD_MIN_LEN + u16::MAX as usize;
 const COMPRESSION_STORED: u16 = 0;
 const COMPRESSION_DEFLATE: u16 = 8;
 
+#[derive(Debug, Clone, Copy)]
 struct Entry {
     flags: u16,
     compression: u16,
     compressed_size: u32,
     uncompressed_size: u32,
     local_header_offset: u32,
+}
+
+struct CentralEntry {
+    name: String,
+    entry: Entry,
+    disk_start: u16,
+    next_offset: u64,
+}
+
+impl CentralEntry {
+    fn validated_entry(&self) -> Result<Entry, ArchiveError> {
+        if self.disk_start != 0 {
+            return Err(ArchiveError::MultiDiskUnsupported);
+        }
+
+        if self.entry.compressed_size == u32::MAX
+            || self.entry.uncompressed_size == u32::MAX
+            || self.entry.local_header_offset == u32::MAX
+        {
+            return Err(ArchiveError::Zip64Unsupported);
+        }
+
+        Ok(self.entry)
+    }
 }
 
 pub(crate) struct Archive<S> {
@@ -185,81 +210,140 @@ where
         }
     }
 
+    pub(crate) async fn uncompressed_sizes(
+        &mut self,
+        paths: &[ArchivePath],
+    ) -> Result<Vec<Option<u64>>, Error<S::Error>> {
+        let mut sizes = vec![None; paths.len()];
+
+        if paths.is_empty() {
+            return Ok(sizes);
+        }
+
+        let central_end = self
+            .central_directory_offset
+            .checked_add(self.central_directory_size)
+            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
+
+        let mut offset = self.central_directory_offset;
+
+        let mut remaining = paths.len();
+
+        for _ in 0..self.entry_count {
+            let central = self.read_central_entry(offset, central_end).await?;
+
+            for (index, path) in paths.iter().enumerate() {
+                if sizes[index].is_some() || central.name.as_str() != path.as_str() {
+                    continue;
+                }
+
+                let entry = central.validated_entry().map_err(Error::Archive)?;
+
+                sizes[index] = Some(u64::from(entry.uncompressed_size));
+
+                remaining = remaining.saturating_sub(1);
+            }
+
+            if remaining == 0 {
+                break;
+            }
+
+            offset = central.next_offset;
+        }
+
+        Ok(sizes)
+    }
+
     pub(crate) fn into_source(self) -> S {
         self.source
     }
 
     async fn find_entry(&mut self, path: &ArchivePath) -> Result<Entry, Error<S::Error>> {
-        let central_end = self.central_directory_offset + self.central_directory_size;
+        let central_end = self
+            .central_directory_offset
+            .checked_add(self.central_directory_size)
+            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
 
         let mut offset = self.central_directory_offset;
 
         for _ in 0..self.entry_count {
-            if offset
-                .checked_add(CENTRAL_HEADER_LEN as u64)
-                .is_none_or(|end| end > central_end)
-            {
-                return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
+            let central = self.read_central_entry(offset, central_end).await?;
+
+            if central.name.as_str() == path.as_str() {
+                return central.validated_entry().map_err(Error::Archive);
             }
 
-            let mut header = [0u8; CENTRAL_HEADER_LEN];
-            self.read_exact(offset, &mut header).await?;
-
-            if le_u32(&header[0..4]) != CENTRAL_HEADER_SIGNATURE {
-                return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
-            }
-
-            let flags = le_u16(&header[8..10]);
-            let compression = le_u16(&header[10..12]);
-            let compressed_size = le_u32(&header[20..24]);
-            let uncompressed_size = le_u32(&header[24..28]);
-            let name_len = le_u16(&header[28..30]);
-            let extra_len = le_u16(&header[30..32]);
-            let comment_len = le_u16(&header[32..34]);
-            let disk_start = le_u16(&header[34..36]);
-            let local_header_offset = le_u32(&header[42..46]);
-            let variable_len = u64::from(name_len) + u64::from(extra_len) + u64::from(comment_len);
-
-            let next_offset = offset
-                .checked_add(CENTRAL_HEADER_LEN as u64)
-                .and_then(|value| value.checked_add(variable_len))
-                .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
-
-            if next_offset > central_end {
-                return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
-            }
-
-            let mut name = vec![0u8; usize::from(name_len)];
-
-            self.read_exact(offset + CENTRAL_HEADER_LEN as u64, &mut name)
-                .await?;
-
-            let name = core::str::from_utf8(&name).map_err(Error::Utf8)?;
-            if name == path.as_str() {
-                if disk_start != 0 {
-                    return Err(Error::Archive(ArchiveError::MultiDiskUnsupported));
-                }
-
-                if compressed_size == u32::MAX
-                    || uncompressed_size == u32::MAX
-                    || local_header_offset == u32::MAX
-                {
-                    return Err(Error::Archive(ArchiveError::Zip64Unsupported));
-                }
-
-                return Ok(Entry {
-                    flags,
-                    compression,
-                    compressed_size,
-                    uncompressed_size,
-                    local_header_offset,
-                });
-            }
-
-            offset = next_offset;
+            offset = central.next_offset;
         }
 
         Err(Error::Archive(ArchiveError::EntryNotFound))
+    }
+
+    async fn read_central_entry(
+        &mut self,
+        offset: u64,
+        central_end: u64,
+    ) -> Result<CentralEntry, Error<S::Error>> {
+        if offset
+            .checked_add(CENTRAL_HEADER_LEN as u64)
+            .is_none_or(|end| end > central_end)
+        {
+            return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
+        }
+
+        let mut header = [0u8; CENTRAL_HEADER_LEN];
+
+        self.read_exact(offset, &mut header).await?;
+
+        if le_u32(&header[0..4]) != CENTRAL_HEADER_SIGNATURE {
+            return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
+        }
+
+        let flags = le_u16(&header[8..10]);
+        let compression = le_u16(&header[10..12]);
+        let compressed_size = le_u32(&header[20..24]);
+        let uncompressed_size = le_u32(&header[24..28]);
+        let name_len = le_u16(&header[28..30]);
+        let extra_len = le_u16(&header[30..32]);
+        let comment_len = le_u16(&header[32..34]);
+        let disk_start = le_u16(&header[34..36]);
+        let local_header_offset = le_u32(&header[42..46]);
+
+        let variable_len = u64::from(name_len)
+            .checked_add(u64::from(extra_len))
+            .and_then(|length| length.checked_add(u64::from(comment_len)))
+            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
+
+        let next_offset = offset
+            .checked_add(CENTRAL_HEADER_LEN as u64)
+            .and_then(|value| value.checked_add(variable_len))
+            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
+
+        if next_offset > central_end {
+            return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
+        }
+
+        let mut name = vec![0u8; usize::from(name_len)];
+
+        self.read_exact(offset + CENTRAL_HEADER_LEN as u64, &mut name)
+            .await?;
+
+        let name = core::str::from_utf8(&name).map_err(Error::Utf8)?;
+
+        Ok(CentralEntry {
+            name: String::from(name),
+
+            entry: Entry {
+                flags,
+                compression,
+                compressed_size,
+                uncompressed_size,
+                local_header_offset,
+            },
+
+            disk_start,
+            next_offset,
+        })
     }
 
     async fn read_exact(&mut self, offset: u64, buffer: &mut [u8]) -> Result<(), Error<S::Error>> {

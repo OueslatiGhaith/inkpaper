@@ -32,6 +32,7 @@ impl RenderOnce for HomeScreen<'_> {
                         <CurrentBookCard
                             title={book.display_title()}
                             subtitle={book.display_subtitle()}
+                            progress={book.progress()}
                             on_activate={self.on_current_book}
                         />
                     {:else}

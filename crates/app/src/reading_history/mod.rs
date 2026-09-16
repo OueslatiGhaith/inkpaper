@@ -3,12 +3,14 @@ use inkpaper_epub::{BookLocation, ContentOffset, SpineIndex};
 use inkpaper_reader::ReadingPosition;
 use serde::{Deserialize, Serialize};
 
+mod progress;
 mod state;
 
+pub use progress::BookProgress;
 pub use state::ReadingHistoryRequest;
 pub(crate) use state::ReadingHistoryState;
 
-const STORAGE_VERSION: u8 = 1;
+const STORAGE_VERSION: u8 = 2;
 
 pub const MAX_READING_HISTORY_ENTRIES: usize = 16;
 
@@ -19,6 +21,7 @@ pub struct ReadingHistoryEntry {
     title: String,
     creator: Option<String>,
     position: ReadingPosition,
+    progress: BookProgress,
 }
 
 impl ReadingHistoryEntry {
@@ -28,6 +31,7 @@ impl ReadingHistoryEntry {
         title: String,
         creator: Option<String>,
         position: ReadingPosition,
+        progress: BookProgress,
     ) -> Self {
         Self {
             path,
@@ -35,6 +39,7 @@ impl ReadingHistoryEntry {
             title,
             creator: creator.filter(|creator| !creator.trim().is_empty()),
             position,
+            progress,
         }
     }
 
@@ -56,6 +61,10 @@ impl ReadingHistoryEntry {
 
     pub const fn position(&self) -> ReadingPosition {
         self.position
+    }
+
+    pub const fn progress(&self) -> BookProgress {
+        self.progress
     }
 
     pub fn display_title(&self) -> &str {
@@ -176,6 +185,7 @@ struct StoredHistoryEntry {
     title: String,
     creator: Option<String>,
     position: StoredPosition,
+    progress_basis_points: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -200,6 +210,7 @@ impl From<&ReadingHistoryEntry> for StoredHistoryEntry {
                 offset: location.offset().get(),
                 non_text: position.non_text(),
             },
+            progress_basis_points: entry.progress().basis_points(),
         }
     }
 }
@@ -218,6 +229,7 @@ impl From<StoredHistoryEntry> for ReadingHistoryEntry {
                 ),
                 entry.position.non_text,
             ),
+            BookProgress::from_basis_points(entry.progress_basis_points),
         )
     }
 }
@@ -244,6 +256,7 @@ mod tests {
                 BookLocation::new(SpineIndex::new(7), ContentOffset::new(1234)),
                 9,
             ),
+            BookProgress::ZERO,
         );
 
         let mut history = ReadingHistory::default();
@@ -267,6 +280,7 @@ mod tests {
             String::from("Old title"),
             None,
             position(0, 1),
+            BookProgress::ZERO,
         ));
 
         history.record(ReadingHistoryEntry::new(
@@ -275,6 +289,7 @@ mod tests {
             String::from("Book B"),
             None,
             position(0, 2),
+            BookProgress::ZERO,
         ));
 
         history.record(ReadingHistoryEntry::new(
@@ -283,6 +298,7 @@ mod tests {
             String::from("New title"),
             Some(String::from("Author A")),
             position(3, 42),
+            BookProgress::ZERO,
         ));
 
         assert_eq!(history.entries().len(), 2);
@@ -306,6 +322,7 @@ mod tests {
             String::from("Book"),
             None,
             ReadingPosition::default(),
+            BookProgress::ZERO,
         ));
 
         assert!(
@@ -328,6 +345,7 @@ mod tests {
             String::from("Dune"),
             Some(String::from("Frank Herbert")),
             ReadingPosition::default(),
+            BookProgress::ZERO,
         );
 
         assert_eq!(entry.display_title(), "Dune");
@@ -343,6 +361,7 @@ mod tests {
             String::from("Dune"),
             None,
             ReadingPosition::default(),
+            BookProgress::ZERO,
         );
 
         assert_eq!(entry.display_subtitle(), "/Books");
@@ -376,5 +395,30 @@ mod tests {
             ReadingHistory::decode(&encoded),
             Err(ReadingHistoryError::TrailingData),
         );
+    }
+
+    #[test]
+    fn history_round_trips_metadata_position_and_progress() {
+        let entry = ReadingHistoryEntry::new(
+            String::from("/Books/Étranger.epub"),
+            Some(String::from("urn:isbn:123")),
+            String::from("L'Étranger"),
+            Some(String::from("Albert Camus")),
+            ReadingPosition::new(
+                BookLocation::new(SpineIndex::new(7), ContentOffset::new(1234)),
+                9,
+            ),
+            BookProgress::from_basis_points(4_321),
+        );
+
+        let mut history = ReadingHistory::default();
+
+        history.record(entry.clone());
+
+        let encoded = history.encode().unwrap();
+
+        let decoded = ReadingHistory::decode(&encoded).unwrap();
+
+        assert_eq!(decoded.entries(), &[entry]);
     }
 }
