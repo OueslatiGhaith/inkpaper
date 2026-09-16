@@ -1,11 +1,9 @@
 use alloc::{string::String, vec::Vec};
-
 use inkpaper_epub::{BookLocation, ContentOffset, SpineIndex};
-
 use inkpaper_reader::ReadingPosition;
+use serde::{Deserialize, Serialize};
 
-const MAGIC: [u8; 8] = *b"INKHST02";
-const NONE_LEN: u16 = u16::MAX;
+const STORAGE_VERSION: u8 = 1;
 
 pub const MAX_READING_HISTORY_ENTRIES: usize = 16;
 
@@ -76,11 +74,10 @@ fn parent_path(path: &str) -> &str {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadingHistoryError {
-    InvalidMagic,
-    InvalidUtf8,
+    Encode,
+    Decode,
+    UnsupportedVersion(u8),
     TooManyEntries,
-    FieldTooLong,
-    Truncated,
     TrailingData,
 }
 
@@ -127,181 +124,97 @@ impl ReadingHistory {
             return Err(ReadingHistoryError::TooManyEntries);
         }
 
-        let count =
-            u16::try_from(self.entries.len()).map_err(|_| ReadingHistoryError::TooManyEntries)?;
+        let stored = StoredHistory {
+            version: STORAGE_VERSION,
+            entries: self.entries.iter().map(StoredHistoryEntry::from).collect(),
+        };
 
-        let mut output = Vec::new();
-
-        output.extend_from_slice(&MAGIC);
-        output.extend_from_slice(&count.to_le_bytes());
-
-        for entry in &self.entries {
-            let path_len = required_len(entry.path())?;
-
-            let identifier_len = optional_len(entry.identifier())?;
-
-            let title_len = required_len(entry.title())?;
-
-            let creator_len = optional_len(entry.creator())?;
-
-            let location = entry.position().location();
-
-            output.extend_from_slice(&path_len.to_le_bytes());
-            output.extend_from_slice(&identifier_len.to_le_bytes());
-            output.extend_from_slice(&title_len.to_le_bytes());
-            output.extend_from_slice(&creator_len.to_le_bytes());
-            output.extend_from_slice(&location.spine().get().to_le_bytes());
-            output.extend_from_slice(&location.offset().get().to_le_bytes());
-            output.extend_from_slice(&entry.position().non_text().to_le_bytes());
-            output.extend_from_slice(entry.path().as_bytes());
-
-            if let Some(identifier) = entry.identifier() {
-                output.extend_from_slice(identifier.as_bytes());
-            }
-
-            output.extend_from_slice(entry.title().as_bytes());
-
-            if let Some(creator) = entry.creator() {
-                output.extend_from_slice(creator.as_bytes());
-            }
-        }
-
-        Ok(output)
+        postcard::to_allocvec(&stored).map_err(|_| ReadingHistoryError::Encode)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, ReadingHistoryError> {
-        let mut cursor = 0usize;
+        let (stored, remainder) = postcard::take_from_bytes::<StoredHistory>(bytes)
+            .map_err(|_| ReadingHistoryError::Decode)?;
 
-        if read_array::<8>(bytes, &mut cursor)? != MAGIC {
-            return Err(ReadingHistoryError::InvalidMagic);
-        }
-
-        let count = usize::from(u16::from_le_bytes(read_array::<2>(bytes, &mut cursor)?));
-        if count > MAX_READING_HISTORY_ENTRIES {
-            return Err(ReadingHistoryError::TooManyEntries);
-        }
-
-        let mut entries = Vec::with_capacity(count);
-
-        for _ in 0..count {
-            let path_len = usize::from(u16::from_le_bytes(read_array::<2>(bytes, &mut cursor)?));
-
-            let identifier_len = u16::from_le_bytes(read_array::<2>(bytes, &mut cursor)?);
-            let title_len = usize::from(u16::from_le_bytes(read_array::<2>(bytes, &mut cursor)?));
-            let creator_len = u16::from_le_bytes(read_array::<2>(bytes, &mut cursor)?);
-
-            let spine = u32::from_le_bytes(read_array::<4>(bytes, &mut cursor)?);
-
-            let offset = u64::from_le_bytes(read_array::<8>(bytes, &mut cursor)?);
-
-            let non_text = u64::from_le_bytes(read_array::<8>(bytes, &mut cursor)?);
-
-            let path = read_string(bytes, &mut cursor, path_len)?;
-
-            let identifier = read_optional_string(bytes, &mut cursor, identifier_len)?;
-
-            let title = read_string(bytes, &mut cursor, title_len)?;
-
-            let creator = read_optional_string(bytes, &mut cursor, creator_len)?;
-
-            entries.push(ReadingHistoryEntry::new(
-                path,
-                identifier,
-                title,
-                creator,
-                ReadingPosition::new(
-                    BookLocation::new(SpineIndex::new(spine), ContentOffset::new(offset)),
-                    non_text,
-                ),
-            ));
-        }
-
-        if cursor != bytes.len() {
+        if !remainder.is_empty() {
             return Err(ReadingHistoryError::TrailingData);
         }
 
-        Ok(Self { entries })
+        if stored.version != STORAGE_VERSION {
+            return Err(ReadingHistoryError::UnsupportedVersion(stored.version));
+        }
+
+        if stored.entries.len() > MAX_READING_HISTORY_ENTRIES {
+            return Err(ReadingHistoryError::TooManyEntries);
+        }
+
+        Ok(Self {
+            entries: stored
+                .entries
+                .into_iter()
+                .map(ReadingHistoryEntry::from)
+                .collect(),
+        })
     }
 }
 
-fn required_len(value: &str) -> Result<u16, ReadingHistoryError> {
-    u16::try_from(value.len()).map_err(|_| ReadingHistoryError::FieldTooLong)
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredHistory {
+    version: u8,
+    entries: Vec<StoredHistoryEntry>,
 }
 
-fn optional_len(value: Option<&str>) -> Result<u16, ReadingHistoryError> {
-    let Some(value) = value else {
-        return Ok(NONE_LEN);
-    };
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredHistoryEntry {
+    path: String,
+    identifier: Option<String>,
+    title: String,
+    creator: Option<String>,
+    position: StoredPosition,
+}
 
-    let len = u16::try_from(value.len()).map_err(|_| ReadingHistoryError::FieldTooLong)?;
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredPosition {
+    spine: u32,
+    offset: u64,
+    non_text: u64,
+}
 
-    if len == NONE_LEN {
-        return Err(ReadingHistoryError::FieldTooLong);
+impl From<&ReadingHistoryEntry> for StoredHistoryEntry {
+    fn from(entry: &ReadingHistoryEntry) -> Self {
+        let position = entry.position();
+        let location = position.location();
+
+        Self {
+            path: entry.path.clone(),
+            identifier: entry.identifier.clone(),
+            title: entry.title.clone(),
+            creator: entry.creator.clone(),
+            position: StoredPosition {
+                spine: location.spine().get(),
+                offset: location.offset().get(),
+                non_text: position.non_text(),
+            },
+        }
     }
-
-    Ok(len)
 }
 
-fn read_string(
-    bytes: &[u8],
-    cursor: &mut usize,
-    len: usize,
-) -> Result<String, ReadingHistoryError> {
-    let bytes = read_slice(bytes, cursor, len)?;
-
-    let value = core::str::from_utf8(bytes).map_err(|_| ReadingHistoryError::InvalidUtf8)?;
-
-    Ok(String::from(value))
-}
-
-fn read_optional_string(
-    bytes: &[u8],
-    cursor: &mut usize,
-    len: u16,
-) -> Result<Option<String>, ReadingHistoryError> {
-    if len == NONE_LEN {
-        return Ok(None);
+impl From<StoredHistoryEntry> for ReadingHistoryEntry {
+    fn from(entry: StoredHistoryEntry) -> Self {
+        Self::new(
+            entry.path,
+            entry.identifier,
+            entry.title,
+            entry.creator,
+            ReadingPosition::new(
+                BookLocation::new(
+                    SpineIndex::new(entry.position.spine),
+                    ContentOffset::new(entry.position.offset),
+                ),
+                entry.position.non_text,
+            ),
+        )
     }
-
-    read_string(bytes, cursor, usize::from(len)).map(Some)
-}
-
-fn read_array<const N: usize>(
-    bytes: &[u8],
-    cursor: &mut usize,
-) -> Result<[u8; N], ReadingHistoryError> {
-    let end = cursor
-        .checked_add(N)
-        .ok_or(ReadingHistoryError::Truncated)?;
-
-    let source = bytes
-        .get(*cursor..end)
-        .ok_or(ReadingHistoryError::Truncated)?;
-
-    let mut output = [0u8; N];
-    output.copy_from_slice(source);
-
-    *cursor = end;
-
-    Ok(output)
-}
-
-fn read_slice<'a>(
-    bytes: &'a [u8],
-    cursor: &mut usize,
-    len: usize,
-) -> Result<&'a [u8], ReadingHistoryError> {
-    let end = cursor
-        .checked_add(len)
-        .ok_or(ReadingHistoryError::Truncated)?;
-
-    let output = bytes
-        .get(*cursor..end)
-        .ok_or(ReadingHistoryError::Truncated)?;
-
-    *cursor = end;
-
-    Ok(output)
 }
 
 #[cfg(test)]
@@ -428,5 +341,35 @@ mod tests {
         );
 
         assert_eq!(entry.display_subtitle(), "/Books");
+    }
+
+    #[test]
+    fn decoder_rejects_an_unsupported_storage_version() {
+        let stored = StoredHistory {
+            version: STORAGE_VERSION.saturating_add(1),
+            entries: Vec::new(),
+        };
+
+        let bytes = postcard::to_allocvec(&stored).unwrap();
+
+        assert_eq!(
+            ReadingHistory::decode(&bytes),
+            Err(ReadingHistoryError::UnsupportedVersion(
+                STORAGE_VERSION.saturating_add(1),
+            )),
+        );
+    }
+
+    #[test]
+    fn decoder_rejects_trailing_data() {
+        let history = ReadingHistory::default();
+        let mut encoded = history.encode().unwrap();
+
+        encoded.push(0xff);
+
+        assert_eq!(
+            ReadingHistory::decode(&encoded),
+            Err(ReadingHistoryError::TrailingData),
+        );
     }
 }

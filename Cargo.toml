@@ -4,21 +4,20 @@ members = ["crates/*", "firmware/*"]
 default-members = ["crates/*"]
 
 [workspace.dependencies]
+defmt = "1.1.1"
 embedded-graphics = "0.8.2"
 embedded-graphics-simulator = "0.8.0"
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
-defmt = "1.1.1"
-futures-lite = "2.6.1"
-heapless = "0.9.3"
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
-static_cell = "2.1.1"
-# TODO: update when released on crates.io
 esp-alloc = "0.11.0"
 esp-backtrace = "0.20.0"
 esp-bootloader-esp-idf = "0.6.0"
 esp-hal = "1.2.1"
 esp-rtos = "0.4.0"
+futures-lite = "2.6.1"
+heapless = "0.9.3"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+static_cell = "2.1.1"
 
 
 [profile.firmware]

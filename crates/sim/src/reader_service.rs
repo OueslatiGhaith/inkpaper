@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use futures_lite::future;
 use inkpaper_app::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderSession, ReadingHistory,
-    ReadingProgress, SpineIndex,
+    ReadingHistoryEntry, SpineIndex,
 };
 
 use crate::host_epub::HostFileSource;
