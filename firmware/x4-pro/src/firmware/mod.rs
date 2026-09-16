@@ -192,6 +192,8 @@ async fn main(spawner: Spawner) -> ! {
     InkPaperApp::register_resources(runtime).unwrap();
     let app = runtime.create_root(|_| InkPaperApp::default()).unwrap();
 
+    app_service::service_app_requests(runtime, app).await;
+
     let mut presenter = Presenter::default();
 
     debug!("building UI frame...");

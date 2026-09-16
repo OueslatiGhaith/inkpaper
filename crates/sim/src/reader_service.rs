@@ -89,7 +89,7 @@ impl SimulatorReaderService {
         let _ = std::fs::rename(temporary, &self.history_path);
     }
 
-    pub(super) fn recent_books(&self) -> Vec<ReadingHistoryEntry> {
+    pub(super) fn reading_history(&self) -> Vec<ReadingHistoryEntry> {
         self.history.entries().to_vec()
     }
 }

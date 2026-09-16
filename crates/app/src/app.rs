@@ -4,10 +4,10 @@ use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
     BrowseListing, BrowseRequest, ReaderChapter, ReaderChapterDirection, ReaderDocument,
-    ReaderRequest, ReadingHistoryEntry, RecentBooksRequest,
+    ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
     browser::BrowserState,
     reader::ReaderState,
-    recent_books::RecentBooksState,
+    reading_history::ReadingHistoryState,
     screens::{
         browse_files::{BrowseFilesScreen, BrowseFilesScreenProps},
         file_transfer::{FileTransferScreen, FileTransferScreenProps},
@@ -32,8 +32,7 @@ pub struct InkPaperApp {
     screen: Screen,
     browser: BrowserState,
     reader: ReaderState,
-    recent_books: RecentBooksState,
-
+    reading_history: ReadingHistoryState,
     reader_return: Screen,
 }
 
@@ -43,7 +42,7 @@ impl Default for InkPaperApp {
             screen: Screen::Home,
             browser: BrowserState::default(),
             reader: ReaderState::default(),
-            recent_books: RecentBooksState::default(),
+            reading_history: ReadingHistoryState::default(),
             reader_return: Screen::BrowseFiles,
         }
     }
@@ -66,6 +65,7 @@ impl InkPaperApp {
     }
 
     pub fn navigate_home(&mut self, cx: &mut Context<'_, Self>) {
+        self.reading_history.request_load();
         self.navigate(Screen::Home, cx);
     }
 
@@ -89,7 +89,7 @@ impl InkPaperApp {
     }
 
     fn show_recent_books(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.recent_books.request_load();
+        self.reading_history.request_load();
         self.navigate(Screen::RecentBooks, cx);
     }
 
@@ -116,8 +116,8 @@ impl InkPaperApp {
     fn reader_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         let target = self.reader_return;
 
-        if target == Screen::RecentBooks {
-            self.recent_books.request_load();
+        if matches!(target, Screen::Home | Screen::RecentBooks) {
+            self.reading_history.request_load();
         }
 
         self.navigate(target, cx);
@@ -250,43 +250,51 @@ impl InkPaperApp {
         true
     }
 
+    fn activate_current_book(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.open_history_entry(0, Screen::Home, cx);
+    }
+
     fn activate_recent_book(&mut self, index: usize, cx: &mut Context<'_, Self>) {
-        let Some(entry) = self.recent_books.entry(index) else {
+        self.open_history_entry(index, Screen::RecentBooks, cx);
+    }
+
+    fn open_history_entry(&mut self, index: usize, return_to: Screen, cx: &mut Context<'_, Self>) {
+        let Some(entry) = self.reading_history.entry(index) else {
             return;
         };
 
         let path = String::from(entry.path());
-
         let title = String::from(entry.display_title());
 
-        self.reader_return = Screen::RecentBooks;
-
+        self.reader_return = return_to;
         self.reader.open(path, title);
-
         self.navigate(Screen::Reader, cx);
     }
 
-    pub fn take_recent_books_request(&mut self) -> Option<RecentBooksRequest> {
-        self.recent_books.take_request()
+    pub fn take_reading_history_request(&mut self) -> Option<ReadingHistoryRequest> {
+        self.reading_history.take_request()
     }
 
-    pub fn apply_recent_books(
+    pub fn apply_reading_history(
         &mut self,
         entries: Vec<ReadingHistoryEntry>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.recent_books.apply_entries(entries);
+        self.reading_history.apply_entries(entries);
+
         cx.notify();
     }
 
-    pub fn apply_recent_books_error(&mut self, cx: &mut Context<'_, Self>) {
-        self.recent_books.apply_error();
+    pub fn apply_reading_history_error(&mut self, cx: &mut Context<'_, Self>) {
+        self.reading_history.apply_error();
+
         cx.notify();
     }
 }
 
 impl Render for InkPaperApp {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let current_book = cx.listener(Self::activate_current_book);
         let browse_files = cx.listener(Self::show_browse_files);
         let recent_books = cx.listener(Self::show_recent_books);
         let file_transfer = cx.listener(Self::show_file_transfer);
@@ -315,7 +323,7 @@ impl Render for InkPaperApp {
         };
 
         let recent_book_listeners = if self.screen == Screen::RecentBooks {
-            (0..self.recent_books.entries().len())
+            (0..self.reading_history.entries().len())
                 .map(|index| {
                     cx.listener(
                         move |app: &mut Self, _: &ActivateEvent, cx: &mut Context<'_, Self>| {
@@ -331,6 +339,8 @@ impl Render for InkPaperApp {
         rsx! {
             {#if self.screen == Screen::Home}
                 <HomeScreen
+                    current_book={self.reading_history.current()}
+                    on_current_book={current_book}
                     on_browse_files={browse_files}
                     on_recent_books={recent_books}
                     on_file_transfer={file_transfer}
@@ -364,10 +374,10 @@ impl Render for InkPaperApp {
                 />
             {:else if self.screen == Screen::RecentBooks}
                 <RecentBooksScreen
-                    entries={self.recent_books.entries()}
+                    entries={self.reading_history.entries()}
                     entry_listeners={recent_book_listeners}
-                    revision={self.recent_books.revision()}
-                    error={self.recent_books.error()}
+                    revision={self.reading_history.revision()}
+                    error={self.reading_history.error()}
                     on_back={home}
                 />
             {:else if self.screen == Screen::FileTransfer}

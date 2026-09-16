@@ -33,6 +33,9 @@ fn main() {
         .create_root(|_| InkPaperApp::default())
         .expect("InkPaper application root must fit");
 
+    let mut reader_service = SimulatorReaderService::new();
+    service_app_requests(&runtime, app, &mut reader_service);
+
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
     rebuild_ui(&mut runtime, &mut display);
@@ -44,8 +47,6 @@ fn main() {
     let mut pointer = PointerGesture::default();
     let mut mouse_position =
         Point::new(px(DISPLAY_WIDTH as i32 / 2), px(DISPLAY_HEIGHT as i32 / 2));
-
-    let mut reader_service = SimulatorReaderService::new();
 
     'running: loop {
         window.update(&display);

@@ -1,6 +1,6 @@
 use defmt::warn;
 use inkpaper_app::{
-    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderRequest, RecentBooksRequest,
+    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderRequest, ReadingHistoryRequest,
 };
 use inkpaper_ui::prelude::*;
 
@@ -12,16 +12,19 @@ pub(super) async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<In
             (
                 app.take_browse_request(),
                 app.take_reader_request(),
-                app.take_recent_books_request(),
+                app.take_reading_history_request(),
             )
         }) {
             Ok(requests) => requests,
-            Err(_) => return warn!("failed to read app requests"),
+
+            Err(_) => {
+                return warn!("failed to read app requests");
+            }
         };
 
-        let (browse_request, reader_request, recent_books_request) = requests;
+        let (browse_request, reader_request, history_request) = requests;
 
-        if browse_request.is_none() && reader_request.is_none() && recent_books_request.is_none() {
+        if browse_request.is_none() && reader_request.is_none() && history_request.is_none() {
             return;
         }
 
@@ -29,12 +32,14 @@ pub(super) async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<In
             service_browse_request(runtime, app, request).await;
         }
 
+        // keep this before history snapshots so a page-position update queued by
+        // the same UI action is visible in the returned snapshot.
         if let Some(request) = reader_request {
             service_reader_request(runtime, app, request).await;
         }
 
-        if let Some(request) = recent_books_request {
-            service_recent_books_request(runtime, app, request).await;
+        if let Some(request) = history_request {
+            service_reading_history_request(runtime, app, request).await;
         }
     }
 }
@@ -150,32 +155,32 @@ async fn service_reader_request(
     }
 }
 
-async fn service_recent_books_request(
+async fn service_reading_history_request(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
-    request: RecentBooksRequest,
+    request: ReadingHistoryRequest,
 ) {
     match request {
-        RecentBooksRequest::Load => match storage::reading_history_and_wait().await {
+        ReadingHistoryRequest::Load => match storage::reading_history_and_wait().await {
             Some(entries) => {
                 if runtime
                     .update(app, move |app, cx| {
-                        app.apply_recent_books(entries, cx);
+                        app.apply_reading_history(entries, cx);
                     })
                     .is_err()
                 {
-                    warn!("failed to apply recent books");
+                    warn!("failed to apply reading history");
                 }
             }
 
             None => {
                 if runtime
                     .update(app, |app, cx| {
-                        app.apply_recent_books_error(cx);
+                        app.apply_reading_history_error(cx);
                     })
                     .is_err()
                 {
-                    warn!("failed to apply recent-books error");
+                    warn!("failed to apply reading-history error");
                 }
             }
         },

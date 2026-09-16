@@ -1,4 +1,4 @@
-use inkpaper_app::{BrowseRequest, InkPaperApp, ReaderRequest, RecentBooksRequest};
+use inkpaper_app::{BrowseRequest, InkPaperApp, ReaderRequest, ReadingHistoryRequest};
 use inkpaper_ui::prelude::*;
 
 use crate::{SimulatorReaderService, fake_fs::simulator_listing};
@@ -9,17 +9,17 @@ pub(super) fn service_app_requests(
     reader_service: &mut SimulatorReaderService,
 ) {
     loop {
-        let (browse_request, reader_request, recent_books_request) = runtime
+        let (browse_request, reader_request, history_request) = runtime
             .update(app, |app, _| {
                 (
                     app.take_browse_request(),
                     app.take_reader_request(),
-                    app.take_recent_books_request(),
+                    app.take_reading_history_request(),
                 )
             })
             .expect("app root must be available");
 
-        if browse_request.is_none() && reader_request.is_none() && recent_books_request.is_none() {
+        if browse_request.is_none() && reader_request.is_none() && history_request.is_none() {
             return;
         }
 
@@ -27,12 +27,14 @@ pub(super) fn service_app_requests(
             service_browse_request(runtime, app, request);
         }
 
+        // reader first intentionally: if leaving the reader also requested a history
+        // refresh, persist the newest position before taking the snapshot.
         if let Some(request) = reader_request {
             service_reader_request(runtime, app, reader_service, request);
         }
 
-        if let Some(request) = recent_books_request {
-            service_recent_books_request(runtime, app, reader_service, request);
+        if let Some(request) = history_request {
+            service_reading_history_request(runtime, app, reader_service, request);
         }
     }
 }
@@ -116,19 +118,19 @@ fn service_reader_request(
     }
 }
 
-fn service_recent_books_request(
+fn service_reading_history_request(
     runtime: &impl RuntimeApi,
     app: Entity<InkPaperApp>,
     reader_service: &SimulatorReaderService,
-    request: RecentBooksRequest,
+    request: ReadingHistoryRequest,
 ) {
     match request {
-        RecentBooksRequest::Load => {
-            let entries = reader_service.recent_books();
+        ReadingHistoryRequest::Load => {
+            let entries = reader_service.reading_history();
 
             runtime
                 .update(app, move |app, cx| {
-                    app.apply_recent_books(entries, cx);
+                    app.apply_reading_history(entries, cx);
                 })
                 .expect("app root must be available");
         }

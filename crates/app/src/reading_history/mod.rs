@@ -3,6 +3,11 @@ use inkpaper_epub::{BookLocation, ContentOffset, SpineIndex};
 use inkpaper_reader::ReadingPosition;
 use serde::{Deserialize, Serialize};
 
+mod state;
+
+pub use state::ReadingHistoryRequest;
+pub(crate) use state::ReadingHistoryState;
+
 const STORAGE_VERSION: u8 = 1;
 
 pub const MAX_READING_HISTORY_ENTRIES: usize = 16;
