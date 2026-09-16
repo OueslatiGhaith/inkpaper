@@ -189,7 +189,7 @@ pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
             Err(error) => {
                 consecutive_errors = consecutive_errors.saturating_add(1);
                 if consecutive_errors == 1 || consecutive_errors.is_multiple_of(100) {
-                    warn!("GT911 poll error ({}): {:?}", consecutive_errors, error,);
+                    warn!("GT911 poll error ({}): {:?}", consecutive_errors, error);
                 }
             }
         }
