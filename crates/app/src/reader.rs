@@ -100,10 +100,12 @@ impl ReaderDocument {
         self.pagination.len()
     }
 
+    pub fn page(&self, index: usize) -> Option<&Page<'static>> {
+        self.pagination.pages().get(index)
+    }
+
     pub fn first_page(&self) -> &Page<'static> {
-        self.pagination
-            .pages()
-            .first()
+        self.page(0)
             .expect("reader document always contains a page")
     }
 }
@@ -293,6 +295,7 @@ pub(crate) struct ReaderState {
     fallback_title: String,
     pending: Option<ReaderRequest>,
     document: Option<ReaderDocument>,
+    page_index: usize,
     failed: bool,
 }
 
@@ -302,6 +305,7 @@ impl ReaderState {
         self.path = path;
         self.fallback_title = fallback_title;
         self.document = None;
+        self.page_index = 0;
         self.failed = false;
     }
 
@@ -315,6 +319,7 @@ impl ReaderState {
         }
 
         self.document = Some(document);
+        self.page_index = 0;
         self.failed = false;
 
         true
@@ -326,7 +331,34 @@ impl ReaderState {
         }
 
         self.document = None;
+        self.page_index = 0;
         self.failed = true;
+
+        true
+    }
+
+    pub(crate) fn previous_page(&mut self) -> bool {
+        if self.document.is_none() || self.page_index == 0 {
+            return false;
+        }
+
+        self.page_index -= 1;
+
+        true
+    }
+
+    pub(crate) fn next_page(&mut self) -> bool {
+        let Some(document) = self.document.as_ref() else {
+            return false;
+        };
+
+        let next = self.page_index.saturating_add(1);
+
+        if next >= document.page_count() {
+            return false;
+        }
+
+        self.page_index = next;
 
         true
     }
@@ -351,7 +383,9 @@ impl ReaderState {
     }
 
     pub(crate) fn page(&self) -> Option<&Page<'static>> {
-        self.document.as_ref().map(ReaderDocument::first_page)
+        self.document
+            .as_ref()
+            .and_then(|document| document.page(self.page_index))
     }
 
     pub(crate) fn status(&self) -> &'static str {
@@ -413,5 +447,45 @@ mod tests {
         assert!(!state.apply_document(document));
         assert_eq!(state.title(), "new");
         assert!(state.page().is_none());
+    }
+
+    #[test]
+    fn reader_state_turns_pages_inside_loaded_pagination() {
+        let path = String::from("/Fixtures/book-boundaries.epub");
+
+        let source = SliceSource::new(include_bytes!("../../../fixtures/book-boundaries.epub"));
+
+        let document = future::block_on(load_reader_document(path.clone(), source)).unwrap();
+
+        let page_count = document.page_count();
+
+        assert!(page_count > 0);
+
+        let mut state = ReaderState::default();
+
+        state.open(path, String::from("book-boundaries"));
+        assert!(state.apply_document(document));
+
+        assert_eq!(state.page_index, 0);
+        assert!(state.page().is_some());
+        assert!(!state.previous_page());
+
+        for expected in 1..page_count {
+            assert!(state.next_page());
+            assert_eq!(state.page_index, expected);
+            assert!(state.page().is_some());
+        }
+
+        assert!(!state.next_page());
+        assert_eq!(state.page_index, page_count - 1);
+
+        for expected in (0..page_count.saturating_sub(1)).rev() {
+            assert!(state.previous_page());
+            assert_eq!(state.page_index, expected);
+            assert!(state.page().is_some());
+        }
+
+        assert_eq!(state.page_index, 0);
+        assert!(!state.previous_page());
     }
 }

@@ -15,6 +15,8 @@ pub(crate) struct ReaderScreen<'a> {
     detail: &'a str,
     path: &'a str,
     page: Option<&'a Page<'static>>,
+    on_previous_page: Listener<ActivateEvent>,
+    on_next_page: Listener<ActivateEvent>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -39,6 +41,18 @@ impl RenderOnce for ReaderScreen<'_> {
                                 reader_viewport(),
                             )
                         }
+
+                        <div
+                            id="reader-previous-page"
+                            on:activate={self.on_previous_page}
+                            class="absolute left-0 top-0 w-[147px] h-full"
+                        />
+
+                        <div
+                            id="reader-next-page"
+                            on:activate={self.on_next_page}
+                            class="absolute right-0 top-0 w-[147px] h-full"
+                        />
                     </div>
                 {:else}
                     <div class="absolute left-5 top-[220px] w-[440px] flex flex-col items-center gap-2.5">

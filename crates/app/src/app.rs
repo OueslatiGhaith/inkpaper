@@ -158,6 +158,38 @@ impl InkPaperApp {
 
         changed
     }
+
+    fn activate_previous_reader_page(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.reader_previous_page(cx);
+    }
+
+    fn activate_next_reader_page(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.reader_next_page(cx);
+    }
+
+    pub fn reader_previous_page(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if self.screen != Screen::Reader {
+            return false;
+        }
+
+        if self.reader.previous_page() {
+            cx.notify();
+        }
+
+        true
+    }
+
+    pub fn reader_next_page(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if self.screen != Screen::Reader {
+            return false;
+        }
+
+        if self.reader.next_page() {
+            cx.notify();
+        }
+
+        true
+    }
 }
 
 impl Render for InkPaperApp {
@@ -169,6 +201,9 @@ impl Render for InkPaperApp {
         let home = cx.listener(Self::show_home);
         let browse_back = cx.listener(Self::browse_back);
         let reader_back = cx.listener(Self::reader_back);
+
+        let reader_previous_page = cx.listener(Self::activate_previous_reader_page);
+        let reader_next_page = cx.listener(Self::activate_next_reader_page);
 
         let browse_entry_listeners = if self.screen == Screen::BrowseFiles {
             (0..self.browser.entries().len())
@@ -210,6 +245,8 @@ impl Render for InkPaperApp {
                     detail={self.reader.detail()}
                     path={self.reader.path()}
                     page={self.reader.page()}
+                    on_previous_page={reader_previous_page}
+                    on_next_page={reader_next_page}
                     on_back={reader_back}
                 />
             {:else if self.screen == Screen::RecentBooks}

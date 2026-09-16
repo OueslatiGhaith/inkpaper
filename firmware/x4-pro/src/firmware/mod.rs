@@ -372,6 +372,34 @@ async fn stay_alive() -> ! {
     }
 }
 
+fn handle_previous_button(runtime: &mut UiRuntime, app: Entity<InkPaperApp>) {
+    let handled = match runtime.update(app, |app, cx| app.reader_previous_page(cx)) {
+        Ok(handled) => handled,
+        Err(_) => {
+            warn!("failed to dispatch previous reader page");
+            false
+        }
+    };
+
+    if !handled {
+        runtime.focus_previous();
+    }
+}
+
+fn handle_next_button(runtime: &mut UiRuntime, app: Entity<InkPaperApp>) {
+    let handled = match runtime.update(app, |app, cx| app.reader_next_page(cx)) {
+        Ok(handled) => handled,
+        Err(_) => {
+            warn!("failed to dispatch next reader page");
+            false
+        }
+    };
+
+    if !handled {
+        runtime.focus_next();
+    }
+}
+
 fn handle_input_event(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
@@ -387,14 +415,14 @@ fn handle_input_event(
         InputEvent::Button(event)
             if event.button() == Button::Left && event.edge() == ButtonEdge::Pressed =>
         {
-            runtime.focus_previous();
+            handle_previous_button(runtime, app);
             InputAction::Continue
         }
 
         InputEvent::Button(event)
             if event.button() == Button::Right && event.edge() == ButtonEdge::Pressed =>
         {
-            runtime.focus_next();
+            handle_next_button(runtime, app);
             InputAction::Continue
         }
 
