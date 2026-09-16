@@ -510,6 +510,7 @@ async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>)
                                 return warn!("failed to apply browse listing");
                             }
                         }
+
                         None => {
                             if runtime
                                 .update(app, |app, cx| {
@@ -528,20 +529,8 @@ async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>)
         if let Some(request) = reader_request {
             match request {
                 ReaderRequest::OpenEpub(path) => {
-                    match storage::read_epub_metadata_and_wait(&path).await {
-                        Some(metadata) => {
-                            let (title, creators, package_path, first_spine_path, spine_len) =
-                                metadata.into_parts();
-
-                            let document = ReaderDocument::new(
-                                path,
-                                title,
-                                creators,
-                                package_path,
-                                first_spine_path,
-                                spine_len,
-                            );
-
+                    match storage::load_epub_document_and_wait(&path).await {
+                        Some(document) => {
                             if runtime
                                 .update(app, move |app, cx| {
                                     app.apply_reader_document(document, cx);

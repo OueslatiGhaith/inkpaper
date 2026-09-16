@@ -209,6 +209,7 @@ impl Render for InkPaperApp {
                     status={self.reader.status()}
                     detail={self.reader.detail()}
                     path={self.reader.path()}
+                    page={self.reader.page()}
                     on_back={reader_back}
                 />
             {:else if self.screen == Screen::RecentBooks}

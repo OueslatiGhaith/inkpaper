@@ -8,4 +8,9 @@ default = []
 defmt = ["inkpaper-ui/defmt"]
 
 [dependencies]
+inkpaper-epub = { path = "../epub" }
+inkpaper-reader = { path = "../reader" }
 inkpaper-ui = { path = "../ui", features = ["alloc"] }
+
+[dev-dependencies]
+futures-lite = { workspace = true }

@@ -1,6 +1,11 @@
+use inkpaper_reader::Page;
 use inkpaper_ui::prelude::*;
 
-use crate::components::header::{BackHeader, BackHeaderProps};
+use crate::{
+    components::header::{BackHeader, BackHeaderProps},
+    reader::reader_viewport,
+    reader_page::ReaderPageView,
+};
 
 #[component]
 pub(crate) struct ReaderScreen<'a> {
@@ -9,6 +14,7 @@ pub(crate) struct ReaderScreen<'a> {
     status: &'a str,
     detail: &'a str,
     path: &'a str,
+    page: Option<&'a Page<'static>>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -25,31 +31,42 @@ impl RenderOnce for ReaderScreen<'_> {
                     />
                 </div>
 
-                <div class="absolute left-5 top-[220px] w-[440px] flex flex-col items-center gap-2.5">
-                    <text class="font-bold text-2xl text-center no-wrap max-lines-1 text-ellipsis">
-                        {self.title}
-                    </text>
-
-                    <text class="text-xl text-center no-wrap max-lines-1 text-ellipsis">
-                        {self.creator}
-                    </text>
-
-                    <text class="text-xl text-center">
-                        {self.status}
-                    </text>
-
-                    <div class="mt-2.5 w-[420px]">
-                        <text class="text-base text-center no-wrap max-lines-1 text-ellipsis">
-                            {self.detail}
-                        </text>
+                {#if self.page.is_some()}
+                    <div class="absolute left-5 top-[95px] w-[440px] h-[685px] overflow-hidden">
+                        {
+                            ReaderPageView::new(
+                                self.page.expect("reader page was checked above"),
+                                reader_viewport(),
+                            )
+                        }
                     </div>
-
-                    <div class="w-[420px]">
-                        <text class="text-base text-center no-wrap max-lines-1 text-ellipsis">
-                            {self.path}
+                {:else}
+                    <div class="absolute left-5 top-[220px] w-[440px] flex flex-col items-center gap-2.5">
+                        <text class="font-bold text-2xl text-center no-wrap max-lines-1 text-ellipsis">
+                            {self.title}
                         </text>
+
+                        <text class="text-xl text-center no-wrap max-lines-1 text-ellipsis">
+                            {self.creator}
+                        </text>
+
+                        <text class="text-xl text-center">
+                            {self.status}
+                        </text>
+
+                        <div class="mt-2.5 w-[420px]">
+                            <text class="text-base text-center no-wrap max-lines-1 text-ellipsis">
+                                {self.detail}
+                            </text>
+                        </div>
+
+                        <div class="w-[420px]">
+                            <text class="text-base text-center no-wrap max-lines-1 text-ellipsis">
+                                {self.path}
+                            </text>
+                        </div>
                     </div>
-                </div>
+                {/if}
             </div>
         }
     }

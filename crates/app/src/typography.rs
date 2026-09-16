@@ -5,6 +5,10 @@ static UI_FONT: TtfFont<'static> = TtfFont::from_data(
     0,
 );
 
+pub(crate) fn ui_font() -> &'static TtfFont<'static> {
+    &UI_FONT
+}
+
 pub(crate) fn register<'resource>(
     runtime: &mut impl ResourceRuntimeApi<'resource>,
 ) -> Result<(), FontRegistryError> {

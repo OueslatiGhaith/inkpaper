@@ -9,8 +9,8 @@ use embedded_graphics_simulator::{
 use futures_lite::future;
 use inkpaper_app::{
     BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderDocument, ReaderRequest,
+    load_reader_document,
 };
-use inkpaper_epub::Epub;
 use inkpaper_ui::{
     backend::{CoverageMode, EmbeddedGraphicsPainter},
     prelude::*,
@@ -234,20 +234,7 @@ fn simulator_reader_document(path: String) -> Option<ReaderDocument> {
 
     let source = HostFileSource::open(&host_path).ok()?;
 
-    let epub = future::block_on(Epub::open(source)).ok()?;
-
-    let package = epub.package();
-
-    Some(ReaderDocument::new(
-        path,
-        epub.metadata().title().map(String::from),
-        epub.metadata().creators().to_vec(),
-        String::from(package.path().as_str()),
-        package
-            .spine_manifest_item(0)
-            .map(|item| String::from(item.path().as_str())),
-        epub.spine().items().len(),
-    ))
+    future::block_on(load_reader_document(path, source)).ok()
 }
 
 fn main() {

@@ -20,7 +20,8 @@ use hadris_io::{
     Error as HadrisError, ErrorKind as HadrisErrorKind, Result as HadrisResult, SeekFrom,
     r#async::{Read as HadrisRead, Seek as HadrisSeek},
 };
-use inkpaper_epub::{Epub, EpubSource};
+use inkpaper_app::{ReaderDocument, load_reader_document};
+use inkpaper_epub::EpubSource;
 use sdio::{BlockDevice, MmcBus, sd::Card};
 
 use crate::firmware::power::SdPower;
@@ -43,14 +44,13 @@ static ROOT_LIST_DONE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static DIRECTORY_LIST_DONE: Signal<CriticalSectionRawMutex, Option<Vec<StorageEntry>>> =
     Signal::new();
-static EPUB_METADATA_DONE: Signal<CriticalSectionRawMutex, Option<StorageEpubMetadata>> =
-    Signal::new();
+static EPUB_DOCUMENT_DONE: Signal<CriticalSectionRawMutex, Option<ReaderDocument>> = Signal::new();
 
 #[derive(Debug)]
 enum Command {
     ListRoot,
     ListDirectory(String),
-    ReadEpubMetadata(String),
+    LoadEpub(String),
     Shutdown,
 }
 
@@ -63,27 +63,6 @@ pub struct StorageEntry {
 impl StorageEntry {
     pub fn into_parts(self) -> (String, bool) {
         (self.name, self.is_directory)
-    }
-}
-
-#[derive(Debug)]
-pub struct StorageEpubMetadata {
-    title: Option<String>,
-    creators: Vec<String>,
-    package_path: String,
-    first_spine_path: Option<String>,
-    spine_len: usize,
-}
-
-impl StorageEpubMetadata {
-    pub fn into_parts(self) -> (Option<String>, Vec<String>, String, Option<String>, usize) {
-        (
-            self.title,
-            self.creators,
-            self.package_path,
-            self.first_spine_path,
-            self.spine_len,
-        )
     }
 }
 
@@ -172,12 +151,10 @@ pub async fn list_directory_and_wait(path: &str) -> Option<Vec<StorageEntry>> {
     DIRECTORY_LIST_DONE.wait().await
 }
 
-pub async fn read_epub_metadata_and_wait(path: &str) -> Option<StorageEpubMetadata> {
-    EPUB_METADATA_DONE.reset();
-    COMMANDS
-        .send(Command::ReadEpubMetadata(String::from(path)))
-        .await;
-    EPUB_METADATA_DONE.wait().await
+pub async fn load_epub_document_and_wait(path: &str) -> Option<ReaderDocument> {
+    EPUB_DOCUMENT_DONE.reset();
+    COMMANDS.send(Command::LoadEpub(String::from(path))).await;
+    EPUB_DOCUMENT_DONE.wait().await
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,9 +437,9 @@ where
                 let entries = list_directory(filesystem, &path).await;
                 DIRECTORY_LIST_DONE.signal(entries);
             }
-            Command::ReadEpubMetadata(path) => {
-                let metadata = read_epub_metadata(filesystem, &path).await;
-                EPUB_METADATA_DONE.signal(metadata);
+            Command::LoadEpub(path) => {
+                let document = load_epub_document(filesystem, &path).await;
+                EPUB_DOCUMENT_DONE.signal(document);
             }
             Command::Shutdown => {
                 debug!("storage shutdown requested");
@@ -482,7 +459,7 @@ async fn serve_unavailable(sd_power: &mut SdPower<'_>) {
         match COMMANDS.receive().await {
             Command::ListRoot => ROOT_LIST_DONE.signal(false),
             Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(None),
-            Command::ReadEpubMetadata(_) => EPUB_METADATA_DONE.signal(None),
+            Command::LoadEpub(_) => EPUB_DOCUMENT_DONE.signal(None),
             Command::Shutdown => {
                 // GPIO5 is already HIGH, but establish it explicitly before
                 // acknowledging the power path
@@ -589,51 +566,38 @@ where
     Some(output)
 }
 
-async fn read_epub_metadata<D>(filesystem: &FatVolume<D>, path: &str) -> Option<StorageEpubMetadata>
+async fn load_epub_document<D>(filesystem: &FatVolume<D>, path: &str) -> Option<ReaderDocument>
 where
     D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
 {
-    debug!("opening EPUB metadata path={}", path);
+    debug!("opening EPUB path={}", path);
 
     let reader = match filesystem.open_file_path(path).await {
         Ok(reader) => reader,
         Err(error) => {
-            warn!("EPUB file open failed path={} error={:?}", path, error);
+            warn!("EPUB file open failed path={} error={:?}", path, error,);
             return None;
         }
     };
 
     let source = FatEpubSource::new(reader);
 
-    let epub = match Epub::open(source).await {
-        Ok(epub) => epub,
-        Err(_) => {
-            warn!("EPUB parse failed path={}", path);
-            return None;
+    match load_reader_document(String::from(path), source).await {
+        Ok(document) => {
+            info!(
+                "EPUB reader ready path={} spine={} pages={}",
+                path,
+                document.spine().get(),
+                document.page_count(),
+            );
+
+            Some(document)
         }
-    };
-
-    let package = epub.package();
-
-    let title = epub.metadata().title().map(String::from);
-    let creators = epub.metadata().creators().to_vec();
-    let package_path = String::from(package.path().as_str());
-
-    let first_spine_path = package
-        .spine_manifest_item(0)
-        .map(|item| String::from(item.path().as_str()));
-
-    let spine_len = epub.spine().items().len();
-
-    info!("EPUB opened path={} spine_items={}", path, spine_len);
-
-    Some(StorageEpubMetadata {
-        title,
-        creators,
-        package_path,
-        first_spine_path,
-        spine_len,
-    })
+        Err(_) => {
+            warn!("EPUB reader load failed path={}", path);
+            None
+        }
+    }
 }
 
 fn owned_entry_name(entry: &FileEntry) -> String {

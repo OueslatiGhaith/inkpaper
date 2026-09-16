@@ -1650,6 +1650,9 @@ dependencies = [
 name = "inkpaper-app"
 version = "0.1.0"
 dependencies = [
+ "futures-lite",
+ "inkpaper-epub",
+ "inkpaper-reader",
  "inkpaper-ui",
 ]
 
