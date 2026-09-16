@@ -15,13 +15,14 @@ use esp_hal::{
     peripherals::{GPIO40, GPIO41, GPIO42, SDHOST},
     sdmmc::{Config, SdHostController, SlotConfig},
 };
-use hadris_fat::r#async::{DirectoryEntry, FatVolume, FileEntry};
+use hadris_fat::r#async::{DirectoryEntry, FatVolume, FatVolumeWriteExt, FileEntry};
 use hadris_io::{
     Error as HadrisError, ErrorKind as HadrisErrorKind, Result as HadrisResult, SeekFrom,
-    r#async::{Read as HadrisRead, Seek as HadrisSeek},
+    r#async::{Read as HadrisRead, Seek as HadrisSeek, Write as HadrisWrite},
 };
 use inkpaper_app::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderSession, SpineIndex,
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderSession, ReadingHistory,
+    ReadingProgress, SpineIndex,
 };
 use inkpaper_epub::EpubSource;
 use sdio::{BlockDevice, MmcBus, sd::Card};
@@ -39,6 +40,12 @@ const MBR_PARTITION_COUNT: usize = 4;
 const COMMAND_CAPACITY: usize = 4;
 
 const LOGGED_FILE_NAME_BYTES: usize = 256;
+
+const INKPAPER_DIRECTORY_NAME: &str = ".inkpaper";
+const INKPAPER_DIRECTORY_PATH: &str = "/.inkpaper";
+const READING_HISTORY_FILE_NAME: &str = "reading-history.dat";
+const READING_HISTORY_PATH: &str = "/.inkpaper/reading-history.dat";
+const MAX_READING_HISTORY_BYTES: usize = 64 * 1024;
 
 static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = Channel::new();
 static READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
@@ -59,6 +66,7 @@ enum Command {
         from: SpineIndex,
         direction: ReaderChapterDirection,
     },
+    UpdateReadingProgress(ReadingProgress),
     Shutdown,
 }
 
@@ -216,6 +224,12 @@ pub async fn load_epub_chapter_and_wait(
     EPUB_CHAPTER_DONE.wait().await
 }
 
+pub async fn update_reading_progress(progress: ReadingProgress) {
+    COMMANDS
+        .send(Command::UpdateReadingProgress(progress))
+        .await;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Partition {
     index: usize,
@@ -293,6 +307,43 @@ where
 
         Ok(())
     }
+
+    async fn store_sector(&mut self, relative_sector: u32) -> HadrisResult<()> {
+        if relative_sector >= self.sector_count {
+            return Err(HadrisError::new(
+                HadrisErrorKind::UnexpectedEof,
+                "sector outside SD partition",
+            ));
+        }
+
+        let physical_lba = self
+            .first_lba
+            .checked_add(relative_sector)
+            .ok_or_else(|| HadrisError::new(HadrisErrorKind::InvalidInput, "SD LBA overflow"))?;
+
+        if let Err(error) = self
+            .device
+            .write(physical_lba, core::slice::from_ref(&self.sector))
+            .await
+        {
+            self.cached_sector = None;
+
+            warn!(
+                "SD write failed at LBA: {}: {}",
+                physical_lba,
+                Debug2Format(&error)
+            );
+
+            return Err(HadrisError::new(
+                HadrisErrorKind::Other,
+                "SD block write failed",
+            ));
+        }
+
+        self.cached_sector = Some(relative_sector);
+
+        Ok(())
+    }
 }
 
 impl<D> HadrisRead for SdPartition<'_, D>
@@ -337,6 +388,61 @@ where
     }
 }
 
+impl<D> HadrisWrite for SdPartition<'_, D>
+where
+    D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
+{
+    type Error = HadrisErrorKind;
+
+    async fn write(&mut self, buf: &[u8]) -> HadrisResult<usize, Self::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        let remaining = self.len_bytes().saturating_sub(self.position);
+        if remaining == 0 {
+            return Ok(0);
+        }
+
+        let bytes_to_write = core::cmp::min(buf.len() as u64, remaining) as usize;
+
+        let mut written = 0usize;
+
+        while written < bytes_to_write {
+            let relative_sector =
+                u32::try_from(self.position / SECTOR_SIZE as u64).map_err(|_| {
+                    HadrisError::new(HadrisErrorKind::InvalidInput, "SD sector index overflow")
+                })?;
+
+            let offset = (self.position % SECTOR_SIZE as u64) as usize;
+
+            let available = SECTOR_SIZE - offset;
+
+            let wanted = bytes_to_write - written;
+
+            let count = core::cmp::min(available, wanted);
+
+            if offset != 0 || count != SECTOR_SIZE {
+                self.load_sector(relative_sector).await?;
+            }
+
+            self.sector[offset..offset + count].copy_from_slice(&buf[written..written + count]);
+
+            self.store_sector(relative_sector).await?;
+
+            written += count;
+            self.position += count as u64;
+        }
+
+        Ok(written)
+    }
+
+    async fn flush(&mut self) -> HadrisResult<(), Self::Error> {
+        // sector writes are committed immediately
+        Ok(())
+    }
+}
+
 impl<D> HadrisSeek for SdPartition<'_, D>
 where
     D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
@@ -354,6 +460,168 @@ where
 
         Ok(self.position)
     }
+}
+
+async fn load_reading_history<D>(filesystem: &FatVolume<D>) -> ReadingHistory
+where
+    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
+{
+    let mut reader = match filesystem.open_file_path(READING_HISTORY_PATH).await {
+        Ok(reader) => reader,
+        Err(hadris_fat::Error::EntryNotFound) => return ReadingHistory::default(),
+        Err(error) => {
+            warn!("reading history open failed error={:?}", error);
+            return ReadingHistory::default();
+        }
+    };
+
+    let size = reader.size() as usize;
+
+    if size == 0 {
+        return ReadingHistory::default();
+    }
+
+    if size > MAX_READING_HISTORY_BYTES {
+        warn!("reading history too large bytes={}", size);
+        return ReadingHistory::default();
+    }
+
+    let mut bytes = Vec::new();
+
+    bytes.resize(size, 0);
+
+    let mut read = 0usize;
+
+    while read < bytes.len() {
+        let count = match reader.read(&mut bytes[read..]).await {
+            Ok(count) => count,
+            Err(error) => {
+                warn!("reading history read failed error={:?}", error);
+                return ReadingHistory::default();
+            }
+        };
+
+        if count == 0 {
+            warn!("reading history ended unexpectedly");
+            return ReadingHistory::default();
+        }
+
+        read += count;
+    }
+
+    match ReadingHistory::decode(&bytes) {
+        Ok(history) => history,
+        Err(_) => {
+            warn!("reading history decode failed");
+            ReadingHistory::default()
+        }
+    }
+}
+
+async fn save_reading_history<D>(filesystem: &FatVolume<D>, history: &ReadingHistory) -> bool
+where
+    D: HadrisRead
+        + HadrisWrite<Error = <D as HadrisRead>::Error>
+        + HadrisSeek<Error = <D as HadrisRead>::Error>,
+{
+    let bytes = match history.encode() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            warn!("reading history encode failed");
+            return false;
+        }
+    };
+
+    if bytes.len() > MAX_READING_HISTORY_BYTES {
+        warn!("encoded reading history too large bytes={}", bytes.len(),);
+        return false;
+    }
+
+    let inkpaper_directory = match filesystem.open_dir_path(INKPAPER_DIRECTORY_PATH).await {
+        Ok(directory) => directory,
+        Err(hadris_fat::Error::EntryNotFound) => {
+            let root = filesystem.root_dir();
+
+            match filesystem.create_dir(&root, INKPAPER_DIRECTORY_NAME).await {
+                Ok(directory) => {
+                    info!(
+                        "created InkPaper storage directory path={}",
+                        INKPAPER_DIRECTORY_PATH,
+                    );
+
+                    directory
+                }
+
+                Err(error) => {
+                    warn!("InkPaper storage directory create failed error={:?}", error,);
+                    return false;
+                }
+            }
+        }
+        Err(error) => {
+            warn!("InkPaper storage directory open failed error={:?}", error,);
+            return false;
+        }
+    };
+
+    let entry = match filesystem.open_path(READING_HISTORY_PATH).await {
+        Ok(entry) => entry,
+        Err(hadris_fat::Error::EntryNotFound) => {
+            match filesystem
+                .create_file(&inkpaper_directory, READING_HISTORY_FILE_NAME)
+                .await
+            {
+                Ok(entry) => entry,
+                Err(error) => {
+                    warn!("reading history create failed error={:?}", error,);
+                    return false;
+                }
+            }
+        }
+        Err(error) => {
+            warn!("reading history lookup failed error={:?}", error,);
+            return false;
+        }
+    };
+
+    let mut writer = match filesystem.write_file(&entry) {
+        Ok(writer) => writer,
+        Err(error) => {
+            warn!("reading history writer open failed error={:?}", error,);
+            return false;
+        }
+    };
+
+    let written = match writer.write(&bytes).await {
+        Ok(written) => written,
+        Err(error) => {
+            warn!("reading history write failed error={:?}", error,);
+            return false;
+        }
+    };
+
+    if written != bytes.len() {
+        warn!(
+            "reading history short write expected={} actual={}",
+            bytes.len(),
+            written,
+        );
+
+        return false;
+    }
+
+    if let Err(error) = writer.finish().await {
+        warn!("reading history finish failed error={:?}", error,);
+        return false;
+    }
+
+    info!(
+        "reading history saved path={} entries={}",
+        READING_HISTORY_PATH,
+        history.entries().len(),
+    );
+
+    true
 }
 
 #[embassy_executor::task]
@@ -484,9 +752,13 @@ where
 
 async fn serve_filesystem<'a, D>(filesystem: &'a FatVolume<D>)
 where
-    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
+    D: HadrisRead
+        + HadrisWrite<Error = <D as HadrisRead>::Error>
+        + HadrisSeek<Error = <D as HadrisRead>::Error>,
 {
     let mut reader_session: Option<ReaderSession<FatEpubSource<'a, D>>> = None;
+    let mut reading_history = load_reading_history(filesystem).await;
+    let mut reading_history_dirty = false;
 
     loop {
         match COMMANDS.receive().await {
@@ -510,13 +782,19 @@ where
                     reader_session = open_reader_session(filesystem, path.clone()).await;
                 }
 
+                let resume = match reader_session.as_ref() {
+                    Some(session) => reading_history.resume_position(&path, session.identifier()),
+                    None => None,
+                };
+
                 let document = match reader_session.as_mut() {
-                    Some(session) => match session.load_document().await {
+                    Some(session) => match session.load_document_at(resume).await {
                         Ok(document) => {
                             info!(
-                                "EPUB reader ready path={} spine={} pages={}",
+                                "EPUB reader ready path={} spine={} page={} pages={}",
                                 path.as_str(),
                                 document.spine().get(),
+                                document.opening_page_index().saturating_add(1),
                                 document.page_count(),
                             );
                             Some(document)
@@ -560,7 +838,7 @@ where
                     None => {
                         warn!(
                             "EPUB chapter request without active session path={}",
-                            path.as_str()
+                            path.as_str(),
                         );
                         None
                     }
@@ -568,12 +846,22 @@ where
 
                 EPUB_CHAPTER_DONE.signal(chapter);
             }
+            Command::UpdateReadingProgress(progress) => {
+                reading_history.record(progress);
+                reading_history_dirty = true;
+            }
             Command::Shutdown => {
                 debug!("storage shutdown requested");
 
                 // drop the FileReader before returning to run_storage(), which then drops
                 // the FAT volume and block device.
                 drop(reader_session);
+
+                if reading_history_dirty
+                    && !save_reading_history(filesystem, &reading_history).await
+                {
+                    warn!("reading history was not persisted");
+                }
 
                 return;
             }
@@ -593,6 +881,7 @@ async fn serve_unavailable(sd_power: &mut SdPower<'_>) {
             Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(None),
             Command::LoadEpub(_) => EPUB_DOCUMENT_DONE.signal(None),
             Command::LoadEpubChapter { .. } => EPUB_CHAPTER_DONE.signal(None),
+            Command::UpdateReadingProgress(_) => {}
             Command::Shutdown => {
                 // GPIO5 is already HIGH, but establish it explicitly before
                 // acknowledging the power path
@@ -685,6 +974,9 @@ where
 
         let name = owned_entry_name(&entry);
         if name == "." || name == ".." {
+            continue;
+        }
+        if path == "/" && name.eq_ignore_ascii_case(INKPAPER_DIRECTORY_NAME) {
             continue;
         }
 

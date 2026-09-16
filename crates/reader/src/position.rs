@@ -9,7 +9,7 @@ use inkpaper_epub::BookLocation;
 ///
 /// Positions belong to the same book revision and normalization rules. A platform must
 /// associate persisted positions with that book, not just a page number
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ReadingPosition {
     location: BookLocation,
     non_text: u64,

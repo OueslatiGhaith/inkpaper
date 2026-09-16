@@ -7,6 +7,7 @@ mod browser;
 mod components;
 mod reader;
 mod reader_page;
+mod reading_history;
 mod screens;
 mod typography;
 
@@ -15,6 +16,9 @@ pub use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
 pub use reader::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderLoadError, ReaderRequest,
     ReaderSession, load_adjacent_reader_chapter, load_reader_document,
+};
+pub use reading_history::{
+    MAX_READING_HISTORY_ENTRIES, ReadingHistory, ReadingHistoryError, ReadingProgress,
 };
 
 pub use inkpaper_epub::SpineIndex;

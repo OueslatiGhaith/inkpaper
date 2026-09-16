@@ -15,9 +15,7 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use inkpaper_app::{
-    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderDocument, ReaderRequest,
-};
+use inkpaper_app::{BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderRequest};
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
@@ -609,6 +607,10 @@ async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>)
                         }
                     }
                 },
+
+                ReaderRequest::UpdateProgress(progress) => {
+                    storage::update_reading_progress(progress).await;
+                }
             }
         }
     }

@@ -12,6 +12,8 @@ use inkpaper_ui::{
     ShapeError, ShapedGlyph, SimpleShaper,
 };
 
+use crate::ReadingProgress;
+
 const READER_VIEWPORT_WIDTH: u32 = 440;
 const READER_VIEWPORT_HEIGHT: u32 = 685;
 const READER_FONT_SIZE: u16 = 20;
@@ -32,6 +34,7 @@ pub enum ReaderRequest {
         from: SpineIndex,
         direction: ReaderChapterDirection,
     },
+    UpdateProgress(ReadingProgress),
 }
 
 #[derive(Debug)]
@@ -65,8 +68,19 @@ where
         &self.path
     }
 
+    pub fn identifier(&self) -> Option<&str> {
+        self.epub.metadata().identifier()
+    }
+
     pub async fn load_document(&mut self) -> Result<ReaderDocument, ReaderLoadError<S::Error>> {
-        load_reader_document_from_epub(self.path.clone(), &mut self.epub).await
+        self.load_document_at(None).await
+    }
+
+    pub async fn load_document_at(
+        &mut self,
+        position: Option<ReadingPosition>,
+    ) -> Result<ReaderDocument, ReaderLoadError<S::Error>> {
+        load_reader_document_from_epub(self.path.clone(), &mut self.epub, position).await
     }
 
     pub async fn load_adjacent_chapter(
@@ -109,39 +123,54 @@ impl ReaderChapter {
     pub fn page(&self, index: usize) -> Option<&Page<'static>> {
         self.pagination.pages().get(index)
     }
+
+    pub fn page_at_position(&self, position: ReadingPosition) -> Option<usize> {
+        self.pagination.page_at_position(position)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReaderDocument {
     path: String,
+    identifier: Option<String>,
     title: Option<String>,
     creators: Vec<String>,
     package_path: String,
     spine_len: usize,
     chapter: ReaderChapter,
+    opening_page_index: usize,
 }
 
 impl ReaderDocument {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         path: String,
+        identifier: Option<String>,
         title: Option<String>,
         creators: Vec<String>,
         package_path: String,
         spine_len: usize,
         chapter: ReaderChapter,
+        opening_page_index: usize,
     ) -> Self {
         Self {
             path,
+            identifier,
             title,
             creators,
             package_path,
             spine_len,
             chapter,
+            opening_page_index,
         }
     }
 
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    pub fn identifier(&self) -> Option<&str> {
+        self.identifier.as_deref()
     }
 
     pub fn title(&self) -> Option<&str> {
@@ -181,8 +210,13 @@ impl ReaderDocument {
             .expect("reader document always contains a page")
     }
 
+    pub const fn opening_page_index(&self) -> usize {
+        self.opening_page_index
+    }
+
     fn replace_chapter(&mut self, chapter: ReaderChapter) {
         self.chapter = chapter;
+        self.opening_page_index = 0;
     }
 }
 
@@ -222,10 +256,13 @@ where
 async fn load_reader_document_from_epub<S>(
     path: String,
     epub: &mut Epub<S>,
+    resume: Option<ReadingPosition>,
 ) -> Result<ReaderDocument, ReaderLoadError<S::Error>>
 where
     S: EpubSource,
 {
+    let identifier = epub.metadata().identifier().map(String::from);
+
     let title = epub.metadata().title().map(String::from);
     let creators = epub.metadata().creators().to_vec();
 
@@ -233,15 +270,36 @@ where
 
     let spine_len = epub.spine().items().len();
 
+    if let Some(position) = resume
+        && let Some(index) = position.location().spine().as_usize()
+        && index < spine_len
+        && let Some(chapter) = load_readable_chapter_at(epub, index).await?
+    {
+        let opening_page_index = chapter.page_at_position(position).unwrap_or(0);
+
+        return Ok(ReaderDocument::new(
+            path,
+            identifier,
+            title,
+            creators,
+            package_path,
+            spine_len,
+            chapter,
+            opening_page_index,
+        ));
+    }
+
     for index in 0..spine_len {
         if let Some(chapter) = load_readable_chapter_at(epub, index).await? {
             return Ok(ReaderDocument::new(
                 path,
+                identifier,
                 title,
                 creators,
                 package_path,
                 spine_len,
                 chapter,
+                0,
             ));
         }
     }
@@ -481,12 +539,18 @@ impl ReaderState {
             return false;
         }
 
+        let page_index = document
+            .opening_page_index()
+            .min(document.page_count().saturating_sub(1));
+
         self.document = Some(document);
         self.pending_chapter = None;
-        self.page_index = 0;
+        self.page_index = page_index;
         self.failed = false;
         self.chrome.controls_visible = false;
+
         self.refresh_chrome();
+        self.queue_progress_update();
 
         true
     }
@@ -554,7 +618,9 @@ impl ReaderState {
         self.pending_chapter = None;
         self.failed = false;
         self.chrome.controls_visible = false;
+
         self.refresh_chrome();
+        self.queue_progress_update();
 
         true
     }
@@ -588,7 +654,9 @@ impl ReaderState {
         if self.page_index > 0 {
             self.page_index -= 1;
             self.chrome.controls_visible = false;
+
             self.refresh_chrome();
+            self.queue_progress_update();
 
             return true;
         }
@@ -614,7 +682,9 @@ impl ReaderState {
         if next < page_count {
             self.page_index = next;
             self.chrome.controls_visible = false;
+
             self.refresh_chrome();
+            self.queue_progress_update();
 
             return true;
         }
@@ -754,13 +824,33 @@ impl ReaderState {
 
         let section_number = document.spine().get().saturating_add(1);
 
-        self.chrome.page_label = format!("{} / {}", page_number, page_count,);
+        self.chrome.page_label = format!("{} / {}", page_number, page_count);
         self.chrome.section_label = format!(
             "S {} / {}  {}%",
             section_number,
             document.spine_len(),
             chapter_percent,
         );
+    }
+
+    pub(crate) fn current_progress(&self) -> Option<ReadingProgress> {
+        let document = self.document.as_ref()?;
+
+        let page = document.page(self.page_index)?;
+
+        Some(ReadingProgress::new(
+            self.path.clone(),
+            document.identifier().map(String::from),
+            page.position(),
+        ))
+    }
+
+    fn queue_progress_update(&mut self) {
+        let Some(progress) = self.current_progress() else {
+            return;
+        };
+
+        self.pending = Some(ReaderRequest::UpdateProgress(progress));
     }
 }
 
@@ -931,11 +1021,11 @@ mod tests {
 
         let expected_page_label = format!("1 / {}", page_count);
 
-        assert_eq!(state.page_label(), expected_page_label.as_str(),);
+        assert_eq!(state.page_label(), expected_page_label.as_str());
 
-        assert_eq!(state.reading_position(), Some(expected_position),);
+        assert_eq!(state.reading_position(), Some(expected_position));
 
-        assert!(state.section_label().starts_with("S "),);
+        assert!(state.section_label().starts_with("S "));
     }
 
     #[test]
@@ -962,5 +1052,34 @@ mod tests {
 
         assert!(state.toggle_controls());
         assert!(!state.controls_visible());
+    }
+
+    #[test]
+    fn reader_session_reopens_at_saved_position() {
+        let path = String::from("/Fixtures/book-boundaries.epub");
+
+        let source = SliceSource::new(include_bytes!("../../../fixtures/book-boundaries.epub"));
+
+        let document = future::block_on(load_reader_document(path.clone(), source)).unwrap();
+
+        let target_index = document.page_count().saturating_sub(1);
+
+        let target_position = document.page(target_index).unwrap().position();
+
+        let source = SliceSource::new(include_bytes!("../../../fixtures/book-boundaries.epub"));
+
+        let mut session = future::block_on(ReaderSession::open(path, source)).unwrap();
+
+        let resumed = future::block_on(session.load_document_at(Some(target_position))).unwrap();
+
+        assert_eq!(resumed.opening_page_index(), target_index);
+
+        assert_eq!(
+            resumed
+                .page(resumed.opening_page_index())
+                .unwrap()
+                .position(),
+            target_position,
+        );
     }
 }

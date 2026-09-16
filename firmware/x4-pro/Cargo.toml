@@ -25,7 +25,7 @@ xteink-display-probe = { path = "../../crates/xteink-display-probe", features = 
 defmt = { workspace = true }
 embedded-graphics = { workspace = true }
 embedded-hal-async = { workspace = true }
-hadris-fat = { version = "2.2.0", default-features = false, features = ["async", "defmt", "lfn", "read"] }
+hadris-fat = { version = "2.2.0", default-features = false, features = ["async", "defmt", "lfn", "read", "write"] }
 hadris-io = { version = "2.2.0", default-features = false, features = ["async"] }
 heapless = { workspace = true, features = ["defmt"] }
 
