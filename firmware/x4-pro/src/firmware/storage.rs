@@ -21,8 +21,7 @@ use hadris_io::{
     r#async::{Read as HadrisRead, Seek as HadrisSeek},
 };
 use inkpaper_app::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, SpineIndex,
-    load_adjacent_reader_chapter, load_reader_document,
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderSession, SpineIndex,
 };
 use inkpaper_epub::EpubSource;
 use sdio::{BlockDevice, MmcBus, sd::Card};
@@ -133,6 +132,41 @@ where
         }
 
         Ok(())
+    }
+}
+
+async fn open_reader_session<'a, D>(
+    filesystem: &'a FatVolume<D>,
+    path: String,
+) -> Option<ReaderSession<FatEpubSource<'a, D>>>
+where
+    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
+{
+    debug!("opening EPUB session path={}", path.as_str());
+
+    let reader = match filesystem.open_file_path(&path).await {
+        Ok(reader) => reader,
+        Err(error) => {
+            warn!(
+                "EPUB file open failed path={} error={:?}",
+                path.as_str(),
+                error
+            );
+            return None;
+        }
+    };
+
+    let source = FatEpubSource::new(reader);
+
+    match ReaderSession::open(path.clone(), source).await {
+        Ok(session) => {
+            info!("EPUB session opened path={}", path.as_str());
+            Some(session)
+        }
+        Err(_) => {
+            warn!("EPUB session parse failed path={}", path.as_str());
+            None
+        }
     }
 }
 
@@ -448,10 +482,12 @@ where
     serve_unavailable(sd_power).await;
 }
 
-async fn serve_filesystem<D>(filesystem: &FatVolume<D>)
+async fn serve_filesystem<'a, D>(filesystem: &'a FatVolume<D>)
 where
     D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
 {
+    let mut reader_session: Option<ReaderSession<FatEpubSource<'a, D>>> = None;
+
     loop {
         match COMMANDS.receive().await {
             Command::ListRoot => {
@@ -463,7 +499,36 @@ where
                 DIRECTORY_LIST_DONE.signal(entries);
             }
             Command::LoadEpub(path) => {
-                let document = load_epub_document(filesystem, &path).await;
+                let reuse_session = match reader_session.as_ref() {
+                    Some(session) => session.path() == path,
+                    None => false,
+                };
+
+                if !reuse_session {
+                    // drop the old FAT FileReader before opening another book.
+                    let _ = reader_session.take();
+                    reader_session = open_reader_session(filesystem, path.clone()).await;
+                }
+
+                let document = match reader_session.as_mut() {
+                    Some(session) => match session.load_document().await {
+                        Ok(document) => {
+                            info!(
+                                "EPUB reader ready path={} spine={} pages={}",
+                                path.as_str(),
+                                document.spine().get(),
+                                document.page_count(),
+                            );
+                            Some(document)
+                        }
+                        Err(_) => {
+                            warn!("EPUB reader load failed path={}", path.as_str());
+                            None
+                        }
+                    },
+                    None => None,
+                };
+
                 EPUB_DOCUMENT_DONE.signal(document);
             }
             Command::LoadEpubChapter {
@@ -471,11 +536,45 @@ where
                 from,
                 direction,
             } => {
-                let chapter = load_epub_chapter(filesystem, &path, from, direction).await;
+                let chapter = match reader_session.as_mut() {
+                    Some(session) if session.path() == path => {
+                        match session.load_adjacent_chapter(from, direction).await {
+                            Ok(chapter) => chapter,
+                            Err(_) => {
+                                warn!(
+                                    "EPUB adjacent chapter load failed path={} from={}",
+                                    path.as_str(),
+                                    from.get(),
+                                );
+                                None
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        warn!(
+                            "EPUB chapter request does not match active session path={}",
+                            path.as_str(),
+                        );
+                        None
+                    }
+                    None => {
+                        warn!(
+                            "EPUB chapter request without active session path={}",
+                            path.as_str()
+                        );
+                        None
+                    }
+                };
+
                 EPUB_CHAPTER_DONE.signal(chapter);
             }
             Command::Shutdown => {
                 debug!("storage shutdown requested");
+
+                // drop the FileReader before returning to run_storage(), which then drops
+                // the FAT volume and block device.
+                drop(reader_session);
+
                 return;
             }
         }
@@ -598,83 +697,6 @@ where
     debug!("directory listed path={} entries={}", path, output.len());
 
     Some(output)
-}
-
-async fn load_epub_document<D>(filesystem: &FatVolume<D>, path: &str) -> Option<ReaderDocument>
-where
-    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
-{
-    debug!("opening EPUB path={}", path);
-
-    let reader = match filesystem.open_file_path(path).await {
-        Ok(reader) => reader,
-        Err(error) => {
-            warn!("EPUB file open failed path={} error={:?}", path, error,);
-            return None;
-        }
-    };
-
-    let source = FatEpubSource::new(reader);
-
-    match load_reader_document(String::from(path), source).await {
-        Ok(document) => {
-            info!(
-                "EPUB reader ready path={} spine={} pages={}",
-                path,
-                document.spine().get(),
-                document.page_count(),
-            );
-
-            Some(document)
-        }
-        Err(_) => {
-            warn!("EPUB reader load failed path={}", path);
-            None
-        }
-    }
-}
-
-async fn load_epub_chapter<D>(
-    filesystem: &FatVolume<D>,
-    path: &str,
-    from: SpineIndex,
-    direction: ReaderChapterDirection,
-) -> Option<ReaderChapter>
-where
-    D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
-{
-    debug!(
-        "opening adjacent EPUB chapter path={} from={}",
-        path,
-        from.get(),
-    );
-
-    let reader = match filesystem.open_file_path(path).await {
-        Ok(reader) => reader,
-        Err(error) => {
-            warn!(
-                "EPUB chapter file open failed path={} error={:?}",
-                path, error,
-            );
-
-            return None;
-        }
-    };
-
-    let source = FatEpubSource::new(reader);
-
-    match load_adjacent_reader_chapter(source, from, direction).await {
-        Ok(chapter) => chapter,
-        Err(_) => {
-            warn!(
-                "EPUB adjacent chapter load failed path={} from={}",
-                path,
-                from.get(),
-            );
-
-            None
-        }
-    }
 }
 
 fn owned_entry_name(entry: &FileEntry) -> String {

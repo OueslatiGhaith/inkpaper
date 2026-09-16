@@ -9,7 +9,8 @@ use embedded_graphics_simulator::{
 use futures_lite::future;
 use inkpaper_app::{
     BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderChapter, ReaderChapterDirection,
-    ReaderDocument, ReaderRequest, SpineIndex, load_adjacent_reader_chapter, load_reader_document,
+    ReaderDocument, ReaderRequest, ReaderSession, SpineIndex, load_adjacent_reader_chapter,
+    load_reader_document,
 };
 use inkpaper_ui::{
     backend::{CoverageMode, EmbeddedGraphicsPainter},
@@ -109,7 +110,53 @@ fn ui_point(point: EgPoint) -> Point {
     Point::new(px(point.x), px(point.y))
 }
 
-fn service_app_requests(runtime: &impl RuntimeApi, app: Entity<InkPaperApp>) {
+#[derive(Default)]
+struct SimulatorReaderService {
+    session: Option<ReaderSession<HostFileSource>>,
+}
+
+impl SimulatorReaderService {
+    fn open_document(&mut self, path: String) -> Option<ReaderDocument> {
+        let reuse = match self.session.as_ref() {
+            Some(session) => session.path() == path,
+            None => false,
+        };
+
+        if !reuse {
+            self.session = None;
+
+            let source = simulator_epub_source(&path)?;
+            let session = future::block_on(ReaderSession::open(path.clone(), source)).ok()?;
+
+            self.session = Some(session);
+        }
+
+        future::block_on(self.session.as_mut()?.load_document()).ok()
+    }
+
+    fn load_adjacent_chapter(
+        &mut self,
+        path: &str,
+        from: SpineIndex,
+        direction: ReaderChapterDirection,
+    ) -> Option<ReaderChapter> {
+        let session = self.session.as_mut()?;
+
+        if session.path() != path {
+            return None;
+        }
+
+        future::block_on(session.load_adjacent_chapter(from, direction))
+            .ok()
+            .flatten()
+    }
+}
+
+fn service_app_requests(
+    runtime: &impl RuntimeApi,
+    app: Entity<InkPaperApp>,
+    reader_service: &mut SimulatorReaderService,
+) {
     loop {
         let (browse_request, reader_request) = runtime
             .update(app, |app, _| {
@@ -145,7 +192,7 @@ fn service_app_requests(runtime: &impl RuntimeApi, app: Entity<InkPaperApp>) {
 
         if let Some(request) = reader_request {
             match request {
-                ReaderRequest::OpenEpub(path) => match simulator_reader_document(path.clone()) {
+                ReaderRequest::OpenEpub(path) => match reader_service.open_document(path.clone()) {
                     Some(document) => {
                         runtime
                             .update(app, move |app, cx| {
@@ -167,7 +214,7 @@ fn service_app_requests(runtime: &impl RuntimeApi, app: Entity<InkPaperApp>) {
                     path,
                     from,
                     direction,
-                } => match simulator_reader_chapter(&path, from, direction) {
+                } => match reader_service.load_adjacent_chapter(&path, from, direction) {
                     Some(chapter) => {
                         runtime
                             .update(app, move |app, cx| {
@@ -242,24 +289,6 @@ fn simulator_listing(path: &str) -> Option<BrowseListing> {
     Some(BrowseListing::new(path, entries))
 }
 
-fn simulator_reader_document(path: String) -> Option<ReaderDocument> {
-    let source = simulator_epub_source(&path)?;
-
-    future::block_on(load_reader_document(path, source)).ok()
-}
-
-fn simulator_reader_chapter(
-    path: &str,
-    from: SpineIndex,
-    direction: ReaderChapterDirection,
-) -> Option<ReaderChapter> {
-    let source = simulator_epub_source(path)?;
-
-    future::block_on(load_adjacent_reader_chapter(source, from, direction))
-        .ok()
-        .flatten()
-}
-
 fn simulator_epub_source(path: &str) -> Option<HostFileSource> {
     let file_name = path.strip_prefix("/Fixtures/")?;
 
@@ -297,6 +326,8 @@ fn main() {
     let mut pointer = PointerGesture::default();
     let mut mouse_position =
         Point::new(px(DISPLAY_WIDTH as i32 / 2), px(DISPLAY_HEIGHT as i32 / 2));
+
+    let mut reader_service = SimulatorReaderService::default();
 
     'running: loop {
         window.update(&display);
@@ -404,7 +435,7 @@ fn main() {
                 _ => {}
             }
 
-            service_app_requests(&runtime, app);
+            service_app_requests(&runtime, app, &mut reader_service);
             render_pending_ui(&mut runtime, &mut display);
         }
     }

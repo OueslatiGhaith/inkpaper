@@ -43,6 +43,41 @@ pub enum ReaderLoadError<E> {
     NoReadableChapter,
 }
 
+pub struct ReaderSession<S>
+where
+    S: EpubSource,
+{
+    path: String,
+    epub: Epub<S>,
+}
+
+impl<S> ReaderSession<S>
+where
+    S: EpubSource,
+{
+    pub async fn open(path: String, source: S) -> Result<Self, ReaderLoadError<S::Error>> {
+        let epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
+
+        Ok(Self { path, epub })
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub async fn load_document(&mut self) -> Result<ReaderDocument, ReaderLoadError<S::Error>> {
+        load_reader_document_from_epub(self.path.clone(), &mut self.epub).await
+    }
+
+    pub async fn load_adjacent_chapter(
+        &mut self,
+        from: SpineIndex,
+        direction: ReaderChapterDirection,
+    ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>> {
+        load_adjacent_reader_chapter_from_epub(&mut self.epub, from, direction).await
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReaderChapter {
     chapter_path: String,
@@ -168,10 +203,30 @@ pub async fn load_reader_document<S>(
 where
     S: EpubSource,
 {
+    let mut session = ReaderSession::open(path, source).await?;
+    session.load_document().await
+}
+
+pub async fn load_adjacent_reader_chapter<S>(
+    source: S,
+    from: SpineIndex,
+    direction: ReaderChapterDirection,
+) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
+where
+    S: EpubSource,
+{
     let mut epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
+    load_adjacent_reader_chapter_from_epub(&mut epub, from, direction).await
+}
 
+async fn load_reader_document_from_epub<S>(
+    path: String,
+    epub: &mut Epub<S>,
+) -> Result<ReaderDocument, ReaderLoadError<S::Error>>
+where
+    S: EpubSource,
+{
     let title = epub.metadata().title().map(String::from);
-
     let creators = epub.metadata().creators().to_vec();
 
     let package_path = String::from(epub.package().path().as_str());
@@ -179,7 +234,7 @@ where
     let spine_len = epub.spine().items().len();
 
     for index in 0..spine_len {
-        if let Some(chapter) = load_readable_chapter_at(&mut epub, index).await? {
+        if let Some(chapter) = load_readable_chapter_at(epub, index).await? {
             return Ok(ReaderDocument::new(
                 path,
                 title,
@@ -194,18 +249,15 @@ where
     Err(ReaderLoadError::NoReadableChapter)
 }
 
-pub async fn load_adjacent_reader_chapter<S>(
-    source: S,
+async fn load_adjacent_reader_chapter_from_epub<S>(
+    epub: &mut Epub<S>,
     from: SpineIndex,
     direction: ReaderChapterDirection,
 ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
 where
     S: EpubSource,
 {
-    let mut epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
-
     let spine_len = epub.spine().items().len();
-
     let from = from.as_usize().ok_or(ReaderLoadError::SpineIndexOverflow)?;
 
     if from >= spine_len {
@@ -215,15 +267,14 @@ where
     match direction {
         ReaderChapterDirection::Next => {
             for index in from.saturating_add(1)..spine_len {
-                if let Some(chapter) = load_readable_chapter_at(&mut epub, index).await? {
+                if let Some(chapter) = load_readable_chapter_at(epub, index).await? {
                     return Ok(Some(chapter));
                 }
             }
         }
-
         ReaderChapterDirection::Previous => {
             for index in (0..from).rev() {
-                if let Some(chapter) = load_readable_chapter_at(&mut epub, index).await? {
+                if let Some(chapter) = load_readable_chapter_at(epub, index).await? {
                     return Ok(Some(chapter));
                 }
             }
@@ -737,5 +788,26 @@ mod tests {
         assert_eq!(state.page_index, 0);
         assert_eq!(state.document.as_ref().unwrap().spine(), next_spine);
         assert!(state.page().is_some());
+    }
+
+    #[test]
+    fn reader_session_supports_multiple_operations_on_one_epub() {
+        let path = String::from("/Fixtures/book-boundaries.epub");
+
+        let source = SliceSource::new(include_bytes!("../../../fixtures/book-boundaries.epub"));
+
+        let mut session = future::block_on(ReaderSession::open(path.clone(), source)).unwrap();
+
+        assert_eq!(session.path(), path);
+
+        let document = future::block_on(session.load_document()).unwrap();
+
+        assert_eq!(document.path(), "/Fixtures/book-boundaries.epub");
+
+        let adjacent = future::block_on(
+            session.load_adjacent_chapter(document.spine(), ReaderChapterDirection::Next),
+        );
+
+        assert!(adjacent.is_ok());
     }
 }

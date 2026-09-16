@@ -14,7 +14,7 @@ pub use app::InkPaperApp;
 pub use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
 pub use reader::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderLoadError, ReaderRequest,
-    load_adjacent_reader_chapter, load_reader_document,
+    ReaderSession, load_adjacent_reader_chapter, load_reader_document,
 };
 
 pub use inkpaper_epub::SpineIndex;
