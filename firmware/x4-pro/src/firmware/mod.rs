@@ -15,9 +15,7 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use inkpaper_app::{
-    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderRequest, RecentBooksRequest,
-};
+use inkpaper_app::InkPaperApp;
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
@@ -38,6 +36,7 @@ use crate::firmware::{
     touch::{TouchController, touch_task},
 };
 
+mod app_service;
 mod battery;
 mod buttons;
 mod display;
@@ -343,7 +342,7 @@ async fn main(spawner: Spawner) -> ! {
             stay_alive().await;
         }
 
-        service_app_requests(runtime, app).await;
+        app_service::service_app_requests(runtime, app).await;
 
         let Some(update) = presenter.render_pending(runtime, frame, panel.capabilities()) else {
             continue;
@@ -490,164 +489,6 @@ fn apply_rtc_state(state: RtcState) {
     }
 
     // TODO: update app once app state is introduced
-}
-
-async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>) {
-    loop {
-        let requests = match runtime.update(app, |app, _| {
-            (
-                app.take_browse_request(),
-                app.take_reader_request(),
-                app.take_recent_books_request(),
-            )
-        }) {
-            Ok(requests) => requests,
-            Err(_) => {
-                return warn!("failed to read app requests");
-            }
-        };
-
-        let (browse_request, reader_request, recent_books_request) = requests;
-
-        if browse_request.is_none() && reader_request.is_none() && recent_books_request.is_none() {
-            return;
-        }
-
-        if let Some(request) = browse_request {
-            match request {
-                BrowseRequest::ListDirectory(path) => {
-                    match storage::list_directory_and_wait(&path).await {
-                        Some(entries) => {
-                            let entries = entries
-                                .into_iter()
-                                .map(|entry| {
-                                    let (name, is_directory) = entry.into_parts();
-
-                                    if is_directory {
-                                        BrowseEntry::directory(name)
-                                    } else {
-                                        BrowseEntry::file(name)
-                                    }
-                                })
-                                .collect();
-
-                            let listing = BrowseListing::new(path, entries);
-
-                            if runtime
-                                .update(app, move |app, cx| {
-                                    app.apply_browse_listing(listing, cx);
-                                })
-                                .is_err()
-                            {
-                                return warn!("failed to apply browse listing");
-                            }
-                        }
-
-                        None => {
-                            if runtime
-                                .update(app, |app, cx| {
-                                    app.apply_browse_error(cx);
-                                })
-                                .is_err()
-                            {
-                                return warn!("failed to apply browse error");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(request) = reader_request {
-            match request {
-                ReaderRequest::OpenEpub(path) => {
-                    match storage::load_epub_document_and_wait(&path).await {
-                        Some(document) => {
-                            if runtime
-                                .update(app, move |app, cx| {
-                                    app.apply_reader_document(document, cx);
-                                })
-                                .is_err()
-                            {
-                                return warn!("failed to apply reader document");
-                            }
-                        }
-
-                        None => {
-                            if runtime
-                                .update(app, move |app, cx| {
-                                    app.apply_reader_error(path, cx);
-                                })
-                                .is_err()
-                            {
-                                return warn!("failed to apply reader error");
-                            }
-                        }
-                    }
-                }
-
-                ReaderRequest::LoadAdjacentChapter {
-                    path,
-                    from,
-                    direction,
-                } => match storage::load_epub_chapter_and_wait(&path, from, direction).await {
-                    Some(chapter) => {
-                        if runtime
-                            .update(app, move |app, cx| {
-                                app.apply_reader_chapter(path, from, direction, chapter, cx);
-                            })
-                            .is_err()
-                        {
-                            return warn!("failed to apply reader chapter");
-                        }
-                    }
-
-                    None => {
-                        if runtime
-                            .update(app, move |app, _| {
-                                app.finish_reader_chapter_request(path, from, direction);
-                            })
-                            .is_err()
-                        {
-                            return warn!("failed to finish reader chapter request");
-                        }
-                    }
-                },
-
-                ReaderRequest::UpdateProgress(progress) => {
-                    storage::update_reading_progress(progress).await;
-                }
-            }
-        }
-
-        if let Some(request) = recent_books_request {
-            match request {
-                RecentBooksRequest::Load => match storage::reading_history_and_wait().await {
-                    Some(entries) => {
-                        if runtime
-                            .update(app, move |app, cx| {
-                                app.apply_recent_books(entries, cx);
-                            })
-                            .is_err()
-                        {
-                            return warn!("failed to apply recent books");
-                        }
-                    }
-
-                    None => {
-                        if runtime
-                            .update(app, |app, cx| {
-                                app.apply_recent_books_error(cx);
-                            })
-                            .is_err()
-                        {
-                            return warn!("failed to apply recent-books error");
-                        }
-                    }
-                },
-            }
-        }
-    }
 }
 
 fn ui_point(position: TouchPosition) -> Point {
