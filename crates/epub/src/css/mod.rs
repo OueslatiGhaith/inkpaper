@@ -12,6 +12,8 @@ use parser::{
     parse_stylesheet,
 };
 
+const FIXED_SCALE: i64 = 1_000;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum FontWeight {
     #[default]
@@ -37,11 +39,143 @@ pub enum TextAlign {
     Justify,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssLengthUnit {
+    Pixels,
+    Em,
+    Percent,
+}
+
+/// a CSS length stored in thousandths of its unit.
+///
+/// keeping the parsed value fixed-point avoids carrying floating-point CSS values into pagination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CssLength {
+    value_milli: i32,
+    unit: CssLengthUnit,
+}
+
+impl CssLength {
+    pub const ZERO: Self = Self {
+        value_milli: 0,
+        unit: CssLengthUnit::Pixels,
+    };
+
+    pub fn resolve(self, font_size: u32, percentage_basis: u32) -> i32 {
+        let (basis, divisor) = match self.unit {
+            CssLengthUnit::Pixels => (1i64, FIXED_SCALE),
+            CssLengthUnit::Em => (i64::from(font_size), FIXED_SCALE),
+            CssLengthUnit::Percent => (
+                i64::from(percentage_basis),
+                100i64.saturating_mul(FIXED_SCALE),
+            ),
+        };
+
+        let resolved = i64::from(self.value_milli).saturating_mul(basis) / divisor;
+
+        i32::try_from(resolved).unwrap_or(if resolved < 0 { i32::MIN } else { i32::MAX })
+    }
+
+    pub(crate) const fn pixels_milli(value_milli: i32) -> Self {
+        Self {
+            value_milli,
+            unit: CssLengthUnit::Pixels,
+        }
+    }
+
+    pub(crate) const fn em_milli(value_milli: i32) -> Self {
+        Self {
+            value_milli,
+            unit: CssLengthUnit::Em,
+        }
+    }
+
+    pub(crate) const fn percent_milli(value_milli: i32) -> Self {
+        Self {
+            value_milli,
+            unit: CssLengthUnit::Percent,
+        }
+    }
+}
+
+impl Default for CssLength {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineHeightValue {
+    Normal,
+    Number(u32),
+    Length(CssLength),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineHeight {
+    value: LineHeightValue,
+}
+
+impl LineHeight {
+    pub const NORMAL: Self = Self {
+        value: LineHeightValue::Normal,
+    };
+
+    /// resolves an explicit CSS line-height.
+    ///
+    /// `None` means `normal`, in which case the text measurer's native line height should be used.
+    pub fn resolve(self, font_size: u32) -> Option<u32> {
+        match self.value {
+            LineHeightValue::Normal => None,
+
+            LineHeightValue::Number(value_milli) => {
+                let scaled = u64::from(font_size).saturating_mul(u64::from(value_milli))
+                    / u64::try_from(FIXED_SCALE).unwrap();
+
+                Some(u32::try_from(scaled).unwrap_or(u32::MAX))
+            }
+
+            LineHeightValue::Length(length) => {
+                let resolved = length.resolve(font_size, font_size).max(0);
+
+                Some(u32::try_from(resolved).unwrap_or(u32::MAX))
+            }
+        }
+    }
+
+    pub(crate) const fn number_milli(value_milli: u32) -> Self {
+        Self {
+            value: LineHeightValue::Number(value_milli),
+        }
+    }
+
+    pub(crate) const fn length(length: CssLength) -> Self {
+        Self {
+            value: LineHeightValue::Length(length),
+        }
+    }
+}
+
+impl Default for LineHeight {
+    fn default() -> Self {
+        Self::NORMAL
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ComputedStyle {
     font_weight: FontWeight,
     font_style: FontStyle,
     text_align: TextAlign,
+
+    // non-inherited block properties.
+    margin_top: Option<CssLength>,
+    margin_bottom: Option<CssLength>,
+
+    // inherited text properties.
+    text_indent: CssLength,
+    line_height: LineHeight,
+
     hidden: bool,
 }
 
@@ -56,6 +190,22 @@ impl ComputedStyle {
 
     pub const fn text_align(self) -> TextAlign {
         self.text_align
+    }
+
+    pub const fn margin_top(self) -> Option<CssLength> {
+        self.margin_top
+    }
+
+    pub const fn margin_bottom(self) -> Option<CssLength> {
+        self.margin_bottom
+    }
+
+    pub const fn text_indent(self) -> CssLength {
+        self.text_indent
+    }
+
+    pub const fn line_height(self) -> LineHeight {
+        self.line_height
     }
 
     pub const fn hidden(self) -> bool {
@@ -115,6 +265,12 @@ struct CascadedStyle {
     font_weight: Option<Candidate<FontWeight>>,
     font_style: Option<Candidate<FontStyle>>,
     text_align: Option<Candidate<TextAlign>>,
+
+    margin_top: Option<Candidate<CssLength>>,
+    margin_bottom: Option<Candidate<CssLength>>,
+    text_indent: Option<Candidate<CssLength>>,
+    line_height: Option<Candidate<LineHeight>>,
+
     display: Option<Candidate<DisplayValue>>,
 }
 
@@ -138,7 +294,10 @@ pub(crate) fn resolve_chapter_styles(chapter: &Chapter, stylesheet: &Stylesheet)
         // underneath a display:none ancestor.
         let inherited_hidden = computed.hidden;
 
+        // these properties are not inherited.
         computed.hidden = false;
+        computed.margin_top = None;
+        computed.margin_bottom = None;
 
         apply_semantic_defaults(node, &mut computed);
 
@@ -170,6 +329,22 @@ pub(crate) fn resolve_chapter_styles(chapter: &Chapter, stylesheet: &Stylesheet)
 
         if let Some(candidate) = cascade.text_align {
             computed.text_align = candidate.value;
+        }
+
+        if let Some(candidate) = cascade.margin_top {
+            computed.margin_top = Some(candidate.value);
+        }
+
+        if let Some(candidate) = cascade.margin_bottom {
+            computed.margin_bottom = Some(candidate.value);
+        }
+
+        if let Some(candidate) = cascade.text_indent {
+            computed.text_indent = candidate.value;
+        }
+
+        if let Some(candidate) = cascade.line_height {
+            computed.line_height = candidate.value;
         }
 
         let local_hidden = cascade
@@ -230,6 +405,50 @@ fn apply_declaration(
         Property::TextAlign(value) => {
             consider_candidate(
                 &mut cascade.text_align,
+                Candidate {
+                    value,
+                    important: declaration.important,
+                    specificity,
+                    order,
+                },
+            );
+        }
+        Property::MarginTop(value) => {
+            consider_candidate(
+                &mut cascade.margin_top,
+                Candidate {
+                    value,
+                    important: declaration.important,
+                    specificity,
+                    order,
+                },
+            );
+        }
+        Property::MarginBottom(value) => {
+            consider_candidate(
+                &mut cascade.margin_bottom,
+                Candidate {
+                    value,
+                    important: declaration.important,
+                    specificity,
+                    order,
+                },
+            );
+        }
+        Property::TextIndent(value) => {
+            consider_candidate(
+                &mut cascade.text_indent,
+                Candidate {
+                    value,
+                    important: declaration.important,
+                    specificity,
+                    order,
+                },
+            );
+        }
+        Property::LineHeight(value) => {
+            consider_candidate(
+                &mut cascade.line_height,
                 Candidate {
                     value,
                     important: declaration.important,

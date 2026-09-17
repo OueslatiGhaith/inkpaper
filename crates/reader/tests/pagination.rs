@@ -777,3 +777,145 @@ fn position_lookup_rejects_other_chapters_and_the_exclusive_end() {
     assert_eq!(empty.len(), 1);
     assert_eq!(empty.page_at_position(empty.pages()[0].position()), Some(0));
 }
+
+#[test]
+fn css_block_margins_control_spacing_between_blocks() {
+    let bytes = build_test_epub(
+        r#"
+<p style="margin-bottom: 2px">one</p>
+<p style="margin-top: 3px">two</p>
+"#,
+    );
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let mut measurer = MonoMeasurer::default();
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(20, 10).unwrap(),
+        // deliberately large fallback: CSS margins should replace it.
+        ReaderSettings::new(1, 9).unwrap(),
+        &mut measurer,
+    )
+    .unwrap();
+
+    assert_eq!(pagination.len(), 1);
+
+    let texts: Vec<_> = pagination.pages()[0]
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            PageItem::Text(text) => Some(text),
+            PageItem::Image(_) => None,
+        })
+        .collect();
+
+    assert_eq!(texts.len(), 2);
+
+    assert_eq!(texts[0].bounds(), Rect::new(0, 0, 3, 1));
+
+    // first line = 1px, collapsed margin = max(2, 3) = 3px.
+    assert_eq!(texts[1].bounds(), Rect::new(0, 4, 3, 1));
+}
+
+#[test]
+fn css_text_indent_applies_only_to_first_line_of_block() {
+    let bytes = build_test_epub(r#"<p style="text-indent: 3px">one two</p>"#);
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let mut measurer = MonoMeasurer::default();
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(7, 2).unwrap(),
+        ReaderSettings::new(1, 0).unwrap(),
+        &mut measurer,
+    )
+    .unwrap();
+
+    assert_eq!(pagination.len(), 1);
+
+    let page = &pagination.pages()[0];
+
+    let texts: Vec<_> = page
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            PageItem::Text(text) => Some(text),
+            PageItem::Image(_) => None,
+        })
+        .collect();
+
+    assert_eq!(texts.len(), 3);
+
+    assert_eq!(texts[0].text(), "one");
+    assert_eq!(texts[0].bounds(), Rect::new(3, 0, 3, 1));
+
+    assert_eq!(texts[1].text(), " ");
+    assert_eq!(texts[1].bounds(), Rect::new(6, 0, 1, 1));
+
+    assert_eq!(texts[2].text(), "two");
+
+    // wrapped lines return to the normal left edge.
+    assert_eq!(texts[2].bounds(), Rect::new(0, 1, 3, 1));
+}
+
+#[test]
+fn css_line_height_controls_line_boxes() {
+    let bytes = build_test_epub(r#"<p style="line-height: 2">one<br/>two</p>"#);
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let mut measurer = MonoMeasurer::default();
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(20, 4).unwrap(),
+        ReaderSettings::new(1, 0).unwrap(),
+        &mut measurer,
+    )
+    .unwrap();
+
+    assert_eq!(pagination.len(), 1);
+
+    let texts: Vec<_> = pagination.pages()[0]
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            PageItem::Text(text) => Some(text),
+            PageItem::Image(_) => None,
+        })
+        .collect();
+
+    assert_eq!(texts.len(), 2);
+
+    assert_eq!(texts[0].bounds(), Rect::new(0, 0, 3, 2));
+
+    assert_eq!(texts[1].bounds(), Rect::new(0, 2, 3, 2));
+}

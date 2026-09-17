@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
-use crate::StyleNode;
+use crate::{CssLength, LineHeight, StyleNode};
 
 use super::{FontStyle, FontWeight, TextAlign};
 
@@ -15,6 +15,12 @@ pub(super) enum Property {
     FontWeight(FontWeight),
     FontStyle(FontStyle),
     TextAlign(TextAlign),
+
+    MarginTop(CssLength),
+    MarginBottom(CssLength),
+    TextIndent(CssLength),
+    LineHeight(LineHeight),
+
     Display(DisplayValue),
 }
 
@@ -304,12 +310,38 @@ fn parse_declaration(declaration: &str, output: &mut Vec<Declaration>) {
 
     let (value, important) = strip_important(value);
 
+    if name.eq_ignore_ascii_case("margin") {
+        let Some((top, bottom)) = parse_vertical_margin(value) else {
+            return;
+        };
+
+        output.push(Declaration {
+            property: Property::MarginTop(top),
+            important,
+        });
+
+        output.push(Declaration {
+            property: Property::MarginBottom(bottom),
+            important,
+        });
+
+        return;
+    }
+
     let property = if name.eq_ignore_ascii_case("font-weight") {
         parse_font_weight(value).map(Property::FontWeight)
     } else if name.eq_ignore_ascii_case("font-style") {
         parse_font_style(value).map(Property::FontStyle)
     } else if name.eq_ignore_ascii_case("text-align") {
         parse_text_align(value).map(Property::TextAlign)
+    } else if name.eq_ignore_ascii_case("margin-top") {
+        parse_margin_length(value).map(Property::MarginTop)
+    } else if name.eq_ignore_ascii_case("margin-bottom") {
+        parse_margin_length(value).map(Property::MarginBottom)
+    } else if name.eq_ignore_ascii_case("text-indent") {
+        parse_css_length(value).map(Property::TextIndent)
+    } else if name.eq_ignore_ascii_case("line-height") {
+        parse_line_height(value).map(Property::LineHeight)
     } else if name.eq_ignore_ascii_case("display") {
         parse_display(value).map(Property::Display)
     } else {
@@ -339,6 +371,164 @@ fn strip_important(value: &str) -> (&str, bool) {
     }
 
     (value, false)
+}
+
+fn parse_vertical_margin(value: &str) -> Option<(CssLength, CssLength)> {
+    let values: Vec<_> = value.split_ascii_whitespace().collect();
+
+    let (top, bottom) = match values.as_slice() {
+        [all] => (*all, *all),
+
+        [vertical, _horizontal] => (*vertical, *vertical),
+
+        [top, _horizontal, bottom] => (*top, *bottom),
+
+        [top, _right, bottom, _left] => (*top, *bottom),
+
+        _ => return None,
+    };
+
+    Some((parse_margin_length(top)?, parse_margin_length(bottom)?))
+}
+
+fn parse_margin_length(value: &str) -> Option<CssLength> {
+    if value.eq_ignore_ascii_case("auto") || value.eq_ignore_ascii_case("initial") {
+        return Some(CssLength::ZERO);
+    }
+
+    parse_css_length(value)
+}
+
+fn parse_css_length(value: &str) -> Option<CssLength> {
+    let value = value.trim();
+
+    if value.eq_ignore_ascii_case("initial") {
+        return Some(CssLength::ZERO);
+    }
+
+    if let Some(number) = strip_suffix_ignore_ascii_case(value, "px") {
+        return Some(CssLength::pixels_milli(parse_milli(number)?));
+    }
+
+    if let Some(number) = strip_suffix_ignore_ascii_case(value, "em") {
+        return Some(CssLength::em_milli(parse_milli(number)?));
+    }
+
+    if let Some(number) = value.strip_suffix('%') {
+        return Some(CssLength::percent_milli(parse_milli(number)?));
+    }
+
+    // unitless zero is valid for CSS lengths.
+    let number = parse_milli(value)?;
+
+    (number == 0).then_some(CssLength::ZERO)
+}
+
+fn parse_line_height(value: &str) -> Option<LineHeight> {
+    let value = value.trim();
+
+    if value.eq_ignore_ascii_case("normal") || value.eq_ignore_ascii_case("initial") {
+        return Some(LineHeight::NORMAL);
+    }
+
+    if let Some(length) = parse_css_length(value) {
+        if length.resolve(1_000, 1_000) < 0 {
+            return None;
+        }
+
+        return Some(LineHeight::length(length));
+    }
+
+    let value_milli = parse_milli(value)?;
+
+    if value_milli < 0 {
+        return None;
+    }
+
+    Some(LineHeight::number_milli(u32::try_from(value_milli).ok()?))
+}
+
+fn strip_suffix_ignore_ascii_case<'a>(value: &'a str, suffix: &str) -> Option<&'a str> {
+    let split = value.len().checked_sub(suffix.len())?;
+
+    let suffix_value = value.get(split..)?;
+
+    if !suffix_value.eq_ignore_ascii_case(suffix) {
+        return None;
+    }
+
+    value.get(..split)
+}
+
+fn parse_milli(value: &str) -> Option<i32> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        return None;
+    }
+
+    let (negative, value) = if let Some(value) = value.strip_prefix('-') {
+        (true, value)
+    } else if let Some(value) = value.strip_prefix('+') {
+        (false, value)
+    } else {
+        (false, value)
+    };
+
+    if value.is_empty() {
+        return None;
+    }
+
+    let (whole, fraction) = match value.split_once('.') {
+        Some((whole, fraction)) => {
+            if fraction.contains('.') {
+                return None;
+            }
+
+            (whole, Some(fraction))
+        }
+
+        None => (value, None),
+    };
+
+    if whole.is_empty() && fraction.is_none_or(str::is_empty) {
+        return None;
+    }
+
+    if !whole.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    let whole = if whole.is_empty() {
+        0i64
+    } else {
+        whole.parse::<i64>().ok()?
+    };
+
+    let mut fractional = 0i64;
+    let mut place = 100i64;
+
+    if let Some(fraction) = fraction {
+        if !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+
+        for byte in fraction.bytes().take(3) {
+            fractional = fractional.checked_add(i64::from(byte - b'0').checked_mul(place)?)?;
+
+            place /= 10;
+        }
+    }
+
+    let value = whole.checked_mul(1_000)?.checked_add(fractional)?;
+
+    let value = if negative {
+        value.checked_neg()?
+    } else {
+        value
+    };
+
+    i32::try_from(value).ok()
 }
 
 fn parse_font_weight(value: &str) -> Option<FontWeight> {

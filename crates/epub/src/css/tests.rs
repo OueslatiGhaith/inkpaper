@@ -169,3 +169,54 @@ fn css_later_equal_specificity_wins() {
         TextAlign::Justify,
     );
 }
+
+#[test]
+fn css_resolves_block_spacing_indentation_and_line_height() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <style>
+            body {
+                text-indent: 10%;
+                line-height: 1.5;
+            }
+
+            p {
+                margin: 2em auto 12px;
+            }
+        </style>
+    </head>
+
+    <body>
+        <p><span>text</span></p>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+
+    let styles = resolve_embedded(&chapter);
+
+    let paragraph = styles.style(chapter.blocks()[0].style_node()).unwrap();
+
+    assert_eq!(paragraph.margin_top().unwrap().resolve(20, 400), 40);
+
+    assert_eq!(paragraph.margin_bottom().unwrap().resolve(20, 400), 12);
+
+    // text-indent is inherited from body.
+    assert_eq!(paragraph.text_indent().resolve(20, 400), 40);
+
+    // line-height is inherited from body.
+    assert_eq!(paragraph.line_height().resolve(20), Some(30));
+
+    let text = text_style(&chapter, &styles, "text");
+
+    // inherited properties continue through the span.
+    assert_eq!(text.text_indent().resolve(20, 400), 40);
+
+    assert_eq!(text.line_height().resolve(20), Some(30));
+
+    // margins are not inherited by the span.
+    assert_eq!(text.margin_top(), None);
+    assert_eq!(text.margin_bottom(), None);
+}

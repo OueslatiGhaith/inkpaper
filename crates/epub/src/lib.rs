@@ -17,7 +17,9 @@ mod source;
 mod xhtml;
 mod xml;
 
-pub use css::{ChapterStyles, ComputedStyle, FontStyle, FontWeight, TextAlign};
+pub use css::{
+    ChapterStyles, ComputedStyle, CssLength, FontStyle, FontWeight, LineHeight, TextAlign,
+};
 pub use error::{ArchiveError, ContainerError, Error, NavigationError, PackageError, XhtmlError};
 pub use image::ImageDimensions;
 pub use location::{BookLocation, ContentOffset, SpineIndex};

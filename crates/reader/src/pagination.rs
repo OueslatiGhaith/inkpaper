@@ -3,12 +3,12 @@ use core::mem;
 
 use inkpaper_epub::{
     BlockKind, BookLocation, Chapter, ChapterBlock, ChapterImage, ChapterStyles, ComputedStyle,
-    ContentOffset, ImageDimensions, Inline, LinkTarget, SpineIndex, StyleNodeId, TextAlign,
-    TextRun,
+    ContentOffset, CssLength, ImageDimensions, Inline, LineHeight, LinkTarget, SpineIndex,
+    StyleNodeId, TextAlign, TextRun,
 };
 
 use crate::{
-    ImageFragment, ImageMeasurer, Page, PageItem, PageRange, ReaderSettings, ReadingPosition, Rect,
+    ImageFragment, ImageMeasurer, Page, PageItem, ReaderSettings, ReadingPosition, Rect,
     TextFragment, TextMeasurer, TextStyle, Viewport,
 };
 
@@ -100,9 +100,13 @@ struct Paginator<'chapter, 'context, M> {
     line_width: u32,
     line_height: u32,
     line_align: TextAlign,
+    line_indent: u32,
     line_items: Vec<PendingText<'chapter>>,
 
     block_laid_out: bool,
+    block_text_indent: u32,
+    block_first_line: bool,
+    block_line_height: LineHeight,
 }
 
 impl<'chapter, 'context, M> Paginator<'chapter, 'context, M>
@@ -135,8 +139,12 @@ where
             line_width: 0,
             line_height: 0,
             line_align: TextAlign::Start,
+            line_indent: 0,
             line_items: Vec::new(),
             block_laid_out: false,
+            block_text_indent: 0,
+            block_first_line: false,
+            block_line_height: LineHeight::NORMAL,
         }
     }
 
@@ -144,8 +152,8 @@ where
         for (index, block) in self.chapter.blocks().iter().enumerate() {
             self.layout_block(block)?;
 
-            if index + 1 < self.chapter.blocks().len() {
-                self.add_block_spacing();
+            if let Some(next) = self.chapter.blocks().get(index + 1) {
+                self.add_block_spacing(block, next);
             }
         }
 
@@ -178,6 +186,10 @@ where
 
         let block_style = self.computed_style(block.style_node());
 
+        self.block_text_indent = self.resolve_text_indent(block_style);
+        self.block_first_line = true;
+        self.block_line_height = block_style.line_height();
+
         for inline in block.inlines() {
             match inline {
                 Inline::Text(text) => {
@@ -198,6 +210,10 @@ where
         }
 
         self.flush_line();
+
+        self.block_text_indent = 0;
+        self.block_first_line = false;
+        self.block_line_height = LineHeight::NORMAL;
 
         Ok(())
     }
@@ -317,7 +333,12 @@ where
 
         let width = self.measurer.measure_text(whitespace, style)?;
 
-        if self.line_width.saturating_add(width) > self.viewport.width() {
+        let occupied = self
+            .line_indent
+            .saturating_add(self.line_width)
+            .saturating_add(width);
+
+        if occupied > self.viewport.width() {
             self.flush_line();
 
             self.cursor = self.cursor.advance_text(whitespace);
@@ -337,11 +358,22 @@ where
     ) -> Result<(), M::Error> {
         let width = self.measurer.measure_text(word, style)?;
 
-        if self.line_active && self.line_width.saturating_add(width) > self.viewport.width() {
-            self.flush_line();
+        if self.line_active {
+            let occupied = self
+                .line_indent
+                .saturating_add(self.line_width)
+                .saturating_add(width);
+
+            if occupied > self.viewport.width() {
+                self.flush_line();
+            }
         }
 
-        if width <= self.viewport.width() {
+        let indent = self.prospective_line_indent();
+
+        let available = self.viewport.width().saturating_sub(indent);
+
+        if width <= available {
             return self.add_text_piece(word, width, style, link, align);
         }
 
@@ -362,7 +394,13 @@ where
                 break;
             };
 
-            let available = self.viewport.width().saturating_sub(self.line_width);
+            let indent = self.prospective_line_indent();
+
+            let available = self
+                .viewport
+                .width()
+                .saturating_sub(indent)
+                .saturating_sub(self.line_width);
 
             let mut best = None;
             let mut end = first_end;
@@ -425,9 +463,13 @@ where
         }
 
         if !self.line_active {
+            let indent = self.prospective_line_indent();
+
             self.line_active = true;
             self.line_start = self.cursor;
             self.line_align = align;
+            self.line_indent = indent;
+            self.block_first_line = false;
         }
 
         let height = self.measured_line_height(style)?;
@@ -466,9 +508,13 @@ where
             computed.font_style(),
         );
 
+        let indent = self.prospective_line_indent();
+
         self.line_active = true;
         self.line_start = self.cursor;
         self.line_align = computed.text_align();
+        self.line_indent = indent;
+        self.block_first_line = false;
         self.line_height = self.measured_line_height(style)?;
         self.block_laid_out = true;
 
@@ -491,12 +537,14 @@ where
 
         let y = self.used_height;
 
-        let offset = alignment_offset(self.line_align, self.viewport.width(), self.line_width);
+        let line_width = self.viewport.width().saturating_sub(self.line_indent);
+        let alignment = alignment_offset(self.line_align, line_width, self.line_width);
+        let origin = self.line_indent.saturating_add(alignment);
 
         for item in mem::take(&mut self.line_items) {
             self.page_items.push(PageItem::Text(TextFragment::new(
                 item.text,
-                Rect::new(offset.saturating_add(item.x), y, item.width, height),
+                Rect::new(origin.saturating_add(item.x), y, item.width, height),
                 item.style,
                 item.link,
             )));
@@ -508,14 +556,25 @@ where
         self.line_width = 0;
         self.line_height = 0;
         self.line_align = TextAlign::Start;
+        self.line_indent = 0;
     }
 
-    fn add_block_spacing(&mut self) {
+    fn add_block_spacing(&mut self, current: &ChapterBlock, next: &ChapterBlock) {
         if !self.block_laid_out {
             return;
         }
 
-        let spacing = u32::from(self.settings.block_spacing());
+        let current = self.computed_style(current.style_node());
+        let next = self.computed_style(next.style_node());
+
+        let spacing = match (current.margin_bottom(), next.margin_top()) {
+            (None, None) => u32::from(self.settings.block_spacing()),
+            (Some(margin), None) | (None, Some(margin)) => self.resolve_block_length(margin),
+            (Some(bottom), Some(top)) => self
+                .resolve_block_length(bottom)
+                .max(self.resolve_block_length(top)),
+        };
+
         if spacing == 0 || self.used_height == 0 {
             return;
         }
@@ -545,6 +604,10 @@ where
     }
 
     fn measured_line_height(&mut self, style: TextStyle) -> Result<u32, M::Error> {
+        if let Some(height) = self.block_line_height.resolve(u32::from(style.font_size())) {
+            return Ok(height.max(1));
+        }
+
         Ok(self.measurer.line_height(style)?.max(1))
     }
 
@@ -565,6 +628,33 @@ where
         }
 
         Ok(scalar_boundary(text, from))
+    }
+
+    fn prospective_line_indent(&self) -> u32 {
+        if self.line_active {
+            self.line_indent
+        } else if self.block_first_line {
+            self.block_text_indent
+        } else {
+            0
+        }
+    }
+
+    fn resolve_text_indent(&self, style: ComputedStyle) -> u32 {
+        let resolved = style
+            .text_indent()
+            .resolve(u32::from(self.settings.font_size()), self.viewport.width());
+
+        let resolved = u32::try_from(resolved.max(0)).unwrap_or(u32::MAX);
+
+        // always leave at least one horizontal pixel available.
+        resolved.min(self.viewport.width().saturating_sub(1))
+    }
+
+    fn resolve_block_length(&self, length: CssLength) -> u32 {
+        let resolved = length.resolve(u32::from(self.settings.font_size()), self.viewport.width());
+
+        u32::try_from(resolved.max(0)).unwrap_or(u32::MAX)
     }
 }
 
