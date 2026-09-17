@@ -309,6 +309,12 @@ async fn main(spawner: Spawner) -> ! {
             info!("suspend: turning frontlight off");
             frontlight_off_and_wait().await;
 
+            info!("suspend: flushing application state");
+
+            if !app_service.flush().await {
+                warn!("application state was not fully persisted");
+            }
+
             info!("suspend: shutting down storage");
             storage::shutdown_and_wait().await;
             info!("suspend: storage shutdown complete");
@@ -318,17 +324,17 @@ async fn main(spawner: Spawner) -> ! {
             // ORDER MATTERS:
             // step 1:
             // tell the actual display controller to enter its own low-power state
-            // while SPI, RESET, adn the board rails are all still operational
+            // while SPI, RESET, and the board rails are all still operational
             panel.deep_sleep(&mut bus, &mut delay).await.unwrap();
             info!("suspend: display controller asleep");
 
-            // step2:
+            // step 2:
             // the X4 PRO keeps the panel rail powered in deep sleep. Force RESET high
             // before latching the pin so a sleeping UC controller can't drift back into
             // an active state
             bus.reset_high().unwrap();
 
-            // step3:
+            // step 3:
             // latch GPIO1, GPIO2, GPIO5, and GPIO14 while they are actively driven
             // to those known states.
             // the RTC pad-hold bits survive the ESP32-S3 deep-sleep interval and remain
@@ -337,7 +343,7 @@ async fn main(spawner: Spawner) -> ! {
             hold_for_deep_sleep();
             info!("suspend: board pins latched for deep sleep");
 
-            // step5:
+            // step 5:
             // the power task owns GPIO3 and LPWR. It waits for the current button press
             // to be released, arms EXT0 LOW, then performs the final SoC deep-sleep
             // transition

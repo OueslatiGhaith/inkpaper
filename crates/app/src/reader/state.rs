@@ -11,13 +11,13 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReaderChapterDirection {
+pub(crate) enum ReaderChapterDirection {
     Previous,
     Next,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReaderRequest {
+pub(crate) enum ReaderRequest {
     OpenEpub {
         path: String,
         font_size: u16,

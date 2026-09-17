@@ -13,16 +13,21 @@ mod service;
 mod typography;
 
 pub use app::InkPaperApp;
-pub use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
-pub use reader::{
+pub use service::{AppPlatform, AppService, AppServiceError, PlatformEntry};
+
+// internal application domain/effect types.
+//
+// keep these available through `crate::...` so the existing internal modules don't need
+// artificial public APIs, while preventing platform wrappers from depending on them.
+pub(crate) use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
+
+pub(crate) use reader::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderLoadError, ReaderPreferences,
     ReaderPreferencesError, ReaderPreferencesRequest, ReaderRequest, ReaderSession,
     load_adjacent_reader_chapter, load_reader_document,
 };
-pub use reading_history::{
+
+pub(crate) use reading_history::{
     BookProgress, MAX_READING_HISTORY_ENTRIES, ReadingHistory, ReadingHistoryEntry,
     ReadingHistoryError, ReadingHistoryRequest,
 };
-pub use service::{AppPlatform, AppService, AppServiceError, PlatformEntry, PlatformEntryKind};
-
-pub use inkpaper_epub::SpineIndex;

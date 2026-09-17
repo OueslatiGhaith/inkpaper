@@ -7,8 +7,7 @@ mod progress;
 mod state;
 
 pub use progress::BookProgress;
-pub use state::ReadingHistoryRequest;
-pub(crate) use state::ReadingHistoryState;
+pub(crate) use state::{ReadingHistoryRequest, ReadingHistoryState};
 
 const STORAGE_VERSION: u8 = 2;
 

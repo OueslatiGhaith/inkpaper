@@ -11,14 +11,12 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub use document::{ReaderChapter, ReaderDocument};
-pub use loader::{
+pub(crate) use document::{ReaderChapter, ReaderDocument};
+pub(crate) use loader::{
     ReaderLoadError, ReaderSession, load_adjacent_reader_chapter, load_reader_document,
 };
-pub use preferences::{ReaderPreferences, ReaderPreferencesError, ReaderPreferencesRequest};
-pub use state::{ReaderChapterDirection, ReaderRequest};
-
-pub(crate) use state::ReaderState;
+pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesError, ReaderPreferencesRequest};
+pub(crate) use state::{ReaderChapterDirection, ReaderRequest, ReaderState};
 
 const READER_VIEWPORT_WIDTH: u32 = 440;
 const READER_VIEWPORT_HEIGHT: u32 = 685;

@@ -7,7 +7,7 @@ use super::{READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN
 const STORAGE_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReaderPreferences {
+pub(crate) struct ReaderPreferences {
     font_size: u16,
 }
 
@@ -58,7 +58,7 @@ impl Default for ReaderPreferences {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReaderPreferencesRequest {
+pub(crate) enum ReaderPreferencesRequest {
     Load,
     Update(ReaderPreferences),
 }

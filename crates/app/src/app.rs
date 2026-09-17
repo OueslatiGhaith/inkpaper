@@ -70,16 +70,20 @@ impl InkPaperApp {
         self.navigate(Screen::Home, cx);
     }
 
-    pub fn take_browse_request(&mut self) -> Option<BrowseRequest> {
+    pub(crate) fn take_browse_request(&mut self) -> Option<BrowseRequest> {
         self.browser.take_request()
     }
 
-    pub fn apply_browse_listing(&mut self, listing: BrowseListing, cx: &mut Context<'_, Self>) {
+    pub(crate) fn apply_browse_listing(
+        &mut self,
+        listing: BrowseListing,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.browser.apply_listing(listing);
         cx.notify();
     }
 
-    pub fn apply_browse_error(&mut self, cx: &mut Context<'_, Self>) {
+    pub(crate) fn apply_browse_error(&mut self, cx: &mut Context<'_, Self>) {
         self.browser.apply_error();
         cx.notify();
     }
@@ -149,11 +153,11 @@ impl InkPaperApp {
         self.navigate(Screen::Reader, cx);
     }
 
-    pub fn take_reader_request(&mut self) -> Option<ReaderRequest> {
+    pub(crate) fn take_reader_request(&mut self) -> Option<ReaderRequest> {
         self.reader.take_request()
     }
 
-    pub fn apply_reader_document(
+    pub(crate) fn apply_reader_document(
         &mut self,
         document: ReaderDocument,
         cx: &mut Context<'_, Self>,
@@ -167,7 +171,7 @@ impl InkPaperApp {
         changed
     }
 
-    pub fn apply_reader_chapter(
+    pub(crate) fn apply_reader_chapter(
         &mut self,
         path: String,
         from: SpineIndex,
@@ -184,7 +188,7 @@ impl InkPaperApp {
         changed
     }
 
-    pub fn finish_reader_chapter_request(
+    pub(crate) fn finish_reader_chapter_request(
         &mut self,
         path: String,
         from: SpineIndex,
@@ -193,7 +197,7 @@ impl InkPaperApp {
         self.reader.finish_chapter_request(&path, from, direction)
     }
 
-    pub fn apply_reader_error(&mut self, path: String, cx: &mut Context<'_, Self>) -> bool {
+    pub(crate) fn apply_reader_error(&mut self, path: String, cx: &mut Context<'_, Self>) -> bool {
         let changed = self.reader.apply_error(&path);
 
         if changed {
@@ -272,11 +276,11 @@ impl InkPaperApp {
         self.navigate(Screen::Reader, cx);
     }
 
-    pub fn take_reading_history_request(&mut self) -> Option<ReadingHistoryRequest> {
+    pub(crate) fn take_reading_history_request(&mut self) -> Option<ReadingHistoryRequest> {
         self.reading_history.take_request()
     }
 
-    pub fn apply_reading_history(
+    pub(crate) fn apply_reading_history(
         &mut self,
         entries: Vec<ReadingHistoryEntry>,
         cx: &mut Context<'_, Self>,
@@ -286,7 +290,7 @@ impl InkPaperApp {
         cx.notify();
     }
 
-    pub fn apply_reading_history_error(&mut self, cx: &mut Context<'_, Self>) {
+    pub(crate) fn apply_reading_history_error(&mut self, cx: &mut Context<'_, Self>) {
         self.reading_history.apply_error();
 
         cx.notify();
@@ -328,7 +332,7 @@ impl InkPaperApp {
         true
     }
 
-    pub fn apply_reader_repagination(
+    pub(crate) fn apply_reader_repagination(
         &mut self,
         path: String,
         spine: SpineIndex,
@@ -347,7 +351,7 @@ impl InkPaperApp {
         changed
     }
 
-    pub fn finish_reader_repagination_request(
+    pub(crate) fn finish_reader_repagination_request(
         &mut self,
         path: String,
         spine: SpineIndex,
@@ -357,11 +361,11 @@ impl InkPaperApp {
             .finish_repagination_request(&path, spine, font_size)
     }
 
-    pub fn take_reader_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
+    pub(crate) fn take_reader_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
         self.reader.take_preferences_request()
     }
 
-    pub fn apply_reader_preferences(
+    pub(crate) fn apply_reader_preferences(
         &mut self,
         preferences: ReaderPreferences,
         cx: &mut Context<'_, Self>,

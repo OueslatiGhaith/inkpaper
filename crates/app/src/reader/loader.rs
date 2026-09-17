@@ -16,7 +16,7 @@ use super::{
 };
 
 #[derive(Debug)]
-pub enum ReaderLoadError<E> {
+pub(crate) enum ReaderLoadError<E> {
     Epub(EpubError<E>),
     FontRegistry(FontRegistryError),
     Shape(ShapeError),
@@ -25,7 +25,7 @@ pub enum ReaderLoadError<E> {
     NoReadableChapter,
 }
 
-pub struct ReaderSession<S>
+pub(crate) struct ReaderSession<S>
 where
     S: EpubSource,
 {
@@ -121,7 +121,7 @@ where
     }
 }
 
-pub async fn load_reader_document<S>(
+pub(crate) async fn load_reader_document<S>(
     path: String,
     source: S,
 ) -> Result<ReaderDocument, ReaderLoadError<S::Error>>
@@ -133,7 +133,7 @@ where
     session.load_document().await
 }
 
-pub async fn load_adjacent_reader_chapter<S>(
+pub(crate) async fn load_adjacent_reader_chapter<S>(
     source: S,
     from: SpineIndex,
     direction: ReaderChapterDirection,

@@ -105,7 +105,7 @@ impl BrowseListing {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BrowseRequest {
+pub(crate) enum BrowseRequest {
     ListDirectory(String),
 }
 

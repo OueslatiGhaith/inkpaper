@@ -15,7 +15,7 @@ const MAX_READING_HISTORY_BYTES: usize = 64 * 1024;
 const MAX_READER_PREFERENCES_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlatformEntryKind {
+enum PlatformEntryKind {
     Directory,
     File,
 }
@@ -39,14 +39,6 @@ impl PlatformEntry {
             name: name.into(),
             kind: PlatformEntryKind::File,
         }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub const fn kind(&self) -> PlatformEntryKind {
-        self.kind
     }
 
     fn into_browse_entry(self) -> BrowseEntry {
@@ -120,14 +112,6 @@ where
             preferences_dirty: false,
             initialized: false,
         }
-    }
-
-    pub fn platform(&self) -> &P {
-        &self.platform
-    }
-
-    pub fn platform_mut(&mut self) -> &mut P {
-        &mut self.platform
     }
 
     pub async fn service_pending<'resource, R>(
