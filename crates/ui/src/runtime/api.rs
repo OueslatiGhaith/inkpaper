@@ -1,3 +1,6 @@
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
 use crate::{
     Context, DamageRegion, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
     FontRegistryError, FrameBuildError, ImageRegistryError, ImageResource, ImageSource, Offset,
@@ -47,6 +50,15 @@ pub trait ResourceRuntimeApi<'resource> {
         &mut self,
         image: &'resource dyn ImageResource,
     ) -> Result<ImageSource, ImageRegistryError>;
+
+    #[cfg(feature = "alloc")]
+    fn register_owned_image(
+        &mut self,
+        image: Box<dyn ImageResource>,
+    ) -> Result<ImageSource, ImageRegistryError>;
+
+    #[cfg(feature = "alloc")]
+    fn clear_owned_images(&mut self);
 }
 
 /// platform-facing rendering operations.
@@ -175,6 +187,19 @@ impl<
         image: &'resource dyn ImageResource,
     ) -> Result<ImageSource, ImageRegistryError> {
         self.register_image(image)
+    }
+
+    #[cfg(feature = "alloc")]
+    fn register_owned_image(
+        &mut self,
+        image: Box<dyn ImageResource>,
+    ) -> Result<ImageSource, ImageRegistryError> {
+        self.register_owned_image(image)
+    }
+
+    #[cfg(feature = "alloc")]
+    fn clear_owned_images(&mut self) {
+        self.clear_owned_images();
     }
 }
 

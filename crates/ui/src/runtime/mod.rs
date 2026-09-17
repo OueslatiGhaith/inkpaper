@@ -1,5 +1,8 @@
 use core::{any::TypeId, cell::Cell};
 
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
 #[cfg(feature = "metrics")]
 use crate::PerformanceMetrics;
 use crate::{
@@ -1034,6 +1037,24 @@ impl<
         image: &'resource dyn ImageResource,
     ) -> Result<ImageSource, ImageRegistryError> {
         self.resources.register_image(image)
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn register_owned_image(
+        &mut self,
+        image: Box<dyn ImageResource>,
+    ) -> Result<ImageSource, ImageRegistryError> {
+        let source = self.resources.register_owned_image(image)?;
+
+        self.notified.set(true);
+
+        Ok(source)
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn clear_owned_images(&mut self) {
+        self.resources.clear_owned_images();
+        self.notified.set(true);
     }
 
     pub fn clear_glyph_cache(&mut self) {

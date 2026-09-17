@@ -13,15 +13,23 @@ pub(crate) use sampling::sample_image;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ImageId(u16);
+pub struct ImageId(u32);
 
 impl ImageId {
-    pub const fn new(value: u16) -> Self {
-        Self(value)
+    pub const fn new(index: u16) -> Self {
+        Self(index as u32)
+    }
+
+    pub(crate) const fn from_parts(index: u16, generation: u16) -> Self {
+        Self(((generation as u32) << 16) | index as u32)
     }
 
     pub(crate) const fn index(self) -> usize {
-        self.0 as usize
+        (self.0 & 0xffff) as usize
+    }
+
+    pub(crate) const fn generation(self) -> u16 {
+        (self.0 >> 16) as u16
     }
 }
 

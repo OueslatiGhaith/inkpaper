@@ -110,3 +110,61 @@ fn image_resource_derives_luminance_from_rgb_pixels() {
     assert_eq!(image.luminance(0, 0), Some(Luminance::new(77)));
     assert_eq!(image.luminance(1, 0), None);
 }
+
+#[cfg(feature = "alloc")]
+#[test]
+fn image_registry_owns_registered_resources() {
+    let mut registry = ImageRegistry::<1>::default();
+
+    let source = registry
+        .register_owned(alloc::boxed::Box::new(SolidImage {
+            size: Size::new(px(3), px(2)),
+            color: Color::GREEN,
+        }))
+        .unwrap();
+
+    let resolved = registry.get(source.id()).unwrap();
+
+    assert_eq!(resolved.size(), Size::new(px(3), px(2)));
+    assert_eq!(resolved.pixel(0, 0), Some(Color::GREEN));
+    assert_eq!(resolved.pixel(2, 1), Some(Color::GREEN));
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn clearing_owned_images_preserves_borrowed_images_and_invalidates_old_sources() {
+    let borrowed = SolidImage {
+        size: Size::new(px(2), px(2)),
+        color: Color::RED,
+    };
+
+    let mut registry = ImageRegistry::<2>::default();
+
+    let borrowed_source = registry.register(&borrowed).unwrap();
+
+    let old_owned_source = registry
+        .register_owned(alloc::boxed::Box::new(SolidImage {
+            size: Size::new(px(3), px(3)),
+            color: Color::GREEN,
+        }))
+        .unwrap();
+
+    registry.clear_owned();
+
+    assert_eq!(registry.len(), 1);
+    assert!(registry.get(borrowed_source.id()).is_some());
+    assert!(registry.get(old_owned_source.id()).is_none());
+
+    let new_owned_source = registry
+        .register_owned(alloc::boxed::Box::new(SolidImage {
+            size: Size::new(px(4), px(4)),
+            color: Color::BLUE,
+        }))
+        .unwrap();
+
+    assert_ne!(new_owned_source.id(), old_owned_source.id());
+    assert_eq!(
+        registry.get(new_owned_source.id()).unwrap().pixel(0, 0),
+        Some(Color::BLUE),
+    );
+}

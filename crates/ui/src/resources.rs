@@ -1,3 +1,6 @@
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
 use crate::{
     FontFace, FontFamilyId, FontId, FontInstance, FontRegistry, FontRegistryError, FontResources,
     FontWeight, GlyphBitmap, GlyphCacheError, GlyphId, ImageId, ImageRegistry, ImageRegistryError,
@@ -60,6 +63,19 @@ impl<
         self.images.register(image)
     }
 
+    #[cfg(feature = "alloc")]
+    pub fn register_owned_image(
+        &mut self,
+        image: Box<dyn ImageResource>,
+    ) -> Result<ImageSource, ImageRegistryError> {
+        self.images.register_owned(image)
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn clear_owned_images(&mut self) {
+        self.images.clear_owned();
+    }
+
     pub fn font_registry(&self) -> FontRegistry<'resource, FONTS> {
         self.fonts.registry()
     }
@@ -89,7 +105,7 @@ impl<
         self.fonts.glyph_bitmap(font, glyph, size_px)
     }
 
-    pub fn image(&self, id: ImageId) -> Option<&'resource dyn ImageResource> {
+    pub fn image(&self, id: ImageId) -> Option<&dyn ImageResource> {
         self.images.get(id)
     }
 
