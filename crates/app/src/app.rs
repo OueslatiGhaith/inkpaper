@@ -363,6 +363,7 @@ impl Render for InkPaperApp {
                     status={self.reader.status()}
                     detail={self.reader.detail()}
                     path={self.reader.path()}
+                    document={self.reader.document()}
                     page={self.reader.page()}
                     page_label={self.reader.page_label()}
                     section_label={self.reader.section_label()}

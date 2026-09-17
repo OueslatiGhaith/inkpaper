@@ -391,8 +391,7 @@ impl ReaderState {
         self.page_index
     }
 
-    #[cfg(test)]
-    pub(super) fn document(&self) -> Option<&ReaderDocument> {
+    pub(crate) fn document(&self) -> Option<&ReaderDocument> {
         self.document.as_ref()
     }
 }

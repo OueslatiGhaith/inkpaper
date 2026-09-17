@@ -1,10 +1,10 @@
 use inkpaper_app::{BrowseRequest, InkPaperApp, ReaderRequest, ReadingHistoryRequest};
 use inkpaper_ui::prelude::*;
 
-use crate::{SimulatorReaderService, fake_fs::simulator_listing};
+use crate::{SimulatorReaderService, fake_fs::simulator_listing, runtime::SimulatorRuntime};
 
 pub(super) fn service_app_requests(
-    runtime: &impl RuntimeApi,
+    runtime: &mut SimulatorRuntime<'_>,
     app: Entity<InkPaperApp>,
     reader_service: &mut SimulatorReaderService,
 ) {
@@ -40,7 +40,7 @@ pub(super) fn service_app_requests(
 }
 
 fn service_browse_request(
-    runtime: &impl RuntimeApi,
+    runtime: &mut SimulatorRuntime<'_>,
     app: Entity<InkPaperApp>,
     request: BrowseRequest,
 ) {
@@ -66,14 +66,16 @@ fn service_browse_request(
 }
 
 fn service_reader_request(
-    runtime: &impl RuntimeApi,
+    runtime: &mut SimulatorRuntime<'_>,
     app: Entity<InkPaperApp>,
     reader_service: &mut SimulatorReaderService,
     request: ReaderRequest,
 ) {
     match request {
         ReaderRequest::OpenEpub(path) => match reader_service.open_document(path.clone()) {
-            Some(document) => {
+            Some(mut document) => {
+                document.register_images(runtime);
+
                 runtime
                     .update(app, move |app, cx| {
                         app.apply_reader_document(document, cx);
@@ -95,7 +97,9 @@ fn service_reader_request(
             from,
             direction,
         } => match reader_service.load_adjacent_chapter(&path, from, direction) {
-            Some(chapter) => {
+            Some(mut chapter) => {
+                chapter.register_images(runtime);
+
                 runtime
                     .update(app, move |app, cx| {
                         app.apply_reader_chapter(path, from, direction, chapter, cx);
@@ -119,7 +123,7 @@ fn service_reader_request(
 }
 
 fn service_reading_history_request(
-    runtime: &impl RuntimeApi,
+    runtime: &mut SimulatorRuntime<'_>,
     app: Entity<InkPaperApp>,
     reader_service: &SimulatorReaderService,
     request: ReadingHistoryRequest,

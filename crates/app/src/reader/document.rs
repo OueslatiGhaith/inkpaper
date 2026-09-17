@@ -1,15 +1,20 @@
 use alloc::{string::String, vec::Vec};
 
-use inkpaper_epub::SpineIndex;
+use inkpaper_epub::{ArchivePath, SpineIndex};
 use inkpaper_reader::{Page, Pagination, ReadingPosition};
+use inkpaper_ui::{ImageSource, ResourceRuntimeApi};
 
-use crate::{BookProgress, reader::progress::BookProgressMap};
+use crate::{
+    BookProgress,
+    reader::{images::ChapterImages, progress::BookProgressMap},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReaderChapter {
     chapter_path: String,
     spine: SpineIndex,
     pagination: Pagination<'static>,
+    images: ChapterImages,
 }
 
 impl ReaderChapter {
@@ -18,11 +23,29 @@ impl ReaderChapter {
         spine: SpineIndex,
         pagination: Pagination<'static>,
     ) -> Self {
+        Self::with_images(chapter_path, spine, pagination, ChapterImages::default())
+    }
+
+    pub(super) fn with_images(
+        chapter_path: String,
+        spine: SpineIndex,
+        pagination: Pagination<'static>,
+        images: ChapterImages,
+    ) -> Self {
         Self {
             chapter_path,
             spine,
             pagination,
+            images,
         }
+    }
+
+    pub fn register_images<'resource>(&mut self, runtime: &mut impl ResourceRuntimeApi<'resource>) {
+        self.images.register(runtime);
+    }
+
+    pub fn image_source(&self, path: &ArchivePath) -> Option<ImageSource> {
+        self.images.source(path)
     }
 
     pub fn chapter_path(&self) -> &str {
@@ -165,5 +188,13 @@ impl ReaderDocument {
             page.end_position().location().offset(),
             chapter_end.end_position().location().offset(),
         )
+    }
+
+    pub fn register_images<'resource>(&mut self, runtime: &mut impl ResourceRuntimeApi<'resource>) {
+        self.chapter.register_images(runtime);
+    }
+
+    pub fn image_source(&self, path: &ArchivePath) -> Option<ImageSource> {
+        self.chapter.image_source(path)
     }
 }

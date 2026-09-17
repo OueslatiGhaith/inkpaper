@@ -2,6 +2,7 @@ use inkpaper_reader::Page;
 use inkpaper_ui::prelude::*;
 
 use crate::{
+    ReaderDocument,
     components::icon::{Icon, IconKind, IconProps},
     reader::reader_viewport,
     reader_page::ReaderPageView,
@@ -15,6 +16,7 @@ pub(crate) struct ReaderScreen<'a> {
     detail: &'a str,
     path: &'a str,
 
+    document: Option<&'a ReaderDocument>,
     page: Option<&'a Page<'static>>,
 
     page_label: &'a str,
@@ -36,9 +38,8 @@ impl RenderOnce for ReaderScreen<'_> {
                     <div class="absolute left-5 top-[35px] w-[440px] h-[685px] overflow-hidden">
                         {
                             ReaderPageView::new(
-                                self.page.expect(
-                                    "reader page was checked above"
-                                ),
+                                self.page.expect("reader page was checked above"),
+                                self.document.expect("a visible reader page always belongs to a document"),
                                 reader_viewport(),
                             )
                         }

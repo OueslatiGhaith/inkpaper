@@ -4,20 +4,37 @@ use inkpaper_reader::{
 };
 use inkpaper_ui::prelude::*;
 
+use crate::ReaderDocument;
+
 pub(crate) struct ReaderPageView<'a> {
     page: &'a Page<'static>,
+    document: &'a ReaderDocument,
     viewport: Viewport,
 }
 
 impl<'a> ReaderPageView<'a> {
-    pub(crate) const fn new(page: &'a Page<'static>, viewport: Viewport) -> Self {
-        Self { page, viewport }
+    pub(crate) const fn new(
+        page: &'a Page<'static>,
+        document: &'a ReaderDocument,
+        viewport: Viewport,
+    ) -> Self {
+        Self {
+            page,
+            document,
+            viewport,
+        }
     }
 }
 
 impl RenderOnce for ReaderPageView<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let items = self.page.items().iter().map(|item| ReaderPageItem { item });
+        let document = self.document;
+
+        let items = self
+            .page
+            .items()
+            .iter()
+            .map(move |item| ReaderPageItem { item, document });
 
         div()
             .relative()
@@ -30,13 +47,14 @@ impl RenderOnce for ReaderPageView<'_> {
 
 struct ReaderPageItem<'a> {
     item: &'a PageItem<'static>,
+    document: &'a ReaderDocument,
 }
 
 impl Element for ReaderPageItem<'_> {
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
         match self.item {
             PageItem::Text(fragment) => mount_text_fragment(fragment, cx),
-            PageItem::Image(fragment) => mount_image_placeholder(fragment, cx),
+            PageItem::Image(fragment) => mount_image_fragment(fragment, self.document, cx),
         }
     }
 }
@@ -60,15 +78,28 @@ fn mount_text_fragment(
         .mount(cx)
 }
 
-fn mount_image_placeholder(
+fn mount_image_fragment(
     fragment: &ImageFragment<'_>,
+    document: &ReaderDocument,
     cx: &mut MountCx<'_>,
 ) -> Result<NodeId, MountError> {
-    // ReaderMeasurer intentionally reports no image dimensions in this milestone,
-    // so paginated documents should not normally contain image fragments yet.
-    // Keep this branch well-defined so the renderer remains total.
-    positioned_box(fragment.bounds())
+    let bounds = fragment.bounds();
+
+    let Some(source) = document.image_source(fragment.image().path()) else {
+        return positioned_box(bounds).overflow_hidden().mount(cx);
+    };
+
+    positioned_box(bounds)
         .overflow_hidden()
+        .child(
+            image(source)
+                .size(Size::new(
+                    reader_px(bounds.width()),
+                    reader_px(bounds.height()),
+                ))
+                .fill()
+                .sampling(ImageSampling::Area),
+        )
         .mount(cx)
 }
 

@@ -4,7 +4,7 @@ use inkpaper_epub::{ContentOffset, Epub, EpubSource, Error as EpubError, SpineIn
 use inkpaper_reader::{ReadingPosition, paginate_chapter};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
-use crate::reader::{images::load_chapter_image_metrics, progress::BookProgressMap};
+use crate::reader::{images::load_chapter_images, progress::BookProgressMap};
 
 use super::{
     document::{ReaderChapter, ReaderDocument},
@@ -278,7 +278,8 @@ where
         .await
         .map_err(ReaderLoadError::Epub)?;
 
-    let image_metrics = load_chapter_image_metrics(epub, &chapter).await;
+    let loaded_images = load_chapter_images(epub, &chapter).await;
+    let (image_metrics, chapter_images) = loaded_images.into_parts();
 
     let spine = SpineIndex::try_from_usize(index).ok_or(ReaderLoadError::SpineIndexOverflow)?;
 
@@ -304,9 +305,10 @@ where
         return Ok(None);
     }
 
-    Ok(Some(ReaderChapter::new(
+    Ok(Some(ReaderChapter::with_images(
         chapter_path,
         spine,
         pagination.into_owned(),
+        chapter_images,
     )))
 }

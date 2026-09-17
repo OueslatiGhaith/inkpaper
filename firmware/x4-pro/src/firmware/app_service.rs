@@ -98,7 +98,9 @@ async fn service_reader_request(
 ) {
     match request {
         ReaderRequest::OpenEpub(path) => match storage::load_epub_document_and_wait(&path).await {
-            Some(document) => {
+            Some(mut document) => {
+                document.register_images(runtime);
+
                 if runtime
                     .update(app, move |app, cx| {
                         app.apply_reader_document(document, cx);
@@ -126,7 +128,9 @@ async fn service_reader_request(
             from,
             direction,
         } => match storage::load_epub_chapter_and_wait(&path, from, direction).await {
-            Some(chapter) => {
+            Some(mut chapter) => {
+                chapter.register_images(runtime);
+
                 if runtime
                     .update(app, move |app, cx| {
                         app.apply_reader_chapter(path, from, direction, chapter, cx);

@@ -20,7 +20,7 @@ pub(crate) type SimulatorRuntime<'resources> = Runtime<
     256,
     2_048,
     8,
-    RuntimeResources<'resources, 2, 128, { 16 * 1024 }, 1>,
+    RuntimeResources<'resources, 2, 128, { 16 * 1024 }, 32>,
 >;
 
 pub(crate) fn new_runtime<'resources>() -> SimulatorRuntime<'resources> {
