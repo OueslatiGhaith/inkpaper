@@ -267,12 +267,6 @@ where
         return Ok(None);
     };
 
-    // keep image-only covers/front matter skipped until pixel rendering lands.
-    // mixed text/image chapters can now be paginated with correct image bounds.
-    if chapter.content_len() == ContentOffset::ZERO {
-        return Ok(None);
-    }
-
     let styles = epub
         .load_chapter_styles(&chapter)
         .await

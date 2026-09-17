@@ -331,3 +331,31 @@ fn broken_epub_image_does_not_make_text_unreadable() {
         "a broken optional image must not discard readable text",
     );
 }
+
+#[test]
+fn image_only_epub_is_a_readable_chapter() {
+    let source = SliceSource::new(include_bytes!("../../../../fixtures/image-only.epub"));
+
+    let document = future::block_on(load_reader_document(
+        String::from("/Fixtures/image-only.epub"),
+        source,
+    ))
+    .unwrap();
+
+    assert_eq!(document.page_count(), 1);
+
+    let page = document.first_page();
+
+    assert_eq!(page.start().offset(), inkpaper_epub::ContentOffset::ZERO);
+    assert_eq!(page.end().offset(), inkpaper_epub::ContentOffset::ZERO);
+
+    assert_eq!(page.position().non_text(), 0);
+    assert_eq!(page.end_position().non_text(), 1);
+
+    assert_eq!(page.items().len(), 1);
+
+    assert!(matches!(
+        page.items()[0],
+        inkpaper_reader::PageItem::Image(_)
+    ));
+}
