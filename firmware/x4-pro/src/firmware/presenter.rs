@@ -34,8 +34,8 @@ const UI_GLOBAL_BYTES: usize = 256;
 const UI_GLOBAL_SLOTS: usize = 4;
 
 const UI_FONT_SLOTS: usize = 2;
-const UI_GLYPH_CACHE_SLOTS: usize = 64;
-const UI_GLYPH_CACHE_BYTES: usize = 8 * 1024;
+const UI_GLYPH_CACHE_SLOTS: usize = 128;
+const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
 
 const UI_IMAGE_SLOTS: usize = 32;
 
