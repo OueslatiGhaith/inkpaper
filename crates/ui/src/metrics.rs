@@ -87,4 +87,20 @@ macro_rules! count_metric {
     }};
 }
 
-pub(crate) use count_metric;
+macro_rules! increment_metric {
+    ($metric:expr) => {
+        #[cfg(feature = "metrics")]
+        {
+            $metric = $metric.saturating_add(1);
+        }
+    };
+
+    ($metric:expr, $amount:expr) => {
+        #[cfg(feature = "metrics")]
+        {
+            $metric = $metric.saturating_add($amount);
+        }
+    };
+}
+
+pub(crate) use {count_metric, increment_metric};

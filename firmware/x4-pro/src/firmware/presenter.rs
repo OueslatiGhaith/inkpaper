@@ -169,7 +169,10 @@ impl Presenter {
         frame: &mut FramebufferStorage,
     ) -> FrameUpdate {
         #[cfg(feature = "ui-metrics")]
-        runtime.reset_performance_metrics();
+        {
+            runtime.reset_performance_metrics();
+            runtime.reset_glyph_cache_metrics();
+        }
 
         let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
 
@@ -177,7 +180,15 @@ impl Presenter {
             .expect("a full initial render must produce physical damage");
 
         #[cfg(feature = "ui-metrics")]
-        crate::firmware::perf::log_ui_metrics(runtime.performance_metrics());
+        {
+            crate::firmware::perf::log_ui_metrics(runtime.performance_metrics());
+            crate::firmware::perf::log_text_metrics(
+                rendered.eink_report,
+                runtime.glyph_cache_metrics(),
+                runtime.glyph_cache_used_bytes(),
+                runtime.glyph_cache_capacity_bytes(),
+            );
+        }
 
         // initial presentation is explicitly full regardless of policy.
         // reset history so subsequent updates begin from a clean panel
@@ -207,7 +218,10 @@ impl Presenter {
         capabilities: EInkCapabilities,
     ) -> Option<FrameUpdate> {
         #[cfg(feature = "ui-metrics")]
-        runtime.reset_performance_metrics();
+        {
+            runtime.reset_performance_metrics();
+            runtime.reset_glyph_cache_metrics();
+        }
 
         let invalidation = runtime.take_render_invalidation();
         if invalidation.is_none() {
@@ -217,7 +231,15 @@ impl Presenter {
         let rendered = render_invalidation(runtime, frame, invalidation)?;
 
         #[cfg(feature = "ui-metrics")]
-        crate::firmware::perf::log_ui_metrics(runtime.performance_metrics());
+        {
+            crate::firmware::perf::log_ui_metrics(runtime.performance_metrics());
+            crate::firmware::perf::log_text_metrics(
+                rendered.eink_report,
+                runtime.glyph_cache_metrics(),
+                runtime.glyph_cache_used_bytes(),
+                runtime.glyph_cache_capacity_bytes(),
+            );
+        }
 
         let presentation = self.presentation_mode(rendered, capabilities);
 

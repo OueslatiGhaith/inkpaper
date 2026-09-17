@@ -39,6 +39,10 @@ impl EInkTone {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EInkPaintReport {
     tone: EInkTone,
+    #[cfg(feature = "metrics")]
+    text_draw_calls: u64,
+    #[cfg(feature = "metrics")]
+    shaped_glyphs: u64,
 }
 
 impl EInkPaintReport {
@@ -50,8 +54,24 @@ impl EInkPaintReport {
         self.tone.has_native_gray()
     }
 
+    #[cfg(feature = "metrics")]
+    pub const fn text_draw_calls(self) -> u64 {
+        self.text_draw_calls
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn shaped_glyphs(self) -> u64 {
+        self.shaped_glyphs
+    }
+
     pub(super) fn include(&mut self, tone: EInkTone) {
         self.tone = self.tone.merged(tone);
+    }
+
+    #[cfg(feature = "metrics")]
+    pub(super) fn record_text_draw(&mut self, shaped_glyphs: u64) {
+        self.text_draw_calls = self.text_draw_calls.saturating_add(1);
+        self.shaped_glyphs = self.shaped_glyphs.saturating_add(shaped_glyphs);
     }
 }
 

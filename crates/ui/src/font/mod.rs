@@ -11,6 +11,8 @@ pub mod ttf;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "metrics")]
+pub use cache::GlyphCacheMetrics;
 pub use cache::{GlyphBitmap, GlyphCache, GlyphCacheError};
 pub use registry::{FontRegistry, FontRegistryError, ResolvedGlyph};
 pub use resources::FontResources;

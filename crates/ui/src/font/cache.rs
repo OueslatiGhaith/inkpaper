@@ -1,4 +1,4 @@
-use crate::{FontInstance, px};
+use crate::{FontInstance, increment_metric, px};
 
 use super::{FontRasterError, GlyphId, GlyphMetrics, registry::FontRegistry};
 
@@ -47,6 +47,19 @@ pub enum GlyphCacheError {
     Raster(FontRasterError),
 }
 
+#[cfg(feature = "metrics")]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GlyphCacheMetrics {
+    pub lookups: u64,
+    pub hits: u64,
+    pub misses: u64,
+    pub collisions: u64,
+    pub rasterizations: u64,
+    pub clears: u64,
+    pub bytes_peak: usize,
+}
+
 pub struct GlyphBitmap<'a> {
     coverage: &'a [u8],
     metrics: GlyphMetrics,
@@ -74,6 +87,8 @@ pub struct GlyphCache<const SLOTS: usize, const BYTES: usize> {
     storage: [u8; BYTES],
     used: usize,
     slots: [GlyphCacheSlot; SLOTS],
+    #[cfg(feature = "metrics")]
+    metrics: GlyphCacheMetrics,
 }
 
 impl<const SLOTS: usize, const BYTES: usize> Default for GlyphCache<SLOTS, BYTES> {
@@ -84,6 +99,8 @@ impl<const SLOTS: usize, const BYTES: usize> Default for GlyphCache<SLOTS, BYTES
             storage: [0; BYTES],
             used: 0,
             slots: [GlyphCacheSlot::EMPTY; SLOTS],
+            #[cfg(feature = "metrics")]
+            metrics: GlyphCacheMetrics::default(),
         }
     }
 }
@@ -102,8 +119,23 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
     }
 
     pub fn clear(&mut self) {
+        increment_metric!(self.metrics.clears);
+
         self.used = 0;
         self.slots.fill(GlyphCacheSlot::EMPTY);
+    }
+
+    #[cfg(feature = "metrics")]
+    pub fn reset_metrics(&mut self) {
+        self.metrics = GlyphCacheMetrics {
+            bytes_peak: self.used,
+            ..GlyphCacheMetrics::default()
+        };
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn metrics(&self) -> GlyphCacheMetrics {
+        self.metrics
     }
 
     fn slot_index(key: GlyphCacheKey) -> usize {
@@ -117,15 +149,6 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
             .wrapping_add(glyph.wrapping_mul(17))
             .wrapping_add(size)
             % SLOTS
-    }
-
-    fn cached_metadata(&self, key: GlyphCacheKey) -> Option<(usize, usize, GlyphMetrics)> {
-        let slot = self.slots[Self::slot_index(key)];
-        if !slot.valid || slot.key != key {
-            return None;
-        }
-
-        Some((slot.offset, slot.len, slot.metrics))
     }
 
     pub fn get_or_rasterize<const FONTS: usize>(
@@ -145,11 +168,26 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
             size_px,
         };
 
-        if let Some((offset, len, metrics)) = self.cached_metadata(key) {
+        let slot_index = Self::slot_index(key);
+        let slot = self.slots[slot_index];
+
+        increment_metric!(self.metrics.lookups);
+
+        if slot.valid && slot.key == key {
+            increment_metric!(self.metrics.hits);
+
             return Ok(GlyphBitmap {
-                coverage: &self.storage[offset..offset + len],
-                metrics,
+                coverage: &self.storage[slot.offset..slot.offset + slot.len],
+                metrics: slot.metrics,
             });
+        }
+
+        #[cfg(feature = "metrics")]
+        {
+            increment_metric!(self.metrics.misses);
+            if slot.valid {
+                increment_metric!(self.metrics.collisions);
+            }
         }
 
         let metrics = font
@@ -174,9 +212,15 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
         font.rasterize(glyph, size_px, &mut self.storage[offset..end])
             .map_err(GlyphCacheError::Raster)?;
 
+        increment_metric!(self.metrics.rasterizations);
+
         self.used = end;
 
-        let slot_index = Self::slot_index(key);
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics.bytes_peak = self.metrics.bytes_peak.max(self.used);
+        }
+
         self.slots[slot_index] = GlyphCacheSlot {
             valid: true,
             key,

@@ -1,3 +1,5 @@
+#[cfg(feature = "metrics")]
+use crate::GlyphCacheMetrics;
 use crate::{FontFamilyId, FontInstance, FontWeight, ResolvedFont};
 
 use super::{
@@ -102,5 +104,15 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
         character: char,
     ) -> Option<ResolvedGlyph<'font>> {
         self.registry.resolve_glyph(preferred, character)
+    }
+
+    #[cfg(feature = "metrics")]
+    pub fn reset_glyph_cache_metrics(&mut self) {
+        self.cache.reset_metrics();
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn glyph_cache_metrics(&self) -> GlyphCacheMetrics {
+        self.cache.metrics()
     }
 }

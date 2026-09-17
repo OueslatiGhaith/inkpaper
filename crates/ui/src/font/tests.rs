@@ -303,3 +303,57 @@ fn glyph_cache_distinguishes_variable_weights() {
 
     assert_eq!(cache.used_bytes(), 8);
 }
+
+#[cfg(feature = "metrics")]
+#[test]
+fn glyph_cache_metrics_track_hits_collisions_and_capacity_clears() {
+    let mut registry = FontRegistry::<1>::default();
+
+    let font = TestFont { fill: 173 };
+    let font_id = registry.register(&font).unwrap();
+
+    let first = font.glyph_id('A').unwrap();
+    let colliding = font.glyph_id('E').unwrap();
+    let third = font.glyph_id('B').unwrap();
+
+    // each TestFont glyph is 2x2 = 4 coverage bytes.
+    // with four metadata slots:
+    //   17 % 4 == 1
+    // so 'A' (65) and 'E' (69) map to the same slot.
+    // a 10-byte backing store can hold two glyph bitmaps (8 bytes), but not a third.
+    // That guarantees a storage clear on the third cache miss.
+    let mut cache = GlyphCache::<4, 10>::default();
+
+    cache.reset_metrics();
+
+    cache
+        .get_or_rasterize(&registry, font_id, first, 16)
+        .unwrap();
+
+    cache
+        .get_or_rasterize(&registry, font_id, first, 16)
+        .unwrap();
+
+    cache
+        .get_or_rasterize(&registry, font_id, colliding, 16)
+        .unwrap();
+
+    assert_eq!(cache.used_bytes(), 8);
+
+    cache
+        .get_or_rasterize(&registry, font_id, third, 16)
+        .unwrap();
+
+    let metrics = cache.metrics();
+
+    assert_eq!(metrics.lookups, 4);
+    assert_eq!(metrics.hits, 1);
+    assert_eq!(metrics.misses, 3);
+    assert_eq!(metrics.collisions, 1);
+    assert_eq!(metrics.rasterizations, 3);
+    assert_eq!(metrics.clears, 1);
+    assert_eq!(metrics.bytes_peak, 8);
+
+    // the third miss cleared the 8-byte generation and started a new one.
+    assert_eq!(cache.used_bytes(), 4);
+}

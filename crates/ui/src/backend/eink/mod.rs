@@ -273,7 +273,7 @@ where
             }
         }
 
-        draw_text_to(
+        let shaped_glyphs = draw_text_to(
             self.target,
             text,
             bounds,
@@ -283,7 +283,15 @@ where
             font,
             style,
             coverage_mode,
-        )
+        )?;
+
+        #[cfg(feature = "metrics")]
+        self.report.record_text_draw(shaped_glyphs);
+
+        #[cfg(not(feature = "metrics"))]
+        let _ = shaped_glyphs;
+
+        Ok(())
     }
 
     fn draw_image(

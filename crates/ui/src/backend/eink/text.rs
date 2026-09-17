@@ -29,12 +29,12 @@ pub(super) fn draw_text_to<
     font: ResolvedFont<'_>,
     style: ResolvedTextStyle,
     coverage_mode: EInkCoverageMode<D>,
-) -> Result<(), EInkError<D::Error>>
+) -> Result<u64, EInkError<D::Error>>
 where
     D: EgDrawTarget<Color = Gray2>,
 {
     if text.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
 
     let font_instance = font.instance();
@@ -49,6 +49,7 @@ where
 
     let mut y = bounds.origin.y;
     let mut error = None;
+    let mut shaped_glyphs = 0u64;
 
     for_each_visible_text_line_with_boundaries(
         text,
@@ -143,13 +144,15 @@ where
                 return;
             }
 
+            shaped_glyphs = shaped_glyphs.saturating_add(glyph_count as u64);
+
             y += line_advance;
         },
     );
 
     match error {
         Some(error) => Err(error),
-        None => Ok(()),
+        None => Ok(shaped_glyphs),
     }
 }
 

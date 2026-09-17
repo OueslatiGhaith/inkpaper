@@ -3,8 +3,6 @@ use core::{any::TypeId, cell::Cell};
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
 
-#[cfg(feature = "metrics")]
-use crate::PerformanceMetrics;
 use crate::{
     ActivateEvent, Context, DamageRegion, Entity, EntityAccessError, EntityAllocError, EntityArena,
     EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageRegistryError,
@@ -19,6 +17,8 @@ use crate::{
     resources::RuntimeResources,
     runtime::root::RuntimeRoot,
 };
+#[cfg(feature = "metrics")]
+use crate::{GlyphCacheMetrics, PerformanceMetrics};
 
 mod api;
 mod builder;
@@ -1067,5 +1067,15 @@ impl<
 
     pub const fn glyph_cache_used_bytes(&self) -> usize {
         self.resources.glyph_cache_used_bytes()
+    }
+
+    #[cfg(feature = "metrics")]
+    pub fn reset_glyph_cache_metrics(&mut self) {
+        self.resources.reset_glyph_cache_metrics();
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn glyph_cache_metrics(&self) -> GlyphCacheMetrics {
+        self.resources.glyph_cache_metrics()
     }
 }

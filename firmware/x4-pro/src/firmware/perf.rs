@@ -76,3 +76,30 @@ pub(crate) fn log_ui_metrics(metrics: inkpaper_ui::PerformanceMetrics) {
         metrics.damage_extent_pruned_subtrees,
     );
 }
+
+#[cfg(feature = "ui-metrics")]
+pub(crate) fn log_text_metrics(
+    paint: inkpaper_ui::backend::EInkPaintReport,
+    cache: inkpaper_ui::GlyphCacheMetrics,
+    bytes_used: usize,
+    bytes_capacity: usize,
+) {
+    let bytes_used = u64::try_from(bytes_used).unwrap_or(u64::MAX);
+    let bytes_peak = u64::try_from(cache.bytes_peak).unwrap_or(u64::MAX);
+    let bytes_capacity = u64::try_from(bytes_capacity).unwrap_or(u64::MAX);
+
+    defmt::info!(
+        "perf/text draws={=u64} glyphs={=u64} lookups={=u64} hits={=u64} misses={=u64} collisions={=u64} rasterized={=u64} clears={=u64} bytes_used={=u64} bytes_peak={=u64} bytes_capacity={=u64}",
+        paint.text_draw_calls(),
+        paint.shaped_glyphs(),
+        cache.lookups,
+        cache.hits,
+        cache.misses,
+        cache.collisions,
+        cache.rasterizations,
+        cache.clears,
+        bytes_used,
+        bytes_peak,
+        bytes_capacity,
+    );
+}

@@ -1,6 +1,8 @@
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
 
+#[cfg(feature = "metrics")]
+use crate::GlyphCacheMetrics;
 use crate::{
     FontFace, FontFamilyId, FontId, FontInstance, FontRegistry, FontRegistryError, FontResources,
     FontWeight, GlyphBitmap, GlyphCacheError, GlyphId, ImageId, ImageRegistry, ImageRegistryError,
@@ -119,6 +121,16 @@ impl<
 
     pub const fn glyph_cache_used_bytes(&self) -> usize {
         self.fonts.glyph_cache_used_bytes()
+    }
+
+    #[cfg(feature = "metrics")]
+    pub fn reset_glyph_cache_metrics(&mut self) {
+        self.fonts.reset_glyph_cache_metrics();
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn glyph_cache_metrics(&self) -> GlyphCacheMetrics {
+        self.fonts.glyph_cache_metrics()
     }
 }
 
