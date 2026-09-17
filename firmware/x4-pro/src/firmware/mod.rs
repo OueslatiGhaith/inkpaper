@@ -42,10 +42,10 @@ mod buttons;
 mod display;
 mod framebuffer;
 mod frontlight;
-#[cfg(feature = "grayscale-validation")]
-mod grayscale_validation;
 mod i2c_bus;
 mod input;
+#[cfg(any(feature = "performance", feature = "ui-metrics"))]
+mod perf;
 mod platform;
 mod power;
 mod power_button;
@@ -184,9 +184,6 @@ async fn main(spawner: Spawner) -> ! {
     info!("display initialized");
 
     let frame = FRAMEBUFFER.init_with(FramebufferStorage::white);
-
-    #[cfg(feature = "grayscale-validation")]
-    grayscale_validation::run(&mut panel, &mut bus, &mut delay, frame).await;
 
     let runtime = UI_RUNTIME.init_with(UiRuntime::default);
 

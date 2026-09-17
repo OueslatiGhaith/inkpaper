@@ -66,7 +66,10 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        match update.presentation() {
+        #[cfg(feature = "performance")]
+        let timer = crate::firmware::perf::CycleTimer::start();
+
+        let result = match update.presentation() {
             PresentationMode::Gray4 => self.present_grayscale(bus, delay, frame, update).await,
             PresentationMode::BinaryPreservingGray => {
                 self.present_binary_preserving_gray(bus, delay, frame, update)
@@ -81,7 +84,12 @@ impl X4Panel {
                     Self::Uc8279(panel) => present_uc8279(panel, bus, delay, frame, update).await,
                 }
             }
-        }
+        };
+
+        #[cfg(feature = "performance")]
+        crate::firmware::perf::log_present(timer.elapsed());
+
+        result
     }
 
     async fn present_grayscale<B, D>(

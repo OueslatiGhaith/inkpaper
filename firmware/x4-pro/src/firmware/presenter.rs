@@ -4,6 +4,8 @@ use inkpaper_ui::{
     prelude::*,
 };
 
+#[cfg(feature = "performance")]
+use crate::firmware::perf::{CycleTimer, RenderTimings};
 use crate::firmware::{
     framebuffer::{
         Framebuffer, FramebufferStorage, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation,
@@ -166,10 +168,16 @@ impl Presenter {
         runtime: &mut UiRuntime,
         frame: &mut FramebufferStorage,
     ) -> FrameUpdate {
+        #[cfg(feature = "ui-metrics")]
+        runtime.reset_performance_metrics();
+
         let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
 
         let rendered = render_invalidation(runtime, frame, invalidation)
             .expect("a full initial render must produce physical damage");
+
+        #[cfg(feature = "ui-metrics")]
+        crate::firmware::perf::log_ui_metrics(runtime.performance_metrics());
 
         // initial presentation is explicitly full regardless of policy.
         // reset history so subsequent updates begin from a clean panel
@@ -198,12 +206,18 @@ impl Presenter {
         frame: &mut FramebufferStorage,
         capabilities: EInkCapabilities,
     ) -> Option<FrameUpdate> {
+        #[cfg(feature = "ui-metrics")]
+        runtime.reset_performance_metrics();
+
         let invalidation = runtime.take_render_invalidation();
         if invalidation.is_none() {
             return None;
         }
 
         let rendered = render_invalidation(runtime, frame, invalidation)?;
+
+        #[cfg(feature = "ui-metrics")]
+        crate::firmware::perf::log_ui_metrics(runtime.performance_metrics());
 
         let presentation = self.presentation_mode(rendered, capabilities);
 
@@ -290,6 +304,9 @@ fn render_invalidation(
         return None;
     }
 
+    #[cfg(feature = "performance")]
+    let mut timings: RenderTimings = RenderTimings::default();
+
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
 
     let (paint_report, eink_report) = {
@@ -299,35 +316,87 @@ fn render_invalidation(
             Invalidation::None => return None,
             Invalidation::Paint => {}
             Invalidation::Layout => {
+                #[cfg(feature = "performance")]
+                let layout_timer = CycleTimer::start();
+
                 runtime
                     .layout(DISPLAY_SIZE)
                     .expect("layout requires a mounted root");
+
+                #[cfg(feature = "performance")]
+                {
+                    timings.layout_cycles = layout_timer.elapsed();
+                }
             }
             Invalidation::Rebuild => {
+                #[cfg(feature = "performance")]
+                let rebuild_timer = CycleTimer::start();
+
                 runtime.rebuild().expect("UI rebuild capacity exceeded");
+
+                #[cfg(feature = "performance")]
+                {
+                    timings.rebuild_cycles = rebuild_timer.elapsed()
+                }
+
+                #[cfg(feature = "performance")]
+                let layout_timer = CycleTimer::start();
+
                 runtime
                     .layout(DISPLAY_SIZE)
                     .expect("rebuilt UI must have a root");
+
+                #[cfg(feature = "performance")]
+                {
+                    timings.layout_cycles = layout_timer.elapsed();
+                }
             }
         }
 
+        #[cfg(feature = "performance")]
+        let clear_timer = CycleTimer::start();
+
         painter.clear_damage(damage, Color::WHITE).unwrap();
+
+        #[cfg(feature = "performance")]
+        {
+            timings.clear_cycles = clear_timer.elapsed();
+        }
+
+        #[cfg(feature = "performance")]
+        let paint_timer = CycleTimer::start();
 
         let paint_report = runtime
             .paint_with_damage(damage, &mut painter)
             .unwrap()
             .expect("painting requires a mounted root");
 
+        #[cfg(feature = "performance")]
+        {
+            timings.paint_cycles = paint_timer.elapsed();
+        }
+
         let eink_report = painter.report();
 
         (paint_report, eink_report)
     };
 
+    #[cfg(feature = "performance")]
+    let damage_timer = CycleTimer::start();
+
     let physical_damage = physical_damage(&display, damage)?;
+
+    #[cfg(feature = "performance")]
+    {
+        timings.damage_cycles = damage_timer.elapsed();
+    }
 
     // framebuffer owns a mutable borrow of `frame`.
     // release it before querying storage directly.
     drop(display);
+
+    #[cfg(feature = "performance")]
+    crate::firmware::perf::log_render(timings);
 
     Some(RenderedFrame {
         physical_damage,
