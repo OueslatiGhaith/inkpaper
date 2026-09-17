@@ -74,11 +74,36 @@ where
 }
 
 struct PendingText<'a> {
-    text: &'a str,
+    source: &'a str,
+    start: usize,
+    end: usize,
     style: TextStyle,
     link: Option<&'a LinkTarget>,
     x: u32,
     width: u32,
+}
+
+impl<'a> PendingText<'a> {
+    fn text(&self) -> &'a str {
+        self.source
+            .get(self.start..self.end)
+            .expect("pending text range must stay on UTF-8 boundaries")
+    }
+
+    fn can_merge_with(&self, next: &Self) -> bool {
+        core::ptr::eq(self.source, next.source)
+            && self.end == next.start
+            && self.style == next.style
+            && self.link == next.link
+            && self.x.saturating_add(self.width) == next.x
+    }
+
+    fn merge(&mut self, next: Self) {
+        debug_assert!(self.can_merge_with(&next));
+
+        self.end = next.end;
+        self.width = self.width.saturating_add(next.width);
+    }
 }
 
 struct Paginator<'chapter, 'context, M> {
@@ -299,17 +324,14 @@ where
             for (relative, character) in text[first_end..].char_indices() {
                 if character.is_whitespace() != whitespace {
                     end = first_end.saturating_add(relative);
-
                     break;
                 }
             }
 
-            let segment = &text[start..end];
-
             if whitespace {
-                self.layout_whitespace(segment, style, link, align)?;
+                self.layout_whitespace(text, start, end, style, link, align)?;
             } else {
-                self.layout_word(segment, style, link, align)?;
+                self.layout_word(text, start, end, style, link, align)?;
             }
 
             start = end;
@@ -320,11 +342,15 @@ where
 
     fn layout_whitespace(
         &mut self,
-        whitespace: &'chapter str,
+        source: &'chapter str,
+        start: usize,
+        end: usize,
         style: TextStyle,
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
     ) -> Result<(), M::Error> {
+        let whitespace = &source[start..end];
+
         if !self.line_active {
             self.cursor = self.cursor.advance_text(whitespace);
 
@@ -346,16 +372,20 @@ where
             return Ok(());
         }
 
-        self.add_text_piece(whitespace, width, style, link, align)
+        self.add_text_piece(source, start, end, width, style, link, align)
     }
 
     fn layout_word(
         &mut self,
-        word: &'chapter str,
+        source: &'chapter str,
+        start: usize,
+        end: usize,
         style: TextStyle,
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
     ) -> Result<(), M::Error> {
+        let word = &source[start..end];
+
         let width = self.measurer.measure_text(word, style)?;
 
         if self.line_active {
@@ -374,19 +404,23 @@ where
         let available = self.viewport.width().saturating_sub(indent);
 
         if width <= available {
-            return self.add_text_piece(word, width, style, link, align);
+            return self.add_text_piece(source, start, end, width, style, link, align);
         }
 
-        self.layout_oversized_word(word, style, link, align)
+        self.layout_oversized_word(source, start, end, style, link, align)
     }
 
     fn layout_oversized_word(
         &mut self,
-        word: &'chapter str,
+        source: &'chapter str,
+        word_start: usize,
+        word_end: usize,
         style: TextStyle,
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
     ) -> Result<(), M::Error> {
+        let word = &source[word_start..word_end];
+
         let mut start = 0usize;
 
         while start < word.len() {
@@ -436,9 +470,10 @@ where
                 }
             };
 
-            let piece = &word[start..end];
+            let source_start = word_start.saturating_add(start);
+            let source_end = word_start.saturating_add(end);
 
-            self.add_text_piece(piece, width, style, link, align)?;
+            self.add_text_piece(source, source_start, source_end, width, style, link, align)?;
 
             start = end;
 
@@ -452,12 +487,16 @@ where
 
     fn add_text_piece(
         &mut self,
-        text: &'chapter str,
+        source: &'chapter str,
+        start: usize,
+        end: usize,
         width: u32,
         style: TextStyle,
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
     ) -> Result<(), M::Error> {
+        let text = &source[start..end];
+
         if text.is_empty() {
             return Ok(());
         }
@@ -475,7 +514,9 @@ where
         let height = self.measured_line_height(style)?;
 
         self.line_items.push(PendingText {
-            text,
+            source,
+            start,
+            end,
             style,
             link,
             x: self.line_width,
@@ -541,13 +582,20 @@ where
         let alignment = alignment_offset(self.line_align, line_width, self.line_width);
         let origin = self.line_indent.saturating_add(alignment);
 
-        for item in mem::take(&mut self.line_items) {
-            self.page_items.push(PageItem::Text(TextFragment::new(
-                item.text,
-                Rect::new(origin.saturating_add(item.x), y, item.width, height),
-                item.style,
-                item.link,
-            )));
+        let mut items = mem::take(&mut self.line_items).into_iter();
+
+        if let Some(mut current) = items.next() {
+            for next in items {
+                if current.can_merge_with(&next) {
+                    current.merge(next);
+                    continue;
+                }
+
+                self.push_text_fragment(current, origin, y, height);
+                current = next;
+            }
+
+            self.push_text_fragment(current, origin, y, height);
         }
 
         self.used_height = self.used_height.saturating_add(height);
@@ -557,6 +605,21 @@ where
         self.line_height = 0;
         self.line_align = TextAlign::Start;
         self.line_indent = 0;
+    }
+
+    fn push_text_fragment(
+        &mut self,
+        item: PendingText<'chapter>,
+        origin: u32,
+        y: u32,
+        height: u32,
+    ) {
+        self.page_items.push(PageItem::Text(TextFragment::new(
+            item.text(),
+            Rect::new(origin.saturating_add(item.x), y, item.width, height),
+            item.style,
+            item.link,
+        )));
     }
 
     fn add_block_spacing(&mut self, current: &ChapterBlock, next: &ChapterBlock) {

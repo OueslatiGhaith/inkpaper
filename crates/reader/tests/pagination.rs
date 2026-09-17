@@ -337,24 +337,17 @@ fn pagination_emits_positioned_text_fragments_and_links() {
 
     let page = &pagination.pages()[0];
 
-    assert_eq!(page.items().len(), 3);
+    assert_eq!(page.items().len(), 2);
 
     let PageItem::Text(one) = &page.items()[0] else {
         panic!("expected text");
     };
 
-    assert_eq!(one.text(), "one");
-    assert_eq!(one.bounds(), Rect::new(1, 0, 3, 1));
+    assert_eq!(one.text(), "one ");
+    assert_eq!(one.bounds(), Rect::new(1, 0, 4, 1));
     assert!(one.link().is_none());
 
-    let PageItem::Text(space) = &page.items()[1] else {
-        panic!("expected space");
-    };
-
-    assert_eq!(space.text(), " ");
-    assert_eq!(space.bounds(), Rect::new(4, 0, 1, 1));
-
-    let PageItem::Text(two) = &page.items()[2] else {
+    let PageItem::Text(two) = &page.items()[1] else {
         panic!("expected linked text");
     };
 
@@ -864,18 +857,15 @@ fn css_text_indent_applies_only_to_first_line_of_block() {
         })
         .collect();
 
-    assert_eq!(texts.len(), 3);
+    assert_eq!(texts.len(), 2);
 
-    assert_eq!(texts[0].text(), "one");
-    assert_eq!(texts[0].bounds(), Rect::new(3, 0, 3, 1));
+    assert_eq!(texts[0].text(), "one ");
+    assert_eq!(texts[0].bounds(), Rect::new(3, 0, 4, 1));
 
-    assert_eq!(texts[1].text(), " ");
-    assert_eq!(texts[1].bounds(), Rect::new(6, 0, 1, 1));
-
-    assert_eq!(texts[2].text(), "two");
+    assert_eq!(texts[1].text(), "two");
 
     // wrapped lines return to the normal left edge.
-    assert_eq!(texts[2].bounds(), Rect::new(0, 1, 3, 1));
+    assert_eq!(texts[1].bounds(), Rect::new(0, 1, 3, 1));
 }
 
 #[test]
@@ -918,4 +908,43 @@ fn css_line_height_controls_line_boxes() {
     assert_eq!(texts[0].bounds(), Rect::new(0, 0, 3, 2));
 
     assert_eq!(texts[1].bounds(), Rect::new(0, 2, 3, 2));
+}
+
+#[test]
+fn pagination_coalesces_contiguous_text_on_the_same_line() {
+    let bytes = build_test_epub("<p>one two three</p>");
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let mut measurer = MonoMeasurer::default();
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(20, 2).unwrap(),
+        ReaderSettings::new(16, 0).unwrap(),
+        &mut measurer,
+    )
+    .unwrap();
+
+    assert_eq!(pagination.len(), 1);
+
+    let page = &pagination.pages()[0];
+
+    assert_eq!(page.items().len(), 1);
+
+    let PageItem::Text(text) = &page.items()[0] else {
+        panic!("expected text");
+    };
+
+    assert_eq!(text.text(), "one two three");
+    assert_eq!(text.bounds(), Rect::new(0, 0, 13, 1));
+    assert!(text.link().is_none());
 }
