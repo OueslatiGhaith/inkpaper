@@ -28,5 +28,7 @@ codegen-units = 1
 
 [profile.profiling]
 inherits = "release"
-debug = 1
+debug = 2
 strip = "none"
+lto = "fat"
+codegen-units = 1
