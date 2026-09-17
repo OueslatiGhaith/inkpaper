@@ -9,7 +9,7 @@ use defmt::{debug, info, warn};
 use hadris_fat::r#async::{DirectoryEntry, FatVolume, FileEntry};
 use hadris_io::r#async::{Read as HadrisRead, Seek as HadrisSeek};
 
-use crate::firmware::storage::{StorageEntry, history::INKPAPER_DIRECTORY_NAME};
+use crate::firmware::storage::{StorageEntry, StorageError, state::INKPAPER_DIRECTORY_NAME};
 
 const LOGGED_FILE_NAME_BYTES: usize = 256;
 
@@ -61,7 +61,7 @@ where
 pub(super) async fn list_directory<D>(
     filesystem: &FatVolume<D>,
     path: &str,
-) -> Option<Vec<StorageEntry>>
+) -> Result<Vec<StorageEntry>, StorageError>
 where
     D: HadrisRead + HadrisSeek<Error = <D as HadrisRead>::Error>,
 {
@@ -71,12 +71,12 @@ where
         filesystem.root_dir()
     } else {
         match filesystem.open_dir_path(path).await {
-            Ok(dir) => dir,
+            Ok(directory) => directory,
 
             Err(error) => {
                 warn!("directory open failed path={} error={:?}", path, error);
 
-                return None;
+                return Err(StorageError::Io);
             }
         }
     };
@@ -94,8 +94,7 @@ where
 
             Err(error) => {
                 warn!("directory read failed path={} error={:?}", path, error);
-
-                return None;
+                return Err(StorageError::Io);
             }
         };
 
@@ -114,7 +113,7 @@ where
 
     debug!("directory listed path={} entries={}", path, output.len());
 
-    Some(output)
+    Ok(output)
 }
 
 fn owned_entry_name(entry: &FileEntry) -> String {

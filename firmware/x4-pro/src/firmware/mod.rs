@@ -15,7 +15,7 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use inkpaper_app::InkPaperApp;
+use inkpaper_app::{AppService, InkPaperApp};
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
@@ -27,6 +27,7 @@ use crate::firmware::{
     framebuffer::FramebufferStorage,
     frontlight::{frontlight_off_and_wait, frontlight_task},
     input::{Button, ButtonEdge, INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
+    platform::X4Platform,
     power::PowerRails,
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
     presenter::{Presenter, UiRuntime},
@@ -36,7 +37,6 @@ use crate::firmware::{
     touch::{TouchController, touch_task},
 };
 
-mod app_service;
 mod battery;
 mod buttons;
 mod display;
@@ -46,6 +46,7 @@ mod frontlight;
 mod grayscale_validation;
 mod i2c_bus;
 mod input;
+mod platform;
 mod power;
 mod power_button;
 mod presenter;
@@ -192,7 +193,10 @@ async fn main(spawner: Spawner) -> ! {
     InkPaperApp::register_resources(runtime).unwrap();
     let app = runtime.create_root(|_| InkPaperApp::default()).unwrap();
 
-    app_service::service_app_requests(runtime, app).await;
+    let mut app_service = AppService::new(X4Platform::new());
+    if app_service.service_pending(runtime, app).await.is_err() {
+        warn!("failed to service initial app work");
+    }
 
     let mut presenter = Presenter::default();
 
@@ -344,7 +348,9 @@ async fn main(spawner: Spawner) -> ! {
             stay_alive().await;
         }
 
-        app_service::service_app_requests(runtime, app).await;
+        if app_service.service_pending(runtime, app).await.is_err() {
+            warn!("failed to service app work");
+        }
 
         let Some(update) = presenter.render_pending(runtime, frame, panel.capabilities()) else {
             continue;

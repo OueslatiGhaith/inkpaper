@@ -1,20 +1,20 @@
 use alloc::{string::String, vec::Vec};
-use defmt::{debug, info, warn};
+
+use defmt::debug;
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
 };
 use hadris_fat::r#async::FatVolume;
 use hadris_io::r#async::{Read as HadrisRead, Seek as HadrisSeek, Write as HadrisWrite};
-use inkpaper_app::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences, ReaderSession,
-    ReadingHistoryEntry, SpineIndex,
-};
 
-use crate::firmware::storage::{
-    epub::{FatEpubSource, open_reader_session},
+use super::{
     filesystem::{list_directory, list_root},
-    history::{load_reading_history, save_reading_history},
-    preferences::{load_reader_preferences, save_reader_preferences},
+    random_access::OpenRandomAccessFile,
+    state::{load_state, save_state},
+    types::{
+        MAX_RANDOM_ACCESS_READ_BYTES, MAX_STATE_BYTES, RandomAccessHandle, StorageEntry,
+        StorageError,
+    },
 };
 
 const COMMAND_CAPACITY: usize = 4;
@@ -23,53 +23,45 @@ static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = C
 static READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static ROOT_LIST_DONE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static DIRECTORY_LIST_DONE: Signal<CriticalSectionRawMutex, Option<Vec<StorageEntry>>> =
+static DIRECTORY_LIST_DONE: Signal<
+    CriticalSectionRawMutex,
+    Result<Vec<StorageEntry>, StorageError>,
+> = Signal::new();
+static RANDOM_ACCESS_OPEN_DONE: Signal<
+    CriticalSectionRawMutex,
+    Result<RandomAccessHandle, StorageError>,
+> = Signal::new();
+static RANDOM_ACCESS_READ_DONE: Signal<CriticalSectionRawMutex, Result<Vec<u8>, StorageError>> =
     Signal::new();
-static EPUB_DOCUMENT_DONE: Signal<CriticalSectionRawMutex, Option<ReaderDocument>> = Signal::new();
-static EPUB_CHAPTER_DONE: Signal<CriticalSectionRawMutex, Option<ReaderChapter>> = Signal::new();
-static READING_HISTORY_DONE: Signal<CriticalSectionRawMutex, Option<Vec<ReadingHistoryEntry>>> =
+static STATE_LOAD_DONE: Signal<CriticalSectionRawMutex, Result<Option<Vec<u8>>, StorageError>> =
     Signal::new();
-static READER_PREFERENCES_DONE: Signal<CriticalSectionRawMutex, ReaderPreferences> = Signal::new();
+static STATE_SAVE_DONE: Signal<CriticalSectionRawMutex, Result<(), StorageError>> = Signal::new();
 
 #[derive(Debug)]
 enum Command {
     ListRoot,
+
     ListDirectory(String),
-    LoadEpub {
-        path: String,
-        font_size: u16,
+
+    OpenRandomAccess(String),
+
+    ReadRandomAccess {
+        handle: u32,
+        offset: u64,
+        len: usize,
     },
-    LoadEpubChapter {
-        path: String,
-        from: SpineIndex,
-        direction: ReaderChapterDirection,
+
+    LoadState {
+        name: String,
+        max_bytes: usize,
     },
-    RepaginateEpubChapter {
-        path: String,
-        spine: SpineIndex,
-        font_size: u16,
+
+    SaveState {
+        name: String,
+        bytes: Vec<u8>,
     },
-    LoadReadingHistory,
-    UpdateReadingProgress(ReadingHistoryEntry),
-    LoadReaderPreferences,
-    UpdateReaderPreferences(ReaderPreferences),
+
     Shutdown,
-}
-
-#[derive(Debug)]
-pub struct StorageEntry {
-    name: String,
-    is_directory: bool,
-}
-
-impl StorageEntry {
-    pub(super) fn new(name: String, is_directory: bool) -> Self {
-        Self { name, is_directory }
-    }
-
-    pub fn into_parts(self) -> (String, bool) {
-        (self.name, self.is_directory)
-    }
 }
 
 pub async fn wait_ready() -> bool {
@@ -82,13 +74,7 @@ pub async fn list_root_and_wait() -> bool {
     ROOT_LIST_DONE.wait().await
 }
 
-pub async fn shutdown_and_wait() {
-    SHUTDOWN_DONE.reset();
-    COMMANDS.send(Command::Shutdown).await;
-    SHUTDOWN_DONE.wait().await;
-}
-
-pub async fn list_directory_and_wait(path: &str) -> Option<Vec<StorageEntry>> {
+pub async fn list_directory_and_wait(path: &str) -> Result<Vec<StorageEntry>, StorageError> {
     DIRECTORY_LIST_DONE.reset();
     COMMANDS
         .send(Command::ListDirectory(String::from(path)))
@@ -96,69 +82,71 @@ pub async fn list_directory_and_wait(path: &str) -> Option<Vec<StorageEntry>> {
     DIRECTORY_LIST_DONE.wait().await
 }
 
-pub async fn load_epub_document_and_wait(path: &str, font_size: u16) -> Option<ReaderDocument> {
-    EPUB_DOCUMENT_DONE.reset();
+pub async fn open_random_access_and_wait(path: &str) -> Result<RandomAccessHandle, StorageError> {
+    RANDOM_ACCESS_OPEN_DONE.reset();
     COMMANDS
-        .send(Command::LoadEpub {
-            path: String::from(path),
-            font_size,
+        .send(Command::OpenRandomAccess(String::from(path)))
+        .await;
+    RANDOM_ACCESS_OPEN_DONE.wait().await
+}
+
+pub async fn read_random_access_and_wait(
+    handle: u32,
+    offset: u64,
+    len: usize,
+) -> Result<Vec<u8>, StorageError> {
+    if len > MAX_RANDOM_ACCESS_READ_BYTES {
+        return Err(StorageError::ReadTooLarge);
+    }
+
+    RANDOM_ACCESS_READ_DONE.reset();
+    COMMANDS
+        .send(Command::ReadRandomAccess {
+            handle,
+            offset,
+            len,
         })
         .await;
-    EPUB_DOCUMENT_DONE.wait().await
+    RANDOM_ACCESS_READ_DONE.wait().await
 }
 
-pub async fn load_epub_chapter_and_wait(
-    path: &str,
-    from: SpineIndex,
-    direction: ReaderChapterDirection,
-) -> Option<ReaderChapter> {
-    EPUB_CHAPTER_DONE.reset();
+pub async fn load_state_and_wait(
+    name: &str,
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>, StorageError> {
+    if max_bytes > MAX_STATE_BYTES {
+        return Err(StorageError::StateTooLarge);
+    }
+
+    STATE_LOAD_DONE.reset();
     COMMANDS
-        .send(Command::LoadEpubChapter {
-            path: String::from(path),
-            from,
-            direction,
+        .send(Command::LoadState {
+            name: String::from(name),
+            max_bytes,
         })
         .await;
-    EPUB_CHAPTER_DONE.wait().await
+    STATE_LOAD_DONE.wait().await
 }
 
-pub async fn repaginate_epub_chapter_and_wait(
-    path: &str,
-    spine: SpineIndex,
-    font_size: u16,
-) -> Option<ReaderChapter> {
-    EPUB_CHAPTER_DONE.reset();
+pub async fn save_state_and_wait(name: &str, bytes: &[u8]) -> Result<(), StorageError> {
+    if bytes.len() > MAX_STATE_BYTES {
+        return Err(StorageError::StateTooLarge);
+    }
+
+    STATE_SAVE_DONE.reset();
     COMMANDS
-        .send(Command::RepaginateEpubChapter {
-            path: String::from(path),
-            spine,
-            font_size,
+        .send(Command::SaveState {
+            name: String::from(name),
+            bytes: Vec::from(bytes),
         })
         .await;
-    EPUB_CHAPTER_DONE.wait().await
+    STATE_SAVE_DONE.wait().await
 }
 
-pub async fn update_reading_progress(entry: ReadingHistoryEntry) {
-    COMMANDS.send(Command::UpdateReadingProgress(entry)).await;
-}
-
-pub async fn reading_history_and_wait() -> Option<Vec<ReadingHistoryEntry>> {
-    READING_HISTORY_DONE.reset();
-    COMMANDS.send(Command::LoadReadingHistory).await;
-    READING_HISTORY_DONE.wait().await
-}
-
-pub async fn reader_preferences_and_wait() -> ReaderPreferences {
-    READER_PREFERENCES_DONE.reset();
-    COMMANDS.send(Command::LoadReaderPreferences).await;
-    READER_PREFERENCES_DONE.wait().await
-}
-
-pub async fn update_reader_preferences(preferences: ReaderPreferences) {
-    COMMANDS
-        .send(Command::UpdateReaderPreferences(preferences))
-        .await;
+pub async fn shutdown_and_wait() {
+    SHUTDOWN_DONE.reset();
+    COMMANDS.send(Command::Shutdown).await;
+    SHUTDOWN_DONE.wait().await;
 }
 
 pub(super) fn signal_ready(ready: bool) {
@@ -175,10 +163,8 @@ where
         + HadrisWrite<Error = <D as HadrisRead>::Error>
         + HadrisSeek<Error = <D as HadrisRead>::Error>,
 {
-    let mut reader_session: Option<ReaderSession<FatEpubSource<'a, D>>> = None;
-    let mut reading_history = load_reading_history(filesystem).await;
-    let mut reading_history_dirty = false;
-    let mut reader_preferences = load_reader_preferences(filesystem).await;
+    let mut open_random_access: Option<OpenRandomAccessFile<'a, D>> = None;
+    let mut last_handle = 0u32;
 
     loop {
         match COMMANDS.receive().await {
@@ -188,184 +174,63 @@ where
             }
 
             Command::ListDirectory(path) => {
-                let entries = list_directory(filesystem, &path).await;
-                DIRECTORY_LIST_DONE.signal(entries);
+                let result = list_directory(filesystem, &path).await;
+                DIRECTORY_LIST_DONE.signal(result);
             }
 
-            Command::LoadEpub { path, font_size } => {
-                let reuse_session = match reader_session.as_ref() {
-                    Some(session) => session.path() == path,
-                    None => false,
-                };
+            Command::OpenRandomAccess(path) => {
+                // only one random-access file is required by the app today. Drop
+                // the previous FAT reader before opening its replacement.
+                open_random_access = None;
 
-                if !reuse_session {
-                    // drop the old FAT FileReader before opening another book.
-                    let _ = reader_session.take();
+                let handle = next_handle(&mut last_handle);
 
-                    reader_session = open_reader_session(filesystem, path.clone()).await;
+                match OpenRandomAccessFile::open(filesystem, &path, handle).await {
+                    Ok(file) => {
+                        let handle = file.handle();
+
+                        open_random_access = Some(file);
+
+                        RANDOM_ACCESS_OPEN_DONE.signal(Ok(handle));
+                    }
+
+                    Err(error) => {
+                        RANDOM_ACCESS_OPEN_DONE.signal(Err(error));
+                    }
                 }
-
-                let document = match reader_session.as_mut() {
-                    Some(session) => {
-                        if !session.set_font_size(font_size) {
-                            warn!(
-                                "invalid EPUB reader font size path={} size={}",
-                                path.as_str(),
-                                font_size,
-                            );
-
-                            None
-                        } else {
-                            let resume =
-                                reading_history.resume_position(&path, session.identifier());
-
-                            match session.load_document_at(resume).await {
-                                Ok(document) => {
-                                    info!(
-                                        "EPUB reader ready path={} spine={} page={} pages={}",
-                                        path.as_str(),
-                                        document.spine().get(),
-                                        document.opening_page_index().saturating_add(1),
-                                        document.page_count(),
-                                    );
-
-                                    Some(document)
-                                }
-
-                                Err(_) => {
-                                    warn!("EPUB reader load failed path={}", path.as_str(),);
-                                    None
-                                }
-                            }
-                        }
-                    }
-
-                    None => None,
-                };
-
-                EPUB_DOCUMENT_DONE.signal(document);
             }
 
-            Command::LoadEpubChapter {
-                path,
-                from,
-                direction,
+            Command::ReadRandomAccess {
+                handle,
+                offset,
+                len,
             } => {
-                let chapter = match reader_session.as_mut() {
-                    Some(session) if session.path() == path => {
-                        match session.load_adjacent_chapter(from, direction).await {
-                            Ok(chapter) => chapter,
-
-                            Err(_) => {
-                                warn!(
-                                    "EPUB adjacent chapter load failed path={} from={}",
-                                    path.as_str(),
-                                    from.get(),
-                                );
-
-                                None
-                            }
-                        }
+                let result = match open_random_access.as_mut() {
+                    Some(file) if file.handle().id() == handle => {
+                        file.read_exact_at(offset, len).await
                     }
-
-                    Some(_) => {
-                        warn!(
-                            "EPUB chapter request does not match active session path={}",
-                            path.as_str(),
-                        );
-
-                        None
-                    }
-
-                    None => {
-                        warn!(
-                            "EPUB chapter request without active session path={}",
-                            path.as_str(),
-                        );
-
-                        None
-                    }
+                    _ => Err(StorageError::StaleHandle),
                 };
 
-                EPUB_CHAPTER_DONE.signal(chapter);
+                RANDOM_ACCESS_READ_DONE.signal(result);
             }
 
-            Command::RepaginateEpubChapter {
-                path,
-                spine,
-                font_size,
-            } => {
-                let chapter = match reader_session.as_mut() {
-                    Some(session) if session.path() == path => {
-                        match session.repaginate_chapter(spine, font_size).await {
-                            Ok(chapter) => chapter,
-
-                            Err(_) => {
-                                warn!(
-                                    "EPUB repagination failed path={} spine={} size={}",
-                                    path.as_str(),
-                                    spine.get(),
-                                    font_size,
-                                );
-
-                                None
-                            }
-                        }
-                    }
-
-                    Some(_) => {
-                        warn!(
-                            "EPUB repagination request does not match active session path={}",
-                            path.as_str(),
-                        );
-
-                        None
-                    }
-
-                    None => {
-                        warn!(
-                            "EPUB repagination without active session path={}",
-                            path.as_str(),
-                        );
-
-                        None
-                    }
-                };
-
-                EPUB_CHAPTER_DONE.signal(chapter);
+            Command::LoadState { name, max_bytes } => {
+                let result = load_state(filesystem, &name, max_bytes).await;
+                STATE_LOAD_DONE.signal(result);
             }
 
-            Command::LoadReadingHistory => {
-                READING_HISTORY_DONE.signal(Some(reading_history.entries().to_vec()));
-            }
-
-            Command::UpdateReadingProgress(progress) => {
-                reading_history.record(progress);
-                reading_history_dirty = true;
-            }
-
-            Command::LoadReaderPreferences => {
-                READER_PREFERENCES_DONE.signal(reader_preferences);
-            }
-
-            Command::UpdateReaderPreferences(preferences) => {
-                reader_preferences = preferences;
-                if !save_reader_preferences(filesystem, reader_preferences).await {
-                    warn!("reader preferences were not persisted");
-                }
+            Command::SaveState { name, bytes } => {
+                let result = save_state(filesystem, &name, &bytes).await;
+                STATE_SAVE_DONE.signal(result);
             }
 
             Command::Shutdown => {
-                debug!("storage shutdown requested",);
+                debug!("storage shutdown requested");
 
-                // drop the FileReader before the FAT volume and block device are dropped.
-                drop(reader_session);
-
-                if reading_history_dirty
-                    && !save_reading_history(filesystem, &reading_history).await
-                {
-                    warn!("reading history was not persisted",);
-                }
+                // ensure every FAT FileReader is gone before `mount.rs` drops
+                // the FatVolume and block device.
+                drop(open_random_access);
 
                 return;
             }
@@ -379,21 +244,29 @@ pub(super) async fn serve_unavailable_requests() {
     loop {
         match COMMANDS.receive().await {
             Command::ListRoot => ROOT_LIST_DONE.signal(false),
-            Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(None),
-            Command::LoadEpub { .. } => EPUB_DOCUMENT_DONE.signal(None),
-            Command::LoadEpubChapter { .. } | Command::RepaginateEpubChapter { .. } => {
-                EPUB_CHAPTER_DONE.signal(None);
+            Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(Err(StorageError::Unavailable)),
+            Command::OpenRandomAccess(_) => {
+                RANDOM_ACCESS_OPEN_DONE.signal(Err(StorageError::Unavailable));
             }
-            Command::LoadReadingHistory => READING_HISTORY_DONE.signal(None),
-            Command::UpdateReadingProgress(_) => {}
-            Command::LoadReaderPreferences => {
-                READER_PREFERENCES_DONE.signal(ReaderPreferences::default());
+            Command::ReadRandomAccess { .. } => {
+                RANDOM_ACCESS_READ_DONE.signal(Err(StorageError::Unavailable));
             }
-            Command::UpdateReaderPreferences(_) => {}
+            Command::LoadState { .. } => STATE_LOAD_DONE.signal(Err(StorageError::Unavailable)),
+            Command::SaveState { .. } => STATE_SAVE_DONE.signal(Err(StorageError::Unavailable)),
             Command::Shutdown => {
                 SHUTDOWN_DONE.signal(());
                 return;
             }
         }
     }
+}
+
+fn next_handle(last: &mut u32) -> u32 {
+    *last = last.wrapping_add(1);
+
+    if *last == 0 {
+        *last = 1;
+    }
+
+    *last
 }

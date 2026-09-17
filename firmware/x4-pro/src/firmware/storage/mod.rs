@@ -1,16 +1,16 @@
-mod epub;
 mod filesystem;
-mod history;
 mod mount;
 mod partition;
-mod preferences;
+mod random_access;
 mod service;
+mod state;
+mod types;
 
 pub use mount::storage_task;
 
 pub use service::{
-    StorageEntry, list_directory_and_wait, list_root_and_wait, load_epub_chapter_and_wait,
-    load_epub_document_and_wait, reader_preferences_and_wait, reading_history_and_wait,
-    repaginate_epub_chapter_and_wait, shutdown_and_wait, update_reader_preferences,
-    update_reading_progress, wait_ready,
+    list_directory_and_wait, list_root_and_wait, load_state_and_wait, open_random_access_and_wait,
+    read_random_access_and_wait, save_state_and_wait, shutdown_and_wait, wait_ready,
 };
+
+pub use types::{MAX_RANDOM_ACCESS_READ_BYTES, RandomAccessHandle, StorageEntry, StorageError};
