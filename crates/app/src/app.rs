@@ -8,6 +8,7 @@ use crate::{
     ReadingHistoryRequest,
     browser::BrowserState,
     reader::ReaderState,
+    reader_page::paint_reader_page,
     reading_history::ReadingHistoryState,
     screens::{
         browse_files::{BrowseFilesScreen, BrowseFilesScreenProps},
@@ -378,6 +379,18 @@ impl InkPaperApp {
 
         changed
     }
+
+    fn paint_reader_page(&self, paint: &mut PaintCx<'_>) {
+        let Some(document) = self.reader.document() else {
+            return;
+        };
+
+        let Some(page) = self.reader.page() else {
+            return;
+        };
+
+        paint_reader_page(page, document, paint);
+    }
 }
 
 impl Render for InkPaperApp {
@@ -399,6 +412,12 @@ impl Render for InkPaperApp {
         let reader_decrease_font_size = cx.listener(Self::activate_decrease_reader_font_size);
 
         let reader_increase_font_size = cx.listener(Self::activate_increase_reader_font_size);
+
+        let reader_page_canvas = if self.screen == Screen::Reader && self.reader.page().is_some() {
+            Some(cx.canvas(|app, paint| app.paint_reader_page(paint)))
+        } else {
+            None
+        };
 
         let browse_entry_listeners = if self.screen == Screen::BrowseFiles {
             (0..self.browser.entries().len())
@@ -455,8 +474,7 @@ impl Render for InkPaperApp {
                     status={self.reader.status()}
                     detail={self.reader.detail()}
                     path={self.reader.path()}
-                    document={self.reader.document()}
-                    page={self.reader.page()}
+                    page_canvas={reader_page_canvas}
                     page_label={self.reader.page_label()}
                     section_label={self.reader.section_label()}
                     controls_visible={self.reader.controls_visible()}

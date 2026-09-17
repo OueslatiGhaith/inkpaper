@@ -1,12 +1,9 @@
 use alloc::format;
-use inkpaper_reader::Page;
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    ReaderDocument,
     components::icon::{Icon, IconKind, IconProps},
     reader::reader_viewport,
-    reader_page::ReaderPageView,
 };
 
 #[component]
@@ -17,8 +14,7 @@ pub(crate) struct ReaderScreen<'a> {
     detail: &'a str,
     path: &'a str,
 
-    document: Option<&'a ReaderDocument>,
-    page: Option<&'a Page<'static>>,
+    page_canvas: Option<Canvas>,
 
     page_label: &'a str,
     section_label: &'a str,
@@ -37,16 +33,21 @@ pub(crate) struct ReaderScreen<'a> {
 
 impl RenderOnce for ReaderScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let viewport = reader_viewport();
+
+        let page_size = Size::new(
+            px(i32::try_from(viewport.width()).unwrap_or(i32::MAX)),
+            px(i32::try_from(viewport.height()).unwrap_or(i32::MAX)),
+        );
+
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
-                {#if self.page.is_some()}
+                {#if self.page_canvas.is_some()}
                     <div class="absolute left-5 top-[35px] w-[440px] h-[685px] overflow-hidden">
                         {
-                            ReaderPageView::new(
-                                self.page.expect("reader page was checked above"),
-                                self.document.expect("a visible reader page always belongs to a document"),
-                                reader_viewport(),
-                            )
+                            self.page_canvas
+                                .expect("reader page canvas was checked above")
+                                .size(page_size)
                         }
 
                         <div
