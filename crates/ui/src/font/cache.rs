@@ -168,26 +168,39 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
             size_px,
         };
 
-        let slot_index = Self::slot_index(key);
-        let slot = self.slots[slot_index];
+        let home_slot = Self::slot_index(key);
+        let mut insertion_slot = None;
 
         increment_metric!(self.metrics.lookups);
 
-        if slot.valid && slot.key == key {
-            increment_metric!(self.metrics.hits);
+        // entries are never individually deleted, so encountering the first empty slot
+        // proves that the key is not present later in the probe sequence.
+        for probe in 0..SLOTS {
+            let slot_index = (home_slot + probe) % SLOTS;
+            let slot = self.slots[slot_index];
 
-            return Ok(GlyphBitmap {
-                coverage: &self.storage[slot.offset..slot.offset + slot.len],
-                metrics: slot.metrics,
-            });
+            if !slot.valid {
+                insertion_slot = Some(slot_index);
+                break;
+            }
+
+            if slot.key == key {
+                increment_metric!(self.metrics.hits);
+
+                return Ok(GlyphBitmap {
+                    coverage: &self.storage[slot.offset..slot.offset + slot.len],
+                    metrics: slot.metrics,
+                });
+            }
         }
 
+        increment_metric!(self.metrics.misses);
+
+        // keep the collision metric comparable with the old direct-mapped cache:
+        // count a miss as a collision when its ideal slot was already occupied.
         #[cfg(feature = "metrics")]
-        {
-            increment_metric!(self.metrics.misses);
-            if slot.valid {
-                increment_metric!(self.metrics.collisions);
-            }
+        if self.slots[home_slot].valid {
+            increment_metric!(self.metrics.collisions);
         }
 
         let metrics = font
@@ -200,9 +213,20 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
         if required > BYTES {
             return Err(GlyphCacheError::GlyphTooLarge);
         }
-        if required > self.remaining_bytes() {
+
+        // there are two reasons to start a fresh generation:
+        //
+        // 1. the metadata table has no free slot;
+        // 2. the bitmap arena has insufficient remaining storage.
+        //
+        // after clearing, every metadata slot is free and the entire byte arena is
+        // available, so the glyph can go directly into its home slot.
+        let slot_index = if insertion_slot.is_none() || required > self.remaining_bytes() {
             self.clear();
-        }
+            home_slot
+        } else {
+            insertion_slot.expect("a non-full glyph cache must have an insertion slot")
+        };
 
         let offset = self.used;
         let end = offset

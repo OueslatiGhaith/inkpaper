@@ -306,7 +306,7 @@ fn glyph_cache_distinguishes_variable_weights() {
 
 #[cfg(feature = "metrics")]
 #[test]
-fn glyph_cache_metrics_track_hits_collisions_and_capacity_clears() {
+fn glyph_cache_metrics_track_linear_probe_collisions() {
     let mut registry = FontRegistry::<1>::default();
 
     let font = TestFont { fill: 173 };
@@ -314,14 +314,54 @@ fn glyph_cache_metrics_track_hits_collisions_and_capacity_clears() {
 
     let first = font.glyph_id('A').unwrap();
     let colliding = font.glyph_id('E').unwrap();
-    let third = font.glyph_id('B').unwrap();
 
-    // each TestFont glyph is 2x2 = 4 coverage bytes.
-    // with four metadata slots:
-    //   17 % 4 == 1
-    // so 'A' (65) and 'E' (69) map to the same slot.
-    // a 10-byte backing store can hold two glyph bitmaps (8 bytes), but not a third.
-    // That guarantees a storage clear on the third cache miss.
+    let mut cache = GlyphCache::<4, 16>::default();
+
+    cache.reset_metrics();
+
+    cache
+        .get_or_rasterize(&registry, font_id, first, 16)
+        .unwrap();
+
+    cache
+        .get_or_rasterize(&registry, font_id, colliding, 16)
+        .unwrap();
+
+    cache
+        .get_or_rasterize(&registry, font_id, first, 16)
+        .unwrap();
+
+    cache
+        .get_or_rasterize(&registry, font_id, colliding, 16)
+        .unwrap();
+
+    let metrics = cache.metrics();
+
+    assert_eq!(metrics.lookups, 4);
+    assert_eq!(metrics.hits, 2);
+    assert_eq!(metrics.misses, 2);
+    assert_eq!(metrics.collisions, 1);
+    assert_eq!(metrics.rasterizations, 2);
+    assert_eq!(metrics.clears, 0);
+    assert_eq!(metrics.bytes_peak, 8);
+
+    assert_eq!(cache.used_bytes(), 8);
+}
+
+#[cfg(feature = "metrics")]
+#[test]
+fn glyph_cache_metrics_track_capacity_clears() {
+    let mut registry = FontRegistry::<1>::default();
+
+    let font = TestFont { fill: 173 };
+    let font_id = registry.register(&font).unwrap();
+
+    let first = font.glyph_id('A').unwrap();
+    let second = font.glyph_id('B').unwrap();
+    let third = font.glyph_id('C').unwrap();
+
+    // each glyph consumes four bytes. Ten bytes hold two glyphs, but the third miss
+    // must begin a fresh cache generation.
     let mut cache = GlyphCache::<4, 10>::default();
 
     cache.reset_metrics();
@@ -335,7 +375,7 @@ fn glyph_cache_metrics_track_hits_collisions_and_capacity_clears() {
         .unwrap();
 
     cache
-        .get_or_rasterize(&registry, font_id, colliding, 16)
+        .get_or_rasterize(&registry, font_id, second, 16)
         .unwrap();
 
     assert_eq!(cache.used_bytes(), 8);
@@ -349,11 +389,48 @@ fn glyph_cache_metrics_track_hits_collisions_and_capacity_clears() {
     assert_eq!(metrics.lookups, 4);
     assert_eq!(metrics.hits, 1);
     assert_eq!(metrics.misses, 3);
-    assert_eq!(metrics.collisions, 1);
+    assert_eq!(metrics.collisions, 0);
     assert_eq!(metrics.rasterizations, 3);
     assert_eq!(metrics.clears, 1);
     assert_eq!(metrics.bytes_peak, 8);
 
-    // the third miss cleared the 8-byte generation and started a new one.
     assert_eq!(cache.used_bytes(), 4);
+}
+
+#[test]
+fn glyph_cache_preserves_colliding_entries_with_linear_probing() {
+    let mut registry = FontRegistry::<1>::default();
+
+    let font = TestFont { fill: 173 };
+    let font_id = registry.register(&font).unwrap();
+
+    let first = font.glyph_id('A').unwrap();
+    let colliding = font.glyph_id('E').unwrap();
+
+    // with four slots:
+    //   17 % 4 == 1
+    // and A (65) and E (69) differ by four, so both keys have the same home slot.
+    let mut cache = GlyphCache::<4, 16>::default();
+
+    cache
+        .get_or_rasterize(&registry, font_id, first, 16)
+        .unwrap();
+
+    cache
+        .get_or_rasterize(&registry, font_id, colliding, 16)
+        .unwrap();
+
+    assert_eq!(cache.used_bytes(), 8);
+
+    // both entries must still be reachable. A direct-mapped cache would rerasterize both
+    // accesses and grow the byte arena to 16 bytes.
+    cache
+        .get_or_rasterize(&registry, font_id, first, 16)
+        .unwrap();
+
+    cache
+        .get_or_rasterize(&registry, font_id, colliding, 16)
+        .unwrap();
+
+    assert_eq!(cache.used_bytes(), 8);
 }
