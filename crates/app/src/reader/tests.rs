@@ -3,8 +3,8 @@ use futures_lite::future;
 use inkpaper_epub::{SliceSource, SpineIndex};
 
 use crate::{
-    ReaderChapter, ReaderChapterDirection, ReaderRequest, ReaderSession, load_reader_document,
-    reader::ReaderState,
+    ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
+    ReaderRequest, ReaderSession, load_reader_document, reader::ReaderState,
 };
 
 #[test]
@@ -440,4 +440,32 @@ fn reader_font_size_stays_within_supported_bounds() {
     assert!(!state.increase_font_size());
 
     assert_eq!(state.font_size(), 20);
+}
+
+#[test]
+fn persisted_reader_preferences_are_used_when_opening_a_book() {
+    let mut state = ReaderState::default();
+
+    assert_eq!(
+        state.take_preferences_request(),
+        Some(ReaderPreferencesRequest::Load),
+    );
+
+    let preferences = ReaderPreferences::new(26).unwrap();
+
+    assert!(state.apply_preferences(preferences));
+
+    assert_eq!(state.font_size(), 26);
+
+    let path = String::from("/Books/book.epub");
+
+    state.open(path.clone(), String::from("Book"));
+
+    assert_eq!(
+        state.take_request(),
+        Some(ReaderRequest::OpenEpub {
+            path,
+            font_size: 26,
+        }),
+    );
 }

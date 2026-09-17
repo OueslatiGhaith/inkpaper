@@ -2,16 +2,20 @@ use std::path::{Path, PathBuf};
 
 use futures_lite::future;
 use inkpaper_app::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderSession, ReadingHistory,
-    ReadingHistoryEntry, SpineIndex,
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences, ReaderSession,
+    ReadingHistory, ReadingHistoryEntry, SpineIndex,
 };
 
 use crate::host_epub::HostFileSource;
 
 pub(super) struct SimulatorReaderService {
     session: Option<ReaderSession<HostFileSource>>,
+
     history: ReadingHistory,
     history_path: PathBuf,
+
+    preferences: ReaderPreferences,
+    preferences_path: PathBuf,
 }
 
 impl SimulatorReaderService {
@@ -23,10 +27,21 @@ impl SimulatorReaderService {
             .and_then(|bytes| ReadingHistory::decode(&bytes).ok())
             .unwrap_or_default();
 
+        let preferences_path = simulator_preferences_path();
+
+        let preferences = std::fs::read(&preferences_path)
+            .ok()
+            .and_then(|bytes| ReaderPreferences::decode(&bytes).ok())
+            .unwrap_or_default();
+
         Self {
             session: None,
+
             history,
             history_path,
+
+            preferences,
+            preferences_path,
         }
     }
 
@@ -110,6 +125,26 @@ impl SimulatorReaderService {
             .ok()
             .flatten()
     }
+
+    pub(super) const fn reader_preferences(&self) -> ReaderPreferences {
+        self.preferences
+    }
+
+    pub(super) fn update_reader_preferences(&mut self, preferences: ReaderPreferences) {
+        self.preferences = preferences;
+
+        let Ok(encoded) = preferences.encode() else {
+            return;
+        };
+
+        let temporary = self.preferences_path.with_extension("tmp");
+
+        if std::fs::write(&temporary, encoded).is_err() {
+            return;
+        }
+
+        let _ = std::fs::rename(temporary, &self.preferences_path);
+    }
 }
 
 fn simulator_history_path() -> PathBuf {
@@ -124,6 +159,20 @@ fn simulator_history_path() -> PathBuf {
     std::fs::create_dir_all(&directory).expect("simulator state directory must be creatable");
 
     directory.join("reading-history.dat")
+}
+
+fn simulator_preferences_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("INKPAPER_SIM_READER_PREFERENCES") {
+        return PathBuf::from(path);
+    }
+
+    let directory = std::env::temp_dir()
+        .join("inkpaper-simulator")
+        .join(".inkpaper");
+
+    std::fs::create_dir_all(&directory).expect("simulator state directory must be creatable");
+
+    directory.join("reader-preferences.dat")
 }
 
 fn simulator_epub_source(path: &str) -> Option<HostFileSource> {

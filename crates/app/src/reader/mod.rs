@@ -4,6 +4,7 @@ mod document;
 mod images;
 mod loader;
 mod measurer;
+mod preferences;
 mod progress;
 mod state;
 
@@ -14,6 +15,7 @@ pub use document::{ReaderChapter, ReaderDocument};
 pub use loader::{
     ReaderLoadError, ReaderSession, load_adjacent_reader_chapter, load_reader_document,
 };
+pub use preferences::{ReaderPreferences, ReaderPreferencesError, ReaderPreferencesRequest};
 pub use state::{ReaderChapterDirection, ReaderRequest};
 
 pub(crate) use state::ReaderState;

@@ -3,7 +3,8 @@ use inkpaper_epub::SpineIndex;
 use inkpaper_reader::{Page, ReadingPosition};
 
 use crate::{
-    ReaderChapter, ReaderDocument, ReadingHistoryEntry,
+    ReaderChapter, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
+    ReadingHistoryEntry,
     reader::{
         READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN, READER_FONT_SIZE_STEP,
     },
@@ -63,6 +64,7 @@ pub(crate) struct ReaderState {
     fallback_title: String,
 
     pending: Option<ReaderRequest>,
+    pending_preferences: Option<ReaderPreferencesRequest>,
     pending_chapter: Option<PendingChapterRequest>,
     pending_repagination: Option<PendingRepaginationRequest>,
 
@@ -80,6 +82,7 @@ impl Default for ReaderState {
             path: String::new(),
             fallback_title: String::new(),
             pending: None,
+            pending_preferences: Some(ReaderPreferencesRequest::Load),
             pending_chapter: None,
             pending_repagination: None,
             document: None,
@@ -111,6 +114,26 @@ impl ReaderState {
 
     pub(crate) fn take_request(&mut self) -> Option<ReaderRequest> {
         self.pending.take()
+    }
+
+    pub(crate) fn take_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
+        self.pending_preferences.take()
+    }
+
+    pub(crate) fn apply_preferences(&mut self, preferences: ReaderPreferences) -> bool {
+        let font_size = preferences.font_size();
+
+        if font_size == self.font_size {
+            return false;
+        }
+
+        if self.document.is_some() {
+            return self.request_font_size(font_size);
+        }
+
+        self.font_size = font_size;
+
+        true
     }
 
     pub(crate) fn apply_document(&mut self, document: ReaderDocument) -> bool {
@@ -545,6 +568,7 @@ impl ReaderState {
         self.chrome.controls_visible = true;
 
         self.refresh_chrome();
+        self.queue_preferences_update();
         self.queue_progress_update();
 
         true
@@ -575,5 +599,12 @@ impl ReaderState {
 
     pub(crate) const fn font_size(&self) -> u16 {
         self.font_size
+    }
+
+    fn queue_preferences_update(&mut self) {
+        let preferences = ReaderPreferences::new(self.font_size)
+            .expect("reader state only contains valid font sizes");
+
+        self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
     }
 }

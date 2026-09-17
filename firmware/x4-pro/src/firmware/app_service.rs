@@ -1,6 +1,7 @@
 use defmt::warn;
 use inkpaper_app::{
-    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderRequest, ReadingHistoryRequest,
+    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderPreferencesRequest,
+    ReaderRequest, ReadingHistoryRequest,
 };
 use inkpaper_ui::prelude::*;
 
@@ -8,6 +9,17 @@ use crate::firmware::{presenter::UiRuntime, storage};
 
 pub(super) async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<InkPaperApp>) {
     loop {
+        let preferences_request =
+            match runtime.update(app, |app, _| app.take_reader_preferences_request()) {
+                Ok(request) => request,
+                Err(_) => return warn!("failed to read app requests"),
+            };
+
+        if let Some(request) = preferences_request {
+            service_reader_preferences_request(runtime, app, request).await;
+            continue;
+        }
+
         let requests = match runtime.update(app, |app, _| {
             (
                 app.take_browse_request(),
@@ -16,10 +28,7 @@ pub(super) async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<In
             )
         }) {
             Ok(requests) => requests,
-
-            Err(_) => {
-                return warn!("failed to read app requests");
-            }
+            Err(_) => return warn!("failed to read app requests"),
         };
 
         let (browse_request, reader_request, history_request) = requests;
@@ -40,6 +49,31 @@ pub(super) async fn service_app_requests(runtime: &mut UiRuntime, app: Entity<In
 
         if let Some(request) = history_request {
             service_reading_history_request(runtime, app, request).await;
+        }
+    }
+}
+
+async fn service_reader_preferences_request(
+    runtime: &mut UiRuntime,
+    app: Entity<InkPaperApp>,
+    request: ReaderPreferencesRequest,
+) {
+    match request {
+        ReaderPreferencesRequest::Load => {
+            let preferences = storage::reader_preferences_and_wait().await;
+
+            if runtime
+                .update(app, move |app, cx| {
+                    app.apply_reader_preferences(preferences, cx);
+                })
+                .is_err()
+            {
+                warn!("failed to apply reader preferences");
+            }
+        }
+
+        ReaderPreferencesRequest::Update(preferences) => {
+            storage::update_reader_preferences(preferences).await;
         }
     }
 }

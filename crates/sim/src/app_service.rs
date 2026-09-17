@@ -1,4 +1,6 @@
-use inkpaper_app::{BrowseRequest, InkPaperApp, ReaderRequest, ReadingHistoryRequest};
+use inkpaper_app::{
+    BrowseRequest, InkPaperApp, ReaderPreferencesRequest, ReaderRequest, ReadingHistoryRequest,
+};
 use inkpaper_ui::prelude::*;
 
 use crate::{SimulatorReaderService, fake_fs::simulator_listing, runtime::SimulatorRuntime};
@@ -9,6 +11,19 @@ pub(super) fn service_app_requests(
     reader_service: &mut SimulatorReaderService,
 ) {
     loop {
+        // reader preferences are intentionally serviced first.
+        //
+        // at startup this guarantees the persisted font size is applied before an OpenEpub
+        // request is consumed.
+        let preferences_request = runtime
+            .update(app, |app, _| app.take_reader_preferences_request())
+            .expect("app root must be available");
+
+        if let Some(request) = preferences_request {
+            service_reader_preferences_request(runtime, app, reader_service, request);
+            continue;
+        }
+
         let (browse_request, reader_request, history_request) = runtime
             .update(app, |app, _| {
                 (
@@ -35,6 +50,29 @@ pub(super) fn service_app_requests(
 
         if let Some(request) = history_request {
             service_reading_history_request(runtime, app, reader_service, request);
+        }
+    }
+}
+
+fn service_reader_preferences_request(
+    runtime: &mut SimulatorRuntime<'_>,
+    app: Entity<InkPaperApp>,
+    reader_service: &mut SimulatorReaderService,
+    request: ReaderPreferencesRequest,
+) {
+    match request {
+        ReaderPreferencesRequest::Load => {
+            let preferences = reader_service.reader_preferences();
+
+            runtime
+                .update(app, move |app, cx| {
+                    app.apply_reader_preferences(preferences, cx);
+                })
+                .expect("app root must be available");
+        }
+
+        ReaderPreferencesRequest::Update(preferences) => {
+            reader_service.update_reader_preferences(preferences);
         }
     }
 }

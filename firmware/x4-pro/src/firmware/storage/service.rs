@@ -6,14 +6,15 @@ use embassy_sync::{
 use hadris_fat::r#async::FatVolume;
 use hadris_io::r#async::{Read as HadrisRead, Seek as HadrisSeek, Write as HadrisWrite};
 use inkpaper_app::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderSession, ReadingHistoryEntry,
-    SpineIndex,
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences, ReaderSession,
+    ReadingHistoryEntry, SpineIndex,
 };
 
 use crate::firmware::storage::{
     epub::{FatEpubSource, open_reader_session},
     filesystem::{list_directory, list_root},
     history::{load_reading_history, save_reading_history},
+    preferences::{load_reader_preferences, save_reader_preferences},
 };
 
 const COMMAND_CAPACITY: usize = 4;
@@ -28,6 +29,7 @@ static EPUB_DOCUMENT_DONE: Signal<CriticalSectionRawMutex, Option<ReaderDocument
 static EPUB_CHAPTER_DONE: Signal<CriticalSectionRawMutex, Option<ReaderChapter>> = Signal::new();
 static READING_HISTORY_DONE: Signal<CriticalSectionRawMutex, Option<Vec<ReadingHistoryEntry>>> =
     Signal::new();
+static READER_PREFERENCES_DONE: Signal<CriticalSectionRawMutex, ReaderPreferences> = Signal::new();
 
 #[derive(Debug)]
 enum Command {
@@ -49,6 +51,8 @@ enum Command {
     },
     LoadReadingHistory,
     UpdateReadingProgress(ReadingHistoryEntry),
+    LoadReaderPreferences,
+    UpdateReaderPreferences(ReaderPreferences),
     Shutdown,
 }
 
@@ -145,6 +149,18 @@ pub async fn reading_history_and_wait() -> Option<Vec<ReadingHistoryEntry>> {
     READING_HISTORY_DONE.wait().await
 }
 
+pub async fn reader_preferences_and_wait() -> ReaderPreferences {
+    READER_PREFERENCES_DONE.reset();
+    COMMANDS.send(Command::LoadReaderPreferences).await;
+    READER_PREFERENCES_DONE.wait().await
+}
+
+pub async fn update_reader_preferences(preferences: ReaderPreferences) {
+    COMMANDS
+        .send(Command::UpdateReaderPreferences(preferences))
+        .await;
+}
+
 pub(super) fn signal_ready(ready: bool) {
     READY.signal(ready);
 }
@@ -162,6 +178,7 @@ where
     let mut reader_session: Option<ReaderSession<FatEpubSource<'a, D>>> = None;
     let mut reading_history = load_reading_history(filesystem).await;
     let mut reading_history_dirty = false;
+    let mut reader_preferences = load_reader_preferences(filesystem).await;
 
     loop {
         match COMMANDS.receive().await {
@@ -189,37 +206,38 @@ where
                 }
 
                 let document = match reader_session.as_mut() {
-                    Some(session) if session.set_font_size(font_size) => {
-                        let resume = reading_history.resume_position(&path, session.identifier());
+                    Some(session) => {
+                        if !session.set_font_size(font_size) {
+                            warn!(
+                                "invalid EPUB reader font size path={} size={}",
+                                path.as_str(),
+                                font_size,
+                            );
 
-                        match session.load_document_at(resume).await {
-                            Ok(document) => {
-                                info!(
-                                    "EPUB reader ready path={} spine={} page={} pages={}",
-                                    path.as_str(),
-                                    document.spine().get(),
-                                    document.opening_page_index().saturating_add(1),
-                                    document.page_count(),
-                                );
+                            None
+                        } else {
+                            let resume =
+                                reading_history.resume_position(&path, session.identifier());
 
-                                Some(document)
-                            }
+                            match session.load_document_at(resume).await {
+                                Ok(document) => {
+                                    info!(
+                                        "EPUB reader ready path={} spine={} page={} pages={}",
+                                        path.as_str(),
+                                        document.spine().get(),
+                                        document.opening_page_index().saturating_add(1),
+                                        document.page_count(),
+                                    );
 
-                            Err(_) => {
-                                warn!("EPUB reader load failed path={}", path.as_str(),);
-                                None
+                                    Some(document)
+                                }
+
+                                Err(_) => {
+                                    warn!("EPUB reader load failed path={}", path.as_str(),);
+                                    None
+                                }
                             }
                         }
-                    }
-
-                    Some(_) => {
-                        warn!(
-                            "invalid EPUB reader font size path={} size={}",
-                            path.as_str(),
-                            font_size,
-                        );
-
-                        None
                     }
 
                     None => None,
@@ -326,6 +344,17 @@ where
                 reading_history_dirty = true;
             }
 
+            Command::LoadReaderPreferences => {
+                READER_PREFERENCES_DONE.signal(reader_preferences);
+            }
+
+            Command::UpdateReaderPreferences(preferences) => {
+                reader_preferences = preferences;
+                if !save_reader_preferences(filesystem, reader_preferences).await {
+                    warn!("reader preferences were not persisted");
+                }
+            }
+
             Command::Shutdown => {
                 debug!("storage shutdown requested",);
 
@@ -357,6 +386,10 @@ pub(super) async fn serve_unavailable_requests() {
             }
             Command::LoadReadingHistory => READING_HISTORY_DONE.signal(None),
             Command::UpdateReadingProgress(_) => {}
+            Command::LoadReaderPreferences => {
+                READER_PREFERENCES_DONE.signal(ReaderPreferences::default());
+            }
+            Command::UpdateReaderPreferences(_) => {}
             Command::Shutdown => {
                 SHUTDOWN_DONE.signal(());
                 return;

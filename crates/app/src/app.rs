@@ -4,7 +4,8 @@ use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
     BrowseListing, BrowseRequest, ReaderChapter, ReaderChapterDirection, ReaderDocument,
-    ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
+    ReaderPreferences, ReaderPreferencesRequest, ReaderRequest, ReadingHistoryEntry,
+    ReadingHistoryRequest,
     browser::BrowserState,
     reader::ReaderState,
     reading_history::ReadingHistoryState,
@@ -354,6 +355,24 @@ impl InkPaperApp {
     ) -> bool {
         self.reader
             .finish_repagination_request(&path, spine, font_size)
+    }
+
+    pub fn take_reader_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
+        self.reader.take_preferences_request()
+    }
+
+    pub fn apply_reader_preferences(
+        &mut self,
+        preferences: ReaderPreferences,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let changed = self.reader.apply_preferences(preferences);
+
+        if changed {
+            cx.notify();
+        }
+
+        changed
     }
 }
 
