@@ -9,6 +9,7 @@ mod reader;
 mod reader_page;
 mod reading_history;
 mod screens;
+mod service;
 mod typography;
 
 pub use app::InkPaperApp;
@@ -22,5 +23,6 @@ pub use reading_history::{
     BookProgress, MAX_READING_HISTORY_ENTRIES, ReadingHistory, ReadingHistoryEntry,
     ReadingHistoryError, ReadingHistoryRequest,
 };
+pub use service::{AppPlatform, AppService, AppServiceError, PlatformEntry, PlatformEntryKind};
 
 pub use inkpaper_epub::SpineIndex;

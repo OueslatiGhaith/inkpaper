@@ -3,45 +3,45 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use inkpaper_app::{BrowseEntry, BrowseListing};
+use inkpaper_app::PlatformEntry;
 
-pub(super) fn simulator_listing(path: &str) -> Option<BrowseListing> {
+pub(super) fn simulator_listing(path: &str) -> Option<Vec<PlatformEntry>> {
     let entries = match path {
         "/" => vec![
-            BrowseEntry::directory("Books"),
-            BrowseEntry::directory("Documents"),
-            BrowseEntry::directory("Fixtures"),
-            BrowseEntry::directory("Read"),
-            BrowseEntry::file("A Fire Upon the Deep.epub"),
-            BrowseEntry::file("Blindsight.epub"),
-            BrowseEntry::file("Children of Time.epub"),
-            BrowseEntry::file("Dune.epub"),
-            BrowseEntry::file("Foundation.epub"),
-            BrowseEntry::file("Hyperion.epub"),
-            BrowseEntry::file("Neuromancer.epub"),
-            BrowseEntry::file("Project Hail Mary.epub"),
-            BrowseEntry::file("Snow Crash.epub"),
-            BrowseEntry::file("The Dispossessed.epub"),
-            BrowseEntry::file("The Left Hand of Darkness.epub"),
-            BrowseEntry::file("The Three-Body Problem.epub"),
+            PlatformEntry::directory("Books"),
+            PlatformEntry::directory("Documents"),
+            PlatformEntry::directory("Fixtures"),
+            PlatformEntry::directory("Read"),
+            PlatformEntry::file("A Fire Upon the Deep.epub"),
+            PlatformEntry::file("Blindsight.epub"),
+            PlatformEntry::file("Children of Time.epub"),
+            PlatformEntry::file("Dune.epub"),
+            PlatformEntry::file("Foundation.epub"),
+            PlatformEntry::file("Hyperion.epub"),
+            PlatformEntry::file("Neuromancer.epub"),
+            PlatformEntry::file("Project Hail Mary.epub"),
+            PlatformEntry::file("Snow Crash.epub"),
+            PlatformEntry::file("The Dispossessed.epub"),
+            PlatformEntry::file("The Left Hand of Darkness.epub"),
+            PlatformEntry::file("The Three-Body Problem.epub"),
         ],
 
         "/Books" => vec![
-            BrowseEntry::directory("Sci-Fi"),
-            BrowseEntry::file("Neuromancer.epub"),
-            BrowseEntry::file("The Dispossessed.epub"),
-            BrowseEntry::file("Hyperion.epub"),
+            PlatformEntry::directory("Sci-Fi"),
+            PlatformEntry::file("Neuromancer.epub"),
+            PlatformEntry::file("The Dispossessed.epub"),
+            PlatformEntry::file("Hyperion.epub"),
         ],
 
         "/Books/Sci-Fi" => vec![
-            BrowseEntry::file("Children of Time.epub"),
-            BrowseEntry::file("The Left Hand of Darkness.epub"),
-            BrowseEntry::file("Foundation.epub"),
+            PlatformEntry::file("Children of Time.epub"),
+            PlatformEntry::file("The Left Hand of Darkness.epub"),
+            PlatformEntry::file("Foundation.epub"),
         ],
 
         "/Documents" => vec![
-            BrowseEntry::file("Distributed Systems.pdf"),
-            BrowseEntry::file("Cloud Computing.pdf"),
+            PlatformEntry::file("Distributed Systems.pdf"),
+            PlatformEntry::file("Cloud Computing.pdf"),
         ],
 
         "/Fixtures" => fixture_entries(),
@@ -51,10 +51,10 @@ pub(super) fn simulator_listing(path: &str) -> Option<BrowseListing> {
         _ => return None,
     };
 
-    Some(BrowseListing::new(path, entries))
+    Some(entries)
 }
 
-fn fixture_entries() -> Vec<BrowseEntry> {
+fn fixture_entries() -> Vec<PlatformEntry> {
     let Ok(entries) = fs::read_dir(fixtures_directory()) else {
         return Vec::new();
     };
@@ -80,7 +80,7 @@ fn fixture_entries() -> Vec<BrowseEntry> {
 
     names.sort();
 
-    names.into_iter().map(BrowseEntry::file).collect()
+    names.into_iter().map(PlatformEntry::file).collect()
 }
 
 fn fixtures_directory() -> PathBuf {

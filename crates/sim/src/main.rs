@@ -3,24 +3,23 @@ use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     sdl2::{Keycode, MouseButton},
 };
-use inkpaper_app::InkPaperApp;
+use futures_lite::future;
+use inkpaper_app::{AppService, InkPaperApp};
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    app_service::service_app_requests,
     gesture::{PointerGesture, PointerRelease, wheel_scroll_offset},
-    reader_service::SimulatorReaderService,
+    platform::SimulatorPlatform,
     render::{
         DISPLAY_HEIGHT, DISPLAY_SIZE_EG, DISPLAY_WIDTH, rebuild_ui, render_pending_ui, ui_point,
     },
     runtime::new_runtime,
 };
 
-mod app_service;
 mod fake_fs;
 mod gesture;
 mod host_epub;
-mod reader_service;
+mod platform;
 mod render;
 mod runtime;
 
@@ -33,8 +32,9 @@ fn main() {
         .create_root(|_| InkPaperApp::default())
         .expect("InkPaper application root must fit");
 
-    let mut reader_service = SimulatorReaderService::new();
-    service_app_requests(&mut runtime, app, &mut reader_service);
+    let mut app_service = AppService::new(SimulatorPlatform::new());
+    future::block_on(app_service.service_pending(&mut runtime, app))
+        .expect("application service must remain available");
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
@@ -53,7 +53,10 @@ fn main() {
 
         for event in window.events() {
             match event {
-                SimulatorEvent::Quit => break 'running,
+                SimulatorEvent::Quit => {
+                    let _ = future::block_on(app_service.flush());
+                    break 'running;
+                }
 
                 SimulatorEvent::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
@@ -154,7 +157,13 @@ fn main() {
                 _ => {}
             }
 
-            service_app_requests(&mut runtime, app, &mut reader_service);
+            future::block_on(app_service.service_pending(&mut runtime, app))
+                .expect("application service must remain available");
+
+            // the simulator can persist immediately. On the X4 we will instead flush
+            // reading progress at suspend so page turns do not write the SD card continuously.
+            let _ = future::block_on(app_service.flush());
+
             render_pending_ui(&mut runtime, &mut display);
         }
     }
