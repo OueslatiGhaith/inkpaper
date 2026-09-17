@@ -1,10 +1,12 @@
 use alloc::string::String;
 
-use inkpaper_epub::{ContentOffset, Epub, EpubSource, Error as EpubError, SpineIndex};
-use inkpaper_reader::{ReadingPosition, paginate_chapter};
+use inkpaper_epub::{Epub, EpubSource, Error as EpubError, SpineIndex};
+use inkpaper_reader::{ReaderSettings, ReadingPosition, paginate_chapter};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
-use crate::reader::{images::load_chapter_images, progress::BookProgressMap};
+use crate::reader::{
+    default_reader_settings, images::load_chapter_images, progress::BookProgressMap,
+};
 
 use super::{
     document::{ReaderChapter, ReaderDocument},
@@ -19,6 +21,7 @@ pub enum ReaderLoadError<E> {
     FontRegistry(FontRegistryError),
     Shape(ShapeError),
     SpineIndexOverflow,
+    InvalidFontSize(u16),
     NoReadableChapter,
 }
 
@@ -29,6 +32,7 @@ where
     path: String,
     epub: Epub<S>,
     progress: BookProgressMap,
+    settings: ReaderSettings,
 }
 
 impl<S> ReaderSession<S>
@@ -43,6 +47,7 @@ where
             path,
             epub,
             progress,
+            settings: default_reader_settings(),
         })
     }
 
@@ -52,6 +57,20 @@ where
 
     pub fn identifier(&self) -> Option<&str> {
         self.epub.metadata().identifier()
+    }
+
+    pub const fn font_size(&self) -> u16 {
+        self.settings.font_size()
+    }
+
+    pub fn set_font_size(&mut self, font_size: u16) -> bool {
+        let Some(settings) = reader_settings(font_size) else {
+            return false;
+        };
+
+        self.settings = settings;
+
+        true
     }
 
     pub async fn load_document(&mut self) -> Result<ReaderDocument, ReaderLoadError<S::Error>> {
@@ -67,6 +86,7 @@ where
             &mut self.epub,
             self.progress.clone(),
             position,
+            self.settings,
         )
         .await
     }
@@ -76,7 +96,28 @@ where
         from: SpineIndex,
         direction: ReaderChapterDirection,
     ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>> {
-        load_adjacent_reader_chapter_from_epub(&mut self.epub, from, direction).await
+        load_adjacent_reader_chapter_from_epub(&mut self.epub, from, direction, self.settings).await
+    }
+
+    pub async fn repaginate_chapter(
+        &mut self,
+        spine: SpineIndex,
+        font_size: u16,
+    ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>> {
+        let settings =
+            reader_settings(font_size).ok_or(ReaderLoadError::InvalidFontSize(font_size))?;
+
+        let index = spine
+            .as_usize()
+            .ok_or(ReaderLoadError::SpineIndexOverflow)?;
+
+        let chapter = load_readable_chapter_at(&mut self.epub, index, settings).await?;
+
+        if chapter.is_some() {
+            self.settings = settings;
+        }
+
+        Ok(chapter)
     }
 }
 
@@ -102,7 +143,8 @@ where
 {
     let mut epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
 
-    load_adjacent_reader_chapter_from_epub(&mut epub, from, direction).await
+    load_adjacent_reader_chapter_from_epub(&mut epub, from, direction, default_reader_settings())
+        .await
 }
 
 async fn load_reader_document_from_epub<S>(
@@ -110,6 +152,7 @@ async fn load_reader_document_from_epub<S>(
     epub: &mut Epub<S>,
     progress: BookProgressMap,
     resume: Option<ReadingPosition>,
+    settings: ReaderSettings,
 ) -> Result<ReaderDocument, ReaderLoadError<S::Error>>
 where
     S: EpubSource,
@@ -127,7 +170,7 @@ where
     if let Some(position) = resume
         && let Some(index) = position.location().spine().as_usize()
         && index < spine_len
-        && let Some(chapter) = load_readable_chapter_at(epub, index).await?
+        && let Some(chapter) = load_readable_chapter_at(epub, index, settings).await?
     {
         let opening_page_index = chapter.page_at_position(position).unwrap_or(0);
 
@@ -145,7 +188,7 @@ where
     }
 
     for index in 0..spine_len {
-        if let Some(chapter) = load_readable_chapter_at(epub, index).await? {
+        if let Some(chapter) = load_readable_chapter_at(epub, index, settings).await? {
             return Ok(ReaderDocument::new(
                 path,
                 identifier,
@@ -167,6 +210,7 @@ async fn load_adjacent_reader_chapter_from_epub<S>(
     epub: &mut Epub<S>,
     from: SpineIndex,
     direction: ReaderChapterDirection,
+    settings: ReaderSettings,
 ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
 where
     S: EpubSource,
@@ -182,7 +226,7 @@ where
     match direction {
         ReaderChapterDirection::Next => {
             for index in from.saturating_add(1)..spine_len {
-                if let Some(chapter) = load_readable_chapter_at(epub, index).await? {
+                if let Some(chapter) = load_readable_chapter_at(epub, index, settings).await? {
                     return Ok(Some(chapter));
                 }
             }
@@ -190,7 +234,7 @@ where
 
         ReaderChapterDirection::Previous => {
             for index in (0..from).rev() {
-                if let Some(chapter) = load_readable_chapter_at(epub, index).await? {
+                if let Some(chapter) = load_readable_chapter_at(epub, index, settings).await? {
                     return Ok(Some(chapter));
                 }
             }
@@ -236,6 +280,7 @@ where
 async fn load_readable_chapter_at<S>(
     epub: &mut Epub<S>,
     index: usize,
+    settings: ReaderSettings,
 ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
 where
     S: EpubSource,
@@ -286,7 +331,7 @@ where
         &styles,
         spine,
         reader_viewport(),
-        reader_settings(),
+        settings,
         &mut measurer,
     )
     .map_err(ReaderLoadError::Shape)?;

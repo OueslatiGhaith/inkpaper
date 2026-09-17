@@ -97,31 +97,33 @@ async fn service_reader_request(
     request: ReaderRequest,
 ) {
     match request {
-        ReaderRequest::OpenEpub(path) => match storage::load_epub_document_and_wait(&path).await {
-            Some(mut document) => {
-                document.register_images(runtime);
+        ReaderRequest::OpenEpub { path, font_size } => {
+            match storage::load_epub_document_and_wait(&path, font_size).await {
+                Some(mut document) => {
+                    document.register_images(runtime);
 
-                if runtime
-                    .update(app, move |app, cx| {
-                        app.apply_reader_document(document, cx);
-                    })
-                    .is_err()
-                {
-                    warn!("failed to apply reader document");
+                    if runtime
+                        .update(app, move |app, cx| {
+                            app.apply_reader_document(document, cx);
+                        })
+                        .is_err()
+                    {
+                        warn!("failed to apply reader document");
+                    }
+                }
+
+                None => {
+                    if runtime
+                        .update(app, move |app, cx| {
+                            app.apply_reader_error(path, cx);
+                        })
+                        .is_err()
+                    {
+                        warn!("failed to apply reader error");
+                    }
                 }
             }
-
-            None => {
-                if runtime
-                    .update(app, move |app, cx| {
-                        app.apply_reader_error(path, cx);
-                    })
-                    .is_err()
-                {
-                    warn!("failed to apply reader error");
-                }
-            }
-        },
+        }
 
         ReaderRequest::LoadAdjacentChapter {
             path,
@@ -149,6 +151,36 @@ async fn service_reader_request(
                     .is_err()
                 {
                     warn!("failed to finish reader chapter request");
+                }
+            }
+        },
+
+        ReaderRequest::RepaginateChapter {
+            path,
+            spine,
+            font_size,
+        } => match storage::repaginate_epub_chapter_and_wait(&path, spine, font_size).await {
+            Some(mut chapter) => {
+                chapter.register_images(runtime);
+
+                if runtime
+                    .update(app, move |app, cx| {
+                        app.apply_reader_repagination(path, spine, font_size, chapter, cx);
+                    })
+                    .is_err()
+                {
+                    warn!("failed to apply reader repagination");
+                }
+            }
+
+            None => {
+                if runtime
+                    .update(app, move |app, _| {
+                        app.finish_reader_repagination_request(path, spine, font_size);
+                    })
+                    .is_err()
+                {
+                    warn!("failed to finish reader repagination");
                 }
             }
         },

@@ -30,10 +30,9 @@ impl SimulatorReaderService {
         }
     }
 
-    pub(super) fn open_document(&mut self, path: String) -> Option<ReaderDocument> {
+    pub(super) fn open_document(&mut self, path: String, font_size: u16) -> Option<ReaderDocument> {
         let reuse = match self.session.as_ref() {
             Some(session) => session.path() == path,
-
             None => false,
         };
 
@@ -47,13 +46,15 @@ impl SimulatorReaderService {
             self.session = Some(session);
         }
 
-        let resume = {
-            let session = self.session.as_ref()?;
+        let session = self.session.as_mut()?;
 
-            self.history.resume_position(&path, session.identifier())
-        };
+        if !session.set_font_size(font_size) {
+            return None;
+        }
 
-        future::block_on(self.session.as_mut()?.load_document_at(resume)).ok()
+        let resume = self.history.resume_position(&path, session.identifier());
+
+        future::block_on(session.load_document_at(resume)).ok()
     }
 
     pub(super) fn load_adjacent_chapter(
@@ -91,6 +92,23 @@ impl SimulatorReaderService {
 
     pub(super) fn reading_history(&self) -> Vec<ReadingHistoryEntry> {
         self.history.entries().to_vec()
+    }
+
+    pub(super) fn repaginate_chapter(
+        &mut self,
+        path: &str,
+        spine: SpineIndex,
+        font_size: u16,
+    ) -> Option<ReaderChapter> {
+        let session = self.session.as_mut()?;
+
+        if session.path() != path {
+            return None;
+        }
+
+        future::block_on(session.repaginate_chapter(spine, font_size))
+            .ok()
+            .flatten()
     }
 }
 

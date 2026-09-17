@@ -359,3 +359,85 @@ fn image_only_epub_is_a_readable_chapter() {
         inkpaper_reader::PageItem::Image(_)
     ));
 }
+
+#[test]
+fn font_size_repagination_keeps_the_current_reading_position() {
+    let path = String::from("/Fixtures/book-boundaries.epub");
+
+    let source = SliceSource::new(include_bytes!("../../../../fixtures/book-boundaries.epub"));
+
+    let mut session = future::block_on(ReaderSession::open(path.clone(), source)).unwrap();
+
+    let document = future::block_on(session.load_document()).unwrap();
+
+    let spine = document.spine();
+
+    let target_index = document.page_count().saturating_sub(1).min(2);
+
+    let target_position = document.page(target_index).unwrap().position();
+
+    let mut state = ReaderState::default();
+
+    state.open(path.clone(), String::from("book-boundaries"));
+
+    // discard the initial open request because this test already loaded the document
+    // through the session above.
+    let _ = state.take_request();
+
+    assert!(state.apply_document(document));
+
+    // applying the document queues a progress update.
+    let _ = state.take_request();
+
+    while state.page_index() < target_index {
+        assert!(state.next_page());
+
+        // page turns queue progress updates.
+        let _ = state.take_request();
+    }
+
+    assert_eq!(state.reading_position(), Some(target_position));
+
+    assert_eq!(state.font_size(), 20);
+
+    assert!(state.increase_font_size());
+
+    assert_eq!(
+        state.take_request(),
+        Some(ReaderRequest::RepaginateChapter {
+            path: path.clone(),
+            spine,
+            font_size: 22,
+        }),
+    );
+
+    let chapter = future::block_on(session.repaginate_chapter(spine, 22))
+        .unwrap()
+        .unwrap();
+
+    assert!(state.apply_repaginated_chapter(&path, spine, 22, chapter));
+
+    assert_eq!(state.font_size(), 22);
+
+    let page = state.page().unwrap();
+
+    assert!(
+        page.position() <= target_position && target_position < page.end_position(),
+        "repagination must keep the old logical position on the visible page",
+    );
+
+    assert!(state.controls_visible());
+}
+
+#[test]
+fn reader_font_size_stays_within_supported_bounds() {
+    let mut state = ReaderState::default();
+
+    assert_eq!(state.font_size(), 20);
+
+    // without a loaded document, adjustments cannot queue repagination.
+    assert!(!state.decrease_font_size());
+    assert!(!state.increase_font_size());
+
+    assert_eq!(state.font_size(), 20);
+}

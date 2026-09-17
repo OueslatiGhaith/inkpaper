@@ -2,7 +2,12 @@ use alloc::{format, string::String};
 use inkpaper_epub::SpineIndex;
 use inkpaper_reader::{Page, ReadingPosition};
 
-use crate::{ReaderChapter, ReaderDocument, ReadingHistoryEntry};
+use crate::{
+    ReaderChapter, ReaderDocument, ReadingHistoryEntry,
+    reader::{
+        READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN, READER_FONT_SIZE_STEP,
+    },
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReaderChapterDirection {
@@ -12,7 +17,10 @@ pub enum ReaderChapterDirection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReaderRequest {
-    OpenEpub(String),
+    OpenEpub {
+        path: String,
+        font_size: u16,
+    },
 
     LoadAdjacentChapter {
         path: String,
@@ -20,7 +28,20 @@ pub enum ReaderRequest {
         direction: ReaderChapterDirection,
     },
 
+    RepaginateChapter {
+        path: String,
+        spine: SpineIndex,
+        font_size: u16,
+    },
+
     UpdateProgress(ReadingHistoryEntry),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingRepaginationRequest {
+    spine: SpineIndex,
+    position: ReadingPosition,
+    font_size: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,23 +57,50 @@ struct ReaderChromeState {
     section_label: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct ReaderState {
     path: String,
     fallback_title: String,
+
     pending: Option<ReaderRequest>,
     pending_chapter: Option<PendingChapterRequest>,
+    pending_repagination: Option<PendingRepaginationRequest>,
+
     document: Option<ReaderDocument>,
     page_index: usize,
+    font_size: u16,
+
     failed: bool,
     chrome: ReaderChromeState,
 }
 
+impl Default for ReaderState {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            fallback_title: String::new(),
+            pending: None,
+            pending_chapter: None,
+            pending_repagination: None,
+            document: None,
+            page_index: 0,
+            font_size: READER_FONT_SIZE_DEFAULT,
+            failed: false,
+            chrome: ReaderChromeState::default(),
+        }
+    }
+}
+
 impl ReaderState {
     pub(crate) fn open(&mut self, path: String, fallback_title: String) {
-        self.pending = Some(ReaderRequest::OpenEpub(path.clone()));
+        self.pending = Some(ReaderRequest::OpenEpub {
+            path: path.clone(),
+            font_size: self.font_size,
+        });
 
         self.pending_chapter = None;
+        self.pending_repagination = None;
+
         self.path = path;
         self.fallback_title = fallback_title;
         self.document = None;
@@ -77,6 +125,7 @@ impl ReaderState {
         self.document = Some(document);
 
         self.pending_chapter = None;
+        self.pending_repagination = None;
         self.page_index = page_index;
         self.failed = false;
 
@@ -95,6 +144,7 @@ impl ReaderState {
 
         self.document = None;
         self.pending_chapter = None;
+        self.pending_repagination = None;
         self.page_index = 0;
         self.failed = true;
 
@@ -187,6 +237,9 @@ impl ReaderState {
         let Some(document) = self.document.as_ref() else {
             return false;
         };
+        if self.pending_repagination.is_some() {
+            return false;
+        }
 
         if self.page_index > 0 {
             self.page_index -= 1;
@@ -210,6 +263,9 @@ impl ReaderState {
         let Some(document) = self.document.as_ref() else {
             return false;
         };
+        if self.pending_repagination.is_some() {
+            return false;
+        }
 
         let page_count = document.page_count();
 
@@ -234,7 +290,7 @@ impl ReaderState {
     }
 
     fn request_adjacent_chapter(&mut self, from: SpineIndex, direction: ReaderChapterDirection) {
-        if self.pending_chapter.is_some() {
+        if self.pending_chapter.is_some() || self.pending_repagination.is_some() {
             return;
         }
 
@@ -393,5 +449,131 @@ impl ReaderState {
 
     pub(crate) fn document(&self) -> Option<&ReaderDocument> {
         self.document.as_ref()
+    }
+
+    pub(crate) fn decrease_font_size(&mut self) -> bool {
+        let target = self
+            .font_size
+            .saturating_sub(READER_FONT_SIZE_STEP)
+            .max(READER_FONT_SIZE_MIN);
+
+        self.request_font_size(target)
+    }
+
+    pub(crate) fn increase_font_size(&mut self) -> bool {
+        let target = self
+            .font_size
+            .saturating_add(READER_FONT_SIZE_STEP)
+            .min(READER_FONT_SIZE_MAX);
+
+        self.request_font_size(target)
+    }
+
+    fn request_font_size(&mut self, font_size: u16) -> bool {
+        if font_size == self.font_size
+            || self.pending_chapter.is_some()
+            || self.pending_repagination.is_some()
+        {
+            return false;
+        }
+
+        let Some(document) = self.document.as_ref() else {
+            return false;
+        };
+
+        let Some(page) = document.page(self.page_index) else {
+            return false;
+        };
+
+        let request = PendingRepaginationRequest {
+            spine: document.spine(),
+            position: page.position(),
+            font_size,
+        };
+
+        self.pending_repagination = Some(request);
+
+        self.pending = Some(ReaderRequest::RepaginateChapter {
+            path: self.path.clone(),
+            spine: request.spine,
+            font_size,
+        });
+
+        true
+    }
+
+    pub(crate) fn apply_repaginated_chapter(
+        &mut self,
+        path: &str,
+        spine: SpineIndex,
+        font_size: u16,
+        chapter: ReaderChapter,
+    ) -> bool {
+        if path != self.path {
+            return false;
+        }
+
+        let Some(request) = self.pending_repagination else {
+            return false;
+        };
+
+        if request.spine != spine || request.font_size != font_size || chapter.spine() != spine {
+            return false;
+        }
+
+        let Some(document) = self.document.as_mut() else {
+            self.pending_repagination = None;
+            return false;
+        };
+
+        if document.spine() != spine {
+            self.pending_repagination = None;
+            return false;
+        }
+
+        let page_index = chapter.page_at_position(request.position).unwrap_or(0);
+
+        document.replace_chapter(chapter);
+
+        self.page_index = page_index.min(document.page_count().saturating_sub(1));
+
+        self.font_size = font_size;
+        self.pending_repagination = None;
+        self.failed = false;
+
+        // keep the chrome visible so repeated A-/A+ presses are convenient.
+        self.chrome.controls_visible = true;
+
+        self.refresh_chrome();
+        self.queue_progress_update();
+
+        true
+    }
+
+    pub(crate) fn finish_repagination_request(
+        &mut self,
+        path: &str,
+        spine: SpineIndex,
+        font_size: u16,
+    ) -> bool {
+        if path != self.path {
+            return false;
+        }
+
+        let Some(request) = self.pending_repagination else {
+            return false;
+        };
+
+        if request.spine != spine || request.font_size != font_size {
+            return false;
+        }
+
+        self.pending_repagination = None;
+
+        true
+    }
+
+    pub(crate) const fn font_size(&self) -> u16 {
+        self.font_size
     }
 }

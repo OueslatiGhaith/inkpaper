@@ -33,11 +33,19 @@ static READING_HISTORY_DONE: Signal<CriticalSectionRawMutex, Option<Vec<ReadingH
 enum Command {
     ListRoot,
     ListDirectory(String),
-    LoadEpub(String),
+    LoadEpub {
+        path: String,
+        font_size: u16,
+    },
     LoadEpubChapter {
         path: String,
         from: SpineIndex,
         direction: ReaderChapterDirection,
+    },
+    RepaginateEpubChapter {
+        path: String,
+        spine: SpineIndex,
+        font_size: u16,
     },
     LoadReadingHistory,
     UpdateReadingProgress(ReadingHistoryEntry),
@@ -84,9 +92,14 @@ pub async fn list_directory_and_wait(path: &str) -> Option<Vec<StorageEntry>> {
     DIRECTORY_LIST_DONE.wait().await
 }
 
-pub async fn load_epub_document_and_wait(path: &str) -> Option<ReaderDocument> {
+pub async fn load_epub_document_and_wait(path: &str, font_size: u16) -> Option<ReaderDocument> {
     EPUB_DOCUMENT_DONE.reset();
-    COMMANDS.send(Command::LoadEpub(String::from(path))).await;
+    COMMANDS
+        .send(Command::LoadEpub {
+            path: String::from(path),
+            font_size,
+        })
+        .await;
     EPUB_DOCUMENT_DONE.wait().await
 }
 
@@ -101,6 +114,22 @@ pub async fn load_epub_chapter_and_wait(
             path: String::from(path),
             from,
             direction,
+        })
+        .await;
+    EPUB_CHAPTER_DONE.wait().await
+}
+
+pub async fn repaginate_epub_chapter_and_wait(
+    path: &str,
+    spine: SpineIndex,
+    font_size: u16,
+) -> Option<ReaderChapter> {
+    EPUB_CHAPTER_DONE.reset();
+    COMMANDS
+        .send(Command::RepaginateEpubChapter {
+            path: String::from(path),
+            spine,
+            font_size,
         })
         .await;
     EPUB_CHAPTER_DONE.wait().await
@@ -146,10 +175,9 @@ where
                 DIRECTORY_LIST_DONE.signal(entries);
             }
 
-            Command::LoadEpub(path) => {
+            Command::LoadEpub { path, font_size } => {
                 let reuse_session = match reader_session.as_ref() {
                     Some(session) => session.path() == path,
-
                     None => false,
                 };
 
@@ -160,31 +188,39 @@ where
                     reader_session = open_reader_session(filesystem, path.clone()).await;
                 }
 
-                let resume = match reader_session.as_ref() {
-                    Some(session) => reading_history.resume_position(&path, session.identifier()),
-                    None => None,
-                };
-
                 let document = match reader_session.as_mut() {
-                    Some(session) => match session.load_document_at(resume).await {
-                        Ok(document) => {
-                            info!(
-                                "EPUB reader ready path={} spine={} page={} pages={}",
-                                path.as_str(),
-                                document.spine().get(),
-                                document.opening_page_index().saturating_add(1),
-                                document.page_count(),
-                            );
+                    Some(session) if session.set_font_size(font_size) => {
+                        let resume = reading_history.resume_position(&path, session.identifier());
 
-                            Some(document)
+                        match session.load_document_at(resume).await {
+                            Ok(document) => {
+                                info!(
+                                    "EPUB reader ready path={} spine={} page={} pages={}",
+                                    path.as_str(),
+                                    document.spine().get(),
+                                    document.opening_page_index().saturating_add(1),
+                                    document.page_count(),
+                                );
+
+                                Some(document)
+                            }
+
+                            Err(_) => {
+                                warn!("EPUB reader load failed path={}", path.as_str(),);
+                                None
+                            }
                         }
+                    }
 
-                        Err(_) => {
-                            warn!("EPUB reader load failed path={}", path.as_str(),);
+                    Some(_) => {
+                        warn!(
+                            "invalid EPUB reader font size path={} size={}",
+                            path.as_str(),
+                            font_size,
+                        );
 
-                            None
-                        }
-                    },
+                        None
+                    }
 
                     None => None,
                 };
@@ -236,6 +272,51 @@ where
                 EPUB_CHAPTER_DONE.signal(chapter);
             }
 
+            Command::RepaginateEpubChapter {
+                path,
+                spine,
+                font_size,
+            } => {
+                let chapter = match reader_session.as_mut() {
+                    Some(session) if session.path() == path => {
+                        match session.repaginate_chapter(spine, font_size).await {
+                            Ok(chapter) => chapter,
+
+                            Err(_) => {
+                                warn!(
+                                    "EPUB repagination failed path={} spine={} size={}",
+                                    path.as_str(),
+                                    spine.get(),
+                                    font_size,
+                                );
+
+                                None
+                            }
+                        }
+                    }
+
+                    Some(_) => {
+                        warn!(
+                            "EPUB repagination request does not match active session path={}",
+                            path.as_str(),
+                        );
+
+                        None
+                    }
+
+                    None => {
+                        warn!(
+                            "EPUB repagination without active session path={}",
+                            path.as_str(),
+                        );
+
+                        None
+                    }
+                };
+
+                EPUB_CHAPTER_DONE.signal(chapter);
+            }
+
             Command::LoadReadingHistory => {
                 READING_HISTORY_DONE.signal(Some(reading_history.entries().to_vec()));
             }
@@ -270,8 +351,10 @@ pub(super) async fn serve_unavailable_requests() {
         match COMMANDS.receive().await {
             Command::ListRoot => ROOT_LIST_DONE.signal(false),
             Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(None),
-            Command::LoadEpub(_) => EPUB_DOCUMENT_DONE.signal(None),
-            Command::LoadEpubChapter { .. } => EPUB_CHAPTER_DONE.signal(None),
+            Command::LoadEpub { .. } => EPUB_DOCUMENT_DONE.signal(None),
+            Command::LoadEpubChapter { .. } | Command::RepaginateEpubChapter { .. } => {
+                EPUB_CHAPTER_DONE.signal(None);
+            }
             Command::LoadReadingHistory => READING_HISTORY_DONE.signal(None),
             Command::UpdateReadingProgress(_) => {}
             Command::Shutdown => {

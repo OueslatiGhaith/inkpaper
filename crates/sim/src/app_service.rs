@@ -72,25 +72,27 @@ fn service_reader_request(
     request: ReaderRequest,
 ) {
     match request {
-        ReaderRequest::OpenEpub(path) => match reader_service.open_document(path.clone()) {
-            Some(mut document) => {
-                document.register_images(runtime);
+        ReaderRequest::OpenEpub { path, font_size } => {
+            match reader_service.open_document(path.clone(), font_size) {
+                Some(mut document) => {
+                    document.register_images(runtime);
 
-                runtime
-                    .update(app, move |app, cx| {
-                        app.apply_reader_document(document, cx);
-                    })
-                    .expect("app root must be available");
-            }
+                    runtime
+                        .update(app, move |app, cx| {
+                            app.apply_reader_document(document, cx);
+                        })
+                        .expect("app root must be available");
+                }
 
-            None => {
-                runtime
-                    .update(app, move |app, cx| {
-                        app.apply_reader_error(path, cx);
-                    })
-                    .expect("app root must be available");
+                None => {
+                    runtime
+                        .update(app, move |app, cx| {
+                            app.apply_reader_error(path, cx);
+                        })
+                        .expect("app root must be available");
+                }
             }
-        },
+        }
 
         ReaderRequest::LoadAdjacentChapter {
             path,
@@ -111,6 +113,30 @@ fn service_reader_request(
                 runtime
                     .update(app, move |app, _| {
                         app.finish_reader_chapter_request(path, from, direction);
+                    })
+                    .expect("app root must be available");
+            }
+        },
+
+        ReaderRequest::RepaginateChapter {
+            path,
+            spine,
+            font_size,
+        } => match reader_service.repaginate_chapter(&path, spine, font_size) {
+            Some(mut chapter) => {
+                chapter.register_images(runtime);
+
+                runtime
+                    .update(app, move |app, cx| {
+                        app.apply_reader_repagination(path, spine, font_size, chapter, cx);
+                    })
+                    .expect("app root must be available");
+            }
+
+            None => {
+                runtime
+                    .update(app, move |app, _| {
+                        app.finish_reader_repagination_request(path, spine, font_size);
                     })
                     .expect("app root must be available");
             }

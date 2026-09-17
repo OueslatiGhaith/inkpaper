@@ -1,3 +1,4 @@
+use alloc::format;
 use inkpaper_reader::Page;
 use inkpaper_ui::prelude::*;
 
@@ -24,6 +25,10 @@ pub(crate) struct ReaderScreen<'a> {
 
     controls_visible: bool,
 
+    font_size: u16,
+
+    on_decrease_font_size: Listener<ActivateEvent>,
+    on_increase_font_size: Listener<ActivateEvent>,
     on_previous_page: Listener<ActivateEvent>,
     on_toggle_controls: Listener<ActivateEvent>,
     on_next_page: Listener<ActivateEvent>,
@@ -72,14 +77,22 @@ impl RenderOnce for ReaderScreen<'_> {
                     {#if self.controls_visible}
                         <ReaderTopControls
                             title={self.title}
+                            font_size={self.font_size}
+                            show_font_controls={true}
                             on_back={self.on_back}
+                            on_decrease_font_size={self.on_decrease_font_size}
+                            on_increase_font_size={self.on_increase_font_size}
                         />
                     {/if}
 
                 {:else}
                     <ReaderTopControls
                         title={self.title}
+                        font_size={self.font_size}
+                        show_font_controls={false}
                         on_back={self.on_back}
+                        on_decrease_font_size={self.on_decrease_font_size}
+                        on_increase_font_size={self.on_increase_font_size}
                     />
 
                     <div class="absolute left-5 top-[220px] w-[440px] flex flex-col items-center gap-2.5">
@@ -116,11 +129,18 @@ impl RenderOnce for ReaderScreen<'_> {
 #[component]
 struct ReaderTopControls<'a> {
     title: &'a str,
+    font_size: u16,
+    show_font_controls: bool,
+
     on_back: Listener<ActivateEvent>,
+    on_decrease_font_size: Listener<ActivateEvent>,
+    on_increase_font_size: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for ReaderTopControls<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let font_size = format!("{}", self.font_size);
+
         rsx! {
             <div class="absolute left-0 top-0 w-[480px] h-[82px] bg-white">
                 <div
@@ -131,11 +151,39 @@ impl RenderOnce for ReaderTopControls<'_> {
                     <Icon kind={IconKind::ChevronLeft} size={px(32)} />
                 </div>
 
-                <div class="absolute left-[60px] top-3 w-[390px] h-[52px] flex items-center">
+                <div class="absolute left-[60px] top-3 w-[235px] h-[52px] flex items-center">
                     <text class="font-bold text-2xl no-wrap max-lines-1 text-ellipsis">
                         {self.title}
                     </text>
                 </div>
+
+                {#if self.show_font_controls}
+                    <div
+                        id="reader-font-size-decrease"
+                        on:activate={self.on_decrease_font_size}
+                        class="absolute left-[305px] top-3 w-[50px] h-[52px] flex items-center justify-center focus:bg-[#aaaaaa]"
+                    >
+                        <text class="font-bold text-xl">
+                            {"A-"}
+                        </text>
+                    </div>
+
+                    <div class="absolute left-[355px] top-3 w-[70px] h-[52px] flex items-center justify-center">
+                        <text class="text-lg">
+                            {font_size}
+                        </text>
+                    </div>
+
+                    <div
+                        id="reader-font-size-increase"
+                        on:activate={self.on_increase_font_size}
+                        class="absolute right-0 top-3 w-[55px] h-[52px] flex items-center justify-center focus:bg-[#aaaaaa]"
+                    >
+                        <text class="font-bold text-xl">
+                            {"A+"}
+                        </text>
+                    </div>
+                {/if}
 
                 <div class="absolute left-5 bottom-0 w-[440px] h-[1px] bg-black" />
             </div>

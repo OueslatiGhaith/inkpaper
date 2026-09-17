@@ -290,6 +290,71 @@ impl InkPaperApp {
 
         cx.notify();
     }
+
+    fn activate_decrease_reader_font_size(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.reader_decrease_font_size(cx);
+    }
+
+    fn activate_increase_reader_font_size(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.reader_increase_font_size(cx);
+    }
+
+    pub fn reader_decrease_font_size(&mut self, _: &mut Context<'_, Self>) -> bool {
+        if self.screen != Screen::Reader {
+            return false;
+        }
+
+        self.reader.decrease_font_size();
+
+        true
+    }
+
+    pub fn reader_increase_font_size(&mut self, _: &mut Context<'_, Self>) -> bool {
+        if self.screen != Screen::Reader {
+            return false;
+        }
+
+        self.reader.increase_font_size();
+
+        true
+    }
+
+    pub fn apply_reader_repagination(
+        &mut self,
+        path: String,
+        spine: SpineIndex,
+        font_size: u16,
+        chapter: ReaderChapter,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let changed = self
+            .reader
+            .apply_repaginated_chapter(&path, spine, font_size, chapter);
+
+        if changed {
+            cx.notify();
+        }
+
+        changed
+    }
+
+    pub fn finish_reader_repagination_request(
+        &mut self,
+        path: String,
+        spine: SpineIndex,
+        font_size: u16,
+    ) -> bool {
+        self.reader
+            .finish_repagination_request(&path, spine, font_size)
+    }
 }
 
 impl Render for InkPaperApp {
@@ -307,6 +372,10 @@ impl Render for InkPaperApp {
         let reader_previous_page = cx.listener(Self::activate_previous_reader_page);
         let reader_next_page = cx.listener(Self::activate_next_reader_page);
         let reader_toggle_controls = cx.listener(Self::activate_toggle_reader_controls);
+
+        let reader_decrease_font_size = cx.listener(Self::activate_decrease_reader_font_size);
+
+        let reader_increase_font_size = cx.listener(Self::activate_increase_reader_font_size);
 
         let browse_entry_listeners = if self.screen == Screen::BrowseFiles {
             (0..self.browser.entries().len())
@@ -368,6 +437,9 @@ impl Render for InkPaperApp {
                     page_label={self.reader.page_label()}
                     section_label={self.reader.section_label()}
                     controls_visible={self.reader.controls_visible()}
+                    font_size={self.reader.font_size()}
+                    on_decrease_font_size={reader_decrease_font_size}
+                    on_increase_font_size={reader_increase_font_size}
                     on_previous_page={reader_previous_page}
                     on_toggle_controls={reader_toggle_controls}
                     on_next_page={reader_next_page}
