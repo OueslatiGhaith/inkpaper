@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "firmware/*"]
+members = ["crates/*", "firmware/*", "tools/*"]
 default-members = ["crates/*"]
 
 [workspace.dependencies]

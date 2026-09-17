@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+indoc = "2.0.7"
+png = "0.18.1"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

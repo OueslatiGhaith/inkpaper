@@ -111,16 +111,23 @@ fn simulator_history_path() -> PathBuf {
 fn simulator_epub_source(path: &str) -> Option<HostFileSource> {
     let file_name = path.strip_prefix("/Fixtures/")?;
 
-    if !matches!(
-        file_name,
-        "book-boundaries.epub" | "broken-chapter.epub" | "broken-image.epub"
-    ) {
+    let relative = Path::new(file_name);
+
+    if relative.components().count() != 1 {
+        return None;
+    }
+
+    if relative
+        .extension()
+        .and_then(|extension| extension.to_str())
+        != Some("epub")
+    {
         return None;
     }
 
     let host_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures")
-        .join(file_name);
+        .join(relative);
 
     HostFileSource::open(&host_path).ok()
 }

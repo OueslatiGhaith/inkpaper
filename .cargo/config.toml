@@ -15,6 +15,9 @@ rustflags = [
     "-C", "link-arg=-Tdefmt.x"
 ]
 
+[alias]
+xtask = "run -p xtask --"
+
 [env]
 DEFMT_LOG = "debug,esp_rtos=off"
 
