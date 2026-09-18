@@ -95,7 +95,8 @@ pub(super) fn sample_next(image: &dyn ImageResource, cursor: &mut AreaCursor) ->
 
     advance_cursor(cursor);
 
-    sample_area_with::<u64>(image, x_axis, row.y_axis, row.total_weight)
+    sample_area_with::<u32>(image, x_axis, row.y_axis, row.total_weight)
+        .or_else(|| sample_area_with::<u64>(image, x_axis, row.y_axis, row.total_weight))
         .or_else(|| sample_area_with::<u128>(image, x_axis, row.y_axis, row.total_weight))
 }
 
