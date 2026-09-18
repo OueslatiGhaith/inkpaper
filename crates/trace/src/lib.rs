@@ -23,10 +23,12 @@ pub enum TraceEvent {
     TextRun = 6,
     Shape = 7,
     Glyphs = 8,
+    LogicalShape = 9,
+    VisualOrder = 10,
 }
 
 impl TraceEvent {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 11] = [
         Self::Render,
         Self::Rebuild,
         Self::Layout,
@@ -36,6 +38,8 @@ impl TraceEvent {
         Self::TextRun,
         Self::Shape,
         Self::Glyphs,
+        Self::LogicalShape,
+        Self::VisualOrder,
     ];
 
     pub const fn id(self) -> u8 {
@@ -53,6 +57,8 @@ impl TraceEvent {
             6 => Some(Self::TextRun),
             7 => Some(Self::Shape),
             8 => Some(Self::Glyphs),
+            9 => Some(Self::LogicalShape),
+            10 => Some(Self::VisualOrder),
             _ => None,
         }
     }
@@ -68,6 +74,8 @@ impl TraceEvent {
             Self::TextRun => "text_run",
             Self::Shape => "shape",
             Self::Glyphs => "glyphs",
+            Self::LogicalShape => "logical_shape",
+            Self::VisualOrder => "visual_order",
         }
     }
 }

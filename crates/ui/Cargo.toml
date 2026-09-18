@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["ttf", "variable-fonts", "macros"]
+default = ["ttf", "variable-fonts", "macros", "trace"]
 alloc = []
 macros = ["dep:inkpaper-ui-macros"]
 defmt = ["dep:defmt", "heapless/defmt"]
