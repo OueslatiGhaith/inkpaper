@@ -1,5 +1,5 @@
 use crate::{
-    FontFamilyId, FontInstance, FontProperties, FontWeight, FontWeightRange, ResolvedFont,
+    FontFamilyId, FontInstance, FontProperties, FontWeight, FontWeightRange, Pixels, ResolvedFont,
 };
 
 use super::{FontFace, FontId, GlyphId};
@@ -285,6 +285,18 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         Some(ResolvedGlyph::from_resolved_font(font, glyph))
     }
 
+    fn glyph_with_advance_in_font(
+        &self,
+        font: FontInstance,
+        character: char,
+        size_px: u16,
+    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+        let font = self.resolve_instance(font)?;
+        let (glyph, advance) = font.glyph_id_and_advance(character, size_px)?;
+
+        Some((ResolvedGlyph::from_resolved_font(font, glyph), advance))
+    }
+
     pub(crate) fn resolve_character_exact(
         &self,
         preferred: impl Into<FontInstance>,
@@ -324,6 +336,43 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         None
     }
 
+    pub(crate) fn resolve_character_with_advance_exact(
+        &self,
+        preferred: impl Into<FontInstance>,
+        character: char,
+        size_px: u16,
+    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+        let preferred = preferred.into();
+
+        if let Some(glyph) = self.glyph_with_advance_in_font(preferred, character, size_px) {
+            return Some(glyph);
+        }
+
+        let requested_weight = preferred.weight();
+
+        for index in 0..self.len {
+            let index = u16::try_from(index).ok()?;
+            let id = FontId::new(index);
+
+            if id == preferred.font() {
+                continue;
+            }
+
+            let Some(entry) = self.entry(id) else {
+                continue;
+            };
+
+            let effective_weight = entry.weights.resolve(requested_weight);
+            let candidate = FontInstance::new(id, FontProperties::new(effective_weight));
+
+            if let Some(glyph) = self.glyph_with_advance_in_font(candidate, character, size_px) {
+                return Some(glyph);
+            }
+        }
+
+        None
+    }
+
     pub fn resolve_glyph(
         &self,
         preferred: impl Into<FontInstance>,
@@ -345,6 +394,36 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         // small bitmap fonts commonly contain '?' but not U+FFFD
         if character != '?'
             && let Some(glyph) = self.resolve_character_exact(preferred, '?')
+        {
+            return Some(glyph);
+        }
+
+        None
+    }
+
+    pub(crate) fn resolve_glyph_with_advance(
+        &self,
+        preferred: impl Into<FontInstance>,
+        character: char,
+        size_px: u16,
+    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+        let preferred = preferred.into();
+
+        if let Some(glyph) =
+            self.resolve_character_with_advance_exact(preferred, character, size_px)
+        {
+            return Some(glyph);
+        }
+
+        if character != '\u{FFFD}'
+            && let Some(glyph) =
+                self.resolve_character_with_advance_exact(preferred, '\u{FFFD}', size_px)
+        {
+            return Some(glyph);
+        }
+
+        if character != '?'
+            && let Some(glyph) = self.resolve_character_with_advance_exact(preferred, '?', size_px)
         {
             return Some(glyph);
         }

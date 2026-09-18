@@ -288,6 +288,19 @@ impl FontFace for TtfFont<'_> {
         glyph_advance_for_face(&face, to_ttf_glyph(glyph), size_px)
     }
 
+    fn glyph_id_and_advance_with_properties(
+        &self,
+        properties: FontProperties,
+        character: char,
+        size_px: u16,
+    ) -> Option<(GlyphId, Pixels)> {
+        let face = self.face_with_properties(properties).ok()?;
+        let glyph = face.glyph_index(character)?;
+        let advance = glyph_advance_for_face(&face, glyph, size_px)?;
+
+        Some((GlyphId::new(glyph.0), advance))
+    }
+
     fn glyph_metrics_with_properties(
         &self,
         properties: FontProperties,

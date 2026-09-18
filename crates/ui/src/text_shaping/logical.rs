@@ -45,7 +45,9 @@ impl SimpleShaper {
             if joining.is_transparent() {
                 let cluster = previous_cluster.unwrap_or(cluster);
 
-                if let Some(resolved) = registry.resolve_glyph(preferred_font, character) {
+                if let Some((resolved, base_advance)) =
+                    registry.resolve_glyph_with_advance(preferred_font, character, size_px)
+                {
                     if let Some(placement) = mark_placement(character) {
                         emit_resolved_mark(
                             resolved,
@@ -63,7 +65,7 @@ impl SimpleShaper {
                         emit_resolved_glyph(
                             resolved,
                             cluster,
-                            size_px,
+                            base_advance,
                             &mut advance,
                             &mut glyph_count,
                             &mut visit,
@@ -126,13 +128,14 @@ impl SimpleShaper {
                 character,
                 feature,
                 presentation,
+                size_px,
             );
 
-            if let Some(resolved) = resolved {
+            if let Some((resolved, base_advance)) = resolved {
                 emit_resolved_glyph(
                     resolved,
                     cluster,
-                    size_px,
+                    base_advance,
                     &mut advance,
                     &mut glyph_count,
                     &mut visit,
@@ -249,7 +252,14 @@ fn resolve_contextual_glyph<'font, const FONTS: usize>(
     base_character: char,
     feature: Option<OpenTypeFeature>,
     presentation: Option<char>,
-) -> Option<ResolvedGlyph<'font>> {
+    size_px: u16,
+) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+    // fast/common path: ordinary text needs no GSUB or presentation-form substitution.
+    // Resolve cmap glyph + advance from the same font face.
+    if feature.is_none() && presentation.is_none() {
+        return registry.resolve_glyph_with_advance(preferred_font, base_character, size_px);
+    }
+
     let base = registry.resolve_character_exact(preferred_font, base_character);
 
     // modern OpenType path.
@@ -261,27 +271,28 @@ fn resolve_contextual_glyph<'font, const FONTS: usize>(
             .resolved_font()
             .single_substitution(feature, base.glyph())
     {
-        return Some(ResolvedGlyph::from_resolved_font(
-            base.resolved_font(),
-            glyph,
-        ));
+        let resolved = ResolvedGlyph::from_resolved_font(base.resolved_font(), glyph);
+
+        let advance = resolved
+            .resolved_font()
+            .glyph_advance(resolved.glyph(), size_px)?;
+
+        return Some((resolved, advance));
     }
 
-    // compatibility path for bitmap fonts and fonts which expose Arabic Presentation
-    // Forms directly through cmap.
     if let Some(presentation) = presentation
-        && let Some(resolved) = registry.resolve_character_exact(preferred_font, presentation)
+        && let Some((resolved, advance)) =
+            registry.resolve_character_with_advance_exact(preferred_font, presentation, size_px)
     {
-        return Some(resolved);
+        return Some((resolved, advance));
     }
 
-    // if we had a valid base glyph but neither shaping path changed it, keep it readable
-    // rather than replacing it.
     if let Some(base) = base {
-        return Some(base);
+        let advance = base.resolved_font().glyph_advance(base.glyph(), size_px)?;
+        return Some((base, advance));
     }
 
-    registry.resolve_glyph(preferred_font, base_character)
+    registry.resolve_glyph_with_advance(preferred_font, base_character, size_px)
 }
 
 fn resolve_lam_alef_ligature<'font, const FONTS: usize>(
@@ -415,7 +426,7 @@ where
 fn emit_resolved_glyph<'font, F, E>(
     resolved: ResolvedGlyph<'font>,
     cluster: usize,
-    size_px: u16,
+    base_advance: Pixels,
     advance: &mut Pixels,
     glyph_count: &mut usize,
     visit: &mut F,
@@ -425,10 +436,6 @@ where
 {
     let font = resolved.resolved_font();
     let glyph = resolved.glyph();
-
-    let Some(base_advance) = font.glyph_advance(glyph, size_px) else {
-        return Ok(false);
-    };
 
     // logical shaping produces unpositioned glyphs.
     // pair positioning belongs to the final visual glyph stream, after bidi ordering

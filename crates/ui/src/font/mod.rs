@@ -390,6 +390,13 @@ pub trait FontFace {
             .map(|metrics| metrics.advance)
     }
 
+    fn glyph_id_and_advance(&self, character: char, size_px: u16) -> Option<(GlyphId, Pixels)> {
+        let glyph = self.glyph_id(character)?;
+        let advance = self.glyph_advance(glyph, size_px)?;
+
+        Some((glyph, advance))
+    }
+
     fn glyph_metrics(&self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics>;
 
     fn kerning(&self, _left: GlyphId, _right: GlyphId, _size_px: u16) -> Pixels {
@@ -506,6 +513,18 @@ pub trait FontFace {
         size_px: u16,
     ) -> Option<Pixels> {
         self.glyph_advance(glyph, size_px)
+    }
+
+    fn glyph_id_and_advance_with_properties(
+        &self,
+        properties: FontProperties,
+        character: char,
+        size_px: u16,
+    ) -> Option<(GlyphId, Pixels)> {
+        let glyph = self.glyph_id_with_properties(properties, character)?;
+        let advance = self.glyph_advance_with_properties(properties, glyph, size_px)?;
+
+        Some((glyph, advance))
     }
 
     fn glyph_metrics_with_properties(
@@ -668,6 +687,11 @@ impl<'font> ResolvedFont<'font> {
     pub fn glyph_advance(self, glyph: GlyphId, size_px: u16) -> Option<Pixels> {
         self.face
             .glyph_advance_with_properties(self.properties(), glyph, size_px)
+    }
+
+    pub fn glyph_id_and_advance(self, character: char, size_px: u16) -> Option<(GlyphId, Pixels)> {
+        self.face
+            .glyph_id_and_advance_with_properties(self.properties(), character, size_px)
     }
 
     pub fn glyph_metrics(self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics> {
