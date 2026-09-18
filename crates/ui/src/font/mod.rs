@@ -354,6 +354,13 @@ impl CursiveAttachment {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PairPositioning {
+    Cursive(CursiveAttachment),
+    Kerning(Pixels),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FontRasterError {
     InvalidFont,
     InvalidGlyph,
@@ -410,6 +417,19 @@ pub trait FontFace {
         _right_to_left: bool,
     ) -> Option<CursiveAttachment> {
         None
+    }
+
+    fn pair_positioning(
+        &self,
+        visual_left: GlyphId,
+        visual_right: GlyphId,
+        size_px: u16,
+        right_to_left: bool,
+    ) -> PairPositioning {
+        match self.cursive_attachment(visual_left, visual_right, size_px, right_to_left) {
+            Some(attachment) => PairPositioning::Cursive(attachment),
+            None => PairPositioning::Kerning(self.kerning(visual_left, visual_right, size_px)),
+        }
     }
 
     /// returns the child mark glyph origin relative to the base glyph origin,
@@ -537,6 +557,31 @@ pub trait FontFace {
         self.cursive_attachment(visual_left, visual_right, size_px, right_to_left)
     }
 
+    fn pair_positioning_with_properties(
+        &self,
+        properties: FontProperties,
+        visual_left: GlyphId,
+        visual_right: GlyphId,
+        size_px: u16,
+        right_to_left: bool,
+    ) -> PairPositioning {
+        match self.cursive_attachment_with_properties(
+            properties,
+            visual_left,
+            visual_right,
+            size_px,
+            right_to_left,
+        ) {
+            Some(attachment) => PairPositioning::Cursive(attachment),
+            None => PairPositioning::Kerning(self.kerning_with_properties(
+                properties,
+                visual_left,
+                visual_right,
+                size_px,
+            )),
+        }
+    }
+
     fn mark_to_base_offset_with_properties(
         &self,
         _properties: FontProperties,
@@ -658,6 +703,22 @@ impl<'font> ResolvedFont<'font> {
         right_to_left: bool,
     ) -> Option<CursiveAttachment> {
         self.face.cursive_attachment_with_properties(
+            self.properties(),
+            visual_left,
+            visual_right,
+            size_px,
+            right_to_left,
+        )
+    }
+
+    pub fn pair_positioning(
+        self,
+        visual_left: GlyphId,
+        visual_right: GlyphId,
+        size_px: u16,
+        right_to_left: bool,
+    ) -> PairPositioning {
+        self.face.pair_positioning_with_properties(
             self.properties(),
             visual_left,
             visual_right,

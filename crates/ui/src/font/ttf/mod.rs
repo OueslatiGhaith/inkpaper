@@ -2,7 +2,8 @@ use ttf_parser::{Face, GlyphId as TtfGlyphId};
 
 use crate::{
     CursiveAttachment, FontData, FontFace, FontMetrics, FontProperties, FontRasterError,
-    FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, Pixels, px,
+    FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning,
+    Pixels, px,
 };
 
 mod gpos;
@@ -366,6 +367,21 @@ impl FontFace for TtfFont<'_> {
         )
     }
 
+    fn pair_positioning_with_properties(
+        &self,
+        properties: FontProperties,
+        visual_left: GlyphId,
+        visual_right: GlyphId,
+        size_px: u16,
+        right_to_left: bool,
+    ) -> PairPositioning {
+        let Ok(face) = self.face_with_properties(properties) else {
+            return PairPositioning::Kerning(px(0));
+        };
+
+        pair_positioning_for_face(&face, visual_left, visual_right, size_px, right_to_left)
+    }
+
     fn mark_to_base_offset_with_properties(
         &self,
         properties: FontProperties,
@@ -412,6 +428,31 @@ impl FontFace for TtfFont<'_> {
 
 fn to_ttf_glyph(glyph: GlyphId) -> TtfGlyphId {
     TtfGlyphId(glyph.value())
+}
+
+fn pair_positioning_for_face(
+    face: &Face<'_>,
+    visual_left: GlyphId,
+    visual_right: GlyphId,
+    size_px: u16,
+    right_to_left: bool,
+) -> PairPositioning {
+    let visual_left = to_ttf_glyph(visual_left);
+    let visual_right = to_ttf_glyph(visual_right);
+
+    if let Some(attachment) =
+        gpos_cursive_attachment_for_face(face, visual_left, visual_right, size_px, right_to_left)
+    {
+        return PairPositioning::Cursive(attachment);
+    }
+
+    if let Some(kerning) = gpos_kerning_for_face(face, visual_left, visual_right, size_px) {
+        return PairPositioning::Kerning(kerning);
+    }
+
+    PairPositioning::Kerning(
+        legacy_kerning_for_face(face, visual_left, visual_right, size_px).unwrap_or(px(0)),
+    )
 }
 
 fn rasterize_face(

@@ -1,4 +1,4 @@
-use crate::{FontRegistry, GlyphMetrics, Offset, Pixels, px};
+use crate::{FontRegistry, GlyphMetrics, Offset, PairPositioning, Pixels, px};
 
 use super::{ShapedGlyph, arabic::MarkPlacement, bidi::DirectionalRun};
 
@@ -59,23 +59,21 @@ fn apply_visual_run_positioning<'font, const FONTS: usize>(
             continue;
         }
 
-        let cursive = match previous_base {
+        let pair_positioning = match previous_base {
             Some(previous) if previous.font_instance() == shaped.font_instance() => registry
                 .resolve_instance(shaped.font_instance())
-                .and_then(|face| {
-                    face.cursive_attachment(
-                        previous.glyph(),
-                        shaped.glyph(),
-                        size_px,
-                        right_to_left,
-                    )
-                }),
+                .map(|face| {
+                    face.pair_positioning(previous.glyph(), shaped.glyph(), size_px, right_to_left)
+                })
+                .unwrap_or(PairPositioning::Kerning(px(0))),
 
-            _ => None,
+            _ => PairPositioning::Kerning(px(0)),
         };
 
-        let (x_adjustment, y_offset) = match (previous_base, cursive) {
-            (Some(previous), Some(attachment)) => {
+        let (x_adjustment, y_offset) = match pair_positioning {
+            PairPositioning::Cursive(attachment) => {
+                let previous = previous_base.expect("cursive positioning requires a previous base");
+
                 let delta = attachment.origin_delta();
 
                 // before pair positioning, the visual-right origin would be one intrinsic
@@ -87,20 +85,8 @@ fn apply_visual_run_positioning<'font, const FONTS: usize>(
                     previous.offset().y + delta.y,
                 )
             }
-            _ => {
-                let kerning = match previous_base {
-                    Some(previous) if previous.font_instance() == shaped.font_instance() => {
-                        registry
-                            .resolve_instance(shaped.font_instance())
-                            .map(|face| face.kerning(previous.glyph(), shaped.glyph(), size_px))
-                            .unwrap_or(px(0))
-                    }
 
-                    _ => px(0),
-                };
-
-                (kerning, px(0))
-            }
+            PairPositioning::Kerning(kerning) => (kerning, px(0)),
         };
 
         // cursive attachment takes precedence over ordinary pair kerning for a pair
