@@ -6,7 +6,8 @@ mod mono_font;
 
 #[cfg(feature = "eink")]
 pub use eink::{
-    EInkCoverageMode, EInkError, EInkPaintReport, EInkPainter, EInkTone, EInkUiMode, Gray2,
+    EInkCoverageMode, EInkError, EInkOrderedCoverageBitmap, EInkOrderedCoverageBlitter,
+    EInkPaintReport, EInkPainter, EInkTone, EInkUiMode, Gray2,
 };
 
 #[cfg(feature = "embedded-graphics")]

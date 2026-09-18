@@ -287,7 +287,7 @@ where
 
                 color_to_gray2(color)
             }
-            EInkCoverageMode::OrderedDither4x4 => {
+            EInkCoverageMode::OrderedDither4x4 { .. } => {
                 if !ordered_dither_accepts(coverage, point) {
                     return;
                 }

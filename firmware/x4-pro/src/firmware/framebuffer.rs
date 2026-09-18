@@ -8,7 +8,7 @@ use embedded_graphics::{
     pixelcolor::GrayColor,
     primitives::Rectangle,
 };
-use inkpaper_ui::backend::Gray2;
+use inkpaper_ui::backend::{EInkOrderedCoverageBitmap, Gray2};
 
 pub const PHYSICAL_WIDTH: usize = 800;
 pub const PHYSICAL_HEIGHT: usize = 480;
@@ -19,6 +19,22 @@ pub const LOGICAL_HEIGHT: usize = 800;
 pub const PHYSICAL_STRIDE: usize = PHYSICAL_WIDTH / 8;
 
 pub const FRAMEBUFFER_LEN: usize = PHYSICAL_STRIDE * PHYSICAL_HEIGHT;
+
+/// must remain byte-for-byte equivalent to inkpaper-ui's ordered_dither_accepts().
+/// 
+/// these are the 4x4 Bayer ranks transformed with:
+/// ```
+///     threshold = rank * 16 + 8
+/// ```
+/// 
+/// the framebuffer equivalence tests protect this contract.
+#[rustfmt::skip]
+const BAYER_4X4_THRESHOLDS: [u8; 16] = [
+    8, 136, 40, 168,
+    200, 72, 232, 104,
+    56, 184, 24, 152,
+    248, 120, 216, 88,
+];
 
 pub struct FramebufferStorage {
     lsb: Vec<u8>,
@@ -296,6 +312,118 @@ impl<'a> Framebuffer<'a> {
     #[cfg(feature = "ui-metrics")]
     pub const fn draw_iter_pixels(&self) -> u64 {
         self.draw_iter_pixels
+    }
+
+    pub fn draw_ordered_coverage_bitmap(
+        &mut self,
+        bitmap: EInkOrderedCoverageBitmap<'_>,
+    ) -> Option<u64> {
+        if self.orientation != Orientation::Portrait {
+            return None;
+        }
+
+        match bitmap.foreground().luma() {
+            0 => self.blit_ordered_coverage_portrait_binary::<false>(bitmap),
+            3 => self.blit_ordered_coverage_portrait_binary::<true>(bitmap),
+            _ => None,
+        }
+    }
+
+    fn blit_ordered_coverage_portrait_binary<const WHITE: bool>(
+        &mut self,
+        bitmap: EInkOrderedCoverageBitmap<'_>,
+    ) -> Option<u64> {
+        let width = usize::from(bitmap.width());
+        let height = usize::from(bitmap.height());
+
+        if width == 0 || height == 0 {
+            return Some(0);
+        }
+
+        let coverage = bitmap.coverage();
+
+        debug_assert_eq!(coverage.len(), width.saturating_mul(height));
+
+        let origin = bitmap.origin();
+        let origin_x = origin.x.get();
+        let origin_y = origin.y.get();
+
+        let glyph_right = origin_x.checked_add(i32::from(bitmap.width()))?;
+        let glyph_bottom = origin_y.checked_add(i32::from(bitmap.height()))?;
+
+        let clip = bitmap.clip();
+
+        let left = origin_x.max(clip.x().get()).max(0);
+        let top = origin_y.max(clip.y().get()).max(0);
+
+        let right = glyph_right
+            .min(clip.right().get())
+            .min(LOGICAL_WIDTH as i32);
+
+        let bottom = glyph_bottom
+            .min(clip.bottom().get())
+            .min(LOGICAL_HEIGHT as i32);
+
+        if left >= right || top >= bottom {
+            return Some(0);
+        }
+
+        let start_col = usize::try_from(left - origin_x).ok()?;
+        let end_col = usize::try_from(right - origin_x).ok()?;
+        let start_row = usize::try_from(top - origin_y).ok()?;
+        let end_row = usize::try_from(bottom - origin_y).ok()?;
+
+        let physical_y_start = PHYSICAL_HEIGHT - right as usize;
+        let initial_x_phase = ((right - 1) as usize) & 0b11;
+
+        let mut accepted = 0u64;
+
+        for row in start_row..end_row {
+            let logical_y = top as usize + (row - start_row);
+
+            // portrait mapping:
+            //
+            // logical (x, y)
+            //     -> physical (y, 479 - x)
+            //
+            // y is constant across this glyph row, so physical_x, the framebuffer
+            // byte column, and the bit mask are all constant.
+            let physical_x = logical_y;
+            let byte_column = physical_x / 8;
+            let mask = 0x80u8 >> (physical_x & 7);
+
+            // traverse logical x from right to left. Physical y therefore increases
+            // monotonically and framebuffer addressing becomes += PHYSICAL_STRIDE.
+            let mut framebuffer_index = physical_y_start * PHYSICAL_STRIDE + byte_column;
+
+            let row_start = row * width;
+
+            let row_coverage = &coverage[row_start + start_col..row_start + end_col];
+
+            let threshold_row = (logical_y & 0b11) * 4;
+            let mut x_phase = initial_x_phase;
+
+            for sample in row_coverage.iter().rev().copied() {
+                let threshold = BAYER_4X4_THRESHOLDS[threshold_row + x_phase];
+
+                if sample > threshold {
+                    if WHITE {
+                        self.storage.lsb[framebuffer_index] |= mask;
+                        self.storage.msb[framebuffer_index] |= mask;
+                    } else {
+                        self.storage.lsb[framebuffer_index] &= !mask;
+                        self.storage.msb[framebuffer_index] &= !mask;
+                    }
+
+                    accepted = accepted.saturating_add(1);
+                }
+
+                x_phase = (x_phase + 3) & 0b11;
+                framebuffer_index += PHYSICAL_STRIDE;
+            }
+        }
+
+        Some(accepted)
     }
 }
 

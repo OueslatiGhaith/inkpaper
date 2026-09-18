@@ -23,7 +23,7 @@ mod image;
 mod text;
 mod tone;
 
-pub use coverage::EInkCoverageMode;
+pub use coverage::{EInkCoverageMode, EInkOrderedCoverageBitmap, EInkOrderedCoverageBlitter};
 pub use tone::{EInkPaintReport, EInkTone, EInkUiMode};
 
 pub use embedded_graphics::pixelcolor::Gray2;
@@ -46,6 +46,7 @@ where
 {
     target: &'target mut D,
     coverage_mode: EInkCoverageMode<D>,
+    ordered_coverage_blitter: Option<EInkOrderedCoverageBlitter<D>>,
     ui_mode: EInkUiMode,
     report: EInkPaintReport,
 }
@@ -58,6 +59,7 @@ where
         Self {
             target,
             coverage_mode: EInkCoverageMode::BinaryThreshold,
+            ordered_coverage_blitter: None,
             ui_mode: EInkUiMode::NativeGray2,
             report: EInkPaintReport::default(),
         }
@@ -65,6 +67,11 @@ where
 
     pub fn with_coverage_mode(mut self, coverage_mode: EInkCoverageMode<D>) -> Self {
         self.coverage_mode = coverage_mode;
+        self
+    }
+
+    pub fn with_ordered_coverage_blitter(mut self, blitter: EInkOrderedCoverageBlitter<D>) -> Self {
+        self.ordered_coverage_blitter = Some(blitter);
         self
     }
 
@@ -79,6 +86,16 @@ where
 
     pub const fn report(&self) -> EInkPaintReport {
         self.report
+    }
+
+    fn effective_coverage_mode(&self) -> EInkCoverageMode<D> {
+        match self.ui_mode {
+            EInkUiMode::NativeGray2 => self.coverage_mode,
+            EInkUiMode::BinaryDither => match self.ordered_coverage_blitter {
+                Some(blitter) => EInkCoverageMode::ordered_dither_4x4_with_blitter(blitter),
+                None => EInkCoverageMode::ordered_dither_4x4(),
+            },
+        }
     }
 
     fn record_native_ui_color(&mut self, color: Color) {
@@ -202,10 +219,7 @@ where
 
         let local_bounds = Rect::new(Point::ZERO, bounds.size);
 
-        let coverage_mode = match self.ui_mode {
-            EInkUiMode::NativeGray2 => self.coverage_mode,
-            EInkUiMode::BinaryDither => EInkCoverageMode::OrderedDither4x4,
-        };
+        let coverage_mode = self.effective_coverage_mode();
 
         if self.ui_mode == EInkUiMode::NativeGray2 {
             // canvas callbacks can paint arbitrary colors and coverage. Conservatively
@@ -258,10 +272,7 @@ where
 
         let registry = resources.font_registry();
 
-        let coverage_mode = match self.ui_mode {
-            EInkUiMode::NativeGray2 => self.coverage_mode,
-            EInkUiMode::BinaryDither => EInkCoverageMode::OrderedDither4x4,
-        };
+        let coverage_mode = self.effective_coverage_mode();
 
         if self.ui_mode == EInkUiMode::NativeGray2 {
             self.record_native_ui_color(style.color);

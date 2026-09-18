@@ -13,10 +13,74 @@ use crate::{
 
 use super::EInkError;
 
+#[derive(Debug, Clone, Copy)]
+pub struct EInkOrderedCoverageBitmap<'a> {
+    coverage: &'a [u8],
+    width: u16,
+    height: u16,
+    origin: Point,
+    foreground: Gray2,
+    clip: Rect,
+}
+
+impl<'a> EInkOrderedCoverageBitmap<'a> {
+    pub fn new(
+        coverage: &'a [u8],
+        width: u16,
+        height: u16,
+        origin: Point,
+        foreground: Gray2,
+        clip: Rect,
+    ) -> Self {
+        debug_assert_eq!(
+            coverage.len(),
+            usize::from(width).saturating_mul(usize::from(height))
+        );
+
+        Self {
+            coverage,
+            width,
+            height,
+            origin,
+            foreground,
+            clip,
+        }
+    }
+
+    pub const fn coverage(self) -> &'a [u8] {
+        self.coverage
+    }
+
+    pub const fn width(self) -> u16 {
+        self.width
+    }
+
+    pub const fn height(self) -> u16 {
+        self.height
+    }
+
+    pub const fn origin(self) -> Point {
+        self.origin
+    }
+
+    pub const fn foreground(self) -> Gray2 {
+        self.foreground
+    }
+
+    pub const fn clip(self) -> Rect {
+        self.clip
+    }
+}
+
+pub type EInkOrderedCoverageBlitter<D> =
+    for<'bitmap> fn(&mut D, EInkOrderedCoverageBitmap<'bitmap>) -> Option<u64>;
+
 #[derive(Debug)]
 pub enum EInkCoverageMode<D> {
     BinaryThreshold,
-    OrderedDither4x4,
+    OrderedDither4x4 {
+        blitter: Option<EInkOrderedCoverageBlitter<D>>,
+    },
     AlphaBlend {
         read_pixel: fn(&D, EgPoint) -> Option<Gray2>,
     },
@@ -36,7 +100,13 @@ impl<D> EInkCoverageMode<D> {
     }
 
     pub const fn ordered_dither_4x4() -> Self {
-        Self::OrderedDither4x4
+        Self::OrderedDither4x4 { blitter: None }
+    }
+
+    pub const fn ordered_dither_4x4_with_blitter(blitter: EInkOrderedCoverageBlitter<D>) -> Self {
+        Self::OrderedDither4x4 {
+            blitter: Some(blitter),
+        }
     }
 
     pub const fn alpha_blend(read_pixel: fn(&D, EgPoint) -> Option<Gray2>) -> Self {
@@ -154,7 +224,31 @@ where
             result
         }
 
-        EInkCoverageMode::OrderedDither4x4 => {
+        EInkCoverageMode::OrderedDither4x4 { blitter } => {
+            if let Some(blitter) = blitter {
+                let bitmap = EInkOrderedCoverageBitmap::new(
+                    coverage,
+                    bitmap.width(),
+                    bitmap.height(),
+                    origin,
+                    foreground,
+                    clip,
+                );
+
+                if let Some(accepted) = blitter(target, bitmap) {
+                    #[cfg(feature = "metrics")]
+                    report.record_coverage_bitmap(samples, accepted);
+
+                    #[cfg(not(feature = "metrics"))]
+                    {
+                        let _ = report;
+                        let _ = accepted;
+                    }
+
+                    return Ok(());
+                }
+            }
+
             #[cfg(feature = "metrics")]
             let mut accepted = 0u64;
 

@@ -342,7 +342,9 @@ fn render_invalidation(
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
 
     let (paint_report, eink_report) = {
-        let mut painter = EInkPainter::new(&mut display).with_ui_mode(EInkUiMode::BinaryDither);
+        let mut painter = EInkPainter::new(&mut display)
+            .with_ordered_coverage_blitter(Framebuffer::draw_ordered_coverage_bitmap)
+            .with_ui_mode(EInkUiMode::BinaryDither);
 
         match invalidation.kind() {
             Invalidation::None => return None,
