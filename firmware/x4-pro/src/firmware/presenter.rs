@@ -370,7 +370,7 @@ fn render_invalidation(
 
                 #[cfg(feature = "performance")]
                 {
-                    timings.rebuild_cycles = rebuild_timer.elapsed()
+                    timings.rebuild_cycles = rebuild_timer.elapsed();
                 }
 
                 #[cfg(feature = "performance")]
@@ -428,17 +428,32 @@ fn render_invalidation(
     #[cfg(feature = "ui-metrics")]
     let framebuffer_draw_iter_pixels = display.draw_iter_pixels();
 
-    // framebuffer owns a mutable borrow of `frame`.
-    // release it before querying storage directly.
+    #[cfg(feature = "performance")]
+    let ordered_coverage_calls = display.ordered_coverage_calls();
+
+    #[cfg(feature = "performance")]
+    let ordered_coverage_pixels = display.ordered_coverage_pixels();
+
+    #[cfg(feature = "performance")]
+    let ordered_coverage_cycles = display.ordered_coverage_cycles();
+
     drop(display);
 
     #[cfg(feature = "performance")]
-    crate::firmware::perf::log_render(timings);
+    {
+        crate::firmware::perf::log_render(timings);
+        crate::firmware::perf::log_ordered_coverage(
+            ordered_coverage_calls,
+            ordered_coverage_pixels,
+            ordered_coverage_cycles,
+        );
+    }
 
     Some(RenderedFrame {
         physical_damage,
         eink_report,
         paint_report,
+
         #[cfg(feature = "ui-metrics")]
         framebuffer_draw_iter_pixels,
     })

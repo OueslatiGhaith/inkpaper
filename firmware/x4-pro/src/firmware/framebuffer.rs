@@ -10,6 +10,9 @@ use embedded_graphics::{
 };
 use inkpaper_ui::backend::{EInkOrderedCoverageBitmap, Gray2};
 
+#[cfg(all(feature = "performance", target_arch = "xtensa"))]
+use crate::firmware::perf::CycleTimer;
+
 pub const PHYSICAL_WIDTH: usize = 800;
 pub const PHYSICAL_HEIGHT: usize = 480;
 
@@ -224,8 +227,15 @@ impl Region {
 pub struct Framebuffer<'a> {
     storage: &'a mut FramebufferStorage,
     orientation: Orientation,
+
     #[cfg(feature = "ui-metrics")]
     draw_iter_pixels: u64,
+    #[cfg(feature = "performance")]
+    ordered_coverage_calls: u64,
+    #[cfg(feature = "performance")]
+    ordered_coverage_pixels: u64,
+    #[cfg(feature = "performance")]
+    ordered_coverage_cycles: u64,
 }
 
 impl<'a> Framebuffer<'a> {
@@ -233,8 +243,15 @@ impl<'a> Framebuffer<'a> {
         Self {
             storage,
             orientation,
+
             #[cfg(feature = "ui-metrics")]
             draw_iter_pixels: 0,
+            #[cfg(feature = "performance")]
+            ordered_coverage_calls: 0,
+            #[cfg(feature = "performance")]
+            ordered_coverage_pixels: 0,
+            #[cfg(feature = "performance")]
+            ordered_coverage_cycles: 0,
         }
     }
 
@@ -244,6 +261,21 @@ impl<'a> Framebuffer<'a> {
 
     pub fn set_orientation(&mut self, orientation: Orientation) {
         self.orientation = orientation;
+    }
+
+    #[cfg(feature = "performance")]
+    pub const fn ordered_coverage_calls(&self) -> u64 {
+        self.ordered_coverage_calls
+    }
+
+    #[cfg(feature = "performance")]
+    pub const fn ordered_coverage_pixels(&self) -> u64 {
+        self.ordered_coverage_pixels
+    }
+
+    #[cfg(feature = "performance")]
+    pub const fn ordered_coverage_cycles(&self) -> u64 {
+        self.ordered_coverage_cycles
     }
 
     pub fn clear_white(&mut self) {
@@ -296,11 +328,11 @@ impl<'a> Framebuffer<'a> {
             return;
         }
 
-        defmt::assert!(
+        assert!(
             region.x as usize + region.width as usize <= PHYSICAL_WIDTH,
             "physical region exceeds framebuffer width"
         );
-        defmt::assert!(
+        assert!(
             region.y as usize + region.height as usize <= PHYSICAL_HEIGHT,
             "physical region exceeds framebuffer height"
         );
@@ -322,11 +354,36 @@ impl<'a> Framebuffer<'a> {
             return None;
         }
 
-        match bitmap.foreground().luma() {
+        let foreground = bitmap.foreground().luma();
+
+        if foreground != 0 && foreground != 3 {
+            return None;
+        }
+
+        #[cfg(all(feature = "performance", target_arch = "xtensa"))]
+        let timer = CycleTimer::start();
+
+        let result = match foreground {
             0 => self.blit_ordered_coverage_portrait_binary::<false>(bitmap),
             3 => self.blit_ordered_coverage_portrait_binary::<true>(bitmap),
-            _ => None,
+            _ => unreachable!(),
+        };
+
+        #[cfg(feature = "performance")]
+        if let Some(accepted) = result {
+            self.ordered_coverage_calls = self.ordered_coverage_calls.saturating_add(1);
+
+            self.ordered_coverage_pixels = self.ordered_coverage_pixels.saturating_add(accepted);
+
+            #[cfg(target_arch = "xtensa")]
+            {
+                self.ordered_coverage_cycles = self
+                    .ordered_coverage_cycles
+                    .saturating_add(u64::from(timer.elapsed()));
+            }
         }
+
+        result
     }
 
     fn blit_ordered_coverage_portrait_binary<const WHITE: bool>(

@@ -117,3 +117,11 @@ pub(crate) fn log_coverage_metrics(
         framebuffer_draw_iter_pixels,
     );
 }
+
+#[cfg(feature = "performance")]
+pub(crate) fn log_ordered_coverage(calls: u64, pixels: u64, cycles: u64) {
+    info!(
+        "perf/coverage_fast calls={=u64} pixels={=u64} cycles={=u64}",
+        calls, pixels, cycles,
+    );
+}
