@@ -1,4 +1,6 @@
 use embedded_graphics::prelude::DrawTarget as EgDrawTarget;
+#[cfg(feature = "trace")]
+use inkpaper_trace::{TraceEvent, TraceSpan};
 
 use crate::{
     Color, FontId, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
@@ -185,6 +187,12 @@ where
         return Ok(0);
     }
 
+    #[cfg(feature = "trace")]
+    let _text_run_trace = TraceSpan::start_with_arg(
+        TraceEvent::TextRun,
+        u32::try_from(text.len()).unwrap_or(u32::MAX),
+    );
+
     let font_instance = font.instance();
     let size_px = font_size_px(style);
 
@@ -195,9 +203,17 @@ where
 
     let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
 
-    let run = shaper
-        .shape_into(registry, font_instance.font(), size_px, text, &mut glyphs)
-        .map_err(EInkError::Shape)?;
+    let run = {
+        #[cfg(feature = "trace")]
+        let _shape_trace = TraceSpan::start_with_arg(
+            TraceEvent::Shape,
+            u32::try_from(text.len()).unwrap_or(u32::MAX),
+        );
+
+        shaper
+            .shape_into(registry, font_instance.font(), size_px, text, &mut glyphs)
+            .map_err(EInkError::Shape)?
+    };
 
     let glyph_count = run.len();
 
@@ -205,18 +221,26 @@ where
     // pass here.
     let mut pen_x = bounds.origin.x;
 
-    draw_shaped_run(
-        target,
-        report,
-        resources,
-        size_px,
-        &run,
-        baseline,
-        style.color,
-        clip,
-        coverage_mode,
-        &mut pen_x,
-    )?;
+    {
+        #[cfg(feature = "trace")]
+        let _shape_trace = TraceSpan::start_with_arg(
+            TraceEvent::Glyphs,
+            u32::try_from(glyph_count).unwrap_or(u32::MAX),
+        );
+
+        draw_shaped_run(
+            target,
+            report,
+            resources,
+            size_px,
+            &run,
+            baseline,
+            style.color,
+            clip,
+            coverage_mode,
+            &mut pen_x,
+        )?;
+    }
 
     Ok(u64::try_from(glyph_count).unwrap_or(u64::MAX))
 }

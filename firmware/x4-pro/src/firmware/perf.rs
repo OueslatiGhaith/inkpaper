@@ -1,4 +1,4 @@
-#[cfg(feature = "performance")]
+#[cfg(any(feature = "performance", feature = "trace"))]
 use defmt::info;
 #[cfg(feature = "performance")]
 use esp_hal::xtensa_lx::timer::get_cycle_count;
@@ -124,4 +124,35 @@ pub(crate) fn log_ordered_coverage(calls: u64, pixels: u64, cycles: u64) {
         "perf/coverage_fast calls={=u64} pixels={=u64} cycles={=u64}",
         calls, pixels, cycles,
     );
+}
+
+#[cfg(feature = "trace")]
+pub(crate) fn log_trace(summary: inkpaper_trace::TraceSummary) {
+    const CLOCK_HZ: u32 = 240_000_000;
+
+    let spans = u32::try_from(summary.records()).unwrap_or(u32::MAX);
+
+    info!(
+        "trace/session id={=u32} hz={=u32} spans={=u32} dropped={=u32} open={=u8}",
+        summary.session_id(),
+        CLOCK_HZ,
+        spans,
+        summary.dropped(),
+        summary.open_spans(),
+    );
+
+    for index in 0..summary.records() {
+        let Some(record) = inkpaper_trace::record(index) else {
+            continue;
+        };
+
+        info!(
+            "trace/span event={=u8} depth={=u8} start={=u32} cycles={=u32} arg={=u32}",
+            record.event().id(),
+            record.depth(),
+            record.start_cycles(),
+            record.duration_cycles(),
+            record.arg(),
+        );
+    }
 }

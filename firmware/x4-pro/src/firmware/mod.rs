@@ -44,7 +44,7 @@ mod framebuffer;
 mod frontlight;
 mod i2c_bus;
 mod input;
-#[cfg(any(feature = "performance", feature = "ui-metrics"))]
+#[cfg(any(feature = "performance", feature = "ui-metrics", feature = "trace"))]
 mod perf;
 mod platform;
 mod power;
@@ -75,6 +75,9 @@ async fn main(spawner: Spawner) -> ! {
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
+
+    #[cfg(feature = "trace")]
+    inkpaper_trace::set_clock(esp_hal::xtensa_lx::timer::get_cycle_count);
 
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
     info!("PSRAM allocator initialized");
