@@ -3262,7 +3262,10 @@ dependencies = [
  "anyhow",
  "clap",
  "indoc",
+ "inkpaper-trace",
  "png",
+ "serde",
+ "serde_json",
  "zip",
 ]
 

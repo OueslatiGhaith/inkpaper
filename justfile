@@ -20,4 +20,4 @@ x4-run:
 
 x4-perf:
     cargo +inkpaper-esp run -p {{firmware_package}} \
-        --target {{x4_pro_target}} --profile profiling --features "performance,ui-metrics"
+        --target {{x4_pro_target}} --profile profiling --features "performance,ui-metrics,trace"
