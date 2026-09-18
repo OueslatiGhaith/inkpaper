@@ -1,0 +1,14 @@
+[package]
+name = "inkpaper-trace"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+recording = []
+
+[target.'cfg(target_os = "none")'.dependencies]
+critical-section = { workspace = true }
+
+[target.'cfg(not(target_os = "none"))'.dependencies]
+critical-section = { workspace = true, features = ["std"] }

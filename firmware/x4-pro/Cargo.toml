@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["performance", "ui-metrics"]
+default = []
 performance = []
 ui-metrics = ["inkpaper-ui/metrics"]
+trace = ["dep:inkpaper-trace", "inkpaper-trace/recording", "inkpaper-ui/trace"]
 
 [dependencies]
 # internal deps
@@ -17,6 +18,7 @@ frontlight = { path = "../../crates/frontlight", features = ["defmt"] }
 gt911 = { path = "../../crates/gt911", features = ["defmt"] }
 inkpaper-app = { path = "../../crates/app", features = ["defmt"] }
 inkpaper-epub = { path = "../../crates/epub" }
+inkpaper-trace = { path = "../../crates/trace", optional = true }
 inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "defmt", "eink"] }
 ssd1677 = { path = "../../crates/ssd1677", features = ["defmt"] }
 uc8179 = { path = "../../crates/uc8179", features = ["defmt"] }

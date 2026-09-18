@@ -4,6 +4,7 @@ members = ["crates/*", "firmware/*", "tools/*"]
 default-members = ["crates/*"]
 
 [workspace.dependencies]
+critical-section = "1.2.0"
 defmt = "1.1.1"
 embedded-graphics = "0.8.2"
 embedded-graphics-simulator = "0.8.0"

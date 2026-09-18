@@ -13,11 +13,13 @@ eink = ["dep:embedded-graphics", "embedded-graphics/defmt"]
 ttf = ["dep:ttf-parser"]
 variable-fonts = ["ttf", "ttf-parser/variable-fonts"]
 metrics = []
+trace = ["dep:inkpaper-trace", "inkpaper-trace/recording"]
 
 [dependencies]
 defmt = { workspace = true, optional = true }
 embedded-graphics = { workspace = true, optional = true }
 heapless = { workspace = true }
+inkpaper-trace = { path = "../trace", optional = true }
 inkpaper-ui-macros = { path = "../ui-macros", optional = true }
 inkpaper-ui-style-schema = { path = "../ui-style-schema" }
 ttf-parser = { version = "0.25.1", optional = true, default-features = false, features = ["no-std-float", "opentype-layout"] }
