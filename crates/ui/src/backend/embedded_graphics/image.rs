@@ -8,8 +8,8 @@ use embedded_graphics::{
 };
 
 use crate::{
-    Color, ImagePaint, ImageResource, Rect, Size, backend::embedded_graphics::to_rgb888,
-    fitted_image_bounds, process_image_pixel, sample_image,
+    Color, ImagePaint, ImageResource, ImageSampler, Rect, Size,
+    backend::embedded_graphics::to_rgb888, fitted_image_bounds, process_image_pixel,
 };
 
 use super::from_embedded_size;
@@ -88,10 +88,16 @@ where
     let destination_width = u32::try_from(destination.width().get()).unwrap_or(0);
     let destination_height = u32::try_from(destination.height().get()).unwrap_or(0);
 
-    if source_width == 0 || source_height == 0 || destination_width == 0 || destination_height == 0
-    {
+    let Some(sampler) = ImageSampler::new(
+        image,
+        source_width,
+        source_height,
+        destination_width,
+        destination_height,
+        paint.sampling,
+    ) else {
         return Ok(());
-    }
+    };
 
     let destination_x = destination.x().get();
     let destination_y = destination.y().get();
@@ -102,24 +108,19 @@ where
     let bottom = visible.bottom().get();
 
     let pixels = (top..bottom).flat_map(|y| {
+        let relative_y = i64::from(y) - i64::from(destination_y);
+
+        let row = u32::try_from(relative_y)
+            .ok()
+            .and_then(|relative_y| sampler.row(relative_y));
+
         (left..right).filter_map(move |x| {
+            let row = row?;
+
             let relative_x = i64::from(x) - i64::from(destination_x);
-            let relative_y = i64::from(y) - i64::from(destination_y);
-
             let relative_x = u32::try_from(relative_x).ok()?;
-            let relative_y = u32::try_from(relative_y).ok()?;
 
-            let color = sample_image(
-                image,
-                relative_x,
-                relative_y,
-                source_width,
-                source_height,
-                destination_width,
-                destination_height,
-                paint.sampling,
-            )?;
-
+            let color = row.sample(relative_x)?;
             let color = process_image_pixel(color, paint, x, y);
 
             Some(EgPixel(EgPoint::new(x, y), to_rgb888(color)))

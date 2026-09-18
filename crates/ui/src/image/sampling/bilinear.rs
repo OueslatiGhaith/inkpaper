@@ -1,35 +1,60 @@
 use crate::{Color, ImageResource};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BilinearAxis {
+    first: u32,
+    second: u32,
+    fraction: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct BilinearRow {
+    y_axis: BilinearAxis,
+}
+
+pub(super) fn prepare_row(
+    y: u32,
+    source_height: u32,
+    destination_height: u32,
+) -> Option<BilinearRow> {
+    Some(BilinearRow {
+        y_axis: bilinear_axis(y, source_height, destination_height)?,
+    })
+}
+
 pub(super) fn sample_bilinear(
     image: &dyn ImageResource,
     x: u32,
-    y: u32,
     source_width: u32,
-    source_height: u32,
     destination_width: u32,
-    destination_height: u32,
+    row: BilinearRow,
 ) -> Option<Color> {
-    let (x0, x1, x_fraction) = bilinear_axis(x, source_width, destination_width);
+    let x_axis = bilinear_axis(x, source_width, destination_width)?;
 
-    let (y0, y1, y_fraction) = bilinear_axis(y, source_height, destination_height);
+    let y_axis = row.y_axis;
+    let top_left = image.pixel(x_axis.first, y_axis.first)?;
+    let top_right = image.pixel(x_axis.second, y_axis.first)?;
+    let bottom_left = image.pixel(x_axis.first, y_axis.second)?;
+    let bottom_right = image.pixel(x_axis.second, y_axis.second)?;
 
-    let top_left = image.pixel(x0, y0)?;
-    let top_right = image.pixel(x1, y0)?;
-    let bottom_left = image.pixel(x0, y1)?;
-    let bottom_right = image.pixel(x1, y1)?;
+    let top = lerp_color(top_left, top_right, x_axis.fraction);
+    let bottom = lerp_color(bottom_left, bottom_right, x_axis.fraction);
 
-    let top = lerp_color(top_left, top_right, x_fraction);
-    let bottom = lerp_color(bottom_left, bottom_right, x_fraction);
-
-    Some(lerp_color(top, bottom, y_fraction))
+    Some(lerp_color(top, bottom, y_axis.fraction))
 }
 
-fn bilinear_axis(destination: u32, source_len: u32, destination_len: u32) -> (u32, u32, u16) {
-    if source_len <= 1 {
-        return (0, 0, 0);
+fn bilinear_axis(destination: u32, source_len: u32, destination_len: u32) -> Option<BilinearAxis> {
+    if source_len == 0 || destination_len == 0 || destination >= destination_len {
+        return None;
     }
 
-    debug_assert!(destination_len > 0);
+    if source_len <= 1 {
+        return Some(BilinearAxis {
+            first: 0,
+            second: 0,
+            fraction: 0,
+        });
+    }
 
     // map destination pixel centers to source pixel centers using 8 bits
     // of fractional precision:
@@ -43,7 +68,11 @@ fn bilinear_axis(destination: u32, source_len: u32, destination_len: u32) -> (u3
     let second = first.saturating_add(1).min(source_len - 1);
     let fraction = u16::try_from(coordinate % 256).unwrap_or(0);
 
-    (first, second, fraction)
+    Some(BilinearAxis {
+        first,
+        second,
+        fraction,
+    })
 }
 
 fn lerp_color(first: Color, second: Color, fraction: u16) -> Color {

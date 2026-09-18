@@ -9,7 +9,7 @@ mod tests;
 
 pub(crate) use processing::process_image_pixel;
 pub use registry::*;
-pub(crate) use sampling::sample_image;
+pub(crate) use sampling::ImageSampler;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

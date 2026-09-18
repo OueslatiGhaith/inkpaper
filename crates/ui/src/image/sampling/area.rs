@@ -13,10 +13,45 @@ struct AreaAxis {
     end_source: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct AreaRow {
+    y_axis: AreaAxis,
+    total_weight: u64,
+}
+
+pub(super) fn prepare_row(
+    y: u32,
+    source_width: u32,
+    source_height: u32,
+    destination_height: u32,
+) -> Option<AreaRow> {
+    let y_axis = area_axis(y, source_height, destination_height)?;
+
+    let total_weight = u64::from(source_width) * u64::from(source_height);
+
+    Some(AreaRow {
+        y_axis,
+        total_weight,
+    })
+}
+
+pub(super) fn sample_area(
+    image: &dyn ImageResource,
+    x: u32,
+    source_width: u32,
+    destination_width: u32,
+    row: AreaRow,
+) -> Option<Color> {
+    let x_axis = area_axis(x, source_width, destination_width)?;
+
+    sample_area_with::<u64>(image, x_axis, row.y_axis, row.total_weight)
+        .or_else(|| sample_area_with::<u128>(image, x_axis, row.y_axis, row.total_weight))
+}
+
 fn area_axis(destination: u32, source_len: u32, destination_len: u32) -> Option<AreaAxis> {
-    debug_assert!(source_len > 0);
-    debug_assert!(destination_len > 0);
-    debug_assert!(destination < destination_len);
+    if source_len == 0 || destination_len == 0 || destination >= destination_len {
+        return None;
+    }
 
     let source_len = u64::from(source_len);
     let destination_len_u64 = u64::from(destination_len);
@@ -37,26 +72,6 @@ fn area_axis(destination: u32, source_len: u32, destination_len: u32) -> Option<
         first_source,
         end_source,
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn sample_area(
-    image: &dyn ImageResource,
-    x: u32,
-    y: u32,
-    source_width: u32,
-    source_height: u32,
-    destination_width: u32,
-    destination_height: u32,
-) -> Option<Color> {
-    let x_axis = area_axis(x, source_width, destination_width)?;
-
-    let y_axis = area_axis(y, source_height, destination_height)?;
-
-    let total_weight = u64::from(source_width) * u64::from(source_height);
-
-    sample_area_with::<u64>(image, x_axis, y_axis, total_weight)
-        .or_else(|| sample_area_with::<u128>(image, x_axis, y_axis, total_weight))
 }
 
 fn sample_area_with<T>(

@@ -4,8 +4,143 @@ mod area;
 mod bilinear;
 mod nearest;
 
+#[derive(Clone, Copy)]
+pub(crate) struct ImageSampler<'image> {
+    image: &'image dyn ImageResource,
+    source_width: u32,
+    source_height: u32,
+    destination_width: u32,
+    destination_height: u32,
+    sampling: ImageSampling,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ImageSamplingRow<'image> {
+    image: &'image dyn ImageResource,
+    source_width: u32,
+    destination_width: u32,
+    kind: ImageSamplingRowKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageSamplingRowKind {
+    Nearest(nearest::NearestRow),
+    Bilinear(bilinear::BilinearRow),
+    Area(area::AreaRow),
+}
+
+impl<'image> ImageSampler<'image> {
+    pub(crate) fn new(
+        image: &'image dyn ImageResource,
+        source_width: u32,
+        source_height: u32,
+        destination_width: u32,
+        destination_height: u32,
+        sampling: ImageSampling,
+    ) -> Option<Self> {
+        if source_width == 0
+            || source_height == 0
+            || destination_width == 0
+            || destination_height == 0
+        {
+            return None;
+        }
+
+        // exact area filtering only applies when both axes are being preserved or minified.
+        // Preserve the existing bilinear fallback for magnification, but decide it
+        // once for the whole image instead of once per pixel.
+        let sampling = match sampling {
+            ImageSampling::Area
+                if destination_width > source_width || destination_height > source_height =>
+            {
+                ImageSampling::Bilinear
+            }
+
+            sampling => sampling,
+        };
+
+        Some(Self {
+            image,
+            source_width,
+            source_height,
+            destination_width,
+            destination_height,
+            sampling,
+        })
+    }
+
+    pub(crate) fn row(self, y: u32) -> Option<ImageSamplingRow<'image>> {
+        if y >= self.destination_height {
+            return None;
+        }
+
+        let kind = match self.sampling {
+            ImageSampling::Nearest => ImageSamplingRowKind::Nearest(nearest::prepare_row(
+                y,
+                self.source_height,
+                self.destination_height,
+            )?),
+
+            ImageSampling::Bilinear => ImageSamplingRowKind::Bilinear(bilinear::prepare_row(
+                y,
+                self.source_height,
+                self.destination_height,
+            )?),
+
+            ImageSampling::Area => ImageSamplingRowKind::Area(area::prepare_row(
+                y,
+                self.source_width,
+                self.source_height,
+                self.destination_height,
+            )?),
+        };
+
+        Some(ImageSamplingRow {
+            image: self.image,
+            source_width: self.source_width,
+            destination_width: self.destination_width,
+            kind,
+        })
+    }
+}
+
+impl ImageSamplingRow<'_> {
+    pub(crate) fn sample(self, x: u32) -> Option<Color> {
+        if x >= self.destination_width {
+            return None;
+        }
+
+        match self.kind {
+            ImageSamplingRowKind::Nearest(row) => nearest::sample_nearest(
+                self.image,
+                x,
+                self.source_width,
+                self.destination_width,
+                row,
+            ),
+
+            ImageSamplingRowKind::Bilinear(row) => bilinear::sample_bilinear(
+                self.image,
+                x,
+                self.source_width,
+                self.destination_width,
+                row,
+            ),
+
+            ImageSamplingRowKind::Area(row) => area::sample_area(
+                self.image,
+                x,
+                self.source_width,
+                self.destination_width,
+                row,
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_image(
+fn sample_image(
     image: &dyn ImageResource,
     x: u32,
     y: u32,
@@ -15,59 +150,16 @@ pub(crate) fn sample_image(
     destination_height: u32,
     sampling: ImageSampling,
 ) -> Option<Color> {
-    if source_width == 0
-        || source_height == 0
-        || destination_width == 0
-        || destination_height == 0
-        || x >= destination_width
-        || y >= destination_height
-    {
-        return None;
-    }
+    let sampler = ImageSampler::new(
+        image,
+        source_width,
+        source_height,
+        destination_width,
+        destination_height,
+        sampling,
+    )?;
 
-    match sampling {
-        ImageSampling::Nearest => nearest::sample_nearest(
-            image,
-            x,
-            y,
-            source_width,
-            source_height,
-            destination_width,
-            destination_height,
-        ),
-        ImageSampling::Bilinear => bilinear::sample_bilinear(
-            image,
-            x,
-            y,
-            source_width,
-            source_height,
-            destination_width,
-            destination_height,
-        ),
-        ImageSampling::Area => {
-            if destination_width <= source_width && destination_height <= source_height {
-                area::sample_area(
-                    image,
-                    x,
-                    y,
-                    source_width,
-                    source_height,
-                    destination_width,
-                    destination_height,
-                )
-            } else {
-                bilinear::sample_bilinear(
-                    image,
-                    x,
-                    y,
-                    source_width,
-                    source_height,
-                    destination_width,
-                    destination_height,
-                )
-            }
-        }
-    }
+    sampler.row(y)?.sample(x)
 }
 
 #[cfg(test)]
