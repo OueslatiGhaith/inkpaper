@@ -208,6 +208,8 @@ impl Region {
 pub struct Framebuffer<'a> {
     storage: &'a mut FramebufferStorage,
     orientation: Orientation,
+    #[cfg(feature = "ui-metrics")]
+    draw_iter_pixels: u64,
 }
 
 impl<'a> Framebuffer<'a> {
@@ -215,6 +217,8 @@ impl<'a> Framebuffer<'a> {
         Self {
             storage,
             orientation,
+            #[cfg(feature = "ui-metrics")]
+            draw_iter_pixels: 0,
         }
     }
 
@@ -288,6 +292,11 @@ impl<'a> Framebuffer<'a> {
         fill_plane_region(&mut self.storage.lsb, region, level & 0b01 != 0);
         fill_plane_region(&mut self.storage.msb, region, level & 0b10 != 0);
     }
+
+    #[cfg(feature = "ui-metrics")]
+    pub const fn draw_iter_pixels(&self) -> u64 {
+        self.draw_iter_pixels
+    }
 }
 
 impl OriginDimensions for Framebuffer<'_> {
@@ -307,6 +316,11 @@ impl DrawTarget for Framebuffer<'_> {
         for Pixel(point, color) in pixels {
             if !contains_logical_pixel(point) {
                 continue;
+            }
+
+            #[cfg(feature = "ui-metrics")]
+            {
+                self.draw_iter_pixels = self.draw_iter_pixels.saturating_add(1);
             }
 
             self.set_pixel(point.x as u16, point.y as u16, color);

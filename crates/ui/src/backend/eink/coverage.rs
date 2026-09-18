@@ -5,7 +5,11 @@ use embedded_graphics::{
     prelude::DrawTarget as EgDrawTarget,
 };
 
-use crate::{Color, GlyphBitmap, Luminance, Point, Rect, backend::eink::tone::binary_dither_gray2};
+use crate::{
+    Color, GlyphBitmap, Luminance, Point, Rect,
+    backend::{EInkPaintReport, eink::tone::binary_dither_gray2},
+    increment_metric,
+};
 
 use super::EInkError;
 
@@ -82,6 +86,7 @@ pub(super) fn alpha_blend_gray2(foreground: Color, background: Gray2, coverage: 
 
 pub(super) fn draw_coverage_bitmap<D>(
     target: &mut D,
+    report: &mut EInkPaintReport,
     bitmap: &GlyphBitmap<'_>,
     origin: Point,
     color: Color,
@@ -95,6 +100,12 @@ where
     let height = usize::from(bitmap.height());
 
     if width == 0 || height == 0 {
+        #[cfg(feature = "metrics")]
+        report.record_coverage_bitmap(0, 0);
+
+        #[cfg(not(feature = "metrics"))]
+        let _ = report;
+
         return Ok(());
     }
 
@@ -104,8 +115,14 @@ where
 
     let foreground = color_to_gray2(color);
 
+    #[cfg(feature = "metrics")]
+    let samples = u64::try_from(coverage.len()).unwrap_or(u64::MAX);
+
     match coverage_mode {
         EInkCoverageMode::BinaryThreshold => {
+            #[cfg(feature = "metrics")]
+            let mut accepted = 0u64;
+
             let pixels = coverage
                 .iter()
                 .copied()
@@ -121,13 +138,26 @@ where
                         return None;
                     }
 
+                    increment_metric!(accepted);
+
                     Some(EgPixel(point, foreground))
                 });
 
-            target.draw_iter(pixels).map_err(EInkError::Target)
+            let result = target.draw_iter(pixels).map_err(EInkError::Target);
+
+            #[cfg(feature = "metrics")]
+            report.record_coverage_bitmap(samples, accepted);
+
+            #[cfg(not(feature = "metrics"))]
+            let _ = report;
+
+            result
         }
 
         EInkCoverageMode::OrderedDither4x4 => {
+            #[cfg(feature = "metrics")]
+            let mut accepted = 0u64;
+
             let pixels = coverage
                 .iter()
                 .copied()
@@ -139,13 +169,26 @@ where
                         return None;
                     }
 
+                    increment_metric!(accepted);
+
                     Some(EgPixel(point, binary_dither_gray2(foreground, point)))
                 });
 
-            target.draw_iter(pixels).map_err(EInkError::Target)
+            let result = target.draw_iter(pixels).map_err(EInkError::Target);
+
+            #[cfg(feature = "metrics")]
+            report.record_coverage_bitmap(samples, accepted);
+
+            #[cfg(not(feature = "metrics"))]
+            let _ = report;
+
+            result
         }
 
         EInkCoverageMode::AlphaBlend { read_pixel } => {
+            #[cfg(feature = "metrics")]
+            let mut accepted = 0u64;
+
             let solid_pixels =
                 coverage
                     .iter()
@@ -161,6 +204,8 @@ where
                         if !point_in_rect(point, clip) {
                             return None;
                         }
+
+                        increment_metric!(accepted);
 
                         Some(EgPixel(point, foreground))
                     });
@@ -189,7 +234,15 @@ where
                 target
                     .draw_iter(core::iter::once(EgPixel(point, color)))
                     .map_err(EInkError::Target)?;
+
+                increment_metric!(accepted);
             }
+
+            #[cfg(feature = "metrics")]
+            report.record_coverage_bitmap(samples, accepted);
+
+            #[cfg(not(feature = "metrics"))]
+            let _ = report;
 
             Ok(())
         }

@@ -63,6 +63,8 @@ struct RenderedFrame {
     physical_damage: Region,
     eink_report: EInkPaintReport,
     paint_report: PaintReport,
+    #[cfg(feature = "ui-metrics")]
+    framebuffer_draw_iter_pixels: u64,
 }
 
 impl RenderedFrame {
@@ -188,6 +190,10 @@ impl Presenter {
                 runtime.glyph_cache_used_bytes(),
                 runtime.glyph_cache_capacity_bytes(),
             );
+            crate::firmware::perf::log_coverage_metrics(
+                rendered.eink_report,
+                rendered.framebuffer_draw_iter_pixels,
+            );
         }
 
         // initial presentation is explicitly full regardless of policy.
@@ -238,6 +244,10 @@ impl Presenter {
                 runtime.glyph_cache_metrics(),
                 runtime.glyph_cache_used_bytes(),
                 runtime.glyph_cache_capacity_bytes(),
+            );
+            crate::firmware::perf::log_coverage_metrics(
+                rendered.eink_report,
+                rendered.framebuffer_draw_iter_pixels,
             );
         }
 
@@ -413,6 +423,9 @@ fn render_invalidation(
         timings.damage_cycles = damage_timer.elapsed();
     }
 
+    #[cfg(feature = "ui-metrics")]
+    let framebuffer_draw_iter_pixels = display.draw_iter_pixels();
+
     // framebuffer owns a mutable borrow of `frame`.
     // release it before querying storage directly.
     drop(display);
@@ -424,6 +437,8 @@ fn render_invalidation(
         physical_damage,
         eink_report,
         paint_report,
+        #[cfg(feature = "ui-metrics")]
+        framebuffer_draw_iter_pixels,
     })
 }
 

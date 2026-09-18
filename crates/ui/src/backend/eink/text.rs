@@ -3,6 +3,7 @@ use embedded_graphics::prelude::DrawTarget as EgDrawTarget;
 use crate::{
     Color, FontId, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
     ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
+    backend::EInkPaintReport,
     px,
     resources::RuntimeResources,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
@@ -21,6 +22,7 @@ pub(super) fn draw_text_to<
     const IMAGES: usize,
 >(
     target: &mut D,
+    report: &mut EInkPaintReport,
     text: &str,
     bounds: Rect,
     clip: Rect,
@@ -131,6 +133,7 @@ where
 
             if let Err(draw_error) = draw_shaped_run(
                 target,
+                report,
                 resources,
                 size_px,
                 &run,
@@ -165,6 +168,7 @@ fn draw_shaped_run<
     const IMAGES: usize,
 >(
     target: &mut D,
+    report: &mut EInkPaintReport,
     resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
     size_px: u16,
     run: &ShapedRun<'_>,
@@ -190,7 +194,7 @@ where
             baseline + offset.y + metrics.bearing_y,
         );
 
-        draw_coverage_bitmap(target, &bitmap, origin, color, clip, coverage_mode)?;
+        draw_coverage_bitmap(target, report, &bitmap, origin, color, clip, coverage_mode)?;
 
         *pen_x += shaped.advance();
     }

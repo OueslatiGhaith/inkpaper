@@ -275,6 +275,7 @@ where
 
         let shaped_glyphs = draw_text_to(
             self.target,
+            &mut self.report,
             text,
             bounds,
             clip,

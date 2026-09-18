@@ -103,3 +103,17 @@ pub(crate) fn log_text_metrics(
         bytes_capacity,
     );
 }
+
+#[cfg(feature = "ui-metrics")]
+pub(crate) fn log_coverage_metrics(
+    paint: inkpaper_ui::backend::EInkPaintReport,
+    framebuffer_draw_iter_pixels: u64,
+) {
+    defmt::info!(
+        "perf/coverage bitmaps={=u64} samples={=u64} accepted={=u64} framebuffer_pixels={=u64}",
+        paint.coverage_bitmaps(),
+        paint.coverage_samples(),
+        paint.coverage_accepted(),
+        framebuffer_draw_iter_pixels,
+    );
+}

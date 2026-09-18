@@ -43,6 +43,12 @@ pub struct EInkPaintReport {
     text_draw_calls: u64,
     #[cfg(feature = "metrics")]
     shaped_glyphs: u64,
+    #[cfg(feature = "metrics")]
+    coverage_bitmaps: u64,
+    #[cfg(feature = "metrics")]
+    coverage_samples: u64,
+    #[cfg(feature = "metrics")]
+    coverage_accepted: u64,
 }
 
 impl EInkPaintReport {
@@ -64,6 +70,21 @@ impl EInkPaintReport {
         self.shaped_glyphs
     }
 
+    #[cfg(feature = "metrics")]
+    pub const fn coverage_bitmaps(self) -> u64 {
+        self.coverage_bitmaps
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn coverage_samples(self) -> u64 {
+        self.coverage_samples
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn coverage_accepted(self) -> u64 {
+        self.coverage_accepted
+    }
+
     pub(super) fn include(&mut self, tone: EInkTone) {
         self.tone = self.tone.merged(tone);
     }
@@ -72,6 +93,13 @@ impl EInkPaintReport {
     pub(super) fn record_text_draw(&mut self, shaped_glyphs: u64) {
         self.text_draw_calls = self.text_draw_calls.saturating_add(1);
         self.shaped_glyphs = self.shaped_glyphs.saturating_add(shaped_glyphs);
+    }
+
+    #[cfg(feature = "metrics")]
+    pub(super) fn record_coverage_bitmap(&mut self, samples: u64, accepted: u64) {
+        self.coverage_bitmaps = self.coverage_bitmaps.saturating_add(1);
+        self.coverage_samples = self.coverage_samples.saturating_add(samples);
+        self.coverage_accepted = self.coverage_accepted.saturating_add(accepted);
     }
 }
 
@@ -231,5 +259,18 @@ mod tests {
         assert_eq!(gray2_tone(Gray2::new(1)), EInkTone::Gray4);
         assert_eq!(gray2_tone(Gray2::new(2)), EInkTone::Gray4);
         assert_eq!(gray2_tone(Gray2::new(3)), EInkTone::Binary);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn eink_paint_report_accumulates_coverage_work() {
+        let mut report = EInkPaintReport::default();
+
+        report.record_coverage_bitmap(100, 35);
+        report.record_coverage_bitmap(80, 20);
+
+        assert_eq!(report.coverage_bitmaps(), 2);
+        assert_eq!(report.coverage_samples(), 180);
+        assert_eq!(report.coverage_accepted(), 55);
     }
 }
