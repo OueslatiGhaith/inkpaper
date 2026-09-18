@@ -1,3 +1,6 @@
+#[cfg(feature = "trace")]
+use inkpaper_trace::{TraceEvent, TraceSpan};
+
 use crate::{FontRegistry, Offset, px};
 
 use super::{
@@ -81,7 +84,15 @@ impl SimpleShaper {
         let run_count = merge_same_level_runs(&mut runs[..run_count]);
         reorder_directional_runs(glyphs, &mut runs[..run_count]);
 
-        let advance = apply_visual_positioning(registry, size_px, glyphs, &runs[..run_count]);
+        let advance = {
+            #[cfg(feature = "trace")]
+            let _positioning_trace = TraceSpan::start_with_arg(
+                TraceEvent::Positioning,
+                u32::try_from(glyphs.len()).unwrap_or(u32::MAX),
+            );
+
+            apply_visual_positioning(registry, size_px, glyphs, &runs[..run_count])
+        };
 
         Ok(ShapedRun::new(glyphs, direction, advance))
     }
