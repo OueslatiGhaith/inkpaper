@@ -3,7 +3,7 @@ use ttf_parser::{
     gpos::{Anchor, PairAdjustment, PositioningSubtable},
 };
 
-use crate::{CursiveAttachment, Offset, Pixels, px};
+use crate::{CursiveAttachment, Offset, PairPositioning, Pixels, px};
 
 use super::metrics::{font_scale, round_to_i32};
 
@@ -342,4 +342,135 @@ fn anchor_attachment_offset(parent: Anchor<'_>, child: Anchor<'_>, scale: f32) -
         px(round_to_i32(x_units as f32 * scale)),
         px(round_to_i32(y_units as f32 * scale)),
     )
+}
+
+pub(super) fn gpos_pair_positioning_for_face(
+    face: &Face<'_>,
+    visual_left: TtfGlyphId,
+    visual_right: TtfGlyphId,
+    size_px: u16,
+    right_to_left: bool,
+) -> Option<PairPositioning> {
+    let scale = font_scale(face, size_px)?;
+    let gpos = face.tables().gpos?;
+
+    let curs_tag = Tag::from_bytes(b"curs");
+    let kern_tag = Tag::from_bytes(b"kern");
+
+    // cursive positioning has precedence over ordinary pair kerning.
+    //
+    // we may encounter a kern feature before a curs feature in the font, so remember
+    // the first matching kerning adjustment while continuing to look for a cursive attachment.
+    let mut kerning = None;
+
+    for feature in gpos.features {
+        if feature.tag == curs_tag {
+            for lookup_index in feature.lookup_indices {
+                let Some(lookup) = gpos.lookups.get(lookup_index) else {
+                    continue;
+                };
+
+                if lookup.flags.right_to_left() != right_to_left {
+                    continue;
+                }
+
+                for subtable in lookup.subtables.into_iter::<PositioningSubtable>() {
+                    let PositioningSubtable::Cursive(adjustment) = subtable else {
+                        continue;
+                    };
+
+                    let Some(left_index) = adjustment.coverage.get(visual_left) else {
+                        continue;
+                    };
+
+                    let Some(right_index) = adjustment.coverage.get(visual_right) else {
+                        continue;
+                    };
+
+                    let origin_delta = if right_to_left {
+                        let Some(left_entry) = adjustment.sets.entry(left_index) else {
+                            continue;
+                        };
+
+                        let Some(right_exit) = adjustment.sets.exit(right_index) else {
+                            continue;
+                        };
+
+                        anchor_attachment_offset(left_entry, right_exit, scale)
+                    } else {
+                        let Some(left_exit) = adjustment.sets.exit(left_index) else {
+                            continue;
+                        };
+
+                        let Some(right_entry) = adjustment.sets.entry(right_index) else {
+                            continue;
+                        };
+
+                        anchor_attachment_offset(left_exit, right_entry, scale)
+                    };
+
+                    return Some(PairPositioning::Cursive(CursiveAttachment::new(
+                        origin_delta,
+                    )));
+                }
+            }
+
+            continue;
+        }
+
+        if feature.tag != kern_tag || kerning.is_some() {
+            continue;
+        }
+
+        'kern_feature: for lookup_index in feature.lookup_indices {
+            let Some(lookup) = gpos.lookups.get(lookup_index) else {
+                continue;
+            };
+
+            for subtable in lookup.subtables.into_iter::<PositioningSubtable>() {
+                let PositioningSubtable::Pair(adjustment) = subtable else {
+                    continue;
+                };
+
+                let pair = match adjustment {
+                    PairAdjustment::Format1 { coverage, sets } => {
+                        let Some(left_index) = coverage.get(visual_left) else {
+                            continue;
+                        };
+
+                        let Some(set) = sets.get(left_index) else {
+                            continue;
+                        };
+
+                        set.get(visual_right)
+                    }
+
+                    PairAdjustment::Format2 {
+                        coverage,
+                        classes,
+                        matrix,
+                    } => {
+                        if coverage.get(visual_left).is_none() {
+                            continue;
+                        }
+
+                        let left_class = classes.0.get(visual_left);
+                        let right_class = classes.1.get(visual_right);
+
+                        matrix.get((left_class, right_class))
+                    }
+                };
+
+                let Some((left_value, _right_value)) = pair else {
+                    continue;
+                };
+
+                kerning = Some(px(round_to_i32(f32::from(left_value.x_advance) * scale)));
+
+                break 'kern_feature;
+            }
+        }
+    }
+
+    kerning.map(PairPositioning::Kerning)
 }

@@ -3,7 +3,7 @@ use ttf_parser::{Face, GlyphId as TtfGlyphId};
 use crate::{
     CursiveAttachment, FontData, FontFace, FontMetrics, FontProperties, FontRasterError,
     FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning,
-    Pixels, px,
+    Pixels, px, ttf::gpos::gpos_pair_positioning_for_face,
 };
 
 mod gpos;
@@ -453,14 +453,10 @@ fn pair_positioning_for_face(
     let visual_left = to_ttf_glyph(visual_left);
     let visual_right = to_ttf_glyph(visual_right);
 
-    if let Some(attachment) =
-        gpos_cursive_attachment_for_face(face, visual_left, visual_right, size_px, right_to_left)
+    if let Some(positioning) =
+        gpos_pair_positioning_for_face(face, visual_left, visual_right, size_px, right_to_left)
     {
-        return PairPositioning::Cursive(attachment);
-    }
-
-    if let Some(kerning) = gpos_kerning_for_face(face, visual_left, visual_right, size_px) {
-        return PairPositioning::Kerning(kerning);
+        return positioning;
     }
 
     PairPositioning::Kerning(
