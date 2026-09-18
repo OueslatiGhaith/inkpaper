@@ -4,6 +4,8 @@ use num_traits::{PrimInt, Unsigned};
 
 use crate::{Color, ImageResource};
 
+use super::axis::LinearQuotient;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AreaAxis {
     start: u64,
@@ -17,6 +19,15 @@ struct AreaAxis {
 pub(super) struct AreaRow {
     y_axis: AreaAxis,
     total_weight: u64,
+}
+
+pub(super) struct AreaCursor {
+    x_axis: AreaAxis,
+    end_position: LinearQuotient,
+    source_len: u64,
+    destination_len: u64,
+    remaining: u32,
+    row: AreaRow,
 }
 
 pub(super) fn prepare_row(
@@ -35,17 +46,91 @@ pub(super) fn prepare_row(
     })
 }
 
-pub(super) fn sample_area(
-    image: &dyn ImageResource,
-    x: u32,
+pub(super) fn prepare_cursor(
+    start_x: u32,
     source_width: u32,
     destination_width: u32,
     row: AreaRow,
-) -> Option<Color> {
-    let x_axis = area_axis(x, source_width, destination_width)?;
+) -> Option<AreaCursor> {
+    if source_width == 0 || destination_width == 0 || start_x >= destination_width {
+        return None;
+    }
+
+    let source_len = u64::from(source_width);
+    let destination_len = u64::from(destination_width);
+
+    let start = u64::from(start_x).checked_mul(source_len)?;
+
+    let end = start.checked_add(source_len)?;
+
+    let first_source = u32::try_from(start / destination_len).ok()?;
+
+    let end_position = LinearQuotient::new(u128::from(end), source_len, destination_len)?;
+
+    let end_source = ceil_position(end_position)?;
+
+    Some(AreaCursor {
+        x_axis: AreaAxis {
+            start,
+            end,
+            source_pixel_span: destination_len,
+            first_source,
+            end_source,
+        },
+        end_position,
+        source_len,
+        destination_len,
+        remaining: destination_width - start_x,
+        row,
+    })
+}
+
+pub(super) fn sample_next(image: &dyn ImageResource, cursor: &mut AreaCursor) -> Option<Color> {
+    if cursor.remaining == 0 {
+        return None;
+    }
+
+    let x_axis = cursor.x_axis;
+    let row = cursor.row;
+
+    advance_cursor(cursor);
 
     sample_area_with::<u64>(image, x_axis, row.y_axis, row.total_weight)
         .or_else(|| sample_area_with::<u128>(image, x_axis, row.y_axis, row.total_weight))
+}
+
+fn advance_cursor(cursor: &mut AreaCursor) {
+    cursor.remaining -= 1;
+
+    if cursor.remaining == 0 {
+        return;
+    }
+
+    let start = cursor.x_axis.end;
+
+    let first_source =
+        u32::try_from(cursor.end_position.quotient()).expect("area source coordinate exceeds u32");
+
+    cursor.end_position.advance();
+
+    let end = start + cursor.source_len;
+
+    let end_source =
+        ceil_position(cursor.end_position).expect("area source coordinate exceeds u32");
+
+    cursor.x_axis = AreaAxis {
+        start,
+        end,
+        source_pixel_span: cursor.destination_len,
+        first_source,
+        end_source,
+    };
+}
+
+fn ceil_position(position: LinearQuotient) -> Option<u32> {
+    let value = position.quotient() + u64::from(position.remainder() != 0);
+
+    u32::try_from(value).ok()
 }
 
 fn area_axis(destination: u32, source_len: u32, destination_len: u32) -> Option<AreaAxis> {
@@ -54,21 +139,21 @@ fn area_axis(destination: u32, source_len: u32, destination_len: u32) -> Option<
     }
 
     let source_len = u64::from(source_len);
-    let destination_len_u64 = u64::from(destination_len);
+    let destination_len = u64::from(destination_len);
 
     let start = u64::from(destination) * source_len;
     let end = (u64::from(destination) + 1) * source_len;
 
-    let first_source = u32::try_from(start / destination_len_u64)
+    let first_source = u32::try_from(start / destination_len)
         .ok()?
         .min(u32::try_from(source_len.saturating_sub(1)).ok()?);
 
-    let end_source = u32::try_from(ceil_div(end, destination_len_u64).min(source_len)).ok()?;
+    let end_source = u32::try_from(ceil_div(end, destination_len).min(source_len)).ok()?;
 
     Some(AreaAxis {
         start,
         end,
-        source_pixel_span: destination_len_u64,
+        source_pixel_span: destination_len,
         first_source,
         end_source,
     })

@@ -1,6 +1,7 @@
 use crate::{Color, ImageResource, ImageSampling};
 
 mod area;
+mod axis;
 mod bilinear;
 mod nearest;
 
@@ -27,6 +28,83 @@ enum ImageSamplingRowKind {
     Nearest(nearest::NearestRow),
     Bilinear(bilinear::BilinearRow),
     Area(area::AreaRow),
+}
+
+enum ImageSamplingCursorKind {
+    Nearest {
+        row: nearest::NearestRow,
+        cursor: nearest::NearestCursor,
+    },
+    Bilinear {
+        row: bilinear::BilinearRow,
+        cursor: bilinear::BilinearCursor,
+    },
+    Area(area::AreaCursor),
+}
+
+impl<'a> ImageSamplingRow<'a> {
+    pub(crate) fn sample(self, x: u32) -> Option<Color> {
+        self.cursor(x)?.sample_next()
+    }
+
+    pub(crate) fn cursor(self, start_x: u32) -> Option<ImageSamplingCursor<'a>> {
+        if start_x >= self.destination_width {
+            return None;
+        }
+
+        let kind =
+            match self.kind {
+                ImageSamplingRowKind::Nearest(row) => ImageSamplingCursorKind::Nearest {
+                    row,
+                    cursor: nearest::prepare_cursor(
+                        start_x,
+                        self.source_width,
+                        self.destination_width,
+                        row,
+                    )?,
+                },
+
+                ImageSamplingRowKind::Bilinear(row) => ImageSamplingCursorKind::Bilinear {
+                    row,
+                    cursor: bilinear::prepare_cursor(
+                        start_x,
+                        self.source_width,
+                        self.destination_width,
+                        row,
+                    )?,
+                },
+
+                ImageSamplingRowKind::Area(row) => ImageSamplingCursorKind::Area(
+                    area::prepare_cursor(start_x, self.source_width, self.destination_width, row)?,
+                ),
+            };
+
+        Some(ImageSamplingCursor {
+            image: self.image,
+            kind,
+        })
+    }
+}
+
+pub(crate) struct ImageSamplingCursor<'image> {
+    image: &'image dyn ImageResource,
+    kind: ImageSamplingCursorKind,
+}
+
+impl ImageSamplingCursor<'_> {
+    pub(crate) fn sample_next(&mut self) -> Option<Color> {
+        match &mut self.kind {
+            ImageSamplingCursorKind::Nearest { row, cursor } => {
+                nearest::sample_next(self.image, *row, cursor)
+            }
+
+            ImageSamplingCursorKind::Bilinear { row, cursor } => {
+                bilinear::sample_next(self.image, *row, cursor)
+            }
+
+            ImageSamplingCursorKind::Area(cursor) => area::sample_next(self.image, cursor),
+        }
+    }
 }
 
 impl<'image> ImageSampler<'image> {
@@ -101,40 +179,6 @@ impl<'image> ImageSampler<'image> {
             destination_width: self.destination_width,
             kind,
         })
-    }
-}
-
-impl ImageSamplingRow<'_> {
-    pub(crate) fn sample(self, x: u32) -> Option<Color> {
-        if x >= self.destination_width {
-            return None;
-        }
-
-        match self.kind {
-            ImageSamplingRowKind::Nearest(row) => nearest::sample_nearest(
-                self.image,
-                x,
-                self.source_width,
-                self.destination_width,
-                row,
-            ),
-
-            ImageSamplingRowKind::Bilinear(row) => bilinear::sample_bilinear(
-                self.image,
-                x,
-                self.source_width,
-                self.destination_width,
-                row,
-            ),
-
-            ImageSamplingRowKind::Area(row) => area::sample_area(
-                self.image,
-                x,
-                self.source_width,
-                self.destination_width,
-                row,
-            ),
-        }
     }
 }
 
@@ -287,6 +331,40 @@ mod tests {
                 let bilinear = sample_image(&image, x, y, 2, 2, 3, 3, ImageSampling::Bilinear);
 
                 assert_eq!(area, bilinear, "area fallback differs at ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn sampling_cursor_can_start_at_nonzero_x() {
+        let image = WhiteCornerImage;
+
+        for sampling in [
+            ImageSampling::Nearest,
+            ImageSampling::Bilinear,
+            ImageSampling::Area,
+        ] {
+            let sampler = ImageSampler::new(&image, 4, 4, 3, 3, sampling).unwrap();
+
+            for y in 0..3 {
+                let row = sampler.row(y).unwrap();
+
+                for start_x in 0..3 {
+                    let mut from_zero = row.cursor(0).unwrap();
+
+                    for _ in 0..start_x {
+                        from_zero.sample_next().unwrap();
+                    }
+
+                    let expected = from_zero.sample_next().unwrap();
+
+                    let actual = row.cursor(start_x).unwrap().sample_next().unwrap();
+
+                    assert_eq!(
+                        actual, expected,
+                        "{sampling:?} cursor differs at ({start_x}, {y})",
+                    );
+                }
             }
         }
     }

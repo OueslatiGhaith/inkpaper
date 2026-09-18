@@ -66,25 +66,26 @@ where
     let right = visible.right().get();
     let bottom = visible.bottom().get();
 
+    let relative_left = i64::from(left) - i64::from(destination_x);
+    let Some(relative_left) = u32::try_from(relative_left).ok() else {
+        return Ok(EInkTone::Binary);
+    };
+
     let tone = Cell::new(EInkTone::Binary);
     let tone_ref = &tone;
 
     let pixels = (top..bottom).flat_map(|y| {
         let relative_y = i64::from(y) - i64::from(destination_y);
 
-        let row = u32::try_from(relative_y)
+        let mut cursor = u32::try_from(relative_y)
             .ok()
-            .and_then(|relative_y| sampler.row(relative_y));
+            .and_then(|relative_y| sampler.row(relative_y))
+            .and_then(|row| row.cursor(relative_left));
 
         (left..right).filter_map(move |x| {
-            let row = row?;
+            let cursor = cursor.as_mut()?;
 
-            let relative_x = i64::from(x) - i64::from(destination_x);
-
-            let relative_x = u32::try_from(relative_x).ok()?;
-
-            let color = row.sample(relative_x)?;
-
+            let color = cursor.sample_next()?;
             let color = process_image_pixel(color, paint, x, y);
 
             let gray = color_to_gray2(color);
