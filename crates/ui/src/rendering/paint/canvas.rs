@@ -29,6 +29,20 @@ impl<'a, R: ?Sized, P: ResourcePainter<R>> PaintSink for CanvasPaintSink<'a, R, 
         }
     }
 
+    fn text_run(&mut self, bounds: Rect, clip: Rect, text: &str, style: ResolvedTextStyle) {
+        if self.error.is_some() {
+            return;
+        }
+
+        match self
+            .painter
+            .draw_text_run(self.resources, text, bounds, style, Some(clip))
+        {
+            Ok(()) => self.report.mark_text(),
+            Err(error) => self.error = Some(error),
+        }
+    }
+
     fn image(&mut self, bounds: Rect, clip: Rect, source: ImageSource, paint: ImagePaint) {
         if self.error.is_some() {
             return;

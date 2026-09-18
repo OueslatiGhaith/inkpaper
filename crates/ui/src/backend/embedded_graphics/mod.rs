@@ -13,7 +13,10 @@ use embedded_graphics::{
 use crate::{
     BoxPaint, CanvasPainter, Color, DamageRegion, GlyphCacheError, ImagePaint, ImageSource,
     Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError, Size,
-    backend::embedded_graphics::{image::draw_image_to, text::draw_text_to},
+    backend::embedded_graphics::{
+        image::draw_image_to,
+        text::{draw_text_run_to, draw_text_to},
+    },
     px,
     resources::RuntimeResources,
 };
@@ -210,6 +213,45 @@ where
         let registry = resources.font_registry();
 
         draw_text_to(
+            self.target,
+            text,
+            bounds,
+            text_clip,
+            &registry,
+            resources,
+            font,
+            style,
+            self.coverage_mode,
+        )
+    }
+
+    fn draw_text_run(
+        &mut self,
+        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        if text.is_empty() || bounds.width().is_non_positive() || bounds.height().is_non_positive()
+        {
+            return Ok(());
+        }
+
+        let Some(text_clip) = (match clip {
+            Some(clip) => clip.intersection(bounds),
+            None => Some(bounds),
+        }) else {
+            return Ok(());
+        };
+
+        let font = resources
+            .resolve_font_family_weight(style.font_family, style.font_weight)
+            .expect("EmbeddedGraphicsPainter requires a default font");
+
+        let registry = resources.font_registry();
+
+        draw_text_run_to(
             self.target,
             text,
             bounds,

@@ -152,6 +152,61 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(super) fn draw_text_run_to<
+    D,
+    const FONTS: usize,
+    const GLYPH_SLOTS: usize,
+    const GLYPH_BYTES: usize,
+    const IMAGES: usize,
+>(
+    target: &mut D,
+    text: &str,
+    bounds: Rect,
+    clip: Rect,
+    registry: &FontRegistry<'_, FONTS>,
+    resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+    font: ResolvedFont<'_>,
+    style: ResolvedTextStyle,
+    coverage_mode: CoverageMode<D>,
+) -> Result<(), EmbeddedGraphicsError<D::Error>>
+where
+    D: EgDrawTarget,
+    D::Color: From<EgRgb888>,
+{
+    if text.is_empty() {
+        return Ok(());
+    }
+
+    let font_instance = font.instance();
+    let size_px = font_size_px(style);
+
+    let baseline_offset = font.metrics(size_px).ascent;
+    let baseline = bounds.origin.y + baseline_offset;
+
+    let shaper = SimpleShaper::with_properties(font.properties());
+
+    let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
+
+    let run = shaper
+        .shape_into(registry, font_instance.font(), size_px, text, &mut glyphs)
+        .map_err(EmbeddedGraphicsError::Shape)?;
+
+    let mut pen_x = bounds.origin.x;
+
+    draw_shaped_run(
+        target,
+        resources,
+        size_px,
+        &run,
+        baseline,
+        to_rgb888(style.color),
+        clip,
+        coverage_mode,
+        &mut pen_x,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn draw_shaped_run<
     D,
     const FONTS: usize,

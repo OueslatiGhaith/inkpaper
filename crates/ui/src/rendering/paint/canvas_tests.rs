@@ -6,6 +6,7 @@ use std::{rc::Rc, string::String, vec, vec::Vec};
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Draw {
     Text(Rect, Option<Rect>, String, ResolvedTextStyle),
+    TextRun(Rect, Option<Rect>, String, ResolvedTextStyle),
     Image(Rect, Option<Rect>, ImagePaint),
     Box(Rect, Option<Rect>),
     Shapes(Rect, Option<Rect>),
@@ -66,6 +67,17 @@ impl ResourcePainter for Recorder {
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
         self.record(Draw::Text(bounds, clip, String::from(text), style))
+    }
+
+    fn draw_text_run(
+        &mut self,
+        _: &mut (),
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        self.record(Draw::TextRun(bounds, clip, String::from(text), style))
     }
 
     fn draw_image(
@@ -472,4 +484,42 @@ fn static_canvas_paints_text_without_runtime_callback_context() {
     );
     assert!(report.content().has_text());
     assert!(!report.content().has_graphics());
+}
+
+#[test]
+fn canvas_routes_prelaid_out_text_runs_to_run_painter() {
+    struct View;
+
+    impl Render for View {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            cx.canvas(|_, paint| {
+                paint.draw_text_run(rect(3, 4, 20, 12), text("reader run").font_size(px(17)));
+            })
+            .size(Size::new(px(40), px(30)))
+        }
+    }
+
+    let mut runtime = TestRuntime::default();
+
+    runtime.create_root(|_| View).unwrap();
+    runtime.rebuild().unwrap();
+
+    let mut recorder = Recorder::default();
+
+    runtime.layout_with_measurer(Size::new(px(40), px(30)), &recorder);
+
+    runtime.paint(&mut recorder).unwrap().unwrap();
+
+    assert_eq!(
+        recorder.draws,
+        vec![Draw::TextRun(
+            rect(3, 4, 20, 12),
+            Some(rect(3, 4, 20, 12)),
+            String::from("reader run"),
+            ResolvedTextStyle {
+                font_size: px(17),
+                ..ResolvedTextStyle::default()
+            },
+        )],
+    );
 }

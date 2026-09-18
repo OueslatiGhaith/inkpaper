@@ -22,13 +22,11 @@ fn paint_text_fragment(fragment: &TextFragment<'_>, paint: &mut PaintCx<'_>) {
     let bounds = fragment.bounds();
     let style = fragment.style();
 
-    paint.draw_text(
+    paint.draw_text_run(
         reader_rect(bounds),
         text(fragment.text())
             .font_weight(reader_font_weight(style.font_weight()))
-            .font_size(px(i32::from(style.font_size())))
-            .line_height(reader_px(bounds.height()))
-            .no_wrap(),
+            .font_size(px(i32::from(style.font_size()))),
     );
 }
 

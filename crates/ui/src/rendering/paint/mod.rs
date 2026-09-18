@@ -129,6 +129,25 @@ pub trait ResourcePainter<R: ?Sized = ()>: Painter {
         clip: Option<Rect>,
     ) -> Result<(), Self::Error>;
 
+    /// paints text whose external layout has already been decided.
+    ///
+    /// the caller supplies the final run bounds and position. Backends may use this to skip
+    /// line breaking, width measurement, ellipsis and alignment work and shape the run
+    /// exactly once.
+    ///
+    /// the default implementation preserves compatibility for painters that don't
+    /// have a specialized run path.
+    fn draw_text_run(
+        &mut self,
+        resources: &mut R,
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        self.draw_text(resources, text, bounds, style, clip)
+    }
+
     fn draw_image(
         &mut self,
         resources: &mut R,

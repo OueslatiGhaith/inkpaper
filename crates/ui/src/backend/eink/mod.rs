@@ -12,7 +12,10 @@ use embedded_graphics::{
 use crate::{
     BoxPaint, CanvasPainter, Color, DamageRegion, GlyphCacheError, ImagePaint, ImageSource,
     Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError, Size,
-    backend::eink::tone::{BinaryDitherTarget, gray2_tone},
+    backend::eink::{
+        text::draw_text_run_to,
+        tone::{BinaryDitherTarget, gray2_tone},
+    },
     px,
     resources::RuntimeResources,
 };
@@ -285,6 +288,64 @@ where
         }
 
         let shaped_glyphs = draw_text_to(
+            self.target,
+            &mut self.report,
+            text,
+            bounds,
+            clip,
+            &registry,
+            resources,
+            font,
+            style,
+            coverage_mode,
+        )?;
+
+        #[cfg(feature = "metrics")]
+        self.report.record_text_draw(shaped_glyphs);
+
+        #[cfg(not(feature = "metrics"))]
+        let _ = shaped_glyphs;
+
+        Ok(())
+    }
+
+    fn draw_text_run(
+        &mut self,
+        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), Self::Error> {
+        if text.is_empty() || bounds.width().is_non_positive() || bounds.height().is_non_positive()
+        {
+            return Ok(());
+        }
+
+        let Some(clip) = (match clip {
+            Some(clip) => clip.intersection(bounds),
+            None => Some(bounds),
+        }) else {
+            return Ok(());
+        };
+
+        let font = resources
+            .resolve_font_family_weight(style.font_family, style.font_weight)
+            .expect("EInkPainter requires a default font");
+
+        let registry = resources.font_registry();
+
+        let coverage_mode = self.effective_coverage_mode();
+
+        if self.ui_mode == EInkUiMode::NativeGray2 {
+            self.record_native_ui_color(style.color);
+
+            if matches!(self.coverage_mode, EInkCoverageMode::AlphaBlend { .. }) {
+                self.report.include(EInkTone::Gray4);
+            }
+        }
+
+        let shaped_glyphs = draw_text_run_to(
             self.target,
             &mut self.report,
             text,

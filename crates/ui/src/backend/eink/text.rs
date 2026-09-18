@@ -160,6 +160,68 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(super) fn draw_text_run_to<
+    D,
+    const FONTS: usize,
+    const GLYPH_SLOTS: usize,
+    const GLYPH_BYTES: usize,
+    const IMAGES: usize,
+>(
+    target: &mut D,
+    report: &mut EInkPaintReport,
+    text: &str,
+    bounds: Rect,
+    clip: Rect,
+    registry: &FontRegistry<'_, FONTS>,
+    resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+    font: ResolvedFont<'_>,
+    style: ResolvedTextStyle,
+    coverage_mode: EInkCoverageMode<D>,
+) -> Result<u64, EInkError<D::Error>>
+where
+    D: EgDrawTarget<Color = Gray2>,
+{
+    if text.is_empty() {
+        return Ok(0);
+    }
+
+    let font_instance = font.instance();
+    let size_px = font_size_px(style);
+
+    let baseline_offset = font.metrics(size_px).ascent;
+    let baseline = bounds.origin.y + baseline_offset;
+
+    let shaper = SimpleShaper::with_properties(font.properties());
+
+    let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
+
+    let run = shaper
+        .shape_into(registry, font_instance.font(), size_px, text, &mut glyphs)
+        .map_err(EInkError::Shape)?;
+
+    let glyph_count = run.len();
+
+    // this run was already positioned by its caller. Do not perform another alignment/layout
+    // pass here.
+    let mut pen_x = bounds.origin.x;
+
+    draw_shaped_run(
+        target,
+        report,
+        resources,
+        size_px,
+        &run,
+        baseline,
+        style.color,
+        clip,
+        coverage_mode,
+        &mut pen_x,
+    )?;
+
+    Ok(u64::try_from(glyph_count).unwrap_or(u64::MAX))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn draw_shaped_run<
     D,
     const FONTS: usize,

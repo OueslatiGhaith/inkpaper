@@ -4,8 +4,15 @@ use crate::{
 
 pub(crate) trait PaintSink {
     fn text(&mut self, bounds: Rect, clip: Rect, text: &str, style: ResolvedTextStyle);
+
+    fn text_run(&mut self, bounds: Rect, clip: Rect, text: &str, style: ResolvedTextStyle) {
+        self.text(bounds, clip, text, style);
+    }
+
     fn image(&mut self, bounds: Rect, clip: Rect, source: ImageSource, paint: ImagePaint);
+
     fn box_paint(&mut self, bounds: Rect, clip: Rect, paint: BoxPaint);
+
     fn shapes(
         &mut self,
         bounds: Rect,
@@ -73,6 +80,23 @@ impl<'a> PaintCx<'a> {
         if let Some((bounds, clip)) = self.destination(bounds) {
             self.sink
                 .text(bounds, clip, content, text.style.resolve(self.text_style));
+        }
+    }
+
+    /// paints one already-laid-out text run.
+    ///
+    /// unlike `draw_text`, the run's position and extent are considered final.
+    /// a capable backend can therefore shape and paint it directly without repeating
+    /// line layout or width measurement.
+    pub fn draw_text_run(&mut self, bounds: Rect, text: Text<'_>) {
+        let content = text.content.as_str();
+        if content.is_empty() {
+            return;
+        }
+
+        if let Some((bounds, clip)) = self.destination(bounds) {
+            self.sink
+                .text_run(bounds, clip, content, text.style.resolve(self.text_style));
         }
     }
 
