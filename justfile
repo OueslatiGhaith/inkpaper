@@ -18,6 +18,6 @@ sim:
 x4-run:
     cargo +inkpaper-esp run -p {{firmware_package}} --target {{x4_pro_target}} --profile firmware
 
-x4-perf:
+x4-perf features="performance,ui-metrics,trace":
     cargo +inkpaper-esp run -p {{firmware_package}} \
-        --target {{x4_pro_target}} --profile profiling --features "performance,ui-metrics,trace"
+        --target {{x4_pro_target}} --profile profiling --features {{features}}

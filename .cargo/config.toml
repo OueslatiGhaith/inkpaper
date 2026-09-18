@@ -19,7 +19,7 @@ rustflags = [
 xtask = "run -p xtask --"
 
 [env]
-DEFMT_LOG = "debug,esp_rtos=off"
+DEFMT_LOG = "debug,esp_rtos=off,esp_hal=off"
 
 [unstable]
 build-std = ["core", "alloc"]

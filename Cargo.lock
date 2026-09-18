@@ -1805,6 +1805,7 @@ dependencies = [
  "inkpaper-trace",
  "inkpaper-ui-macros",
  "inkpaper-ui-style-schema",
+ "num-traits",
  "trybuild",
  "ttf-parser",
 ]
