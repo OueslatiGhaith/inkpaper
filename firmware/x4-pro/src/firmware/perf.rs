@@ -36,6 +36,9 @@ impl CycleTimer {
 }
 
 #[cfg(feature = "performance")]
+const PRESENT_BUSY_WAIT_CAPACITY: usize = 8;
+
+#[cfg(feature = "performance")]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PresentTimings {
     total_cycles: u32,
@@ -45,6 +48,10 @@ pub(crate) struct PresentTimings {
     io_calls: u32,
     busy_waits: u32,
     longest_busy_cycles: u32,
+
+    busy_wait_samples: [u32; PRESENT_BUSY_WAIT_CAPACITY],
+    recorded_busy_waits: u8,
+    dropped_busy_waits: u32,
 }
 
 #[cfg(feature = "performance")]
@@ -77,6 +84,22 @@ impl PresentTimings {
         self.longest_busy_cycles
     }
 
+    pub(crate) const fn recorded_busy_waits(self) -> u8 {
+        self.recorded_busy_waits
+    }
+
+    pub(crate) const fn dropped_busy_waits(self) -> u32 {
+        self.dropped_busy_waits
+    }
+
+    pub(crate) fn busy_wait_cycles(self, index: u8) -> Option<u32> {
+        if index >= self.recorded_busy_waits {
+            return None;
+        }
+
+        self.busy_wait_samples.get(usize::from(index)).copied()
+    }
+
     pub(crate) fn other_cycles(self) -> u64 {
         u64::from(self.total_cycles)
             .saturating_sub(self.io_cycles)
@@ -85,20 +108,35 @@ impl PresentTimings {
 
     fn record_io(&mut self, cycles: u32, bytes: u64) {
         self.io_cycles = self.io_cycles.saturating_add(u64::from(cycles));
-
         self.io_bytes = self.io_bytes.saturating_add(bytes);
-
         self.io_calls = self.io_calls.saturating_add(1);
     }
 
     fn record_busy(&mut self, cycles: u32, wait: bool) {
         self.busy_cycles = self.busy_cycles.saturating_add(u64::from(cycles));
 
-        if wait {
-            self.busy_waits = self.busy_waits.saturating_add(1);
-
-            self.longest_busy_cycles = self.longest_busy_cycles.max(cycles);
+        if !wait {
+            return;
         }
+
+        let sample_index = self.busy_waits;
+
+        self.busy_waits = self.busy_waits.saturating_add(1);
+        self.longest_busy_cycles = self.longest_busy_cycles.max(cycles);
+
+        let Ok(sample_index) = usize::try_from(sample_index) else {
+            self.dropped_busy_waits = self.dropped_busy_waits.saturating_add(1);
+            return;
+        };
+
+        let Some(slot) = self.busy_wait_samples.get_mut(sample_index) else {
+            self.dropped_busy_waits = self.dropped_busy_waits.saturating_add(1);
+            return;
+        };
+
+        *slot = cycles;
+
+        self.recorded_busy_waits = self.recorded_busy_waits.saturating_add(1);
     }
 }
 
@@ -204,10 +242,12 @@ where
     where
         D: DelayNs,
     {
+        let wait_index = self.timings.busy_waits();
         let timer = CycleTimer::start();
 
         let result = profile_expr!(
             TraceEvent::PresentBusy,
+            arg = wait_index,
             self.inner.wait_busy(polarity, delay,).await,
         );
 
@@ -332,7 +372,7 @@ pub(crate) fn log_render(frame_id: u32, timings: RenderTimings) {
 #[cfg(feature = "performance")]
 pub(crate) fn log_present(frame_id: u32, timings: PresentTimings) {
     info!(
-        "perf/present frame={=u32} cycles={=u32} io={=u64} busy={=u64} other={=u64} bytes={=u64} io_calls={=u32} busy_waits={=u32} longest_busy={=u32}",
+        "perf/present frame={=u32} cycles={=u32} io={=u64} busy={=u64} other={=u64} bytes={=u64} io_calls={=u32} busy_waits={=u32} longest_busy={=u32} busy_dropped={=u32}",
         frame_id,
         timings.total_cycles(),
         timings.io_cycles(),
@@ -342,7 +382,19 @@ pub(crate) fn log_present(frame_id: u32, timings: PresentTimings) {
         timings.io_calls(),
         timings.busy_waits(),
         timings.longest_busy_cycles(),
+        timings.dropped_busy_waits(),
     );
+
+    for index in 0..timings.recorded_busy_waits() {
+        let Some(cycles) = timings.busy_wait_cycles(index) else {
+            continue;
+        };
+
+        info!(
+            "perf/present_busy frame={=u32} index={=u8} cycles={=u32}",
+            frame_id, index, cycles,
+        );
+    }
 }
 
 #[cfg(feature = "performance")]
@@ -353,7 +405,7 @@ pub(crate) fn log_frame(update: FrameUpdate, present: PresentTimings) {
     let eink = update.eink_report();
 
     info!(
-        "perf/frame id={=u32} refresh={:?} presentation={:?} x={=u16} y={=u16} width={=u16} height={=u16} rebuild={=u32} layout={=u32} clear={=u32} paint={=u32} damage={=u32} present={=u32} present_io={=u64} present_busy={=u64} present_other={=u64} present_bytes={=u64} present_io_calls={=u32} present_busy_waits={=u32} present_longest_busy={=u32} framebuffer_pixels={=u64} framebuffer_valid={=u8} text_draws={=u64} glyphs={=u64}",
+        "perf/frame id={=u32} refresh={:?} presentation={:?} x={=u16} y={=u16} width={=u16} height={=u16} rebuild={=u32} layout={=u32} clear={=u32} paint={=u32} damage={=u32} present={=u32} present_io={=u64} present_busy={=u64} present_other={=u64} present_bytes={=u64} present_io_calls={=u32} present_busy_waits={=u32} present_longest_busy={=u32} present_busy_dropped={=u32} framebuffer_pixels={=u64} framebuffer_valid={=u8} text_draws={=u64} glyphs={=u64}",
         update.frame_id(),
         update.refresh(),
         update.presentation(),
@@ -374,6 +426,7 @@ pub(crate) fn log_frame(update: FrameUpdate, present: PresentTimings) {
         present.io_calls(),
         present.busy_waits(),
         present.longest_busy_cycles(),
+        present.dropped_busy_waits(),
         report.framebuffer_pixels(),
         u8::from(report.has_framebuffer_pixels(),),
         eink.text_draw_calls(),

@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["performance", "ui-metrics", "trace"]
+default = ["performance", "ui-metrics"]
 performance = []
 ui-metrics = ["inkpaper-ui/metrics"]
-trace = ["inkpaper-trace/recording", "inkpaper-ui/trace"]
+trace = ["performance", "inkpaper-trace/recording", "inkpaper-ui/trace"]
 
 [dependencies]
 # internal deps

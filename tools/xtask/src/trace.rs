@@ -45,7 +45,13 @@ struct Shared {
 
 #[derive(Serialize)]
 struct Frame {
-    name: &'static str,
+    name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TraceFrameKey {
+    event: TraceEvent,
+    arg: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -193,11 +199,59 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
     Ok(captures)
 }
 
+fn trace_frame_key(span: &Span) -> TraceFrameKey {
+    let arg = match span.event {
+        TraceEvent::PresentBusy => Some(span.arg),
+
+        _ => None,
+    };
+
+    TraceFrameKey {
+        event: span.event,
+        arg,
+    }
+}
+
+fn trace_frame_name(key: TraceFrameKey) -> String {
+    match (key.event, key.arg) {
+        (TraceEvent::PresentBusy, Some(index)) => format!("{} #{}", key.event.name(), index),
+        _ => key.event.name().to_owned(),
+    }
+}
+
+fn build_frame_keys(captures: &[Capture]) -> Vec<TraceFrameKey> {
+    let mut keys = Vec::new();
+
+    for event in TraceEvent::ALL.iter().copied() {
+        if event == TraceEvent::PresentBusy {
+            continue;
+        }
+
+        keys.push(TraceFrameKey { event, arg: None });
+    }
+
+    for capture in captures {
+        for span in &capture.spans {
+            let key = trace_frame_key(span);
+
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+    }
+
+    keys
+}
+
 fn build_speedscope(captures: &[Capture]) -> Result<SpeedscopeFile> {
-    let frames = TraceEvent::ALL
+    let frame_keys = build_frame_keys(captures);
+
+    let frames = frame_keys
         .iter()
         .copied()
-        .map(|event| Frame { name: event.name() })
+        .map(|key| Frame {
+            name: trace_frame_name(key),
+        })
         .collect();
 
     let mut profiles = Vec::with_capacity(captures.len());
@@ -215,15 +269,12 @@ fn build_speedscope(captures: &[Capture]) -> Result<SpeedscopeFile> {
 
             end_value = end_value.max(end);
 
-            let frame = TraceEvent::ALL
+            let key = trace_frame_key(span);
+
+            let frame = frame_keys
                 .iter()
-                .position(|candidate| *candidate == span.event)
-                .with_context(|| {
-                    format!(
-                        "trace event {:?} is missing from TraceEvent::ALL",
-                        span.event,
-                    )
-                })?;
+                .position(|candidate| *candidate == key)
+                .with_context(|| format!("trace frame {:?} is missing from shared frames", key))?;
 
             timed.push(TimedEvent {
                 kind: EventKind::Open,
@@ -238,8 +289,6 @@ fn build_speedscope(captures: &[Capture]) -> Result<SpeedscopeFile> {
                 frame,
                 depth: span.depth,
             });
-
-            let _ = span.arg;
         }
 
         timed.sort_by(|a, b| {
@@ -388,9 +437,10 @@ mod tests {
             1.002 INFO trace/span event=8 depth=2 start=720 cycles=240 arg=18
             1.003 INFO trace/span event=0 depth=0 start=120 cycles=960 arg=0
 
-            2.000 INFO trace/session id=13 frame=4 hz=240000000 spans=2 dropped=0 open=0
-            2.001 INFO trace/span event=13 depth=1 start=480 cycles=960 arg=0
-            2.002 INFO trace/span event=12 depth=0 start=120 cycles=1680 arg=0
+            2.000 INFO trace/session id=13 frame=4 hz=240000000 spans=3 dropped=0 open=0
+            2.001 INFO trace/span event=13 depth=1 start=480 cycles=240 arg=0
+            2.002 INFO trace/span event=13 depth=1 start=960 cycles=480 arg=1
+            2.003 INFO trace/span event=12 depth=0 start=120 cycles=1680 arg=0
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -408,6 +458,7 @@ mod tests {
         let serialized = serde_json::to_string(&file).unwrap();
 
         assert!(serialized.contains("\"name\":\"present\""));
-        assert!(serialized.contains("\"name\":\"present_busy\""));
+        assert!(serialized.contains("\"name\":\"present_busy #0\""));
+        assert!(serialized.contains("\"name\":\"present_busy #1\""));
     }
 }

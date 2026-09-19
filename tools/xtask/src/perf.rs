@@ -34,6 +34,8 @@ struct Frame {
     present_io_calls: u32,
     present_busy_waits: u32,
     present_longest_busy: u32,
+    present_busy_dropped: u32,
+    present_busy_cycles: Vec<u64>,
 
     framebuffer_pixels: u64,
     framebuffer_valid: bool,
@@ -155,6 +157,34 @@ pub fn summary(input: &Path) -> Result<()> {
         );
     }
 
+    if capture
+        .frames
+        .iter()
+        .any(|frame| !frame.present_busy_cycles.is_empty())
+    {
+        println!();
+        println!("Individual BUSY waits");
+        println!();
+
+        for frame in &capture.frames {
+            if frame.present_busy_cycles.is_empty() {
+                continue;
+            }
+
+            print!("frame {:>5}:", frame.id);
+
+            for (index, cycles) in frame.present_busy_cycles.iter().copied().enumerate() {
+                print!("  #{}={:.1}ms", index, cycles_ms(cycles, capture.hz));
+            }
+
+            if frame.present_busy_dropped != 0 {
+                print!("  dropped={}", frame.present_busy_dropped);
+            }
+
+            println!();
+        }
+    }
+
     Ok(())
 }
 
@@ -263,6 +293,7 @@ fn read_capture(path: &Path) -> Result<Capture> {
 fn parse_capture(log: &str) -> Result<Capture> {
     let mut hz = None;
     let mut frames = Vec::new();
+    let mut busy_waits: BTreeMap<u32, Vec<(u32, u64)>> = BTreeMap::new();
 
     for line in log.lines() {
         if let Some((_, payload)) = line.split_once("perf/config ") {
@@ -275,6 +306,19 @@ fn parse_capture(log: &str) -> Result<Capture> {
             }
 
             hz = Some(found);
+
+            continue;
+        }
+
+        if let Some((_, payload)) = line.split_once("perf/present_busy ") {
+            let frame_id = u32_field(payload, "frame")?;
+            let index = u32_field(payload, "index")?;
+            let cycles = u64_field(payload, "cycles")?;
+
+            busy_waits
+                .entry(frame_id)
+                .or_default()
+                .push((index, cycles));
 
             continue;
         }
@@ -304,6 +348,8 @@ fn parse_capture(log: &str) -> Result<Capture> {
             present_io_calls: u32_field(payload, "present_io_calls")?,
             present_busy_waits: u32_field(payload, "present_busy_waits")?,
             present_longest_busy: u32_field(payload, "present_longest_busy")?,
+            present_busy_dropped: optional_u32_field(payload, "present_busy_dropped")?.unwrap_or(0),
+            present_busy_cycles: Vec::new(),
             framebuffer_pixels: u64_field(payload, "framebuffer_pixels")?,
             framebuffer_valid: u8_field(payload, "framebuffer_valid")? != 0,
             text_draws: u64_field(payload, "text_draws")?,
@@ -318,6 +364,45 @@ fn parse_capture(log: &str) -> Result<Capture> {
     }
 
     frames.sort_by_key(|frame| frame.id);
+
+    for frame in &mut frames {
+        let Some(mut waits) = busy_waits.remove(&frame.id) else {
+            // older captures did not contain individual BUSY records.
+            continue;
+        };
+
+        waits.sort_by_key(|(index, _)| *index);
+
+        for (expected, (actual, _)) in waits.iter().enumerate() {
+            let expected = u32::try_from(expected).unwrap_or(u32::MAX);
+
+            if *actual != expected {
+                bail!(
+                    "frame {} has non-contiguous BUSY wait indices: expected {} but found {}",
+                    frame.id,
+                    expected,
+                    actual,
+                );
+            }
+        }
+
+        let expected_samples = frame
+            .present_busy_waits
+            .saturating_sub(frame.present_busy_dropped);
+
+        let actual_samples = u32::try_from(waits.len()).unwrap_or(u32::MAX);
+
+        if actual_samples != expected_samples {
+            bail!(
+                "frame {} reports {} stored BUSY waits but log contains {}",
+                frame.id,
+                expected_samples,
+                actual_samples,
+            );
+        }
+
+        frame.present_busy_cycles = waits.into_iter().map(|(_, cycles)| cycles).collect();
+    }
 
     for pair in frames.windows(2) {
         if pair[0].id == pair[1].id {
@@ -387,6 +472,24 @@ fn u32_field(payload: &str, name: &str) -> Result<u32> {
         .with_context(|| format!("invalid `{name}` in perf line: {payload}"))
 }
 
+fn optional_field<'a>(payload: &'a str, name: &str) -> Option<&'a str> {
+    payload.split_whitespace().find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+
+        (key == name).then(|| value.trim_end_matches(','))
+    })
+}
+
+fn optional_u32_field(payload: &str, name: &str) -> Result<Option<u32>> {
+    let Some(value) = optional_field(payload, name) else {
+        return Ok(None);
+    };
+
+    Ok(Some(value.parse().with_context(|| {
+        format!("invalid `{name}` in perf line: {payload}")
+    })?))
+}
+
 fn u64_field(payload: &str, name: &str) -> Result<u64> {
     field(payload, name)?
         .parse()
@@ -402,10 +505,16 @@ mod tests {
     #[test]
     fn parses_perf_capture() {
         let log = indoc! {r#"
-            0.000 INFO perf/config hz=240000000
-            1.000 INFO perf/frame id=1 refresh=Full presentation=Gray4 x=0 y=0 width=800 height=480 rebuild=500 layout=1000 clear=200 paint=2000 damage=10 present=4000 present_io=1000 present_busy=2500 present_other=500 present_bytes=96000 present_io_calls=800 present_busy_waits=4 present_longest_busy=900 framebuffer_pixels=156480 framebuffer_valid=1 text_draws=3 glyphs=34
-            2.000 INFO perf/frame id=2 refresh=Full presentation=Binary x=0 y=0 width=800 height=480 rebuild=0 layout=1000 clear=200 paint=1000 damage=10 present=2000 present_io=700 present_busy=1000 present_other=300 present_bytes=48000 present_io_calls=400 present_busy_waits=3 present_longest_busy=500 framebuffer_pixels=0 framebuffer_valid=1 text_draws=31 glyphs=1021
-        "#};
+        0.000 INFO perf/config hz=240000000
+
+        0.900 INFO perf/present_busy frame=1 index=0 cycles=400
+        0.901 INFO perf/present_busy frame=1 index=1 cycles=900
+        0.902 INFO perf/present_busy frame=1 index=2 cycles=1200
+        1.000 INFO perf/frame id=1 refresh=Full presentation=Gray4 x=0 y=0 width=800 height=480 rebuild=500 layout=1000 clear=200 paint=2000 damage=10 present=4000 present_io=1000 present_busy=2500 present_other=500 present_bytes=96000 present_io_calls=800 present_busy_waits=3 present_longest_busy=1200 present_busy_dropped=0 framebuffer_pixels=156480 framebuffer_valid=1 text_draws=3 glyphs=34
+
+        1.900 INFO perf/present_busy frame=2 index=0 cycles=1000
+        2.000 INFO perf/frame id=2 refresh=Full presentation=Binary x=0 y=0 width=800 height=480 rebuild=0 layout=1000 clear=200 paint=1000 damage=10 present=2000 present_io=700 present_busy=1000 present_other=300 present_bytes=48000 present_io_calls=400 present_busy_waits=1 present_longest_busy=1000 present_busy_dropped=0 framebuffer_pixels=0 framebuffer_valid=1 text_draws=31 glyphs=1021
+    "#};
 
         let capture = parse_capture(log).unwrap();
 
@@ -433,7 +542,11 @@ mod tests {
 
         assert_eq!(first.present_bytes, 96_000);
 
-        assert_eq!(first.present_busy_waits, 4);
+        assert_eq!(first.present_busy_waits, 3);
+
+        assert_eq!(first.present_busy_dropped, 0);
+
+        assert_eq!(first.present_busy_cycles, vec![400, 900, 1_200]);
     }
 
     #[test]
