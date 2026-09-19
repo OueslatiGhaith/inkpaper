@@ -29,7 +29,12 @@ pub enum GrayscaleUpdateMode {
 
 #[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshContent {
-    Binary,
+    Binary {
+        /// a valid binary frame is already established on the panel, so a differential
+        /// FAST transition may be used even when the new damage covers most or all
+        /// of the display
+        differential_eligible: bool,
+    },
     Grayscale {
         /// the panel already contains a valid grayscale frame and the controller supports
         /// a damage-scoped grayscale transition
@@ -104,11 +109,20 @@ impl RefreshContext {
         }
     }
 
+    const fn binary_differential_eligible(self) -> bool {
+        matches!(
+            self.content,
+            RefreshContent::Binary {
+                differential_eligible: true,
+            }
+        )
+    }
+
     const fn grayscale_requires_full(self) -> bool {
         matches!(
             self.content,
             RefreshContent::Grayscale {
-                window_eligible: false
+                window_eligible: false,
             }
         )
     }
@@ -139,15 +153,17 @@ impl RefreshPolicy {
             // - controllers without damage-scoped grayscale updates.
             RefreshRequest::Full
         } else if self.consecutive_fast_refreshes >= MAX_CONSECUTIVE_FAST_REFRESHES {
-            // periodically re-establish the panel from a complete waveform even when
-            // the controller supports fast damage-scoped transitions.
+            // periodically re-establish the panel using the complete waveform, regardless
+            // of whether the current content is binary or grayscale.
             RefreshRequest::Full
+        } else if context.binary_differential_eligible() {
+            // DTM1/controller state already represents the preceding binary frame.
+            // A complete repaint does not require a complete waveform:
+            // the controller can transition previous -> current with FAST.
+            RefreshRequest::Fast
         } else if context.grayscale_window_eligible() {
             // once a valid grayscale baseline exists, large/full Gray4 damage is still
-            // eligible for the controller's fast window path.
-            //
-            // the controller driver remains responsible for falling back if its internal
-            // baseline state is not actually usable.
+            // eligible for the controller's fast grayscale path.
             RefreshRequest::Fast
         } else if context.full_damage {
             RefreshRequest::Full

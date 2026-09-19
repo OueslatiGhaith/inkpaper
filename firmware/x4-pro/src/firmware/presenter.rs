@@ -591,7 +591,26 @@ fn refresh_context(
     let damaged_pixels = u32::from(damage.width).saturating_mul(u32::from(damage.height));
 
     let content = match presentation {
-        PresentationMode::Binary | PresentationMode::BinaryPreservingGray => RefreshContent::Binary,
+        PresentationMode::Binary => {
+            RefreshContent::Binary {
+                // a normal binary FAST update is safe only when the previous physical
+                // panel state is also binary.
+                //
+                // in particular, a full binary repaint immediately after Gray4 remains
+                // Full so it can cleanly leave grayscale.
+                differential_eligible: panel_tone == EInkTone::Binary,
+            }
+        }
+
+        PresentationMode::BinaryPreservingGray => {
+            // this path deliberately remains governed by the ordinary damage thresholds.
+            // It is updating binary content while preserving grayscale elsewhere, not
+            // performing an ordinary binary previous -> current transition.
+            RefreshContent::Binary {
+                differential_eligible: false,
+            }
+        }
+
         PresentationMode::Gray4 => {
             let native_grayscale = rendered.eink_report.tone() == EInkTone::Gray4;
             let window_eligible = native_grayscale
