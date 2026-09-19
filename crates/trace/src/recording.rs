@@ -66,6 +66,7 @@ impl TraceRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TraceSummary {
     session_id: u32,
+    origin_cycles: u32,
     records: usize,
     dropped: u32,
     open_spans: u8,
@@ -74,6 +75,7 @@ pub struct TraceSummary {
 impl TraceSummary {
     const EMPTY: Self = Self {
         session_id: 0,
+        origin_cycles: 0,
         records: 0,
         dropped: 0,
         open_spans: 0,
@@ -81,6 +83,10 @@ impl TraceSummary {
 
     pub const fn session_id(self) -> u32 {
         self.session_id
+    }
+
+    pub const fn origin_cycles(self) -> u32 {
+        self.origin_cycles
     }
 
     pub const fn records(self) -> usize {
@@ -193,6 +199,7 @@ fn finish_session(session_id: u32) -> TraceSummary {
 
         let summary = TraceSummary {
             session_id,
+            origin_cycles: state.origin,
             records: state.len,
             dropped: state.dropped,
             open_spans: state.depth,
@@ -354,6 +361,7 @@ mod tests {
         assert_eq!(summary.records(), 2);
         assert_eq!(summary.dropped(), 0);
         assert_eq!(summary.open_spans(), 0);
+        assert_eq!(summary.origin_cycles(), 100);
 
         let inner = record(0).unwrap();
 

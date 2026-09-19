@@ -522,10 +522,11 @@ pub(crate) fn log_trace(frame_id: u32, summary: inkpaper_trace::TraceSummary) {
     let spans = u32::try_from(summary.records()).unwrap_or(u32::MAX);
 
     info!(
-        "trace/session id={=u32} frame={=u32} hz={=u32} spans={=u32} dropped={=u32} open={=u8}",
+        "trace/session id={=u32} frame={=u32} hz={=u32} origin={=u32} spans={=u32} dropped={=u32} open={=u8}",
         summary.session_id(),
         frame_id,
         CLOCK_HZ,
+        summary.origin_cycles(),
         spans,
         summary.dropped(),
         summary.open_spans(),

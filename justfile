@@ -66,3 +66,4 @@ x4-trace-log output="target/perf/latest-trace.log":
 x4-trace-report log="target/perf/latest-trace.log":
     cargo xtask perf summary "{{log}}"
     cargo xtask trace-speedscope "{{log}}"
+    cargo xtask trace-perfetto "{{log}}"

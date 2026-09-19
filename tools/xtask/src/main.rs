@@ -31,6 +31,15 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// convert InkPaper firmware trace logs to Perfetto trace
+    TracePerfetto {
+        /// firmware log containing trace/session and trace/span records
+        input: PathBuf,
+        /// output Perfetto trace file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -51,7 +60,11 @@ fn main() -> anyhow::Result<()> {
             PerfCommand::Compare { before, after } => perf::compare(&before, &after)?,
         },
         Command::TraceSpeedscope { input, output } => {
-            let output = trace::convert(&input, output.as_deref())?;
+            let output = trace::convert_speedscope(&input, output.as_deref())?;
+            println!("wrote {}", output.display());
+        }
+        Command::TracePerfetto { input, output } => {
+            let output = trace::convert_perfetto(&input, output.as_deref())?;
             println!("wrote {}", output.display());
         }
     }
