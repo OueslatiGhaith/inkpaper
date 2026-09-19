@@ -7,10 +7,13 @@ use epd_bus::{BusyPolarity, EpdInterface};
 #[cfg(feature = "performance")]
 use esp_hal::xtensa_lx::timer::get_cycle_count;
 #[cfg(feature = "performance")]
-use inkpaper_trace::{TraceEvent, profile_expr};
+use inkpaper_trace::{DisplayPhase, TraceEvent, profile_expr, profile_span};
 
 #[cfg(feature = "performance")]
-use crate::firmware::presenter::FrameUpdate;
+use crate::firmware::{
+    presenter::{FrameUpdate, PresentationMode},
+    refresh_policy::RefreshRequest,
+};
 
 pub(crate) const CLOCK_HZ: u32 = 240_000_000;
 
@@ -144,14 +147,24 @@ impl PresentTimings {
 pub(crate) struct ProfiledEpdBus<'a, B> {
     inner: &'a mut B,
     timings: PresentTimings,
+
+    trace_plan: DisplayTracePlan,
+    pending_phase: Option<DisplayPhase>,
 }
 
 #[cfg(feature = "performance")]
 impl<'a, B> ProfiledEpdBus<'a, B> {
-    pub(crate) fn new(inner: &'a mut B) -> Self {
+    pub(crate) fn new(
+        inner: &'a mut B,
+        controller: DisplayController,
+        update: FrameUpdate,
+    ) -> Self {
         Self {
             inner,
             timings: PresentTimings::default(),
+
+            trace_plan: DisplayTracePlan::new(controller, update),
+            pending_phase: None,
         }
     }
 
@@ -170,6 +183,30 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
     fn record_busy(&mut self, cycles: u32, wait: bool) {
         self.timings.record_busy(cycles, wait);
     }
+
+    fn observe_command(&mut self, command: u8) {
+        let phase = match command {
+            EPD_COMMAND_POWER_ON => Some(DisplayPhase::PowerOn),
+            EPD_COMMAND_DISPLAY_REFRESH => Some(self.trace_plan.next_refresh_phase()),
+            EPD_COMMAND_POWER_OFF => Some(DisplayPhase::PowerOff),
+            _ => None,
+        };
+
+        let Some(phase) = phase else {
+            return;
+        };
+
+        self.pending_phase = Some(phase);
+
+        #[cfg(feature = "trace")]
+        {
+            let _ = inkpaper_trace::async_begin(
+                TraceEvent::DisplayPhase,
+                DISPLAY_ASYNC_TRACE_ID,
+                u32::from(phase.id()),
+            );
+        }
+    }
 }
 
 #[cfg(feature = "performance")]
@@ -185,6 +222,10 @@ where
         let result = self.inner.command(command).await;
 
         self.record_io(timer.elapsed(), 1);
+
+        if result.is_ok() {
+            self.observe_command(command);
+        }
 
         result
     }
@@ -243,13 +284,30 @@ where
         D: DelayNs,
     {
         let wait_index = self.timings.busy_waits();
+
+        let phase = self.pending_phase.take().unwrap_or(DisplayPhase::Unknown);
+
         let timer = CycleTimer::start();
+
+        let phase_trace = profile_span!(TraceEvent::DisplayPhase, arg = phase.id());
 
         let result = profile_expr!(
             TraceEvent::PresentBusy,
             arg = wait_index,
-            self.inner.wait_busy(polarity, delay,).await,
+            self.inner.wait_busy(polarity, delay).await,
         );
+
+        drop(phase_trace);
+
+        // this intentionally runs even if this ProfiledEpdBus did not observe the command
+        // which started the operation.
+        //
+        // that is what lets a future deferred PowerOff begin during one presentation
+        // and be completed by a readiness wait in the next.
+        #[cfg(feature = "trace")]
+        {
+            let _ = inkpaper_trace::async_end(TraceEvent::DisplayPhase, DISPLAY_ASYNC_TRACE_ID);
+        }
 
         self.record_busy(timer.elapsed(), true);
 
@@ -284,6 +342,93 @@ where
         self.record_io(timer.elapsed(), 0);
 
         result
+    }
+}
+
+#[cfg(feature = "performance")]
+const EPD_COMMAND_POWER_OFF: u8 = 0x02;
+
+#[cfg(feature = "performance")]
+const EPD_COMMAND_POWER_ON: u8 = 0x04;
+
+#[cfg(feature = "performance")]
+const EPD_COMMAND_DISPLAY_REFRESH: u8 = 0x12;
+
+#[cfg(feature = "trace")]
+const DISPLAY_ASYNC_TRACE_ID: u32 = 1;
+
+#[cfg(feature = "performance")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DisplayController {
+    Ssd1677,
+    Uc8179,
+    Uc8279,
+}
+
+#[cfg(feature = "performance")]
+#[derive(Debug, Clone, Copy)]
+struct DisplayTracePlan {
+    controller: DisplayController,
+    presentation: PresentationMode,
+    refresh: RefreshRequest,
+    refresh_index: u8,
+}
+
+#[cfg(feature = "performance")]
+impl DisplayTracePlan {
+    const fn new(controller: DisplayController, update: FrameUpdate) -> Self {
+        Self {
+            controller,
+            presentation: update.presentation(),
+            refresh: update.refresh(),
+            refresh_index: 0,
+        }
+    }
+
+    fn next_refresh_phase(&mut self) -> DisplayPhase {
+        let index = self.refresh_index;
+
+        self.refresh_index = self.refresh_index.saturating_add(1);
+
+        match (self.controller, self.presentation, self.refresh, index) {
+            (_, PresentationMode::Binary, RefreshRequest::Full, _) => {
+                DisplayPhase::BinaryFullRefresh
+            }
+
+            (_, PresentationMode::Binary, RefreshRequest::Fast, _) => {
+                DisplayPhase::BinaryFastRefresh
+            }
+
+            (
+                DisplayController::Uc8179,
+                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
+                RefreshRequest::Full,
+                0,
+            ) => DisplayPhase::GrayscaleBaseRefresh,
+
+            (
+                DisplayController::Uc8179,
+                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
+                RefreshRequest::Full,
+                _,
+            ) => DisplayPhase::GrayscaleActivate,
+
+            (
+                DisplayController::Uc8179,
+                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
+                RefreshRequest::Fast,
+                0,
+            ) => DisplayPhase::GrayscalePrecondition,
+
+            (
+                DisplayController::Uc8179,
+                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
+                RefreshRequest::Fast,
+                _,
+            ) => DisplayPhase::GrayscaleActivate,
+
+            _ => DisplayPhase::GrayscaleRefresh,
+        }
     }
 }
 
@@ -428,7 +573,7 @@ pub(crate) fn log_frame(update: FrameUpdate, present: PresentTimings) {
         present.longest_busy_cycles(),
         present.dropped_busy_waits(),
         report.framebuffer_pixels(),
-        u8::from(report.has_framebuffer_pixels(),),
+        u8::from(report.has_framebuffer_pixels()),
         eink.text_draw_calls(),
         eink.shaped_glyphs(),
     );
@@ -546,4 +691,30 @@ pub(crate) fn log_trace(frame_id: u32, summary: inkpaper_trace::TraceSummary) {
             record.arg(),
         );
     }
+
+    let async_records = inkpaper_trace::async_record_count();
+
+    info!(
+        "trace/async_summary records={=usize} dropped={=u32} open={=u8}",
+        async_records,
+        inkpaper_trace::async_dropped(),
+        inkpaper_trace::async_open_count(),
+    );
+
+    for index in 0..async_records {
+        let Some(record) = inkpaper_trace::async_record(index) else {
+            continue;
+        };
+
+        info!(
+            "trace/async event={=u8} id={=u32} start={=u32} cycles={=u32} arg={=u32}",
+            record.event().id(),
+            record.id(),
+            record.start_cycles(),
+            record.duration_cycles(),
+            record.arg(),
+        );
+    }
+
+    inkpaper_trace::clear_async_records();
 }

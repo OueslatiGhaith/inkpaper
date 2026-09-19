@@ -6,11 +6,15 @@ use std::{
 use anyhow::{Context, Result, bail};
 use inkpaper_trace::TraceEvent;
 
-use crate::trace::{Capture, EventKind, parse_captures, trace_frame_key, trace_frame_name};
+use crate::trace::{
+    Capture, EventKind, parse_captures, trace_event_name, trace_frame_key, trace_frame_name,
+};
 
 const PERFETTO_ROOT_TRACK: u64 = 1;
 
 const PERFETTO_FRAMES_TRACK: u64 = 2;
+
+const PERFETTO_PACKET_SEQUENCE_ID: u64 = 1;
 
 const PERFETTO_CPU_GROUP: u64 = 3;
 const PERFETTO_CPU_RENDER_TRACK: u64 = 4;
@@ -23,7 +27,8 @@ const PERFETTO_DISPLAY_BUSY_TRACK: u64 = 8;
 const PROTO_WIRE_VARINT: u8 = 0;
 const PROTO_WIRE_LENGTH_DELIMITED: u8 = 2;
 
-const PERFETTO_PACKET_SEQUENCE_ID: u64 = 1;
+const PERFETTO_DISPLAY_PHASE_TRACK: u64 = 9;
+const PERFETTO_DISPLAY_STATE_TRACK: u64 = 10;
 
 #[derive(Debug)]
 struct PerfettoTimedEvent {
@@ -63,15 +68,31 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
     }
 
     let origins = unwrap_capture_origins(captures)?;
-    let base_origin = origins[0];
+
+    let mut timeline_base = origins[0];
+
+    // async records use absolute raw cycle-counter values. Find their unwrapped starts
+    // first because a deferred operation may have begun before the session which logs
+    // its completion.
+    for (capture, origin) in captures.iter().zip(origins.iter().copied()) {
+        let raw_origin = capture
+            .origin_cycles
+            .with_context(|| format!("trace session {} has no origin", capture.id,))?;
+
+        for span in &capture.async_spans {
+            let start = unwrap_cycle_near(span.start_cycles, raw_origin, origin)?;
+
+            timeline_base = timeline_base.min(start);
+        }
+    }
 
     let mut events = Vec::new();
     let mut frame_bounds = BTreeMap::<u32, (u64, u64)>::new();
 
     for (capture, origin) in captures.iter().zip(origins.iter().copied()) {
         let relative_origin = origin
-            .checked_sub(base_origin)
-            .context("trace origin moved backwards after unwrapping")?;
+            .checked_sub(timeline_base)
+            .context("trace origin moved before timeline base")?;
 
         for span in &capture.spans {
             let start_cycles = relative_origin + u64::from(span.start_cycles);
@@ -92,6 +113,40 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
 
             bounds.0 = bounds.0.min(start_ns);
             bounds.1 = bounds.1.max(end_ns);
+        }
+    }
+
+    // emit completed asynchronous controller operations.
+    for (capture, origin) in captures.iter().zip(origins.iter().copied()) {
+        let raw_origin = capture
+            .origin_cycles
+            .with_context(|| format!("trace session {} has no origin", capture.id,))?;
+
+        for span in &capture.async_spans {
+            let absolute_start = unwrap_cycle_near(span.start_cycles, raw_origin, origin)?;
+
+            let absolute_end = absolute_start
+                .checked_add(u64::from(span.duration_cycles))
+                .context("async trace interval overflow")?;
+
+            let start_cycles = absolute_start
+                .checked_sub(timeline_base)
+                .context("async span moved before timeline base")?;
+
+            let end_cycles = absolute_end
+                .checked_sub(timeline_base)
+                .context("async span moved before timeline base")?;
+
+            let name = trace_event_name(span.event, Some(span.arg));
+
+            push_perfetto_slice(
+                &mut events,
+                PERFETTO_DISPLAY_STATE_TRACK,
+                name,
+                cycles_to_ns_u64(start_cycles, hz),
+                cycles_to_ns_u64(end_cycles, hz),
+                0,
+            );
         }
     }
 
@@ -171,6 +226,20 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
         "BUSY",
     );
 
+    push_perfetto_track_descriptor(
+        &mut trace,
+        PERFETTO_DISPLAY_PHASE_TRACK,
+        Some(PERFETTO_DISPLAY_GROUP),
+        "Phases",
+    );
+
+    push_perfetto_track_descriptor(
+        &mut trace,
+        PERFETTO_DISPLAY_STATE_TRACK,
+        Some(PERFETTO_DISPLAY_GROUP),
+        "Controller",
+    );
+
     for event in events {
         push_perfetto_track_event(
             &mut trace,
@@ -225,6 +294,21 @@ fn unwrap_capture_origins(captures: &[Capture]) -> Result<Vec<u64>> {
     Ok(origins)
 }
 
+fn unwrap_cycle_near(raw: u32, reference_raw: u32, reference_unwrapped: u64) -> Result<u64> {
+    let forward = raw.wrapping_sub(reference_raw);
+    let backward = reference_raw.wrapping_sub(raw);
+
+    if forward <= backward {
+        reference_unwrapped
+            .checked_add(u64::from(forward))
+            .context("cycle counter overflow while unwrapping async timestamp")
+    } else {
+        reference_unwrapped
+            .checked_sub(u64::from(backward))
+            .context("cycle counter underflow while unwrapping async timestamp")
+    }
+}
+
 fn push_perfetto_slice(
     events: &mut Vec<PerfettoTimedEvent>,
     track_uuid: u64,
@@ -269,6 +353,8 @@ fn perfetto_track_for_event(event: TraceEvent) -> u64 {
         TraceEvent::Present => PERFETTO_DISPLAY_PRESENT_TRACK,
 
         TraceEvent::PresentBusy => PERFETTO_DISPLAY_BUSY_TRACK,
+
+        TraceEvent::DisplayPhase => PERFETTO_DISPLAY_PHASE_TRACK,
     }
 }
 

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use inkpaper_trace::TraceEvent;
+use inkpaper_trace::{DisplayPhase, TraceEvent};
 
 mod perfetto;
 mod speedscope;
@@ -17,12 +17,22 @@ struct Capture {
     dropped: u32,
     open_spans: u8,
     spans: Vec<Span>,
+    async_spans: Vec<AsyncSpan>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct Span {
     event: TraceEvent,
     depth: u8,
+    start_cycles: u32,
+    duration_cycles: u32,
+    arg: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AsyncSpan {
+    event: TraceEvent,
+    id: u32,
     start_cycles: u32,
     duration_cycles: u32,
     arg: u32,
@@ -62,6 +72,28 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
                 dropped: u32_field(payload, "dropped")?,
                 open_spans: u8_field(payload, "open")?,
                 spans: Vec::new(),
+                async_spans: Vec::new(),
+            });
+
+            continue;
+        }
+
+        if let Some((_, payload)) = line.split_once("trace/async ") {
+            let Some(capture) = current.as_mut() else {
+                continue;
+            };
+
+            let event_id = u8_field(payload, "event")?;
+
+            let event = TraceEvent::from_id(event_id)
+                .with_context(|| format!("unknown async trace event id {event_id}"))?;
+
+            capture.async_spans.push(AsyncSpan {
+                event,
+                id: u32_field(payload, "id")?,
+                start_cycles: u32_field(payload, "start")?,
+                duration_cycles: u32_field(payload, "cycles")?,
+                arg: u32_field(payload, "arg")?,
             });
 
             continue;
@@ -133,8 +165,7 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
 
 fn trace_frame_key(span: &Span) -> TraceFrameKey {
     let arg = match span.event {
-        TraceEvent::PresentBusy => Some(span.arg),
-
+        TraceEvent::PresentBusy | TraceEvent::DisplayPhase => Some(span.arg),
         _ => None,
     };
 
@@ -145,9 +176,21 @@ fn trace_frame_key(span: &Span) -> TraceFrameKey {
 }
 
 fn trace_frame_name(key: TraceFrameKey) -> String {
-    match (key.event, key.arg) {
-        (TraceEvent::PresentBusy, Some(index)) => format!("{} #{}", key.event.name(), index),
-        _ => key.event.name().to_owned(),
+    trace_event_name(key.event, key.arg)
+}
+
+fn trace_event_name(event: TraceEvent, arg: Option<u32>) -> String {
+    match (event, arg) {
+        (TraceEvent::PresentBusy, Some(index)) => format!("{} #{}", event.name(), index),
+        (TraceEvent::DisplayPhase, Some(id)) => {
+            let phase = u8::try_from(id).ok().and_then(DisplayPhase::from_id);
+
+            match phase {
+                Some(phase) => phase.name().to_owned(),
+                None => format!("display_phase #{}", id),
+            }
+        }
+        _ => event.name().to_owned(),
     }
 }
 

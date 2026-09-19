@@ -184,7 +184,7 @@ fn build_frame_keys(captures: &[Capture]) -> Vec<TraceFrameKey> {
     let mut keys = Vec::new();
 
     for event in TraceEvent::ALL.iter().copied() {
-        if event == TraceEvent::PresentBusy {
+        if matches!(event, TraceEvent::PresentBusy | TraceEvent::DisplayPhase) {
             continue;
         }
 

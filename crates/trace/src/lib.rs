@@ -10,7 +10,9 @@ pub use inkpaper_trace_macros::profile;
 
 #[cfg(feature = "recording")]
 pub use recording::{
-    TRACE_CAPACITY, TraceRecord, TraceSession, TraceSpan, TraceSummary, record, set_clock,
+    TRACE_ASYNC_CAPACITY, TRACE_ASYNC_OPEN_CAPACITY, TRACE_CAPACITY, TraceAsyncRecord, TraceRecord,
+    TraceSession, TraceSpan, TraceSummary, async_begin, async_dropped, async_end, async_open_count,
+    async_record, async_record_count, clear_async_records, record, set_clock,
 };
 
 #[cfg(feature = "recording")]
@@ -117,6 +119,59 @@ macro_rules! profile_expr {
     }};
 }
 
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayPhase {
+    Unknown = 0,
+
+    PowerOn = 1,
+
+    BinaryFullRefresh = 2,
+    BinaryFastRefresh = 3,
+
+    GrayscaleBaseRefresh = 4,
+    GrayscalePrecondition = 5,
+    GrayscaleActivate = 6,
+    GrayscaleRefresh = 7,
+
+    PowerOff = 8,
+}
+
+impl DisplayPhase {
+    pub const fn id(self) -> u8 {
+        self as u8
+    }
+
+    pub const fn from_id(id: u8) -> Option<Self> {
+        match id {
+            0 => Some(Self::Unknown),
+            1 => Some(Self::PowerOn),
+            2 => Some(Self::BinaryFullRefresh),
+            3 => Some(Self::BinaryFastRefresh),
+            4 => Some(Self::GrayscaleBaseRefresh),
+            5 => Some(Self::GrayscalePrecondition),
+            6 => Some(Self::GrayscaleActivate),
+            7 => Some(Self::GrayscaleRefresh),
+            8 => Some(Self::PowerOff),
+            _ => None,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::PowerOn => "power_on",
+            Self::BinaryFullRefresh => "binary_full_refresh",
+            Self::BinaryFastRefresh => "binary_fast_refresh",
+            Self::GrayscaleBaseRefresh => "grayscale_base_refresh",
+            Self::GrayscalePrecondition => "grayscale_precondition",
+            Self::GrayscaleActivate => "grayscale_activate",
+            Self::GrayscaleRefresh => "grayscale_refresh",
+            Self::PowerOff => "power_off",
+        }
+    }
+}
+
 macro_rules! define_trace_events {
     (
         $( $variant:ident = $id:literal => $name:literal ),+ $(,)?
@@ -175,4 +230,5 @@ define_trace_events! {
 
     Present = 12 => "present",
     PresentBusy = 13 => "present_busy",
+    DisplayPhase = 14 => "display_phase",
 }

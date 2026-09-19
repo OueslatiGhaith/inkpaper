@@ -5,6 +5,8 @@ use critical_section::Mutex;
 use crate::TraceEvent;
 
 pub const TRACE_CAPACITY: usize = 256;
+pub const TRACE_ASYNC_CAPACITY: usize = 16;
+pub const TRACE_ASYNC_OPEN_CAPACITY: usize = 4;
 
 type ClockFn = fn() -> u32;
 
@@ -64,6 +66,64 @@ impl TraceRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraceAsyncRecord {
+    event: TraceEvent,
+    id: u32,
+    start_cycles: u32,
+    duration_cycles: u32,
+    arg: u32,
+}
+
+impl TraceAsyncRecord {
+    const EMPTY: Self = Self {
+        event: TraceEvent::Render,
+        id: 0,
+        start_cycles: 0,
+        duration_cycles: 0,
+        arg: 0,
+    };
+
+    pub const fn event(self) -> TraceEvent {
+        self.event
+    }
+
+    pub const fn id(self) -> u32 {
+        self.id
+    }
+
+    pub const fn start_cycles(self) -> u32 {
+        self.start_cycles
+    }
+
+    pub const fn duration_cycles(self) -> u32 {
+        self.duration_cycles
+    }
+
+    pub const fn arg(self) -> u32 {
+        self.arg
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TraceAsyncOpen {
+    active: bool,
+    event: TraceEvent,
+    id: u32,
+    start_cycles: u32,
+    arg: u32,
+}
+
+impl TraceAsyncOpen {
+    const EMPTY: Self = Self {
+        active: false,
+        event: TraceEvent::Render,
+        id: 0,
+        start_cycles: 0,
+        arg: 0,
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TraceSummary {
     session_id: u32,
     origin_cycles: u32,
@@ -104,6 +164,7 @@ impl TraceSummary {
 
 struct TraceState {
     clock: Option<ClockFn>,
+
     enabled: bool,
     session_id: u32,
     origin: u32,
@@ -111,6 +172,11 @@ struct TraceState {
     len: usize,
     dropped: u32,
     records: [TraceRecord; TRACE_CAPACITY],
+
+    async_len: usize,
+    async_dropped: u32,
+    async_records: [TraceAsyncRecord; TRACE_ASYNC_CAPACITY],
+    async_open: [TraceAsyncOpen; TRACE_ASYNC_OPEN_CAPACITY],
 }
 
 impl TraceState {
@@ -124,6 +190,10 @@ impl TraceState {
             len: 0,
             dropped: 0,
             records: [TraceRecord::EMPTY; TRACE_CAPACITY],
+            async_len: 0,
+            async_dropped: 0,
+            async_records: [TraceAsyncRecord::EMPTY; TRACE_ASYNC_CAPACITY],
+            async_open: [TraceAsyncOpen::EMPTY; TRACE_ASYNC_OPEN_CAPACITY],
         }
     }
 }
@@ -320,6 +390,122 @@ pub fn record(index: usize) -> Option<TraceRecord> {
             Some(state.records[index])
         }
     })
+}
+
+pub fn async_begin(event: TraceEvent, id: u32, arg: u32) -> bool {
+    critical_section::with(|cs| {
+        let mut state = TRACE.borrow(cs).borrow_mut();
+
+        let Some(clock) = state.clock else {
+            return false;
+        };
+
+        if state
+            .async_open
+            .iter()
+            .any(|entry| entry.active && entry.event == event && entry.id == id)
+        {
+            return false;
+        }
+
+        let Some(index) = state.async_open.iter().position(|entry| !entry.active) else {
+            state.async_dropped = state.async_dropped.saturating_add(1);
+
+            return false;
+        };
+
+        state.async_open[index] = TraceAsyncOpen {
+            active: true,
+            event,
+            id,
+            start_cycles: clock(),
+            arg,
+        };
+
+        true
+    })
+}
+
+pub fn async_end(event: TraceEvent, id: u32) -> bool {
+    critical_section::with(|cs| {
+        let mut state = TRACE.borrow(cs).borrow_mut();
+
+        let Some(index) = state
+            .async_open
+            .iter()
+            .position(|entry| entry.active && entry.event == event && entry.id == id)
+        else {
+            return false;
+        };
+
+        let Some(clock) = state.clock else {
+            return false;
+        };
+
+        let open = state.async_open[index];
+
+        state.async_open[index] = TraceAsyncOpen::EMPTY;
+
+        let record = TraceAsyncRecord {
+            event: open.event,
+            id: open.id,
+            start_cycles: open.start_cycles,
+            duration_cycles: clock().wrapping_sub(open.start_cycles),
+            arg: open.arg,
+        };
+
+        if state.async_len >= TRACE_ASYNC_CAPACITY {
+            state.async_dropped = state.async_dropped.saturating_add(1);
+
+            return true;
+        }
+
+        let index = state.async_len;
+
+        state.async_records[index] = record;
+        state.async_len = index + 1;
+
+        true
+    })
+}
+
+pub fn async_record_count() -> usize {
+    critical_section::with(|cs| TRACE.borrow(cs).borrow().async_len)
+}
+
+pub fn async_record(index: usize) -> Option<TraceAsyncRecord> {
+    critical_section::with(|cs| {
+        let state = TRACE.borrow(cs).borrow();
+
+        if index >= state.async_len {
+            None
+        } else {
+            Some(state.async_records[index])
+        }
+    })
+}
+
+pub fn async_dropped() -> u32 {
+    critical_section::with(|cs| TRACE.borrow(cs).borrow().async_dropped)
+}
+
+pub fn async_open_count() -> u8 {
+    critical_section::with(|cs| {
+        let state = TRACE.borrow(cs).borrow();
+
+        let count = state.async_open.iter().filter(|entry| entry.active).count();
+
+        u8::try_from(count).unwrap_or(u8::MAX)
+    })
+}
+
+pub fn clear_async_records() {
+    critical_section::with(|cs| {
+        let mut state = TRACE.borrow(cs).borrow_mut();
+
+        state.async_len = 0;
+        state.async_dropped = 0;
+    });
 }
 
 #[cfg(test)]

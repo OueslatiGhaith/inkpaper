@@ -13,7 +13,7 @@ use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC
 use xteink_display_probe::Controller;
 
 #[cfg(feature = "performance")]
-use crate::firmware::perf::{CycleTimer, ProfiledEpdBus};
+use crate::firmware::perf::{CycleTimer, DisplayController, ProfiledEpdBus};
 use crate::firmware::{
     framebuffer::FramebufferStorage,
     presenter::{FrameUpdate, PresentationMode},
@@ -79,7 +79,13 @@ impl X4Panel {
         let (result, present_timings) = {
             let timer = CycleTimer::start();
 
-            let mut profiled_bus = ProfiledEpdBus::new(bus);
+            let controller = match self {
+                Self::Ssd1677(_) => DisplayController::Ssd1677,
+                Self::Uc8179(_) => DisplayController::Uc8179,
+                Self::Uc8279(_) => DisplayController::Uc8279,
+            };
+
+            let mut profiled_bus = ProfiledEpdBus::new(bus, controller, update);
 
             let result = self
                 .present_inner(&mut profiled_bus, delay, frame, update)
