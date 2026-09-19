@@ -28,6 +28,16 @@ pub enum GrayscaleUpdateMode {
 }
 
 #[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshContent {
+    Binary,
+    Grayscale {
+        /// the panel already contains a valid grayscale frame and the controller supports
+        /// a damage-scoped grayscale transition
+        window_eligible: bool,
+    },
+}
+
+#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
 pub struct EInkCapabilities {
     binary_update: BinaryUpdateMode,
     binary_over_gray: BinaryOverGrayMode,
@@ -70,6 +80,7 @@ impl EInkCapabilities {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RefreshContext {
+    content: RefreshContent,
     full_damage: bool,
     continuous_tone_images: bool,
     damaged_pixels: u32,
@@ -78,17 +89,37 @@ pub(crate) struct RefreshContext {
 
 impl RefreshContext {
     pub(crate) const fn new(
+        content: RefreshContent,
         full_damage: bool,
         continuous_tone_images: bool,
         damaged_pixels: u32,
         total_pixels: u32,
     ) -> Self {
         Self {
+            content,
             full_damage,
             continuous_tone_images,
             damaged_pixels,
             total_pixels,
         }
+    }
+
+    const fn grayscale_requires_full(self) -> bool {
+        matches!(
+            self.content,
+            RefreshContent::Grayscale {
+                window_eligible: false
+            }
+        )
+    }
+
+    const fn grayscale_window_eligible(self) -> bool {
+        matches!(
+            self.content,
+            RefreshContent::Grayscale {
+                window_eligible: true,
+            }
+        )
     }
 }
 
@@ -100,8 +131,24 @@ pub(crate) struct RefreshPolicy {
 impl RefreshPolicy {
     pub fn select(&mut self, context: RefreshContext) -> RefreshRequest {
         let request = if context.total_pixels == 0 {
-            // a malformed/unknown display size should fail conservatively
+            // a malformed/unknown display size should fail conservatively.
             RefreshRequest::Full
+        } else if context.grayscale_requires_full() {
+            // this covers:
+            // - the first grayscale frame after binary content;
+            // - controllers without damage-scoped grayscale updates.
+            RefreshRequest::Full
+        } else if self.consecutive_fast_refreshes >= MAX_CONSECUTIVE_FAST_REFRESHES {
+            // periodically re-establish the panel from a complete waveform even when
+            // the controller supports fast damage-scoped transitions.
+            RefreshRequest::Full
+        } else if context.grayscale_window_eligible() {
+            // once a valid grayscale baseline exists, large/full Gray4 damage is still
+            // eligible for the controller's fast window path.
+            //
+            // the controller driver remains responsible for falling back if its internal
+            // baseline state is not actually usable.
+            RefreshRequest::Fast
         } else if context.full_damage {
             RefreshRequest::Full
         } else if ratio_at_least(
@@ -117,8 +164,6 @@ impl RefreshPolicy {
                 CONTINUOUS_TONE_DAMAGE_PERCENT,
             )
         {
-            RefreshRequest::Full
-        } else if self.consecutive_fast_refreshes >= MAX_CONSECUTIVE_FAST_REFRESHES {
             RefreshRequest::Full
         } else {
             RefreshRequest::Fast

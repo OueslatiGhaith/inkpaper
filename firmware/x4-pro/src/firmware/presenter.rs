@@ -15,7 +15,8 @@ use crate::firmware::{
         PHYSICAL_HEIGHT, PHYSICAL_WIDTH, Region,
     },
     refresh_policy::{
-        BinaryOverGrayMode, EInkCapabilities, RefreshContext, RefreshPolicy, RefreshRequest,
+        BinaryOverGrayMode, EInkCapabilities, RefreshContent, RefreshContext, RefreshPolicy,
+        RefreshRequest,
     },
 };
 
@@ -295,15 +296,12 @@ impl Presenter {
 
         let presentation = self.presentation_mode(rendered, capabilities);
 
-        let refresh = if presentation == PresentationMode::Gray4
-            && !capabilities.supports_partial_grayscale()
-        {
-            self.refresh_policy.record_full_refresh();
-
-            RefreshRequest::Full
-        } else {
-            self.refresh_policy.select(refresh_context(rendered))
-        };
+        let refresh = self.refresh_policy.select(refresh_context(
+            rendered,
+            presentation,
+            capabilities,
+            self.panel_tone,
+        ));
 
         self.record_presented_frame(rendered);
 
@@ -583,12 +581,29 @@ fn ui_rect_to_region(rect: Rect) -> Option<Region> {
     ))
 }
 
-fn refresh_context(rendered: RenderedFrame) -> RefreshContext {
+fn refresh_context(
+    rendered: RenderedFrame,
+    presentation: PresentationMode,
+    capabilities: EInkCapabilities,
+    panel_tone: EInkTone,
+) -> RefreshContext {
     let damage = rendered.physical_damage;
-
     let damaged_pixels = u32::from(damage.width).saturating_mul(u32::from(damage.height));
 
+    let content = match presentation {
+        PresentationMode::Binary | PresentationMode::BinaryPreservingGray => RefreshContent::Binary,
+        PresentationMode::Gray4 => {
+            let native_grayscale = rendered.eink_report.tone() == EInkTone::Gray4;
+            let window_eligible = native_grayscale
+                && panel_tone == EInkTone::Gray4
+                && capabilities.supports_partial_grayscale();
+
+            RefreshContent::Grayscale { window_eligible }
+        }
+    };
+
     RefreshContext::new(
+        content,
         rendered.paint_report.damage().is_full(),
         rendered.paint_report.content().has_continuous_tone_images(),
         damaged_pixels,
