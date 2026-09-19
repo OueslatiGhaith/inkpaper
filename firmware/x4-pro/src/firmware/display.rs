@@ -60,6 +60,44 @@ impl X4Panel {
         }
     }
 
+    pub async fn prepare_present<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        let Self::Uc8179(panel) = self else {
+            return Ok(());
+        };
+
+        #[cfg(feature = "performance")]
+        {
+            let power_off_pending = panel.power_off_pending();
+
+            let mut profiled_bus = ProfiledEpdBus::new_preparation(bus);
+
+            if power_off_pending {
+                profiled_bus.expect_power_off_completion();
+            }
+
+            panel
+                .prepare_power_on(&mut profiled_bus, delay)
+                .await
+                .map_err(Error::Uc8179)
+        }
+
+        #[cfg(not(feature = "performance"))]
+        {
+            panel
+                .prepare_power_on(bus, delay)
+                .await
+                .map_err(Error::Uc8179)
+        }
+    }
+
     pub async fn present<B, D>(
         &mut self,
         bus: &mut B,
@@ -85,15 +123,21 @@ impl X4Panel {
                 Self::Uc8279(_) => DisplayController::Uc8279,
             };
 
-            let pending_power_off = match self {
-                Self::Uc8179(panel) => panel.power_off_pending(),
-                Self::Ssd1677(_) | Self::Uc8279(_) => false,
+            let (pending_power_off, pending_power_on) = match self {
+                Self::Uc8179(panel) => (panel.power_off_pending(), panel.power_on_pending()),
+                Self::Ssd1677(_) | Self::Uc8279(_) => (false, false),
             };
+
+            debug_assert!(!(pending_power_off && pending_power_on));
 
             let mut profiled_bus = ProfiledEpdBus::new(bus, controller, update);
 
             if pending_power_off {
                 profiled_bus.expect_power_off_completion();
+            }
+
+            if pending_power_on {
+                profiled_bus.expect_power_on_completion();
             }
 
             let result = self

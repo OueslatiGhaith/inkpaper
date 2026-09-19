@@ -227,6 +227,7 @@ pub struct Uc8179 {
 
     screen_on: bool,
     power_off_pending: bool,
+    power_on_pending: bool,
 
     need_full_clear: bool,
     old_plane_valid: bool,
@@ -242,6 +243,7 @@ impl Uc8179 {
             config,
             screen_on: false,
             power_off_pending: false,
+            power_on_pending: false,
             need_full_clear: true,
             old_plane_valid: false,
             grayscale_on_panel: false,
@@ -259,6 +261,10 @@ impl Uc8179 {
 
     pub const fn power_off_pending(&self) -> bool {
         self.power_off_pending
+    }
+
+    pub const fn power_on_pending(&self) -> bool {
+        self.power_on_pending
     }
 
     pub fn set_dark_background(&mut self, enabled: bool) {
@@ -281,6 +287,7 @@ impl Uc8179 {
         self.validate_geometry()?;
 
         self.finish_pending_power_off(bus, delay).await?;
+        self.finish_pending_power_on(bus, delay).await?;
 
         bus.reset(delay).await.map_err(Error::Bus)?;
 
@@ -317,6 +324,7 @@ impl Uc8179 {
 
         self.screen_on = false;
         self.power_off_pending = false;
+        self.power_on_pending = false;
         self.need_full_clear = true;
         self.old_plane_valid = false;
         self.grayscale_on_panel = false;
@@ -339,6 +347,7 @@ impl Uc8179 {
         self.validate_frame(frame)?;
 
         self.finish_pending_power_off(bus, delay).await?;
+        self.finish_pending_power_on(bus, delay).await?;
 
         // a caller that bypasses display_grayscale_window() and asks for a Fast B/W update
         // while grayscale is physically present must not use an ordinary DU transition.
@@ -432,6 +441,7 @@ impl Uc8179 {
         self.validate_frame(msb)?;
 
         self.finish_pending_power_off(bus, delay).await?;
+        self.finish_pending_power_on(bus, delay).await?;
 
         self.display_absolute_grayscale_base(bus, delay, lsb, msb)
             .await?;
@@ -484,6 +494,7 @@ impl Uc8179 {
         let region = self.normalize_region(region)?;
 
         self.finish_pending_power_off(bus, delay).await?;
+        self.finish_pending_power_on(bus, delay).await?;
 
         let full = Region::new(0, 0, self.config.width, self.config.visible_height);
 
@@ -559,6 +570,7 @@ impl Uc8179 {
         let region = self.normalize_region(region)?;
 
         self.finish_pending_power_off(bus, delay).await?;
+        self.finish_pending_power_on(bus, delay).await?;
 
         // This path relies on the clean B/W baseline established by the grayscale-window
         // implementation.
@@ -618,6 +630,7 @@ impl Uc8179 {
         // a previously deferred shutdown must be complete before sending another
         // controller command.
         self.finish_pending_power_off(bus, delay).await?;
+        self.finish_pending_power_on(bus, delay).await?;
 
         if self.screen_on {
             self.power_off(bus, delay).await?;
@@ -828,11 +841,13 @@ impl Uc8179 {
         Ok(())
     }
 
-    async fn power_off<B, D>(&mut self, bus: &mut B, _delay: &mut D) -> Result<(), Error<B::Error>>
+    async fn power_off<B, D>(&mut self, bus: &mut B, delay: &mut D) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
         D: DelayNs,
     {
+        self.finish_pending_power_on(bus, delay).await?;
+
         if !self.screen_on {
             return Ok(());
         }
@@ -871,6 +886,66 @@ impl Uc8179 {
         self.wait_ready(bus, delay).await?;
 
         self.power_off_pending = false;
+
+        Ok(())
+    }
+
+    pub async fn prepare_power_on<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        debug_assert!(!(self.power_off_pending && self.power_on_pending));
+
+        if self.screen_on || self.power_on_pending {
+            return Ok(());
+        }
+
+        if self.power_off_pending {
+            // Do not synchronously wait for an in-flight PowerOff here.
+            //
+            // That would move the ~80 ms shutdown stall back in front of rendering
+            // and undo the previous optimization.
+            //
+            // Wait only long enough to guarantee that BUSY has had time to assert,
+            // then sample once. If shutdown is still running, rendering proceeds
+            // immediately and the ordinary presentation path will finish it later.
+            delay.delay_ms(BUSY_ASSERT_SETTLE_MS).await;
+
+            if bus.is_busy(BUSY_POLARITY).map_err(Error::Bus)? {
+                return Ok(());
+            }
+
+            self.power_off_pending = false;
+        }
+
+        self.command(bus, Command::PowerOn).await?;
+        self.power_on_pending = true;
+
+        Ok(())
+    }
+
+    async fn finish_pending_power_on<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        if !self.power_on_pending {
+            return Ok(());
+        }
+
+        self.wait_ready(bus, delay).await?;
+
+        self.power_on_pending = false;
+        self.screen_on = true;
 
         Ok(())
     }
@@ -1439,5 +1514,13 @@ mod tests {
 
         assert_eq!(region, Region::new(8, 10, 16, 20));
         assert_eq!(region_buffer_len(region), 40);
+    }
+
+    #[test]
+    fn power_transitions_start_idle() {
+        let panel = Uc8179::new(X4_PRO_800X480);
+
+        assert!(!panel.power_off_pending());
+        assert!(!panel.power_on_pending());
     }
 }

@@ -148,7 +148,7 @@ pub(crate) struct ProfiledEpdBus<'a, B> {
     inner: &'a mut B,
     timings: PresentTimings,
 
-    trace_plan: DisplayTracePlan,
+    trace_plan: Option<DisplayTracePlan>,
     pending_phase: Option<DisplayPhase>,
 }
 
@@ -163,7 +163,16 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
             inner,
             timings: PresentTimings::default(),
 
-            trace_plan: DisplayTracePlan::new(controller, update),
+            trace_plan: Some(DisplayTracePlan::new(controller, update)),
+            pending_phase: None,
+        }
+    }
+
+    pub(crate) fn new_preparation(inner: &'a mut B) -> Self {
+        Self {
+            inner,
+            timings: PresentTimings::default(),
+            trace_plan: None,
             pending_phase: None,
         }
     }
@@ -187,8 +196,19 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
     fn observe_command(&mut self, command: u8) {
         let phase = match command {
             EPD_COMMAND_POWER_ON => Some(DisplayPhase::PowerOn),
-            EPD_COMMAND_DISPLAY_REFRESH => Some(self.trace_plan.next_refresh_phase()),
+
+            EPD_COMMAND_DISPLAY_REFRESH => {
+                let phase = self
+                    .trace_plan
+                    .as_mut()
+                    .map(|plan| plan.next_refresh_phase())
+                    .unwrap_or(DisplayPhase::Unknown);
+
+                Some(phase)
+            }
+
             EPD_COMMAND_POWER_OFF => Some(DisplayPhase::PowerOff),
+
             _ => None,
         };
 
@@ -212,6 +232,12 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
         debug_assert!(self.pending_phase.is_none());
 
         self.pending_phase = Some(DisplayPhase::PowerOff);
+    }
+
+    pub(crate) fn expect_power_on_completion(&mut self) {
+        debug_assert!(self.pending_phase.is_none());
+
+        self.pending_phase = Some(DisplayPhase::PowerOn);
     }
 }
 
@@ -277,6 +303,20 @@ where
         let result = self.inner.is_busy(polarity);
 
         self.record_busy(timer.elapsed(), false);
+
+        let ready = match &result {
+            Ok(busy) => !*busy,
+            Err(_) => false,
+        };
+
+        if ready && self.pending_phase == Some(DisplayPhase::PowerOff) {
+            self.pending_phase = None;
+
+            #[cfg(feature = "trace")]
+            {
+                let _ = inkpaper_trace::async_end(TraceEvent::DisplayPhase, DISPLAY_ASYNC_TRACE_ID);
+            }
+        }
 
         result
     }

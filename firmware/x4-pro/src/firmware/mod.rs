@@ -203,6 +203,8 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut presenter = Presenter::default();
 
+    panel.prepare_present(&mut bus, &mut delay).await.unwrap();
+
     debug!("building UI frame...");
     let update = presenter.render_initial(runtime, frame);
     let damage = update.physical_damage();
@@ -358,8 +360,20 @@ async fn main(spawner: Spawner) -> ! {
             stay_alive().await;
         }
 
+        if !runtime.render_invalidation().is_none() {
+            panel.prepare_present(&mut bus, &mut delay).await.unwrap();
+        }
+
         if app_service.service_pending(runtime, app).await.is_err() {
             warn!("failed to service app work");
+        }
+
+        // app-service work can itself create an invalidation, and it may also have
+        // provided enough time for a previously-busy PowerOff to finish.
+        //
+        // prepare_present() is idempotent, so trying again is cheap.
+        if !runtime.render_invalidation().is_none() {
+            panel.prepare_present(&mut bus, &mut delay).await.unwrap();
         }
 
         let Some(update) = presenter.render_pending(runtime, frame, panel.capabilities()) else {
