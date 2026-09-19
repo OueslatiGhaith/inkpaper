@@ -23,6 +23,8 @@ const PERFETTO_DISPLAY_BUSY_TRACK: u64 = 8;
 const PROTO_WIRE_VARINT: u8 = 0;
 const PROTO_WIRE_LENGTH_DELIMITED: u8 = 2;
 
+const PERFETTO_PACKET_SEQUENCE_ID: u64 = 1;
+
 #[derive(Debug)]
 struct PerfettoTimedEvent {
     kind: EventKind,
@@ -337,6 +339,13 @@ fn push_perfetto_track_event(
 
     // TracePacket.timestamp = 8, in nanoseconds by default.
     proto_varint_field(&mut packet, 8, timestamp_ns);
+
+    // TrackEvent packets must belong to a non-zero packet sequence.
+    // we do not use incremental/interened data yet, so one sequence is enough
+    // for the entire InkPaper trace.
+    //
+    // TracePacket.trusted_packet_sequence_id = 10
+    proto_varint_field(&mut packet, 10, PERFETTO_PACKET_SEQUENCE_ID);
 
     // TracePacket.track_event = 11
     proto_bytes_field(&mut packet, 11, &event);
