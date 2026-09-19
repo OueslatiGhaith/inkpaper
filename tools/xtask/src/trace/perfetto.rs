@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use inkpaper_trace::TraceEvent;
+use inkpaper_trace::{DisplayPhase, TraceEvent};
 
 use crate::trace::{
     Capture, EventKind, parse_captures, trace_event_name, trace_frame_key, trace_frame_name,
@@ -137,7 +137,7 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
                 .checked_sub(timeline_base)
                 .context("async span moved before timeline base")?;
 
-            let name = trace_event_name(span.event, Some(span.arg));
+            let name = async_trace_name(span.event, span.arg);
 
             push_perfetto_slice(
                 &mut events,
@@ -356,6 +356,17 @@ fn perfetto_track_for_event(event: TraceEvent) -> u64 {
 
         TraceEvent::DisplayPhase => PERFETTO_DISPLAY_PHASE_TRACK,
     }
+}
+
+fn async_trace_name(event: TraceEvent, arg: u32) -> String {
+    if event == TraceEvent::DisplayPhase {
+        let phase = u8::try_from(arg).ok().and_then(DisplayPhase::from_id);
+        if phase == Some(DisplayPhase::PowerOff) {
+            return "power_off_pending".to_owned();
+        }
+    }
+
+    trace_event_name(event, Some(arg))
 }
 
 fn cycles_to_ns_u64(cycles: u64, hz: u32) -> u64 {

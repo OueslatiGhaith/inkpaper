@@ -207,6 +207,12 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
             );
         }
     }
+
+    pub(crate) fn expect_power_off_completion(&mut self) {
+        debug_assert!(self.pending_phase.is_none());
+
+        self.pending_phase = Some(DisplayPhase::PowerOff);
+    }
 }
 
 #[cfg(feature = "performance")]
@@ -305,7 +311,7 @@ where
         // that is what lets a future deferred PowerOff begin during one presentation
         // and be completed by a readiness wait in the next.
         #[cfg(feature = "trace")]
-        {
+        if result.is_ok() {
             let _ = inkpaper_trace::async_end(TraceEvent::DisplayPhase, DISPLAY_ASYNC_TRACE_ID);
         }
 

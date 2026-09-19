@@ -226,6 +226,7 @@ pub struct Uc8179 {
     config: Config,
 
     screen_on: bool,
+    power_off_pending: bool,
 
     need_full_clear: bool,
     old_plane_valid: bool,
@@ -240,6 +241,7 @@ impl Uc8179 {
         Self {
             config,
             screen_on: false,
+            power_off_pending: false,
             need_full_clear: true,
             old_plane_valid: false,
             grayscale_on_panel: false,
@@ -253,6 +255,10 @@ impl Uc8179 {
 
     pub const fn grayscale_on_panel(&self) -> bool {
         self.grayscale_on_panel
+    }
+
+    pub const fn power_off_pending(&self) -> bool {
+        self.power_off_pending
     }
 
     pub fn set_dark_background(&mut self, enabled: bool) {
@@ -273,6 +279,8 @@ impl Uc8179 {
         D: DelayNs,
     {
         self.validate_geometry()?;
+
+        self.finish_pending_power_off(bus, delay).await?;
 
         bus.reset(delay).await.map_err(Error::Bus)?;
 
@@ -308,6 +316,7 @@ impl Uc8179 {
         }
 
         self.screen_on = false;
+        self.power_off_pending = false;
         self.need_full_clear = true;
         self.old_plane_valid = false;
         self.grayscale_on_panel = false;
@@ -328,6 +337,8 @@ impl Uc8179 {
         D: DelayNs,
     {
         self.validate_frame(frame)?;
+
+        self.finish_pending_power_off(bus, delay).await?;
 
         // a caller that bypasses display_grayscale_window() and asks for a Fast B/W update
         // while grayscale is physically present must not use an ordinary DU transition.
@@ -420,6 +431,8 @@ impl Uc8179 {
         self.validate_frame(lsb)?;
         self.validate_frame(msb)?;
 
+        self.finish_pending_power_off(bus, delay).await?;
+
         self.display_absolute_grayscale_base(bus, delay, lsb, msb)
             .await?;
 
@@ -469,6 +482,8 @@ impl Uc8179 {
         self.validate_frame(msb)?;
 
         let region = self.normalize_region(region)?;
+
+        self.finish_pending_power_off(bus, delay).await?;
 
         let full = Region::new(0, 0, self.config.width, self.config.visible_height);
 
@@ -543,6 +558,8 @@ impl Uc8179 {
 
         let region = self.normalize_region(region)?;
 
+        self.finish_pending_power_off(bus, delay).await?;
+
         // This path relies on the clean B/W baseline established by the grayscale-window
         // implementation.
         if self.need_full_clear || !self.old_plane_valid || !self.grayscale_on_panel {
@@ -598,8 +615,15 @@ impl Uc8179 {
         B: EpdInterface,
         D: DelayNs,
     {
+        // a previously deferred shutdown must be complete before sending another
+        // controller command.
+        self.finish_pending_power_off(bus, delay).await?;
+
         if self.screen_on {
             self.power_off(bus, delay).await?;
+
+            // DeepSleep must not race the asynchronous PowerOff sequence.
+            self.finish_pending_power_off(bus, delay).await?;
         }
 
         self.command_data(bus, Command::DeepSleep, &[0xa5]).await?;
@@ -804,7 +828,7 @@ impl Uc8179 {
         Ok(())
     }
 
-    async fn power_off<B, D>(&mut self, bus: &mut B, delay: &mut D) -> Result<(), Error<B::Error>>
+    async fn power_off<B, D>(&mut self, bus: &mut B, _delay: &mut D) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
         D: DelayNs,
@@ -814,8 +838,39 @@ impl Uc8179 {
         }
 
         self.command(bus, Command::PowerOff).await?;
-        self.wait_ready(bus, delay).await?;
+
+        // PowerOff continues autonomously in the controller.
+        //
+        // do not wait here: there is no reason for the CPU to remain blocked after
+        // the visible update has completed. Any later operation touching the controller
+        // must resolve this pending state first.
         self.screen_on = false;
+        self.power_off_pending = true;
+
+        Ok(())
+    }
+
+    async fn finish_pending_power_off<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        if !self.power_off_pending {
+            return Ok(());
+        }
+
+        // we still retain the normal assertion-settle delay here. In the usual page-turn
+        // path PowerOff was issued far earlier, so BUSY will already be idle and this costs
+        // only the 1 ms guard.
+        //
+        // keeping the guard also makes an immediate follow-up operation safe.
+        self.wait_ready(bus, delay).await?;
+
+        self.power_off_pending = false;
 
         Ok(())
     }

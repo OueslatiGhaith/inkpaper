@@ -85,7 +85,16 @@ impl X4Panel {
                 Self::Uc8279(_) => DisplayController::Uc8279,
             };
 
+            let pending_power_off = match self {
+                Self::Uc8179(panel) => panel.power_off_pending(),
+                Self::Ssd1677(_) | Self::Uc8279(_) => false,
+            };
+
             let mut profiled_bus = ProfiledEpdBus::new(bus, controller, update);
+
+            if pending_power_off {
+                profiled_bus.expect_power_off_completion();
+            }
 
             let result = self
                 .present_inner(&mut profiled_bus, delay, frame, update)
