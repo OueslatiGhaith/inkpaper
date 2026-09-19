@@ -1791,6 +1791,16 @@ name = "inkpaper-trace"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "inkpaper-trace-macros",
+]
+
+[[package]]
+name = "inkpaper-trace-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
 ]
 
 [[package]]

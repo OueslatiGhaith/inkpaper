@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["ttf", "variable-fonts", "macros", "trace"]
+default = ["ttf", "variable-fonts", "macros"]
 alloc = []
 macros = ["dep:inkpaper-ui-macros"]
 defmt = ["dep:defmt", "heapless/defmt"]
@@ -13,13 +13,13 @@ eink = ["dep:embedded-graphics", "embedded-graphics/defmt"]
 ttf = ["dep:ttf-parser"]
 variable-fonts = ["ttf", "ttf-parser/variable-fonts"]
 metrics = []
-trace = ["dep:inkpaper-trace", "inkpaper-trace/recording"]
+trace = ["inkpaper-trace/recording"]
 
 [dependencies]
 defmt = { workspace = true, optional = true }
 embedded-graphics = { workspace = true, optional = true }
 heapless = { workspace = true }
-inkpaper-trace = { path = "../trace", optional = true }
+inkpaper-trace = { path = "../trace" }
 inkpaper-ui-macros = { path = "../ui-macros", optional = true }
 inkpaper-ui-style-schema = { path = "../ui-style-schema" }
 num-traits = { version = "0.2.19", default-features = false }

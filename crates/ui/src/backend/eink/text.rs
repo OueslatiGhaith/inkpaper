@@ -1,6 +1,5 @@
 use embedded_graphics::prelude::DrawTarget as EgDrawTarget;
-#[cfg(feature = "trace")]
-use inkpaper_trace::{TraceEvent, TraceSpan};
+use inkpaper_trace::{TraceEvent, profile, profile_expr};
 
 use crate::{
     Color, FontId, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
@@ -162,6 +161,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[profile(TraceEvent::TextRun, arg = text.len())]
 pub(super) fn draw_text_run_to<
     D,
     const FONTS: usize,
@@ -187,12 +187,6 @@ where
         return Ok(0);
     }
 
-    #[cfg(feature = "trace")]
-    let _text_run_trace = TraceSpan::start_with_arg(
-        TraceEvent::TextRun,
-        u32::try_from(text.len()).unwrap_or(u32::MAX),
-    );
-
     let font_instance = font.instance();
     let size_px = font_size_px(style);
 
@@ -203,17 +197,13 @@ where
 
     let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
 
-    let run = {
-        #[cfg(feature = "trace")]
-        let _shape_trace = TraceSpan::start_with_arg(
-            TraceEvent::Shape,
-            u32::try_from(text.len()).unwrap_or(u32::MAX),
-        );
-
+    let run = profile_expr!(
+        TraceEvent::Shape,
+        arg = text.len(),
         shaper
-            .shape_into(registry, font_instance.font(), size_px, text, &mut glyphs)
-            .map_err(EInkError::Shape)?
-    };
+            .shape_into(registry, font_instance.font(), size_px, text, &mut glyphs,)
+            .map_err(EInkError::Shape)?,
+    );
 
     let glyph_count = run.len();
 
@@ -221,13 +211,9 @@ where
     // pass here.
     let mut pen_x = bounds.origin.x;
 
-    {
-        #[cfg(feature = "trace")]
-        let _shape_trace = TraceSpan::start_with_arg(
-            TraceEvent::Glyphs,
-            u32::try_from(glyph_count).unwrap_or(u32::MAX),
-        );
-
+    profile_expr!(
+        TraceEvent::Glyphs,
+        arg = glyph_count,
         draw_shaped_run(
             target,
             report,
@@ -239,8 +225,8 @@ where
             clip,
             coverage_mode,
             &mut pen_x,
-        )?;
-    }
+        ),
+    )?;
 
     Ok(u64::try_from(glyph_count).unwrap_or(u64::MAX))
 }

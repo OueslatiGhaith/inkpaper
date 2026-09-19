@@ -1,5 +1,4 @@
-#[cfg(feature = "trace")]
-use inkpaper_trace::{TraceEvent, TraceSpan};
+use inkpaper_trace::{TraceEvent, profile_expr};
 
 use crate::{FontId, FontInstance, FontProperties, FontRegistry, GlyphId, Offset, Pixels};
 
@@ -387,32 +386,24 @@ impl SimpleShaper {
     ) -> Result<ShapedRun<'out>, ShapeError> {
         let mut state = ShapeState::new();
 
-        let summary = {
-            #[cfg(feature = "trace")]
-            let _logical_shape_trace = TraceSpan::start_with_arg(
-                TraceEvent::LogicalShape,
-                u32::try_from(text.len()).unwrap_or(u32::MAX),
-            );
-
-            self.shape_piece_into(registry, preferred_font, size_px, text, &mut state, output)?
-        };
+        let summary = profile_expr!(
+            TraceEvent::LogicalShape,
+            arg = text.len(),
+            self.shape_piece_into(registry, preferred_font, size_px, text, &mut state, output,)?,
+        );
 
         let glyph_count = summary.glyph_count();
 
-        {
-            #[cfg(feature = "trace")]
-            let _visual_order_trace = TraceSpan::start_with_arg(
-                TraceEvent::VisualOrder,
-                u32::try_from(glyph_count).unwrap_or(u32::MAX),
-            );
-
+        profile_expr!(
+            TraceEvent::VisualOrder,
+            arg = glyph_count,
             self.visual_order(
                 registry,
                 size_px,
                 text,
                 glyph_count,
                 &mut output[..glyph_count],
-            )
-        }
+            ),
+        )
     }
 }
