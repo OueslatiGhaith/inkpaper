@@ -87,7 +87,11 @@ impl X4Panel {
         };
 
         #[cfg(feature = "performance")]
-        crate::firmware::perf::log_present(timer.elapsed());
+        {
+            let present_cycles = timer.elapsed();
+            crate::firmware::perf::log_present(update.frame_id(), present_cycles);
+            crate::firmware::perf::log_frame(update, present_cycles);
+        }
 
         result
     }

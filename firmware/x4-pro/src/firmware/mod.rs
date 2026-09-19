@@ -73,6 +73,9 @@ async fn main(spawner: Spawner) -> ! {
     rtt_target::rtt_init_defmt!();
     info!("InkPaper X4 Pro boot");
 
+    #[cfg(feature = "performance")]
+    perf::log_config();
+
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
@@ -204,7 +207,8 @@ async fn main(spawner: Spawner) -> ! {
     let update = presenter.render_initial(runtime, frame);
     let damage = update.physical_damage();
     debug!(
-        "UI update refresh={:?} damage_tone={:?} presentation={:?} x={} y={} width={} height={}",
+        "UI update frame={} refresh={:?} damage_tone={:?} presentation={:?} x={} y={} width={} height={}",
+        update.frame_id(),
         update.refresh(),
         update.eink_report().tone(),
         update.presentation(),
@@ -364,7 +368,8 @@ async fn main(spawner: Spawner) -> ! {
 
         let damage = update.physical_damage();
         debug!(
-            "UI update refresh={:?} x={} y={} width={} height={}",
+            "UI update frame={} refresh={:?} x={} y={} width={} height={}",
+            update.frame_id(),
             update.refresh(),
             damage.x,
             damage.y,

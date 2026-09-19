@@ -8,7 +8,7 @@ use inkpaper_ui::{
 };
 
 #[cfg(feature = "performance")]
-use crate::firmware::perf::{CycleTimer, RenderTimings};
+use crate::firmware::perf::{CycleTimer, FramePerfReport, RenderTimings};
 use crate::firmware::{
     framebuffer::{
         Framebuffer, FramebufferStorage, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation,
@@ -63,9 +63,13 @@ pub type UiRuntime = Runtime<
 
 #[derive(Debug, Clone, Copy)]
 struct RenderedFrame {
+    frame_id: u32,
     physical_damage: Region,
     eink_report: EInkPaintReport,
     paint_report: PaintReport,
+
+    #[cfg(feature = "performance")]
+    perf_report: FramePerfReport,
     #[cfg(feature = "ui-metrics")]
     framebuffer_draw_iter_pixels: u64,
 }
@@ -97,15 +101,20 @@ impl PresentationMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameUpdate {
+    frame_id: u32,
     refresh: RefreshRequest,
     physical_damage: Region,
     eink_report: EInkPaintReport,
     presentation: PresentationMode,
     paint_report: PaintReport,
+
+    #[cfg(feature = "performance")]
+    perf_report: FramePerfReport,
 }
 
 impl FrameUpdate {
     pub const fn new(
+        frame_id: u32,
         refresh: RefreshRequest,
         physical_damage: Region,
         eink_report: EInkPaintReport,
@@ -113,12 +122,20 @@ impl FrameUpdate {
         paint_report: PaintReport,
     ) -> Self {
         Self {
+            frame_id,
             refresh,
             physical_damage,
             eink_report,
             presentation,
             paint_report,
+
+            #[cfg(feature = "performance")]
+            perf_report: FramePerfReport::EMPTY,
         }
+    }
+
+    pub const fn frame_id(self) -> u32 {
+        self.frame_id
     }
 
     pub const fn refresh(self) -> RefreshRequest {
@@ -151,11 +168,23 @@ impl FrameUpdate {
             && self.physical_damage.width == PHYSICAL_WIDTH as u16
             && self.physical_damage.height == PHYSICAL_HEIGHT as u16
     }
+
+    #[cfg(feature = "performance")]
+    pub(crate) const fn with_perf_report(mut self, report: FramePerfReport) -> Self {
+        self.perf_report = report;
+        self
+    }
+
+    #[cfg(feature = "performance")]
+    pub(crate) const fn perf_report(self) -> FramePerfReport {
+        self.perf_report
+    }
 }
 
 pub struct Presenter {
     refresh_policy: RefreshPolicy,
     panel_tone: EInkTone,
+    next_frame_id: u32,
 }
 
 impl Default for Presenter {
@@ -163,11 +192,19 @@ impl Default for Presenter {
         Self {
             refresh_policy: RefreshPolicy::default(),
             panel_tone: EInkTone::Binary,
+            next_frame_id: 1,
         }
     }
 }
 
 impl Presenter {
+    fn allocate_frame_id(&mut self) -> u32 {
+        let frame_id = self.next_frame_id;
+        self.next_frame_id = self.next_frame_id.wrapping_add(1);
+
+        frame_id
+    }
+
     pub fn render_initial(
         &mut self,
         runtime: &mut UiRuntime,
@@ -181,19 +218,23 @@ impl Presenter {
 
         let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
 
-        let rendered = render_invalidation(runtime, frame, invalidation)
+        let frame_id = self.allocate_frame_id();
+
+        let rendered = render_invalidation(frame_id, runtime, frame, invalidation)
             .expect("a full initial render must produce physical damage");
 
         #[cfg(feature = "ui-metrics")]
         {
-            crate::firmware::perf::log_ui_metrics(runtime.performance_metrics());
+            crate::firmware::perf::log_ui_metrics(rendered.frame_id, runtime.performance_metrics());
             crate::firmware::perf::log_text_metrics(
+                rendered.frame_id,
                 rendered.eink_report,
                 runtime.glyph_cache_metrics(),
                 runtime.glyph_cache_used_bytes(),
                 runtime.glyph_cache_capacity_bytes(),
             );
             crate::firmware::perf::log_coverage_metrics(
+                rendered.frame_id,
                 rendered.eink_report,
                 rendered.framebuffer_draw_iter_pixels,
             );
@@ -211,13 +252,7 @@ impl Presenter {
             EInkTone::Gray4 => PresentationMode::Gray4,
         };
 
-        FrameUpdate::new(
-            RefreshRequest::Full,
-            rendered.physical_damage,
-            rendered.eink_report,
-            presentation,
-            rendered.paint_report,
-        )
+        make_frame_update(rendered, RefreshRequest::Full, presentation)
     }
 
     pub fn render_pending(
@@ -237,18 +272,22 @@ impl Presenter {
             return None;
         }
 
-        let rendered = render_invalidation(runtime, frame, invalidation)?;
+        let frame_id = self.allocate_frame_id();
+
+        let rendered = render_invalidation(frame_id, runtime, frame, invalidation)?;
 
         #[cfg(feature = "ui-metrics")]
         {
-            crate::firmware::perf::log_ui_metrics(runtime.performance_metrics());
+            crate::firmware::perf::log_ui_metrics(rendered.frame_id, runtime.performance_metrics());
             crate::firmware::perf::log_text_metrics(
+                rendered.frame_id,
                 rendered.eink_report,
                 runtime.glyph_cache_metrics(),
                 runtime.glyph_cache_used_bytes(),
                 runtime.glyph_cache_capacity_bytes(),
             );
             crate::firmware::perf::log_coverage_metrics(
+                rendered.frame_id,
                 rendered.eink_report,
                 rendered.framebuffer_draw_iter_pixels,
             );
@@ -268,13 +307,7 @@ impl Presenter {
 
         self.record_presented_frame(rendered);
 
-        Some(FrameUpdate::new(
-            refresh,
-            rendered.physical_damage,
-            rendered.eink_report,
-            presentation,
-            rendered.paint_report,
-        ))
+        Some(make_frame_update(rendered, refresh, presentation))
     }
 
     fn presentation_mode(
@@ -326,6 +359,7 @@ impl Presenter {
 }
 
 fn render_invalidation(
+    frame_id: u32,
     runtime: &mut UiRuntime,
     frame: &mut FramebufferStorage,
     invalidation: RenderInvalidation,
@@ -365,7 +399,7 @@ fn render_invalidation(
                     TraceEvent::Layout,
                     runtime
                         .layout(DISPLAY_SIZE)
-                        .expect("layout requires a mounted root"),
+                        .expect("layout requires a mounted root",),
                 );
 
                 #[cfg(feature = "performance")]
@@ -379,7 +413,7 @@ fn render_invalidation(
 
                 profile_expr!(
                     TraceEvent::Rebuild,
-                    runtime.rebuild().expect("UI rebuild capacity exceeded"),
+                    runtime.rebuild().expect("UI rebuild capacity exceeded",),
                 );
 
                 #[cfg(feature = "performance")]
@@ -394,7 +428,7 @@ fn render_invalidation(
                     TraceEvent::Layout,
                     runtime
                         .layout(DISPLAY_SIZE)
-                        .expect("rebuilt UI must have a root"),
+                        .expect("rebuilt UI must have a root",),
                 );
 
                 #[cfg(feature = "performance")]
@@ -409,7 +443,7 @@ fn render_invalidation(
 
         profile_expr!(
             TraceEvent::Clear,
-            painter.clear_damage(damage, Color::WHITE).unwrap(),
+            painter.clear_damage(damage, Color::WHITE,).unwrap(),
         );
 
         #[cfg(feature = "performance")]
@@ -425,7 +459,7 @@ fn render_invalidation(
             runtime
                 .paint_with_damage(damage, &mut painter,)
                 .unwrap()
-                .expect("painting requires a mounted root"),
+                .expect("painting requires a mounted root",),
         );
 
         #[cfg(feature = "performance")]
@@ -441,7 +475,7 @@ fn render_invalidation(
     #[cfg(feature = "performance")]
     let damage_timer = CycleTimer::start();
 
-    let physical_damage = profile_expr!(TraceEvent::Damage, physical_damage(&display, damage)?,);
+    let physical_damage = profile_expr!(TraceEvent::Damage, physical_damage(&display, damage,)?,);
 
     #[cfg(feature = "performance")]
     {
@@ -471,8 +505,9 @@ fn render_invalidation(
 
     #[cfg(feature = "performance")]
     {
-        crate::firmware::perf::log_render(timings);
+        crate::firmware::perf::log_render(frame_id, timings);
         crate::firmware::perf::log_ordered_coverage(
+            frame_id,
             ordered_coverage_calls,
             ordered_coverage_pixels,
             ordered_coverage_cycles,
@@ -482,11 +517,20 @@ fn render_invalidation(
     #[cfg(feature = "trace")]
     crate::firmware::perf::log_trace(trace_summary);
 
+    #[cfg(feature = "performance")]
+    let perf_report = FramePerfReport::new(timings);
+
+    #[cfg(all(feature = "performance", feature = "ui-metrics"))]
+    let perf_report = perf_report.with_framebuffer_pixels(framebuffer_draw_iter_pixels);
+
     Some(RenderedFrame {
+        frame_id,
         physical_damage,
         eink_report,
         paint_report,
 
+        #[cfg(feature = "performance")]
+        perf_report,
         #[cfg(feature = "ui-metrics")]
         framebuffer_draw_iter_pixels,
     })
@@ -554,4 +598,24 @@ fn refresh_context(rendered: RenderedFrame) -> RefreshContext {
 
 const fn physical_display_pixels() -> u32 {
     (PHYSICAL_WIDTH as u32) * (PHYSICAL_HEIGHT as u32)
+}
+
+fn make_frame_update(
+    rendered: RenderedFrame,
+    refresh: RefreshRequest,
+    presentation: PresentationMode,
+) -> FrameUpdate {
+    let update = FrameUpdate::new(
+        rendered.frame_id,
+        refresh,
+        rendered.physical_damage,
+        rendered.eink_report,
+        presentation,
+        rendered.paint_report,
+    );
+
+    #[cfg(feature = "performance")]
+    let update = update.with_perf_report(rendered.perf_report);
+
+    update
 }
