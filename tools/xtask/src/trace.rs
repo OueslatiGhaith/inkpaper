@@ -10,6 +10,7 @@ use serde::Serialize;
 #[derive(Debug)]
 struct Capture {
     id: u32,
+    frame_id: u32,
     hz: u32,
     expected_spans: usize,
     dropped: u32,
@@ -112,8 +113,12 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
                 captures.push(capture);
             }
 
+            let id = u32_field(payload, "id")?;
+            let frame_id = optional_u32_field(payload, "frame")?.unwrap_or(id);
+
             current = Some(Capture {
-                id: u32_field(payload, "id")?,
+                id,
+                frame_id,
                 hz: u32_field(payload, "hz")?,
                 expected_spans: usize_field(payload, "spans")?,
                 dropped: u32_field(payload, "dropped")?,
@@ -190,7 +195,8 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
 
 fn build_speedscope(captures: &[Capture]) -> Result<SpeedscopeFile> {
     let frames = TraceEvent::ALL
-        .into_iter()
+        .iter()
+        .copied()
         .map(|event| Frame { name: event.name() })
         .collect();
 
@@ -209,7 +215,15 @@ fn build_speedscope(captures: &[Capture]) -> Result<SpeedscopeFile> {
 
             end_value = end_value.max(end);
 
-            let frame = usize::from(span.event.id());
+            let frame = TraceEvent::ALL
+                .iter()
+                .position(|candidate| *candidate == span.event)
+                .with_context(|| {
+                    format!(
+                        "trace event {:?} is missing from TraceEvent::ALL",
+                        span.event,
+                    )
+                })?;
 
             timed.push(TimedEvent {
                 kind: EventKind::Open,
@@ -251,7 +265,11 @@ fn build_speedscope(captures: &[Capture]) -> Result<SpeedscopeFile> {
 
         profiles.push(Profile {
             profile_type: "evented",
-            name: format!("InkPaper render {}", capture.id),
+            name: format!(
+                "InkPaper frame {} {}",
+                capture.frame_id,
+                capture_phase(capture),
+            ),
             unit: "microseconds",
             start_value: 0.0,
             end_value,
@@ -266,6 +284,26 @@ fn build_speedscope(captures: &[Capture]) -> Result<SpeedscopeFile> {
         profiles,
         exporter: "InkPaper xtask",
     })
+}
+
+fn capture_phase(capture: &Capture) -> &'static str {
+    if capture
+        .spans
+        .iter()
+        .any(|span| span.depth == 0 && span.event == TraceEvent::Present)
+    {
+        return "present";
+    }
+
+    if capture
+        .spans
+        .iter()
+        .any(|span| span.depth == 0 && span.event == TraceEvent::Render)
+    {
+        return "render";
+    }
+
+    "trace"
 }
 
 fn cycles_to_us(cycles: u32, hz: u32) -> f64 {
@@ -312,6 +350,24 @@ fn u32_field(payload: &str, name: &str) -> Result<u32> {
         .with_context(|| format!("invalid `{name}` in trace line: {payload}"))
 }
 
+fn optional_field<'a>(payload: &'a str, name: &str) -> Option<&'a str> {
+    payload.split_whitespace().find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+
+        (key == name).then(|| value.trim_end_matches(','))
+    })
+}
+
+fn optional_u32_field(payload: &str, name: &str) -> Result<Option<u32>> {
+    let Some(value) = optional_field(payload, name) else {
+        return Ok(None);
+    };
+
+    Ok(Some(value.parse().with_context(|| {
+        format!("invalid `{name}` in trace line: {payload}")
+    })?))
+}
+
 fn usize_field(payload: &str, name: &str) -> Result<usize> {
     field(payload, name)?
         .parse()
@@ -325,29 +381,33 @@ mod tests {
     use crate::trace::{build_speedscope, parse_captures};
 
     #[test]
-    fn parses_completed_trace_and_builds_evented_profile() {
+    fn parses_render_and_present_sessions() {
         let log = indoc! {r#"
-            1.000 INFO  trace/session id=12 hz=240000000 spans=3 dropped=0 open=0
-            1.001 INFO  trace/span event=7 depth=2 start=240 cycles=480 arg=12
-            1.002 INFO  trace/span event=8 depth=2 start=720 cycles=240 arg=18
-            1.003 INFO  trace/span event=6 depth=1 start=120 cycles=960 arg=12
+            1.000 INFO trace/session id=12 frame=4 hz=240000000 spans=3 dropped=0 open=0
+            1.001 INFO trace/span event=7 depth=2 start=240 cycles=480 arg=12
+            1.002 INFO trace/span event=8 depth=2 start=720 cycles=240 arg=18
+            1.003 INFO trace/span event=0 depth=0 start=120 cycles=960 arg=0
+
+            2.000 INFO trace/session id=13 frame=4 hz=240000000 spans=2 dropped=0 open=0
+            2.001 INFO trace/span event=13 depth=1 start=480 cycles=960 arg=0
+            2.002 INFO trace/span event=12 depth=0 start=120 cycles=1680 arg=0
         "#};
 
         let captures = parse_captures(log).unwrap();
 
-        assert_eq!(captures.len(), 1);
-        assert_eq!(captures[0].id, 12);
-        assert_eq!(captures[0].spans.len(), 3);
+        assert_eq!(captures.len(), 2);
+        assert_eq!(captures[0].frame_id, 4);
+        assert_eq!(captures[1].frame_id, 4);
 
         let file = build_speedscope(&captures).unwrap();
 
-        assert_eq!(file.profiles.len(), 1);
-        assert_eq!(file.profiles[0].events.len(), 6);
+        assert_eq!(file.profiles.len(), 2);
+        assert_eq!(file.profiles[0].name, "InkPaper frame 4 render");
+        assert_eq!(file.profiles[1].name, "InkPaper frame 4 present");
 
         let serialized = serde_json::to_string(&file).unwrap();
 
-        assert!(serialized.contains("\"type\":\"evented\""));
-        assert!(serialized.contains("\"name\":\"shape\""));
-        assert!(serialized.contains("\"name\":\"glyphs\""));
+        assert!(serialized.contains("\"name\":\"present\""));
+        assert!(serialized.contains("\"name\":\"present_busy\""));
     }
 }

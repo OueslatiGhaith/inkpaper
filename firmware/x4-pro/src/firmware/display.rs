@@ -1,6 +1,9 @@
 use defmt::Format;
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::EpdInterface;
+#[cfg(feature = "trace")]
+use inkpaper_trace::TraceSession;
+use inkpaper_trace::{TraceEvent, profile_span};
 use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Region as SsdRegion, Ssd1677};
 use uc8179::{
     RefreshMode as Uc8179RefreshMode, Region as Uc8179Region, Uc8179,
@@ -9,6 +12,8 @@ use uc8179::{
 use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC8279_X4_PRO};
 use xteink_display_probe::Controller;
 
+#[cfg(feature = "performance")]
+use crate::firmware::perf::{CycleTimer, ProfiledEpdBus};
 use crate::firmware::{
     framebuffer::FramebufferStorage,
     presenter::{FrameUpdate, PresentationMode},
@@ -66,10 +71,58 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        #[cfg(feature = "performance")]
-        let timer = crate::firmware::perf::CycleTimer::start();
+        #[cfg(feature = "trace")]
+        let trace_session = TraceSession::start();
+        let present_trace = profile_span!(TraceEvent::Present);
 
-        let result = match update.presentation() {
+        #[cfg(feature = "performance")]
+        let (result, present_timings) = {
+            let timer = CycleTimer::start();
+
+            let mut profiled_bus = ProfiledEpdBus::new(bus);
+
+            let result = self
+                .present_inner(&mut profiled_bus, delay, frame, update)
+                .await;
+
+            let timings = profiled_bus.finish(timer.elapsed());
+
+            (result, timings)
+        };
+
+        #[cfg(not(feature = "performance"))]
+        let result = self.present_inner(bus, delay, frame, update).await;
+
+        // close the top-level presentation span before finalizing the trace session.
+        drop(present_trace);
+
+        #[cfg(feature = "trace")]
+        let trace_summary = trace_session.finish();
+
+        #[cfg(feature = "performance")]
+        {
+            crate::firmware::perf::log_present(update.frame_id(), present_timings);
+            crate::firmware::perf::log_frame(update, present_timings);
+        }
+
+        #[cfg(feature = "trace")]
+        crate::firmware::perf::log_trace(update.frame_id(), trace_summary);
+
+        result
+    }
+
+    async fn present_inner<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        frame: &FramebufferStorage,
+        update: FrameUpdate,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        match update.presentation() {
             PresentationMode::Gray4 => self.present_grayscale(bus, delay, frame, update).await,
             PresentationMode::BinaryPreservingGray => {
                 self.present_binary_preserving_gray(bus, delay, frame, update)
@@ -84,16 +137,7 @@ impl X4Panel {
                     Self::Uc8279(panel) => present_uc8279(panel, bus, delay, frame, update).await,
                 }
             }
-        };
-
-        #[cfg(feature = "performance")]
-        {
-            let present_cycles = timer.elapsed();
-            crate::firmware::perf::log_present(update.frame_id(), present_cycles);
-            crate::firmware::perf::log_frame(update, present_cycles);
         }
-
-        result
     }
 
     async fn present_grayscale<B, D>(

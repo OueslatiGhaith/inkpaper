@@ -27,6 +27,14 @@ struct Frame {
     damage: u64,
     present: u64,
 
+    present_io: u64,
+    present_busy: u64,
+    present_other: u64,
+    present_bytes: u64,
+    present_io_calls: u32,
+    present_busy_waits: u32,
+    present_longest_busy: u32,
+
     framebuffer_pixels: u64,
     framebuffer_valid: bool,
 
@@ -116,6 +124,34 @@ pub fn summary(input: &Path) -> Result<()> {
             cycles_ms(frame.paint, capture.hz),
             cycles_ms(frame.present, capture.hz),
             cycles_ms(frame.total_cycles(), capture.hz),
+        );
+    }
+
+    println!();
+    println!("Present breakdown");
+    println!();
+
+    println!(
+        "{:>5}  {:>9}  {:>9}  {:>9}  {:>9}  {:>10}  {:>7}  {:>9}",
+        "frame", "io", "busy", "other", "bytes", "KiB/s", "waits", "max busy",
+    );
+
+    println!(
+        "{:-<5}  {:-<9}  {:-<9}  {:-<9}  {:-<9}  {:-<10}  {:-<7}  {:-<9}",
+        "", "", "", "", "", "", "", "",
+    );
+
+    for frame in &capture.frames {
+        println!(
+            "{:>5}  {:>8.1}ms  {:>8.1}ms  {:>8.1}ms  {:>9}  {:>10.1}  {:>7}  {:>8.1}ms",
+            frame.id,
+            cycles_ms(frame.present_io, capture.hz),
+            cycles_ms(frame.present_busy, capture.hz),
+            cycles_ms(frame.present_other, capture.hz),
+            frame.present_bytes,
+            io_kib_per_second(frame.present_bytes, frame.present_io, capture.hz),
+            frame.present_busy_waits,
+            cycles_ms(u64::from(frame.present_longest_busy), capture.hz),
         );
     }
 
@@ -261,6 +297,13 @@ fn parse_capture(log: &str) -> Result<Capture> {
             paint: u64_field(payload, "paint")?,
             damage: u64_field(payload, "damage")?,
             present: u64_field(payload, "present")?,
+            present_io: u64_field(payload, "present_io")?,
+            present_busy: u64_field(payload, "present_busy")?,
+            present_other: u64_field(payload, "present_other")?,
+            present_bytes: u64_field(payload, "present_bytes")?,
+            present_io_calls: u32_field(payload, "present_io_calls")?,
+            present_busy_waits: u32_field(payload, "present_busy_waits")?,
+            present_longest_busy: u32_field(payload, "present_longest_busy")?,
             framebuffer_pixels: u64_field(payload, "framebuffer_pixels")?,
             framebuffer_valid: u8_field(payload, "framebuffer_valid")? != 0,
             text_draws: u64_field(payload, "text_draws")?,
@@ -287,6 +330,16 @@ fn parse_capture(log: &str) -> Result<Capture> {
 
 fn cycles_ms(cycles: u64, hz: u32) -> f64 {
     cycles as f64 * 1_000.0 / f64::from(hz)
+}
+
+fn io_kib_per_second(bytes: u64, cycles: u64, hz: u32) -> f64 {
+    if cycles == 0 {
+        return 0.0;
+    }
+
+    let seconds = cycles as f64 / f64::from(hz);
+
+    bytes as f64 / 1024.0 / seconds
 }
 
 fn delta_percent(before: u64, after: u64) -> f64 {
@@ -344,14 +397,14 @@ fn u64_field(payload: &str, name: &str) -> Result<u64> {
 mod tests {
     use indoc::indoc;
 
-    use super::{cycles_ms, parse_capture};
+    use crate::perf::{cycles_ms, io_kib_per_second, parse_capture};
 
     #[test]
     fn parses_perf_capture() {
         let log = indoc! {r#"
             0.000 INFO perf/config hz=240000000
-            1.000 INFO perf/frame id=1 refresh=Full presentation=Gray4 x=0 y=0 width=800 height=480 rebuild=500 layout=1000 clear=200 paint=2000 damage=10 present=4000 framebuffer_pixels=156480 framebuffer_valid=1 text_draws=3 glyphs=34
-            2.000 INFO perf/frame id=2 refresh=Full presentation=Binary x=0 y=0 width=800 height=480 rebuild=0 layout=1000 clear=200 paint=1000 damage=10 present=2000 framebuffer_pixels=0 framebuffer_valid=1 text_draws=31 glyphs=1021
+            1.000 INFO perf/frame id=1 refresh=Full presentation=Gray4 x=0 y=0 width=800 height=480 rebuild=500 layout=1000 clear=200 paint=2000 damage=10 present=4000 present_io=1000 present_busy=2500 present_other=500 present_bytes=96000 present_io_calls=800 present_busy_waits=4 present_longest_busy=900 framebuffer_pixels=156480 framebuffer_valid=1 text_draws=3 glyphs=34
+            2.000 INFO perf/frame id=2 refresh=Full presentation=Binary x=0 y=0 width=800 height=480 rebuild=0 layout=1000 clear=200 paint=1000 damage=10 present=2000 present_io=700 present_busy=1000 present_other=300 present_bytes=48000 present_io_calls=400 present_busy_waits=3 present_longest_busy=500 framebuffer_pixels=0 framebuffer_valid=1 text_draws=31 glyphs=1021
         "#};
 
         let capture = parse_capture(log).unwrap();
@@ -371,6 +424,16 @@ mod tests {
         assert!(first.framebuffer_valid);
 
         assert_eq!(first.glyphs, 34);
+
+        assert_eq!(first.present_io, 1_000);
+
+        assert_eq!(first.present_busy, 2_500);
+
+        assert_eq!(first.present_other, 500);
+
+        assert_eq!(first.present_bytes, 96_000);
+
+        assert_eq!(first.present_busy_waits, 4);
     }
 
     #[test]
@@ -382,12 +445,19 @@ mod tests {
     fn workload_signature_detects_changed_content() {
         let log = indoc! {r#"
             0.000 INFO perf/config hz=240000000
-            1.000 INFO perf/frame id=1 refresh=Full presentation=Gray4 x=0 y=0 width=800 height=480 rebuild=0 layout=0 clear=0 paint=100 damage=0 present=200 framebuffer_pixels=156480 framebuffer_valid=1 text_draws=3 glyphs=34
-            2.000 INFO perf/frame id=2 refresh=Full presentation=Gray4 x=0 y=0 width=800 height=480 rebuild=0 layout=0 clear=0 paint=100 damage=0 present=200 framebuffer_pixels=155520 framebuffer_valid=1 text_draws=3 glyphs=34
+            1.000 INFO perf/frame id=1 refresh=Full presentation=Gray4 x=0 y=0 width=800 height=480 rebuild=0 layout=0 clear=0 paint=100 damage=0 present=200 present_io=50 present_busy=100 present_other=50 present_bytes=96000 present_io_calls=800 present_busy_waits=4 present_longest_busy=50 framebuffer_pixels=156480 framebuffer_valid=1 text_draws=3 glyphs=34
+            2.000 INFO perf/frame id=2 refresh=Full presentation=Gray4 x=0 y=0 width=800 height=480 rebuild=0 layout=0 clear=0 paint=100 damage=0 present=200 present_io=50 present_busy=100 present_other=50 present_bytes=96000 present_io_calls=800 present_busy_waits=4 present_longest_busy=50 framebuffer_pixels=155520 framebuffer_valid=1 text_draws=3 glyphs=34
         "#};
 
         let capture = parse_capture(log).unwrap();
 
         assert_ne!(capture.frames[0].signature(), capture.frames[1].signature());
+    }
+
+    #[test]
+    fn calculates_io_throughput() {
+        let rate = io_kib_per_second(1024, 240_000_000, 240_000_000);
+
+        assert_eq!(rate, 1.0);
     }
 }

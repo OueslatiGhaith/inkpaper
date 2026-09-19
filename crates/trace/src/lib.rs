@@ -117,75 +117,62 @@ macro_rules! profile_expr {
     }};
 }
 
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TraceEvent {
-    Render = 0,
-    Rebuild = 1,
-    Layout = 2,
-    Clear = 3,
-    Paint = 4,
-    Damage = 5,
-    TextRun = 6,
-    Shape = 7,
-    Glyphs = 8,
-    LogicalShape = 9,
-    VisualOrder = 10,
-    Positioning = 11,
+macro_rules! define_trace_events {
+    (
+        $( $variant:ident = $id:literal => $name:literal ),+ $(,)?
+    ) => {
+        #[repr(u8)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum TraceEvent {
+            $( $variant = $id, )+
+        }
+
+        impl TraceEvent {
+            pub const ALL: &'static [Self] = &[
+                $(
+                    Self::$variant,
+                )+
+            ];
+
+            pub const fn id(self) -> u8 {
+                self as u8
+            }
+
+            pub const fn from_id(
+                id: u8,
+            ) -> Option<Self> {
+                match id {
+                    $( $id => Some(Self::$variant), )+
+                    _ => None,
+                }
+            }
+
+            pub const fn name(
+                self,
+            ) -> &'static str {
+                match self {
+                    $( Self::$variant => $name, )+
+                }
+            }
+        }
+    };
 }
 
-impl TraceEvent {
-    pub const ALL: [Self; 12] = [
-        Self::Render,
-        Self::Rebuild,
-        Self::Layout,
-        Self::Clear,
-        Self::Paint,
-        Self::Damage,
-        Self::TextRun,
-        Self::Shape,
-        Self::Glyphs,
-        Self::LogicalShape,
-        Self::VisualOrder,
-        Self::Positioning,
-    ];
+define_trace_events! {
+    Render = 0 => "render",
+    Rebuild = 1 => "rebuild",
+    Layout = 2 => "layout",
+    Clear = 3 => "clear",
+    Paint = 4 => "paint",
+    Damage = 5 => "damage",
 
-    pub const fn id(self) -> u8 {
-        self as u8
-    }
+    TextRun = 6 => "text_run",
+    Shape = 7 => "shape",
+    Glyphs = 8 => "glyphs",
+    LogicalShape = 9 => "logical_shape",
+    VisualOrder = 10 => "visual_order",
+    Positioning = 11 => "positioning",
 
-    pub const fn from_id(id: u8) -> Option<Self> {
-        match id {
-            0 => Some(Self::Render),
-            1 => Some(Self::Rebuild),
-            2 => Some(Self::Layout),
-            3 => Some(Self::Clear),
-            4 => Some(Self::Paint),
-            5 => Some(Self::Damage),
-            6 => Some(Self::TextRun),
-            7 => Some(Self::Shape),
-            8 => Some(Self::Glyphs),
-            9 => Some(Self::LogicalShape),
-            10 => Some(Self::VisualOrder),
-            11 => Some(Self::Positioning),
-            _ => None,
-        }
-    }
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Render => "render",
-            Self::Rebuild => "rebuild",
-            Self::Layout => "layout",
-            Self::Clear => "clear",
-            Self::Paint => "paint",
-            Self::Damage => "damage",
-            Self::TextRun => "text_run",
-            Self::Shape => "shape",
-            Self::Glyphs => "glyphs",
-            Self::LogicalShape => "logical_shape",
-            Self::VisualOrder => "visual_order",
-            Self::Positioning => "positioning",
-        }
-    }
+    Present = 12 => "present",
+    PresentBusy = 13 => "present_busy",
 }

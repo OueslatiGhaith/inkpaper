@@ -515,7 +515,7 @@ fn render_invalidation(
     }
 
     #[cfg(feature = "trace")]
-    crate::firmware::perf::log_trace(trace_summary);
+    crate::firmware::perf::log_trace(frame_id, trace_summary);
 
     #[cfg(feature = "performance")]
     let perf_report = FramePerfReport::new(timings);
