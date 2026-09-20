@@ -3,8 +3,13 @@ name = "inkpaper-reader"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+trace = ["inkpaper-trace/recording"]
+
 [dependencies]
 inkpaper-epub = { path = "../epub" }
+inkpaper-trace = { path = "../trace" }
 
 [dev-dependencies]
 futures-lite = { workspace = true }

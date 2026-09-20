@@ -2,7 +2,7 @@ use core::cell::RefCell;
 
 use critical_section::Mutex;
 
-use crate::{TraceEvent, TraceMetric};
+use crate::{TraceEvent, TraceMetric, schema::TraceAggregate};
 
 pub const TRACE_CAPACITY: usize = 256;
 pub const TRACE_ASYNC_CAPACITY: usize = 16;
@@ -196,6 +196,63 @@ impl TraceMetricRecord {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TraceAggregateTotals {
+    calls: u32,
+    total: u64,
+    max: u64,
+}
+
+impl TraceAggregateTotals {
+    const EMPTY: Self = Self {
+        calls: 0,
+        total: 0,
+        max: 0,
+    };
+
+    fn observe(&mut self, value: u64) {
+        self.calls = self.calls.saturating_add(1);
+        self.total = self.total.saturating_add(value);
+        self.max = self.max.max(value);
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.calls = self.calls.saturating_add(other.calls);
+        self.total = self.total.saturating_add(other.total);
+        self.max = self.max.max(other.max);
+    }
+
+    const fn is_empty(self) -> bool {
+        self.calls == 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraceAggregateRecord {
+    aggregate: TraceAggregate,
+    calls: u32,
+    total: u64,
+    max: u64,
+}
+
+impl TraceAggregateRecord {
+    pub const fn aggregate(self) -> TraceAggregate {
+        self.aggregate
+    }
+
+    pub const fn calls(self) -> u32 {
+        self.calls
+    }
+
+    pub const fn total(self) -> u64 {
+        self.total
+    }
+
+    pub const fn max(self) -> u64 {
+        self.max
+    }
+}
+
 struct TraceState {
     clock: Option<ClockFn>,
 
@@ -205,8 +262,10 @@ struct TraceState {
     depth: u8,
     len: usize,
     dropped: u32,
+
     records: [TraceRecord; TRACE_CAPACITY],
     metrics: [TraceMetricTotals; TraceMetric::COUNT],
+    aggregates: [TraceAggregateTotals; TraceAggregate::COUNT],
 
     async_len: usize,
     async_dropped: u32,
@@ -226,6 +285,7 @@ impl TraceState {
             dropped: 0,
             records: [TraceRecord::EMPTY; TRACE_CAPACITY],
             metrics: [TraceMetricTotals::EMPTY; TraceMetric::COUNT],
+            aggregates: [TraceAggregateTotals::EMPTY; TraceAggregate::COUNT],
             async_len: 0,
             async_dropped: 0,
             async_records: [TraceAsyncRecord::EMPTY; TRACE_ASYNC_CAPACITY],
@@ -500,6 +560,110 @@ pub fn metric_record(metric: TraceMetric) -> TraceMetricRecord {
     })
 }
 
+pub struct TraceAggregates {
+    clock: Option<ClockFn>,
+    totals: [TraceAggregateTotals; TraceAggregate::COUNT],
+}
+
+impl TraceAggregates {
+    pub fn new() -> Self {
+        let clock = critical_section::with(|cs| TRACE.borrow(cs).borrow().clock);
+
+        Self {
+            clock,
+            totals: [TraceAggregateTotals::EMPTY; TraceAggregate::COUNT],
+        }
+    }
+
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn __start(&self) -> Option<u32> {
+        self.clock.map(|clock| clock())
+    }
+
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn __finish(&mut self, aggregate: TraceAggregate, started_at: Option<u32>) {
+        let Some(started_at) = started_at else {
+            return;
+        };
+
+        let Some(clock) = self.clock else {
+            return;
+        };
+
+        let elapsed = clock().wrapping_sub(started_at);
+
+        self.__observe(aggregate, u64::from(elapsed));
+    }
+
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn __observe(&mut self, aggregate: TraceAggregate, value: u64) {
+        let index = usize::from(aggregate.id());
+
+        let Some(total) = self.totals.get_mut(index) else {
+            return;
+        };
+
+        total.observe(value);
+    }
+
+    pub fn flush(&mut self) {
+        if self
+            .totals
+            .iter()
+            .copied()
+            .all(TraceAggregateTotals::is_empty)
+        {
+            return;
+        }
+
+        critical_section::with(|cs| {
+            let mut state = TRACE.borrow(cs).borrow_mut();
+
+            for (target, source) in state.aggregates.iter_mut().zip(self.totals.iter().copied()) {
+                target.merge(source);
+            }
+        });
+
+        self.totals = [TraceAggregateTotals::EMPTY; TraceAggregate::COUNT];
+    }
+}
+
+impl Default for TraceAggregates {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for TraceAggregates {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
+pub fn aggregate_record(aggregate: TraceAggregate) -> TraceAggregateRecord {
+    critical_section::with(|cs| {
+        let state = TRACE.borrow(cs).borrow();
+        let totals = state.aggregates[usize::from(aggregate.id())];
+
+        TraceAggregateRecord {
+            aggregate,
+            calls: totals.calls,
+            total: totals.total,
+            max: totals.max,
+        }
+    })
+}
+
+pub fn clear_aggregate_records() {
+    critical_section::with(|cs| {
+        TRACE.borrow(cs).borrow_mut().aggregates =
+            [TraceAggregateTotals::EMPTY; TraceAggregate::COUNT];
+    });
+}
+
 pub fn record(index: usize) -> Option<TraceRecord> {
     critical_section::with(|cs| {
         let state = TRACE.borrow(cs).borrow();
@@ -634,7 +798,11 @@ mod tests {
 
     use crate::{
         TraceEvent,
-        recording::{TraceSession, TraceSpan, record, set_clock},
+        recording::{
+            TraceAggregates, TraceSession, TraceSpan, aggregate_record, clear_aggregate_records,
+            record, set_clock,
+        },
+        schema::TraceAggregate,
     };
 
     static CLOCK: AtomicU32 = AtomicU32::new(0);
@@ -768,5 +936,47 @@ mod tests {
         assert_eq!(metric.metric(), TraceMetric::PairPositioning);
         assert_eq!(metric.calls(), 2);
         assert_eq!(metric.cycles(), 55);
+    }
+
+    #[test]
+    fn aggregates_record_outside_trace_sessions() {
+        set_clock(test_clock);
+        clear_aggregate_records();
+
+        CLOCK.store(100, Ordering::Relaxed);
+
+        {
+            let mut aggregates = TraceAggregates::new();
+
+            aggregates.__observe(TraceAggregate::ReaderMeasureTextBytes, 12);
+            aggregates.__observe(TraceAggregate::ReaderMeasureTextBytes, 30);
+
+            CLOCK.store(110, Ordering::Relaxed);
+
+            let started = aggregates.__start();
+
+            CLOCK.store(160, Ordering::Relaxed);
+
+            aggregates.__finish(TraceAggregate::ReaderMeasureText, started);
+        }
+
+        let bytes = aggregate_record(TraceAggregate::ReaderMeasureTextBytes);
+
+        assert_eq!(bytes.calls(), 2);
+        assert_eq!(bytes.total(), 42);
+        assert_eq!(bytes.max(), 30);
+
+        let timing = aggregate_record(TraceAggregate::ReaderMeasureText);
+
+        assert_eq!(timing.calls(), 1);
+        assert_eq!(timing.total(), 50);
+        assert_eq!(timing.max(), 50);
+
+        clear_aggregate_records();
+
+        assert_eq!(
+            aggregate_record(TraceAggregate::ReaderMeasureText,).calls(),
+            0,
+        );
     }
 }

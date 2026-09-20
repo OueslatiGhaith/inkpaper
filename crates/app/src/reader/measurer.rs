@@ -1,5 +1,6 @@
 use inkpaper_epub::{ChapterImage, FontWeight as ReaderFontWeight, ImageDimensions};
 use inkpaper_reader::{ImageMeasurer, TextMeasurer, TextStyle as ReaderTextStyle};
+use inkpaper_trace::{TraceAggregate, TraceAggregates, profile_aggregate_expr, trace_aggregate};
 use inkpaper_ui::{
     FontFamilyId, FontRegistry, FontRegistryError, FontWeight as UiFontWeight, ResolvedFont,
     ShapeError, ShapedGlyph, SimpleShaper,
@@ -13,6 +14,7 @@ pub(super) struct ReaderMeasurer {
     fonts: FontRegistry<'static, 1>,
     glyphs: [ShapedGlyph; READER_SHAPING_GLYPHS],
     images: ChapterImageMetrics,
+    trace: TraceAggregates,
 }
 
 impl ReaderMeasurer {
@@ -27,6 +29,7 @@ impl ReaderMeasurer {
             fonts,
             glyphs: [ShapedGlyph::EMPTY; READER_SHAPING_GLYPHS],
             images,
+            trace: TraceAggregates::new(),
         })
     }
 
@@ -46,31 +49,41 @@ impl TextMeasurer for ReaderMeasurer {
     type Error = ShapeError;
 
     fn measure_text(&mut self, text: &str, style: ReaderTextStyle) -> Result<u32, Self::Error> {
-        let font = self.resolve_font(style);
+        trace_aggregate!(
+            self.trace,
+            TraceAggregate::ReaderMeasureTextBytes,
+            text.len(),
+        );
 
-        let shaper = SimpleShaper::with_properties(font.properties());
+        profile_aggregate_expr!(self.trace, TraceAggregate::ReaderMeasureText, {
+            let font = self.resolve_font(style);
 
-        let summary = shaper.measure(
-            &self.fonts,
-            font.id(),
-            style.font_size(),
-            text,
-            &mut self.glyphs,
-        )?;
+            let shaper = SimpleShaper::with_properties(font.properties());
 
-        Ok(u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX))
+            let summary = shaper.measure(
+                &self.fonts,
+                font.id(),
+                style.font_size(),
+                text,
+                &mut self.glyphs,
+            )?;
+
+            Ok(u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX))
+        },)
     }
 
     fn line_height(&mut self, style: ReaderTextStyle) -> Result<u32, Self::Error> {
-        let font = self.resolve_font(style);
+        profile_aggregate_expr!(self.trace, TraceAggregate::ReaderLineHeight, {
+            let font = self.resolve_font(style);
 
-        Ok(u32::try_from(
-            font.metrics(style.font_size())
-                .line_height()
-                .non_negative()
-                .get(),
-        )
-        .unwrap_or(u32::MAX))
+            Ok(u32::try_from(
+                font.metrics(style.font_size())
+                    .line_height()
+                    .non_negative()
+                    .get(),
+            )
+            .unwrap_or(u32::MAX))
+        },)
     }
 
     fn next_boundary(
@@ -79,11 +92,19 @@ impl TextMeasurer for ReaderMeasurer {
         from: usize,
         style: ReaderTextStyle,
     ) -> Result<Option<usize>, Self::Error> {
-        let font = self.resolve_font(style);
+        trace_aggregate!(
+            self.trace,
+            TraceAggregate::ReaderNextBoundaryBytes,
+            text.len().saturating_sub(from),
+        );
 
-        let shaper = SimpleShaper::with_properties(font.properties());
+        profile_aggregate_expr!(self.trace, TraceAggregate::ReaderNextBoundary, {
+            let font = self.resolve_font(style);
 
-        Ok(shaper.next_cluster_boundary(&self.fonts, font.id(), style.font_size(), text, from))
+            let shaper = SimpleShaper::with_properties(font.properties());
+
+            Ok(shaper.next_cluster_boundary(&self.fonts, font.id(), style.font_size(), text, from))
+        },)
     }
 }
 

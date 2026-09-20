@@ -6,6 +6,7 @@ use inkpaper_epub::{
     ContentOffset, CssLength, ImageDimensions, Inline, LineHeight, LinkTarget, SpineIndex,
     StyleNodeId, TextAlign, TextRun,
 };
+use inkpaper_trace::{TraceAggregate, TraceAggregates, trace_aggregate};
 
 use crate::{
     ImageFragment, ImageMeasurer, Page, PageItem, ReaderSettings, ReadingPosition, Rect,
@@ -132,6 +133,8 @@ struct Paginator<'chapter, 'context, M> {
     block_text_indent: u32,
     block_first_line: bool,
     block_line_height: LineHeight,
+
+    trace: TraceAggregates,
 }
 
 impl<'chapter, 'context, M> Paginator<'chapter, 'context, M>
@@ -170,10 +173,23 @@ where
             block_text_indent: 0,
             block_first_line: false,
             block_line_height: LineHeight::NORMAL,
+            trace: TraceAggregates::new(),
         }
     }
 
     fn paginate(mut self) -> Result<Pagination<'chapter>, M::Error> {
+        trace_aggregate!(
+            self.trace,
+            TraceAggregate::ReaderPaginationBlocks,
+            self.chapter.blocks().len(),
+        );
+
+        trace_aggregate!(
+            self.trace,
+            TraceAggregate::ReaderPaginationContentChars,
+            self.chapter.content_len().get(),
+        );
+
         for (index, block) in self.chapter.blocks().iter().enumerate() {
             self.layout_block(block)?;
 
@@ -202,6 +218,12 @@ where
                 last.set_end(end);
             }
         }
+
+        trace_aggregate!(
+            self.trace,
+            TraceAggregate::ReaderPaginationPages,
+            self.pages.len(),
+        );
 
         Ok(Pagination { pages: self.pages })
     }
@@ -273,6 +295,8 @@ where
             return;
         }
 
+        trace_aggregate!(self.trace, TraceAggregate::ReaderPaginationImages);
+
         self.flush_line();
 
         let Some(intrinsic) = self.measurer.image_dimensions(image) else {
@@ -329,8 +353,10 @@ where
             }
 
             if whitespace {
+                trace_aggregate!(self.trace, TraceAggregate::ReaderPaginationWhitespaceRuns);
                 self.layout_whitespace(text, start, end, style, link, align)?;
             } else {
+                trace_aggregate!(self.trace, TraceAggregate::ReaderPaginationWords);
                 self.layout_word(text, start, end, style, link, align)?;
             }
 
@@ -406,6 +432,8 @@ where
         if width <= available {
             return self.add_text_piece(source, start, end, width, style, link, align);
         }
+
+        trace_aggregate!(self.trace, TraceAggregate::ReaderPaginationOversizedWords);
 
         self.layout_oversized_word(source, start, end, style, link, align)
     }
@@ -569,6 +597,8 @@ where
             return;
         }
 
+        trace_aggregate!(self.trace, TraceAggregate::ReaderPaginationLines);
+
         let height = self.line_height.max(1);
 
         if self.used_height > 0 && self.used_height.saturating_add(height) > self.viewport.height()
@@ -614,6 +644,8 @@ where
         y: u32,
         height: u32,
     ) {
+        trace_aggregate!(self.trace, TraceAggregate::ReaderPaginationTextFragments);
+
         self.page_items.push(PageItem::Text(TextFragment::new(
             item.text(),
             Rect::new(origin.saturating_add(item.x), y, item.width, height),

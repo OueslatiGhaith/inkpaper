@@ -119,6 +119,28 @@ define_named_u8_enum! {
     }
 }
 
+define_named_u8_enum! {
+    pub enum TraceAggregate {
+        ReaderMeasureText = 0 => "reader_measure_text",
+        ReaderMeasureTextBytes = 1 => "reader_measure_text_bytes",
+
+        ReaderNextBoundary = 2 => "reader_next_boundary",
+        ReaderNextBoundaryBytes = 3 => "reader_next_boundary_bytes",
+
+        ReaderLineHeight = 4 => "reader_line_height",
+
+        ReaderPaginationBlocks = 5 => "reader_pagination_blocks",
+        ReaderPaginationContentChars = 6 => "reader_pagination_content_chars",
+        ReaderPaginationWords = 7 => "reader_pagination_words",
+        ReaderPaginationWhitespaceRuns = 8 => "reader_pagination_whitespace_runs",
+        ReaderPaginationOversizedWords = 9 => "reader_pagination_oversized_words",
+        ReaderPaginationTextFragments = 10 => "reader_pagination_text_fragments",
+        ReaderPaginationLines = 11 => "reader_pagination_lines",
+        ReaderPaginationPages = 12 => "reader_pagination_pages",
+        ReaderPaginationImages = 13 => "reader_pagination_images",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

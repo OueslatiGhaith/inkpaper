@@ -3,7 +3,7 @@ use inkpaper_epub::SpineIndex;
 use super::state::ReaderChapterDirection;
 
 #[cfg(feature = "trace")]
-use inkpaper_trace::{TraceEvent, async_begin, async_end};
+use inkpaper_trace::{TraceEvent, async_begin, async_end, clear_aggregate_records};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChapterTraceStage {
@@ -106,6 +106,10 @@ pub(crate) fn spine_trace_id(index: usize) -> u32 {
 pub(crate) fn begin_chapter_transition(from: SpineIndex, direction: ReaderChapterDirection) {
     #[cfg(feature = "trace")]
     {
+        // aggregates are deferred until the render following the chapter load. Start each
+        // transition from a clean slate.
+        clear_aggregate_records();
+
         let _ = async_begin(
             TraceEvent::ReaderChapterTransition,
             chapter_transition_id(from, direction),

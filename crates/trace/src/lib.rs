@@ -8,13 +8,14 @@ mod recording;
 mod schema;
 
 pub use inkpaper_trace_macros::profile;
-pub use schema::{DisplayPhase, TraceEvent, TraceMetric};
+pub use schema::{DisplayPhase, TraceAggregate, TraceEvent, TraceMetric};
 
 #[cfg(feature = "recording")]
 pub use recording::{
-    TRACE_ASYNC_CAPACITY, TRACE_ASYNC_OPEN_CAPACITY, TRACE_CAPACITY, TraceAsyncRecord,
-    TraceMetricRecord, TraceMetricTimer, TraceRecord, TraceSession, TraceSpan, TraceSummary,
-    async_begin, async_dropped, async_end, async_open_count, async_record, async_record_count,
+    TRACE_ASYNC_CAPACITY, TRACE_ASYNC_OPEN_CAPACITY, TRACE_CAPACITY, TraceAggregateRecord,
+    TraceAggregates, TraceAsyncRecord, TraceMetricRecord, TraceMetricTimer, TraceRecord,
+    TraceSession, TraceSpan, TraceSummary, aggregate_record, async_begin, async_dropped, async_end,
+    async_open_count, async_record, async_record_count, clear_aggregate_records,
     clear_async_records, metric_record, record, set_clock,
 };
 
@@ -26,6 +27,27 @@ where
     u32: TryFrom<T>,
 {
     u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[cfg(feature = "recording")]
+#[doc(hidden)]
+#[inline(always)]
+pub fn __trace_value<T>(value: T) -> u64
+where
+    u64: TryFrom<T>,
+{
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+#[cfg(not(feature = "recording"))]
+#[derive(Debug, Default)]
+pub struct TraceAggregates;
+
+#[cfg(not(feature = "recording"))]
+impl TraceAggregates {
+    pub const fn new() -> Self {
+        Self
+    }
 }
 
 #[cfg(feature = "recording")]
@@ -158,5 +180,85 @@ macro_rules! profile_metric_expr {
         }
 
         $expression
+    }};
+}
+
+#[cfg(feature = "recording")]
+#[macro_export]
+macro_rules! profile_aggregate_expr {
+    (
+        $aggregates:expr,
+        $aggregate:expr,
+        $expression:expr
+        $(,)?
+    ) => {{
+        let __inkpaper_trace_started = $aggregates.__start();
+
+        let __inkpaper_trace_result = $expression;
+
+        $aggregates.__finish($aggregate, __inkpaper_trace_started);
+
+        __inkpaper_trace_result
+    }};
+}
+
+#[cfg(not(feature = "recording"))]
+#[macro_export]
+macro_rules! profile_aggregate_expr {
+    (
+        $aggregates:expr,
+        $aggregate:expr,
+        $expression:expr
+        $(,)?
+    ) => {{
+        if false {
+            let _ = &$aggregates;
+            let _ = &$aggregate;
+        }
+
+        $expression
+    }};
+}
+
+#[cfg(feature = "recording")]
+#[macro_export]
+macro_rules! trace_aggregate {
+    ($aggregates:expr, $aggregate:expr $(,)?) => {{
+        $aggregates.__observe($aggregate, 1);
+    }};
+
+    (
+        $aggregates:expr,
+        $aggregate:expr,
+        $value:expr
+        $(,)?
+    ) => {{
+        let __inkpaper_trace_value = $crate::__trace_value($value);
+
+        $aggregates.__observe($aggregate, __inkpaper_trace_value);
+    }};
+}
+
+#[cfg(not(feature = "recording"))]
+#[macro_export]
+macro_rules! trace_aggregate {
+    ($aggregates:expr, $aggregate:expr $(,)?) => {{
+        if false {
+            let _ = &$aggregates;
+            let _ = &$aggregate;
+        }
+    }};
+
+    (
+        $aggregates:expr,
+        $aggregate:expr,
+        $value:expr
+        $(,)?
+    ) => {{
+        if false {
+            let _ = &$aggregates;
+            let _ = &$aggregate;
+            let _ = &$value;
+        }
     }};
 }
