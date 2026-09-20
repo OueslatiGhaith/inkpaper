@@ -3,7 +3,7 @@
 #[cfg(test)]
 extern crate std;
 
-#[cfg(feature = "alloc")]
+#[cfg(any(test, feature = "alloc"))]
 extern crate alloc;
 
 #[cfg(any(feature = "embedded-graphics", feature = "eink"))]

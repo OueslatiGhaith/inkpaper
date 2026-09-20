@@ -49,6 +49,14 @@ pub struct EInkPaintReport {
     coverage_samples: u64,
     #[cfg(feature = "metrics")]
     coverage_accepted: u64,
+    #[cfg(feature = "metrics")]
+    pair_positioning_cache_lookups: u64,
+    #[cfg(feature = "metrics")]
+    pair_positioning_cache_hits: u64,
+    #[cfg(feature = "metrics")]
+    pair_positioning_cache_misses: u64,
+    #[cfg(feature = "metrics")]
+    pair_positioning_cache_collisions: u64,
 }
 
 impl EInkPaintReport {
@@ -85,6 +93,26 @@ impl EInkPaintReport {
         self.coverage_accepted
     }
 
+    #[cfg(feature = "metrics")]
+    pub const fn pair_positioning_cache_lookups(self) -> u64 {
+        self.pair_positioning_cache_lookups
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn pair_positioning_cache_hits(self) -> u64 {
+        self.pair_positioning_cache_hits
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn pair_positioning_cache_misses(self) -> u64 {
+        self.pair_positioning_cache_misses
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn pair_positioning_cache_collisions(self) -> u64 {
+        self.pair_positioning_cache_collisions
+    }
+
     pub(super) fn include(&mut self, tone: EInkTone) {
         self.tone = self.tone.merged(tone);
     }
@@ -100,6 +128,27 @@ impl EInkPaintReport {
         self.coverage_bitmaps = self.coverage_bitmaps.saturating_add(1);
         self.coverage_samples = self.coverage_samples.saturating_add(samples);
         self.coverage_accepted = self.coverage_accepted.saturating_add(accepted);
+    }
+
+    #[cfg(feature = "metrics")]
+    pub(super) fn record_pair_positioning_cache(
+        &mut self,
+        lookups: u64,
+        hits: u64,
+        misses: u64,
+        collisions: u64,
+    ) {
+        self.pair_positioning_cache_lookups =
+            self.pair_positioning_cache_lookups.saturating_add(lookups);
+
+        self.pair_positioning_cache_hits = self.pair_positioning_cache_hits.saturating_add(hits);
+
+        self.pair_positioning_cache_misses =
+            self.pair_positioning_cache_misses.saturating_add(misses);
+
+        self.pair_positioning_cache_collisions = self
+            .pair_positioning_cache_collisions
+            .saturating_add(collisions);
     }
 }
 

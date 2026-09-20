@@ -5,6 +5,7 @@ use crate::{
     Color, FontId, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
     ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
     backend::EInkPaintReport,
+    pair_cache::PairPositioningCache,
     px,
     resources::RuntimeResources,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
@@ -168,6 +169,7 @@ pub(super) fn draw_text_run_to<
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
     const IMAGES: usize,
+    const PAIR_SLOTS: usize,
 >(
     target: &mut D,
     report: &mut EInkPaintReport,
@@ -179,6 +181,7 @@ pub(super) fn draw_text_run_to<
     font: ResolvedFont<'_>,
     style: ResolvedTextStyle,
     coverage_mode: EInkCoverageMode<D>,
+    pair_positioning_cache: &mut PairPositioningCache<PAIR_SLOTS>,
 ) -> Result<u64, EInkError<D::Error>>
 where
     D: EgDrawTarget<Color = Gray2>,
@@ -201,7 +204,14 @@ where
         TraceEvent::Shape,
         arg = text.len(),
         shaper
-            .shape_into(registry, font_instance.font(), size_px, text, &mut glyphs,)
+            .shape_into_with_pair_positioning_cache(
+                registry,
+                font_instance.font(),
+                size_px,
+                text,
+                &mut glyphs,
+                pair_positioning_cache,
+            )
             .map_err(EInkError::Shape)?,
     );
 

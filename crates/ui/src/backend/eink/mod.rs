@@ -16,6 +16,7 @@ use crate::{
         text::draw_text_run_to,
         tone::{BinaryDitherTarget, gray2_tone},
     },
+    pair_cache::{PAIR_POSITIONING_CACHE_SLOTS, PairPositioningCache},
     px,
     resources::RuntimeResources,
 };
@@ -52,6 +53,7 @@ where
     ordered_coverage_blitter: Option<EInkOrderedCoverageBlitter<D>>,
     ui_mode: EInkUiMode,
     report: EInkPaintReport,
+    pair_positioning_cache: PairPositioningCache<PAIR_POSITIONING_CACHE_SLOTS>,
 }
 
 impl<'target, D> EInkPainter<'target, D>
@@ -65,6 +67,7 @@ where
             ordered_coverage_blitter: None,
             ui_mode: EInkUiMode::NativeGray2,
             report: EInkPaintReport::default(),
+            pair_positioning_cache: PairPositioningCache::default(),
         }
     }
 
@@ -345,6 +348,9 @@ where
             }
         }
 
+        #[cfg(feature = "metrics")]
+        let pair_cache_before = self.pair_positioning_cache.metrics();
+
         let shaped_glyphs = draw_text_run_to(
             self.target,
             &mut self.report,
@@ -356,10 +362,25 @@ where
             font,
             style,
             coverage_mode,
+            &mut self.pair_positioning_cache,
         )?;
 
         #[cfg(feature = "metrics")]
-        self.report.record_text_draw(shaped_glyphs);
+        {
+            let pair_cache_delta = self
+                .pair_positioning_cache
+                .metrics()
+                .delta_since(pair_cache_before);
+
+            self.report.record_pair_positioning_cache(
+                pair_cache_delta.lookups,
+                pair_cache_delta.hits,
+                pair_cache_delta.misses,
+                pair_cache_delta.collisions,
+            );
+
+            self.report.record_text_draw(shaped_glyphs);
+        }
 
         #[cfg(not(feature = "metrics"))]
         let _ = shaped_glyphs;

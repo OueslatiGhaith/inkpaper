@@ -715,6 +715,15 @@ pub(crate) fn log_text_metrics(
         bytes_peak,
         bytes_capacity,
     );
+
+    defmt::info!(
+        "perf/pair_cache frame={=u32} lookups={=u64} hits={=u64} misses={=u64} collisions={=u64}",
+        frame_id,
+        paint.pair_positioning_cache_lookups(),
+        paint.pair_positioning_cache_hits(),
+        paint.pair_positioning_cache_misses(),
+        paint.pair_positioning_cache_collisions(),
+    );
 }
 
 #[cfg(feature = "ui-metrics")]

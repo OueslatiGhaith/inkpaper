@@ -1,6 +1,6 @@
 use inkpaper_trace::{TraceEvent, TraceMetric, profile_expr, profile_metric_expr};
 
-use crate::{FontRegistry, Offset, px};
+use crate::{FontRegistry, Offset, pair_cache::PairPositioningCache, px};
 
 use super::{
     ShapeError, ShapedGlyph, ShapedRun, SimpleShaper, TextDirection,
@@ -60,7 +60,51 @@ impl SimpleShaper {
         text_glyph_count: usize,
         glyphs: &'out mut [ShapedGlyph],
     ) -> Result<ShapedRun<'out>, ShapeError> {
+        self.visual_order_impl(
+            registry,
+            size_px,
+            text,
+            text_glyph_count,
+            glyphs,
+            None::<&mut PairPositioningCache<1>>,
+        )
+    }
+
+    pub(crate) fn visual_order_with_pair_positioning_cache<
+        'out,
+        'font,
+        const FONTS: usize,
+        const SLOTS: usize,
+    >(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        size_px: u16,
+        text: &str,
+        text_glyph_count: usize,
+        glyphs: &'out mut [ShapedGlyph],
+        pair_positioning_cache: &mut PairPositioningCache<SLOTS>,
+    ) -> Result<ShapedRun<'out>, ShapeError> {
+        self.visual_order_impl(
+            registry,
+            size_px,
+            text,
+            text_glyph_count,
+            glyphs,
+            Some(pair_positioning_cache),
+        )
+    }
+
+    fn visual_order_impl<'out, 'font, const FONTS: usize, const SLOTS: usize>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        size_px: u16,
+        text: &str,
+        text_glyph_count: usize,
+        glyphs: &'out mut [ShapedGlyph],
+        pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
+    ) -> Result<ShapedRun<'out>, ShapeError> {
         let direction = paragraph_direction(text);
+
         if glyphs.is_empty() {
             return Ok(ShapedRun::new(glyphs, direction, px(0)));
         }
@@ -101,7 +145,13 @@ impl SimpleShaper {
         let advance = profile_expr!(
             TraceEvent::Positioning,
             arg = glyphs.len(),
-            apply_visual_positioning(registry, size_px, glyphs, &runs[..run_count],),
+            apply_visual_positioning(
+                registry,
+                size_px,
+                glyphs,
+                &runs[..run_count],
+                pair_positioning_cache,
+            ),
         );
 
         Ok(ShapedRun::new(glyphs, direction, advance))

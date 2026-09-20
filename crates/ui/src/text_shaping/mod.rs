@@ -7,6 +7,7 @@ use self::arabic::MarkPlacement;
 mod arabic;
 mod bidi;
 mod logical;
+pub(crate) mod pair_cache;
 mod positioning;
 #[cfg(test)]
 mod tests;
@@ -403,6 +404,44 @@ impl SimpleShaper {
                 text,
                 glyph_count,
                 &mut output[..glyph_count],
+            ),
+        )
+    }
+
+    pub(crate) fn shape_into_with_pair_positioning_cache<
+        'out,
+        'font,
+        const FONTS: usize,
+        const SLOTS: usize,
+    >(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        preferred_font: FontId,
+        size_px: u16,
+        text: &str,
+        output: &'out mut [ShapedGlyph],
+        pair_positioning_cache: &mut pair_cache::PairPositioningCache<SLOTS>,
+    ) -> Result<ShapedRun<'out>, ShapeError> {
+        let mut state = ShapeState::new();
+
+        let summary = profile_expr!(
+            TraceEvent::LogicalShape,
+            arg = text.len(),
+            self.shape_piece_into(registry, preferred_font, size_px, text, &mut state, output,)?,
+        );
+
+        let glyph_count = summary.glyph_count();
+
+        profile_expr!(
+            TraceEvent::VisualOrder,
+            arg = glyph_count,
+            self.visual_order_with_pair_positioning_cache(
+                registry,
+                size_px,
+                text,
+                glyph_count,
+                &mut output[..glyph_count],
+                pair_positioning_cache,
             ),
         )
     }

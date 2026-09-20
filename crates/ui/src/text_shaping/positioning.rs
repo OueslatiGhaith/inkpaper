@@ -1,16 +1,20 @@
 use inkpaper_trace::{TraceMetric, profile_metric_expr, profile_metric_scope};
 
-use crate::{FontRegistry, GlyphMetrics, Offset, PairPositioning, Pixels, px};
+use crate::{
+    FontRegistry, GlyphMetrics, Offset, PairPositioning, Pixels, pair_cache::PairPositioningCache,
+    px,
+};
 
 use super::{ShapedGlyph, arabic::MarkPlacement, bidi::DirectionalRun};
 
 const MARK_GAP: Pixels = px(1);
 
-pub(super) fn apply_visual_positioning<'font, const FONTS: usize>(
+pub(super) fn apply_visual_positioning<'font, const FONTS: usize, const SLOTS: usize>(
     registry: &FontRegistry<'font, FONTS>,
     size_px: u16,
     glyphs: &mut [ShapedGlyph],
     runs: &[DirectionalRun],
+    mut pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
 ) -> Pixels {
     let mut advance = px(0);
 
@@ -27,17 +31,19 @@ pub(super) fn apply_visual_positioning<'font, const FONTS: usize>(
             size_px,
             &mut glyphs[run.start..run.end],
             run.level % 2 == 1,
+            pair_positioning_cache.as_deref_mut(),
         );
     }
 
     advance
 }
 
-fn apply_visual_run_positioning<'font, const FONTS: usize>(
+fn apply_visual_run_positioning<'font, const FONTS: usize, const SLOTS: usize>(
     registry: &FontRegistry<'font, FONTS>,
     size_px: u16,
     glyphs: &mut [ShapedGlyph],
     right_to_left: bool,
+    mut pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
 ) -> Pixels {
     let mut previous_base: Option<ShapedGlyph> = None;
     let mut visual_advance = px(0);
@@ -65,17 +71,28 @@ fn apply_visual_run_positioning<'font, const FONTS: usize>(
             Some(previous) if previous.font_instance() == shaped.font_instance() => {
                 profile_metric_expr!(
                     TraceMetric::PairPositioning,
-                    registry
-                        .resolve_instance(shaped.font_instance())
-                        .map(|face| {
-                            face.pair_positioning(
-                                previous.glyph(),
-                                shaped.glyph(),
-                                size_px,
-                                right_to_left,
-                            )
-                        })
-                        .unwrap_or(PairPositioning::Kerning(px(0))),
+                    match pair_positioning_cache.as_deref_mut() {
+                        Some(cache) => cache.get_or_compute(
+                            registry,
+                            shaped.font_instance(),
+                            previous.glyph(),
+                            shaped.glyph(),
+                            size_px,
+                            right_to_left,
+                        ),
+
+                        None => registry
+                            .resolve_instance(shaped.font_instance())
+                            .map(|face| {
+                                face.pair_positioning(
+                                    previous.glyph(),
+                                    shaped.glyph(),
+                                    size_px,
+                                    right_to_left,
+                                )
+                            })
+                            .unwrap_or(PairPositioning::Kerning(px(0))),
+                    },
                 )
             }
 
