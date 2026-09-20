@@ -1,3 +1,5 @@
+use inkpaper_trace::{TraceMetric, profile_metric_scope};
+
 use crate::{
     FontInstance, FontRegistry, FontResources, LineHeight, Pixels, ResolvedFont, ResolvedTextStyle,
     ShapeState, ShapedGlyph, SimpleShaper, Size, TextMeasurer, px,
@@ -10,6 +12,8 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
     for FontResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES>
 {
     fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size {
+        profile_metric_scope!(TraceMetric::TextMeasure);
+
         if text.is_empty() {
             return Size::ZERO;
         }

@@ -52,6 +52,10 @@ pub(crate) struct PresentTimings {
     busy_waits: u32,
     longest_busy_cycles: u32,
 
+    stream_cycles: u64,
+    stream_bytes: u64,
+    stream_calls: u32,
+
     busy_wait_samples: [u32; PRESENT_BUSY_WAIT_CAPACITY],
     recorded_busy_waits: u8,
     dropped_busy_waits: u32,
@@ -85,6 +89,18 @@ impl PresentTimings {
 
     pub(crate) const fn longest_busy_cycles(self) -> u32 {
         self.longest_busy_cycles
+    }
+
+    pub(crate) const fn stream_cycles(self) -> u64 {
+        self.stream_cycles
+    }
+
+    pub(crate) const fn stream_bytes(self) -> u64 {
+        self.stream_bytes
+    }
+
+    pub(crate) const fn stream_calls(self) -> u32 {
+        self.stream_calls
     }
 
     pub(crate) const fn recorded_busy_waits(self) -> u8 {
@@ -140,6 +156,14 @@ impl PresentTimings {
         *slot = cycles;
 
         self.recorded_busy_waits = self.recorded_busy_waits.saturating_add(1);
+    }
+
+    fn record_stream_io(&mut self, cycles: u32, bytes: u64) {
+        self.record_io(cycles, bytes);
+
+        self.stream_cycles = self.stream_cycles.saturating_add(u64::from(cycles));
+        self.stream_bytes = self.stream_bytes.saturating_add(bytes);
+        self.stream_calls = self.stream_calls.saturating_add(1);
     }
 }
 
@@ -375,7 +399,8 @@ where
 
         let result = self.inner.stream_data(data).await;
 
-        self.record_io(timer.elapsed(), usize_to_u64(data.len()));
+        self.timings
+            .record_stream_io(timer.elapsed(), usize_to_u64(data.len()));
 
         result
     }
@@ -576,6 +601,14 @@ pub(crate) fn log_present(frame_id: u32, timings: PresentTimings) {
         timings.dropped_busy_waits(),
     );
 
+    info!(
+        "perf/present_stream frame={=u32} cycles={=u64} bytes={=u64} calls={=u32}",
+        frame_id,
+        timings.stream_cycles(),
+        timings.stream_bytes(),
+        timings.stream_calls(),
+    );
+
     for index in 0..timings.recorded_busy_waits() {
         let Some(cycles) = timings.busy_wait_cycles(index) else {
             continue;
@@ -738,6 +771,8 @@ pub(crate) fn log_trace(frame_id: u32, summary: inkpaper_trace::TraceSummary) {
         );
     }
 
+    log_trace_metrics(frame_id);
+
     let async_records = inkpaper_trace::async_record_count();
 
     info!(
@@ -763,4 +798,69 @@ pub(crate) fn log_trace(frame_id: u32, summary: inkpaper_trace::TraceSummary) {
     }
 
     inkpaper_trace::clear_async_records();
+}
+
+#[cfg(feature = "performance")]
+pub(crate) fn log_render_invalidation(frame_id: u32, invalidation: inkpaper_ui::Invalidation) {
+    info!(
+        "perf/invalidation frame={=u32} kind={:?}",
+        frame_id, invalidation,
+    );
+}
+
+#[cfg(feature = "trace")]
+fn log_trace_metrics(frame_id: u32) {
+    use inkpaper_trace::{TraceMetric, metric_record};
+
+    let text_measure = metric_record(TraceMetric::TextMeasure);
+
+    let bidi_build = metric_record(TraceMetric::BidiBuildRuns);
+    let bidi_levels = metric_record(TraceMetric::BidiResolveLevels);
+    let bidi_mirror = metric_record(TraceMetric::BidiMirror);
+    let bidi_reorder = metric_record(TraceMetric::BidiReorder);
+
+    let font_resolve = metric_record(TraceMetric::FontResolve);
+    let pair = metric_record(TraceMetric::PairPositioning);
+    let face_parse = metric_record(TraceMetric::TtfFaceParse);
+    let gpos = metric_record(TraceMetric::GposPairLookup);
+    let legacy = metric_record(TraceMetric::LegacyKerning);
+    let mark_anchors = metric_record(TraceMetric::MarkAnchors);
+    let mark_metrics = metric_record(TraceMetric::MarkMetrics);
+
+    if text_measure.calls() != 0
+        || bidi_build.calls() != 0
+        || pair.calls() != 0
+        || face_parse.calls() != 0
+    {
+        info!(
+            "perf/text_shape frame={=u32} measure_calls={=u32} measure_cycles={=u64} bidi_build_calls={=u32} bidi_build_cycles={=u64} bidi_levels_cycles={=u64} bidi_mirror_cycles={=u64} bidi_reorder_cycles={=u64}",
+            frame_id,
+            text_measure.calls(),
+            text_measure.cycles(),
+            bidi_build.calls(),
+            bidi_build.cycles(),
+            bidi_levels.cycles(),
+            bidi_mirror.cycles(),
+            bidi_reorder.cycles(),
+        );
+
+        info!(
+            "perf/text_position frame={=u32} resolve_calls={=u32} resolve_cycles={=u64} pair_calls={=u32} pair_cycles={=u64} face_parse_calls={=u32} face_parse_cycles={=u64} gpos_calls={=u32} gpos_cycles={=u64} legacy_calls={=u32} legacy_cycles={=u64} mark_anchor_calls={=u32} mark_anchor_cycles={=u64} mark_metric_calls={=u32} mark_metric_cycles={=u64}",
+            frame_id,
+            font_resolve.calls(),
+            font_resolve.cycles(),
+            pair.calls(),
+            pair.cycles(),
+            face_parse.calls(),
+            face_parse.cycles(),
+            gpos.calls(),
+            gpos.cycles(),
+            legacy.calls(),
+            legacy.cycles(),
+            mark_anchors.calls(),
+            mark_anchors.cycles(),
+            mark_metrics.calls(),
+            mark_metrics.cycles(),
+        );
+    }
 }

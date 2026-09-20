@@ -371,6 +371,9 @@ fn render_invalidation(
         return None;
     }
 
+    #[cfg(feature = "performance")]
+    crate::firmware::perf::log_render_invalidation(frame_id, invalidation.kind());
+
     #[cfg(feature = "trace")]
     let trace_session = TraceSession::start();
 

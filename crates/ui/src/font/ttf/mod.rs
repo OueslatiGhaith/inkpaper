@@ -1,3 +1,4 @@
+use inkpaper_trace::{TraceMetric, profile_metric_expr};
 use ttf_parser::{Face, GlyphId as TtfGlyphId};
 
 use crate::{
@@ -55,7 +56,11 @@ impl<'a> TtfFont<'a> {
     }
 
     fn face(&self) -> Result<Face<'a>, TtfFontError> {
-        Face::parse(self.data.bytes(), self.face_index).map_err(|_| TtfFontError::InvalidFont)
+        profile_metric_expr!(
+            TraceMetric::TtfFaceParse,
+            Face::parse(self.data.bytes(), self.face_index),
+        )
+        .map_err(|_| TtfFontError::InvalidFont)
     }
 
     fn face_with_properties(&self, properties: FontProperties) -> Result<Face<'a>, TtfFontError> {
@@ -453,15 +458,21 @@ fn pair_positioning_for_face(
     let visual_left = to_ttf_glyph(visual_left);
     let visual_right = to_ttf_glyph(visual_right);
 
-    if let Some(positioning) =
-        gpos_pair_positioning_for_face(face, visual_left, visual_right, size_px, right_to_left)
-    {
+    let positioning = profile_metric_expr!(
+        TraceMetric::GposPairLookup,
+        gpos_pair_positioning_for_face(face, visual_left, visual_right, size_px, right_to_left,),
+    );
+
+    if let Some(positioning) = positioning {
         return positioning;
     }
 
-    PairPositioning::Kerning(
-        legacy_kerning_for_face(face, visual_left, visual_right, size_px).unwrap_or(px(0)),
-    )
+    let kerning = profile_metric_expr!(
+        TraceMetric::LegacyKerning,
+        legacy_kerning_for_face(face, visual_left, visual_right, size_px),
+    );
+
+    PairPositioning::Kerning(kerning.unwrap_or(px(0)))
 }
 
 fn rasterize_face(

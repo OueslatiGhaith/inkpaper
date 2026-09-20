@@ -1,4 +1,4 @@
-use inkpaper_trace::{TraceEvent, profile_expr};
+use inkpaper_trace::{TraceEvent, TraceMetric, profile_expr, profile_metric_expr};
 
 use crate::{FontRegistry, Offset, px};
 
@@ -68,20 +68,35 @@ impl SimpleShaper {
         let text_glyph_count = text_glyph_count.min(glyphs.len());
         let mut runs = [DirectionalRun::EMPTY; DIRECTIONAL_RUN_CAPACITY];
 
-        let run_count = build_directional_runs(text, text_glyph_count, glyphs, &mut runs)?;
-        resolve_directional_run_levels(&mut runs[..run_count], direction);
-
-        mirror_odd_level_glyphs(
-            registry,
-            size_px,
-            text,
-            text_glyph_count,
-            glyphs,
-            &runs[..run_count],
+        let run_count = profile_metric_expr!(
+            TraceMetric::BidiBuildRuns,
+            build_directional_runs(text, text_glyph_count, glyphs, &mut runs)?,
         );
 
-        let run_count = merge_same_level_runs(&mut runs[..run_count]);
-        reorder_directional_runs(glyphs, &mut runs[..run_count]);
+        profile_metric_expr!(
+            TraceMetric::BidiResolveLevels,
+            resolve_directional_run_levels(&mut runs[..run_count], direction),
+        );
+
+        profile_metric_expr!(
+            TraceMetric::BidiMirror,
+            mirror_odd_level_glyphs(
+                registry,
+                size_px,
+                text,
+                text_glyph_count,
+                glyphs,
+                &runs[..run_count],
+            ),
+        );
+
+        let run_count = profile_metric_expr!(TraceMetric::BidiReorder, {
+            let run_count = merge_same_level_runs(&mut runs[..run_count]);
+
+            reorder_directional_runs(glyphs, &mut runs[..run_count]);
+
+            run_count
+        });
 
         let advance = profile_expr!(
             TraceEvent::Positioning,

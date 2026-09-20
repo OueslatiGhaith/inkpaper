@@ -339,6 +339,10 @@ fn perfetto_track_for_event(event: TraceEvent) -> u64 {
         TraceEvent::Render
         | TraceEvent::Rebuild
         | TraceEvent::Layout
+        | TraceEvent::LayoutResolveStyles
+        | TraceEvent::LayoutClearMeasureCaches
+        | TraceEvent::LayoutFlow
+        | TraceEvent::LayoutFinishBounds
         | TraceEvent::Clear
         | TraceEvent::Paint
         | TraceEvent::Damage => PERFETTO_CPU_RENDER_TRACK,

@@ -2,7 +2,7 @@ use core::cell::RefCell;
 
 use critical_section::Mutex;
 
-use crate::TraceEvent;
+use crate::{TraceEvent, TraceMetric};
 
 pub const TRACE_CAPACITY: usize = 256;
 pub const TRACE_ASYNC_CAPACITY: usize = 16;
@@ -162,6 +162,40 @@ impl TraceSummary {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TraceMetricTotals {
+    calls: u32,
+    cycles: u64,
+}
+
+impl TraceMetricTotals {
+    const EMPTY: Self = Self {
+        calls: 0,
+        cycles: 0,
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraceMetricRecord {
+    metric: TraceMetric,
+    calls: u32,
+    cycles: u64,
+}
+
+impl TraceMetricRecord {
+    pub const fn metric(self) -> TraceMetric {
+        self.metric
+    }
+
+    pub const fn calls(self) -> u32 {
+        self.calls
+    }
+
+    pub const fn cycles(self) -> u64 {
+        self.cycles
+    }
+}
+
 struct TraceState {
     clock: Option<ClockFn>,
 
@@ -172,6 +206,7 @@ struct TraceState {
     len: usize,
     dropped: u32,
     records: [TraceRecord; TRACE_CAPACITY],
+    metrics: [TraceMetricTotals; TraceMetric::COUNT],
 
     async_len: usize,
     async_dropped: u32,
@@ -190,6 +225,7 @@ impl TraceState {
             len: 0,
             dropped: 0,
             records: [TraceRecord::EMPTY; TRACE_CAPACITY],
+            metrics: [TraceMetricTotals::EMPTY; TraceMetric::COUNT],
             async_len: 0,
             async_dropped: 0,
             async_records: [TraceAsyncRecord::EMPTY; TRACE_ASYNC_CAPACITY],
@@ -229,6 +265,7 @@ impl TraceSession {
             state.len = 0;
             state.dropped = 0;
             state.enabled = true;
+            state.metrics = [TraceMetricTotals::EMPTY; TraceMetric::COUNT];
 
             Self {
                 session_id: state.session_id,
@@ -378,6 +415,89 @@ impl Drop for TraceSpan {
             }
         });
     }
+}
+
+pub struct TraceMetricTimer {
+    session_id: u32,
+    metric: TraceMetric,
+    clock: Option<ClockFn>,
+    started_at: u32,
+}
+
+impl TraceMetricTimer {
+    #[inline(always)]
+    pub fn start(metric: TraceMetric) -> Self {
+        critical_section::with(|cs| {
+            let state = TRACE.borrow(cs).borrow();
+
+            if !state.enabled {
+                return Self::inactive(metric);
+            }
+
+            let Some(clock) = state.clock else {
+                return Self::inactive(metric);
+            };
+
+            Self {
+                session_id: state.session_id,
+                metric,
+                clock: Some(clock),
+                started_at: clock(),
+            }
+        })
+    }
+
+    const fn inactive(metric: TraceMetric) -> Self {
+        Self {
+            session_id: 0,
+            metric,
+            clock: None,
+            started_at: 0,
+        }
+    }
+}
+
+impl Drop for TraceMetricTimer {
+    #[inline(always)]
+    fn drop(&mut self) {
+        let Some(clock) = self.clock else {
+            return;
+        };
+
+        // Take the ending timestamp before entering the recorder's critical section so
+        // recorder bookkeeping is not counted as measured work.
+        let elapsed = clock().wrapping_sub(self.started_at);
+
+        critical_section::with(|cs| {
+            let mut state = TRACE.borrow(cs).borrow_mut();
+
+            if !state.enabled || state.session_id != self.session_id {
+                return;
+            }
+
+            let index = usize::from(self.metric.id());
+
+            let Some(metric) = state.metrics.get_mut(index) else {
+                return;
+            };
+
+            metric.calls = metric.calls.saturating_add(1);
+            metric.cycles = metric.cycles.saturating_add(u64::from(elapsed));
+        });
+    }
+}
+
+pub fn metric_record(metric: TraceMetric) -> TraceMetricRecord {
+    critical_section::with(|cs| {
+        let state = TRACE.borrow(cs).borrow();
+        let totals = state.metrics[usize::from(metric.id())];
+
+        TraceMetricRecord {
+            metric,
+            calls: totals.calls,
+            cycles: totals.cycles,
+        }
+    })
 }
 
 pub fn record(index: usize) -> Option<TraceRecord> {
@@ -612,5 +732,41 @@ mod tests {
         assert_eq!(damage.start_cycles(), 50);
         assert_eq!(damage.duration_cycles(), 30);
         assert_eq!(damage.arg(), 9);
+    }
+
+    #[test]
+    fn aggregates_hot_metrics_without_consuming_span_capacity() {
+        use crate::{
+            TraceMetric,
+            recording::{TraceMetricTimer, metric_record},
+        };
+
+        set_clock(test_clock);
+
+        CLOCK.store(100, Ordering::Relaxed);
+        let session = TraceSession::start();
+
+        CLOCK.store(110, Ordering::Relaxed);
+        let first = TraceMetricTimer::start(TraceMetric::PairPositioning);
+
+        CLOCK.store(140, Ordering::Relaxed);
+        drop(first);
+
+        CLOCK.store(150, Ordering::Relaxed);
+        let second = TraceMetricTimer::start(TraceMetric::PairPositioning);
+
+        CLOCK.store(175, Ordering::Relaxed);
+        drop(second);
+
+        let summary = session.finish();
+
+        assert_eq!(summary.records(), 0);
+        assert_eq!(summary.dropped(), 0);
+
+        let metric = metric_record(TraceMetric::PairPositioning);
+
+        assert_eq!(metric.metric(), TraceMetric::PairPositioning);
+        assert_eq!(metric.calls(), 2);
+        assert_eq!(metric.cycles(), 55);
     }
 }

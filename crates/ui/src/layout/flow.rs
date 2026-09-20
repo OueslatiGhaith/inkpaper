@@ -1,3 +1,5 @@
+use inkpaper_trace::{TraceEvent, profile_expr};
+
 use super::*;
 
 use crate::{AlignItems, FrameArena, JustifyContent, NodeId, NodeKind, Position, count_metric};
@@ -377,16 +379,29 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         viewport: Size,
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
-        self.resolve_text_styles(root);
-        self.clear_measurement_caches();
+        profile_expr!(
+            TraceEvent::LayoutResolveStyles,
+            self.resolve_text_styles(root),
+        );
 
-        let size = self.layout_node(root, Point::ZERO, viewport, text_measurer);
+        profile_expr!(
+            TraceEvent::LayoutClearMeasureCaches,
+            self.clear_measurement_caches(),
+        );
 
-        // all subtree extents were produced bottom-up as part of recursive layout.
-        self.finish_subtree_paint_bounds();
+        let size = profile_expr!(
+            TraceEvent::LayoutFlow,
+            self.layout_node(root, Point::ZERO, viewport, text_measurer),
+        );
+
+        profile_expr!(
+            TraceEvent::LayoutFinishBounds,
+            self.finish_subtree_paint_bounds(),
+        );
 
         size
     }
+
     fn layout_node_with_size(
         &mut self,
         node: NodeId,

@@ -1,3 +1,5 @@
+use inkpaper_trace::{TraceMetric, profile_metric_expr, profile_metric_scope};
+
 use crate::{FontRegistry, GlyphMetrics, Offset, PairPositioning, Pixels, px};
 
 use super::{ShapedGlyph, arabic::MarkPlacement, bidi::DirectionalRun};
@@ -60,12 +62,22 @@ fn apply_visual_run_positioning<'font, const FONTS: usize>(
         }
 
         let pair_positioning = match previous_base {
-            Some(previous) if previous.font_instance() == shaped.font_instance() => registry
-                .resolve_instance(shaped.font_instance())
-                .map(|face| {
-                    face.pair_positioning(previous.glyph(), shaped.glyph(), size_px, right_to_left)
-                })
-                .unwrap_or(PairPositioning::Kerning(px(0))),
+            Some(previous) if previous.font_instance() == shaped.font_instance() => {
+                profile_metric_expr!(
+                    TraceMetric::PairPositioning,
+                    registry
+                        .resolve_instance(shaped.font_instance())
+                        .map(|face| {
+                            face.pair_positioning(
+                                previous.glyph(),
+                                shaped.glyph(),
+                                size_px,
+                                right_to_left,
+                            )
+                        })
+                        .unwrap_or(PairPositioning::Kerning(px(0))),
+                )
+            }
 
             _ => PairPositioning::Kerning(px(0)),
         };
@@ -148,6 +160,8 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
     base: ShapedGlyph,
     marks: &mut [ShapedGlyph],
 ) -> bool {
+    profile_metric_scope!(TraceMetric::MarkAnchors);
+
     let mut previous_mark: Option<ShapedGlyph> = None;
 
     for mark in marks.iter_mut() {
@@ -226,6 +240,8 @@ fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
     base: ShapedGlyph,
     marks: &mut [ShapedGlyph],
 ) {
+    profile_metric_scope!(TraceMetric::MarkMetrics);
+
     let fallback_offset = Offset::new(Pixels::ZERO - base.base_advance(), base.offset().y);
 
     let Some(base_metrics) = registry

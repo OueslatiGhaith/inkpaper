@@ -1,3 +1,5 @@
+use inkpaper_trace::{TraceMetric, profile_metric_scope};
+
 use crate::{
     FontFamilyId, FontInstance, FontProperties, FontWeight, FontWeightRange, Pixels, ResolvedFont,
 };
@@ -189,6 +191,8 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
     }
 
     pub fn resolve_instance(&self, instance: FontInstance) -> Option<ResolvedFont<'font>> {
+        profile_metric_scope!(TraceMetric::FontResolve);
+
         let entry = self.entry(instance.font())?;
         let weight = entry.weights.resolve(instance.weight());
 
