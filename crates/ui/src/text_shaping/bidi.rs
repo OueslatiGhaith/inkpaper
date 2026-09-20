@@ -1,6 +1,6 @@
 use inkpaper_trace::{TraceEvent, TraceMetric, profile_expr, profile_metric_expr};
 
-use crate::{FontRegistry, Offset, pair_cache::PairPositioningCache, px};
+use crate::{FontRegistry, Offset, PreparedFont, pair_cache::PairPositioningCache, px};
 
 use super::{
     ShapeError, ShapedGlyph, ShapedRun, SimpleShaper, TextDirection,
@@ -67,6 +67,27 @@ impl SimpleShaper {
             text_glyph_count,
             glyphs,
             None::<&mut PairPositioningCache<1>>,
+            None,
+        )
+    }
+
+    pub(super) fn visual_order_with_prepared_font<'out, 'font, const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        size_px: u16,
+        text: &str,
+        text_glyph_count: usize,
+        glyphs: &'out mut [ShapedGlyph],
+        prepared_font: Option<&PreparedFont<'font>>,
+    ) -> Result<ShapedRun<'out>, ShapeError> {
+        self.visual_order_impl(
+            registry,
+            size_px,
+            text,
+            text_glyph_count,
+            glyphs,
+            None::<&mut PairPositioningCache<1>>,
+            prepared_font,
         )
     }
 
@@ -82,6 +103,7 @@ impl SimpleShaper {
         text: &str,
         text_glyph_count: usize,
         glyphs: &'out mut [ShapedGlyph],
+        prepared_font: Option<&PreparedFont<'font>>,
         pair_positioning_cache: &mut PairPositioningCache<SLOTS>,
     ) -> Result<ShapedRun<'out>, ShapeError> {
         self.visual_order_impl(
@@ -91,6 +113,7 @@ impl SimpleShaper {
             text_glyph_count,
             glyphs,
             Some(pair_positioning_cache),
+            prepared_font,
         )
     }
 
@@ -102,6 +125,7 @@ impl SimpleShaper {
         text_glyph_count: usize,
         glyphs: &'out mut [ShapedGlyph],
         pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
+        prepared_font: Option<&PreparedFont<'font>>,
     ) -> Result<ShapedRun<'out>, ShapeError> {
         let direction = paragraph_direction(text);
 
@@ -114,12 +138,12 @@ impl SimpleShaper {
 
         let run_count = profile_metric_expr!(
             TraceMetric::BidiBuildRuns,
-            build_directional_runs(text, text_glyph_count, glyphs, &mut runs)?,
+            build_directional_runs(text, text_glyph_count, glyphs, &mut runs,)?,
         );
 
         profile_metric_expr!(
             TraceMetric::BidiResolveLevels,
-            resolve_directional_run_levels(&mut runs[..run_count], direction),
+            resolve_directional_run_levels(&mut runs[..run_count], direction,),
         );
 
         profile_metric_expr!(
@@ -140,7 +164,7 @@ impl SimpleShaper {
             reorder_directional_runs(glyphs, &mut runs[..run_count]);
 
             run_count
-        });
+        },);
 
         let advance = profile_expr!(
             TraceEvent::Positioning,
@@ -150,6 +174,7 @@ impl SimpleShaper {
                 size_px,
                 glyphs,
                 &runs[..run_count],
+                prepared_font,
                 pair_positioning_cache,
             ),
         );

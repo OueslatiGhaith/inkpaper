@@ -860,4 +860,24 @@ impl PreparedFont<'_> {
             PreparedFontKind::Ttf(font) => font.glyph_id_and_advance(character, size_px),
         }
     }
+
+    pub(crate) fn pair_positioning(
+        &self,
+        visual_left: GlyphId,
+        visual_right: GlyphId,
+        size_px: u16,
+        right_to_left: bool,
+    ) -> PairPositioning {
+        match &self.source.kind {
+            PreparedFontKind::Unprepared => {
+                self.resolved
+                    .pair_positioning(visual_left, visual_right, size_px, right_to_left)
+            }
+
+            #[cfg(feature = "ttf")]
+            PreparedFontKind::Ttf(font) => {
+                font.pair_positioning(visual_left, visual_right, size_px, right_to_left)
+            }
+        }
+    }
 }

@@ -1,4 +1,6 @@
-use crate::{FontInstance, FontRegistry, GlyphId, PairPositioning, increment_metric, px};
+use crate::{
+    FontInstance, FontRegistry, GlyphId, PairPositioning, PreparedFont, increment_metric, px,
+};
 
 pub(crate) const PAIR_POSITIONING_CACHE_SLOTS: usize = 256;
 
@@ -135,6 +137,7 @@ impl<const SLOTS: usize> PairPositioningCache<SLOTS> {
     pub(crate) fn get_or_compute<const FONTS: usize>(
         &mut self,
         registry: &FontRegistry<'_, FONTS>,
+        prepared_font: Option<&PreparedFont<'_>>,
         font: FontInstance,
         visual_left: GlyphId,
         visual_right: GlyphId,
@@ -149,13 +152,17 @@ impl<const SLOTS: usize> PairPositioningCache<SLOTS> {
             right_to_left,
         };
 
-        self.get_or_insert_with(key, || {
-            registry
+        self.get_or_insert_with(key, || match prepared_font {
+            Some(prepared) if prepared.instance() == font => {
+                prepared.pair_positioning(visual_left, visual_right, size_px, right_to_left)
+            }
+
+            _ => registry
                 .resolve_instance(font)
                 .map(|face| {
                     face.pair_positioning(visual_left, visual_right, size_px, right_to_left)
                 })
-                .unwrap_or(PairPositioning::Kerning(px(0)))
+                .unwrap_or(PairPositioning::Kerning(px(0))),
         })
     }
 

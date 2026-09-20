@@ -470,6 +470,22 @@ impl<'a> PreparedTtfFont<'a> {
 
         Some((GlyphId::new(glyph.0), advance))
     }
+
+    pub(super) fn pair_positioning(
+        &self,
+        visual_left: GlyphId,
+        visual_right: GlyphId,
+        size_px: u16,
+        right_to_left: bool,
+    ) -> PairPositioning {
+        pair_positioning_for_face(
+            &self.face,
+            visual_left,
+            visual_right,
+            size_px,
+            right_to_left,
+        )
+    }
 }
 
 fn to_ttf_glyph(glyph: GlyphId) -> TtfGlyphId {

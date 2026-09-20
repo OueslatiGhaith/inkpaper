@@ -385,12 +385,23 @@ impl SimpleShaper {
         text: &str,
         output: &'out mut [ShapedGlyph],
     ) -> Result<ShapedRun<'out>, ShapeError> {
+        let preferred_font = self.font_instance(preferred_font);
+        let prepared_font = registry.prepare_instance(preferred_font);
+
         let mut state = ShapeState::new();
 
         let summary = profile_expr!(
             TraceEvent::LogicalShape,
             arg = text.len(),
-            self.shape_piece_into(registry, preferred_font, size_px, text, &mut state, output,)?,
+            self.shape_piece_into_with_prepared_font(
+                registry,
+                preferred_font,
+                prepared_font.as_ref(),
+                size_px,
+                text,
+                &mut state,
+                output,
+            )?,
         );
 
         let glyph_count = summary.glyph_count();
@@ -398,12 +409,13 @@ impl SimpleShaper {
         profile_expr!(
             TraceEvent::VisualOrder,
             arg = glyph_count,
-            self.visual_order(
+            self.visual_order_with_prepared_font(
                 registry,
                 size_px,
                 text,
                 glyph_count,
                 &mut output[..glyph_count],
+                prepared_font.as_ref(),
             ),
         )
     }
@@ -422,12 +434,23 @@ impl SimpleShaper {
         output: &'out mut [ShapedGlyph],
         pair_positioning_cache: &mut pair_cache::PairPositioningCache<SLOTS>,
     ) -> Result<ShapedRun<'out>, ShapeError> {
+        let preferred_font = self.font_instance(preferred_font);
+        let prepared_font = registry.prepare_instance(preferred_font);
+
         let mut state = ShapeState::new();
 
         let summary = profile_expr!(
             TraceEvent::LogicalShape,
             arg = text.len(),
-            self.shape_piece_into(registry, preferred_font, size_px, text, &mut state, output,)?,
+            self.shape_piece_into_with_prepared_font(
+                registry,
+                preferred_font,
+                prepared_font.as_ref(),
+                size_px,
+                text,
+                &mut state,
+                output,
+            )?,
         );
 
         let glyph_count = summary.glyph_count();
@@ -441,6 +464,7 @@ impl SimpleShaper {
                 text,
                 glyph_count,
                 &mut output[..glyph_count],
+                prepared_font.as_ref(),
                 pair_positioning_cache,
             ),
         )

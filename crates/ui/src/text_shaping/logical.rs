@@ -24,7 +24,7 @@ impl SimpleShaper {
         size_px: u16,
         text: &str,
         state: &mut ShapeState,
-        mut visit: F,
+        visit: F,
     ) -> Result<ShapeSummary, E>
     where
         F: FnMut(ShapedGlyph) -> Result<(), E>,
@@ -32,6 +32,30 @@ impl SimpleShaper {
         let preferred_font = self.font_instance(preferred_font);
         let prepared_font = registry.prepare_instance(preferred_font);
 
+        self.try_shape_piece_with_prepared_font(
+            registry,
+            preferred_font,
+            prepared_font.as_ref(),
+            size_px,
+            text,
+            state,
+            visit,
+        )
+    }
+
+    fn try_shape_piece_with_prepared_font<'font, const FONTS: usize, F, E>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        preferred_font: FontInstance,
+        prepared_font: Option<&PreparedFont<'font>>,
+        size_px: u16,
+        text: &str,
+        state: &mut ShapeState,
+        mut visit: F,
+    ) -> Result<ShapeSummary, E>
+    where
+        F: FnMut(ShapedGlyph) -> Result<(), E>,
+    {
         let mut advance = px(0);
         let mut glyph_count = 0usize;
         let mut characters = text.char_indices();
@@ -50,7 +74,7 @@ impl SimpleShaper {
                 if let Some((resolved, base_advance)) = registry
                     .resolve_glyph_with_advance_prepared(
                         preferred_font,
-                        prepared_font.as_ref(),
+                        prepared_font,
                         character,
                         size_px,
                     )
@@ -132,7 +156,7 @@ impl SimpleShaper {
             let resolved = resolve_contextual_glyph(
                 registry,
                 preferred_font,
-                prepared_font.as_ref(),
+                prepared_font,
                 character,
                 feature,
                 presentation,
@@ -179,6 +203,7 @@ impl SimpleShaper {
             Err(error) => match error {},
         }
     }
+
     pub fn shape_piece_into<'font, const FONTS: usize>(
         &self,
         registry: &FontRegistry<'font, FONTS>,
@@ -188,19 +213,53 @@ impl SimpleShaper {
         state: &mut ShapeState,
         output: &mut [ShapedGlyph],
     ) -> Result<ShapeSummary, ShapeError> {
+        let preferred_font = self.font_instance(preferred_font);
+        let prepared_font = registry.prepare_instance(preferred_font);
+
+        self.shape_piece_into_with_prepared_font(
+            registry,
+            preferred_font,
+            prepared_font.as_ref(),
+            size_px,
+            text,
+            state,
+            output,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn shape_piece_into_with_prepared_font<'font, const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        preferred_font: FontInstance,
+        prepared_font: Option<&PreparedFont<'font>>,
+        size_px: u16,
+        text: &str,
+        state: &mut ShapeState,
+        output: &mut [ShapedGlyph],
+    ) -> Result<ShapeSummary, ShapeError> {
         let mut written = 0usize;
 
-        self.try_shape_piece_with(registry, preferred_font, size_px, text, state, |glyph| {
-            let Some(destination) = output.get_mut(written) else {
-                return Err(ShapeError::BufferTooSmall);
-            };
+        self.try_shape_piece_with_prepared_font(
+            registry,
+            preferred_font,
+            prepared_font,
+            size_px,
+            text,
+            state,
+            |glyph| {
+                let Some(destination) = output.get_mut(written) else {
+                    return Err(ShapeError::BufferTooSmall);
+                };
 
-            *destination = glyph;
-            written = written.saturating_add(1);
+                *destination = glyph;
+                written = written.saturating_add(1);
 
-            Ok(())
-        })
+                Ok(())
+            },
+        )
     }
+
     pub fn next_cluster_boundary<'font, const FONTS: usize>(
         &self,
         registry: &FontRegistry<'font, FONTS>,

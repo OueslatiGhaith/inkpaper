@@ -180,7 +180,7 @@ fn registry_rejects_unregistered_family() {
     let mut registry = FontRegistry::<1>::default();
 
     assert_eq!(
-        registry.register_face_with_weight(FontFamilyId::new(7), FontWeight::NORMAL, &font,),
+        registry.register_face_with_weight(FontFamilyId::new(7), FontWeight::NORMAL, &font),
         Err(FontRegistryError::InvalidFamily),
     );
 }
@@ -258,7 +258,7 @@ fn registry_preserves_requested_weight_inside_variable_range() {
         .resolve_family_weight(family, FontWeight::new(650))
         .unwrap();
 
-    assert_eq!(resolved.weight(), FontWeight::new(650),);
+    assert_eq!(resolved.weight(), FontWeight::new(650));
 }
 
 #[test]
@@ -290,7 +290,7 @@ fn glyph_cache_distinguishes_variable_weights() {
             .get_or_rasterize(&registry, weight_650, glyph, 16)
             .unwrap();
 
-        assert_eq!(bitmap.coverage(), &[162, 162, 162, 162],);
+        assert_eq!(bitmap.coverage(), &[162, 162, 162, 162]);
     }
 
     {
@@ -298,7 +298,7 @@ fn glyph_cache_distinguishes_variable_weights() {
             .get_or_rasterize(&registry, weight_700, glyph, 16)
             .unwrap();
 
-        assert_eq!(bitmap.coverage(), &[175, 175, 175, 175],);
+        assert_eq!(bitmap.coverage(), &[175, 175, 175, 175]);
     }
 
     assert_eq!(cache.used_bytes(), 8);
@@ -450,4 +450,8 @@ fn prepared_font_delegates_for_non_ttf_face() {
 
     assert_eq!(glyph, GlyphId::new(u16::from(b'A')));
     assert_eq!(advance, px(3));
+    assert_eq!(
+        prepared.pair_positioning(GlyphId::new(1), GlyphId::new(2), 16, false),
+        PairPositioning::Kerning(px(0)),
+    );
 }
