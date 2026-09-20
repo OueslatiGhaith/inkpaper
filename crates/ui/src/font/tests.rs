@@ -434,3 +434,20 @@ fn glyph_cache_preserves_colliding_entries_with_linear_probing() {
 
     assert_eq!(cache.used_bytes(), 8);
 }
+
+#[test]
+fn prepared_font_delegates_for_non_ttf_face() {
+    let font = TestFont { fill: 42 };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+
+    let prepared = registry
+        .prepare_instance(FontInstance::normal(font_id))
+        .unwrap();
+
+    let (glyph, advance) = prepared.glyph_id_and_advance('A', 16).unwrap();
+
+    assert_eq!(glyph, GlyphId::new(u16::from(b'A')));
+    assert_eq!(advance, px(3));
+}

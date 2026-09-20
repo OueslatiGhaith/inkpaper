@@ -1,7 +1,8 @@
 use core::{convert::Infallible, str::CharIndices};
 
 use crate::{
-    FontId, FontInstance, FontRegistry, Offset, OpenTypeFeature, Pixels, ResolvedGlyph, px,
+    FontId, FontInstance, FontRegistry, Offset, OpenTypeFeature, Pixels, PreparedFont,
+    ResolvedGlyph, px,
 };
 
 use super::{
@@ -29,6 +30,7 @@ impl SimpleShaper {
         F: FnMut(ShapedGlyph) -> Result<(), E>,
     {
         let preferred_font = self.font_instance(preferred_font);
+        let prepared_font = registry.prepare_instance(preferred_font);
 
         let mut advance = px(0);
         let mut glyph_count = 0usize;
@@ -38,15 +40,20 @@ impl SimpleShaper {
         while let Some((cluster, character)) = characters.next() {
             let joining = joining_type(character);
 
-            // transparent marks belong to the preceeding logical cluster
+            // transparent marks belong to the preceding logical cluster
             // they remain separate glyphs for now because we don't mark positioning yet,
-            // but line breaking, ellipsis and bidi must treat the bae + marks as
-            // invisible unit
+            // but line breaking, ellipsis and bidi must treat the base + marks as
+            // indivisible unit
             if joining.is_transparent() {
                 let cluster = previous_cluster.unwrap_or(cluster);
 
-                if let Some((resolved, base_advance)) =
-                    registry.resolve_glyph_with_advance(preferred_font, character, size_px)
+                if let Some((resolved, base_advance)) = registry
+                    .resolve_glyph_with_advance_prepared(
+                        preferred_font,
+                        prepared_font.as_ref(),
+                        character,
+                        size_px,
+                    )
                 {
                     if let Some(placement) = mark_placement(character) {
                         emit_resolved_mark(
@@ -125,6 +132,7 @@ impl SimpleShaper {
             let resolved = resolve_contextual_glyph(
                 registry,
                 preferred_font,
+                prepared_font.as_ref(),
                 character,
                 feature,
                 presentation,
@@ -147,6 +155,7 @@ impl SimpleShaper {
 
         Ok(ShapeSummary::new(glyph_count, advance))
     }
+
     pub fn shape_piece_with<'font, const FONTS: usize, F>(
         &self,
         registry: &FontRegistry<'font, FONTS>,
@@ -249,6 +258,7 @@ fn next_non_transparent_accepts_previous(characters: &CharIndices<'_>) -> bool {
 fn resolve_contextual_glyph<'font, const FONTS: usize>(
     registry: &FontRegistry<'font, FONTS>,
     preferred_font: FontInstance,
+    prepared_font: Option<&PreparedFont<'font>>,
     base_character: char,
     feature: Option<OpenTypeFeature>,
     presentation: Option<char>,
@@ -257,7 +267,12 @@ fn resolve_contextual_glyph<'font, const FONTS: usize>(
     // fast/common path: ordinary text needs no GSUB or presentation-form substitution.
     // Resolve cmap glyph + advance from the same font face.
     if feature.is_none() && presentation.is_none() {
-        return registry.resolve_glyph_with_advance(preferred_font, base_character, size_px);
+        return registry.resolve_glyph_with_advance_prepared(
+            preferred_font,
+            prepared_font,
+            base_character,
+            size_px,
+        );
     }
 
     let base = registry.resolve_character_exact(preferred_font, base_character);

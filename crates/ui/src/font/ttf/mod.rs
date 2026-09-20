@@ -4,7 +4,7 @@ use ttf_parser::{Face, GlyphId as TtfGlyphId};
 use crate::{
     CursiveAttachment, FontData, FontFace, FontMetrics, FontProperties, FontRasterError,
     FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning,
-    Pixels, px, ttf::gpos::gpos_pair_positioning_for_face,
+    Pixels, PreparedFontSource, px, ttf::gpos::gpos_pair_positioning_for_face,
 };
 
 mod gpos;
@@ -104,6 +104,13 @@ impl FontFace for TtfFont<'_> {
         }
 
         FontWeightRange::exact(FontWeight::new(face.weight().to_number()))
+    }
+
+    fn prepare_with_properties(&self, properties: FontProperties) -> PreparedFontSource<'_> {
+        match self.face_with_properties(properties) {
+            Ok(face) => PreparedFontSource::from_ttf(PreparedTtfFont::new(face)),
+            Err(_) => PreparedFontSource::unprepared(),
+        }
     }
 
     fn glyph_id(&self, character: char) -> Option<GlyphId> {
@@ -441,6 +448,27 @@ impl FontFace for TtfFont<'_> {
         let face = self.face_with_properties(properties).ok()?;
 
         mark_to_mark_offset_for_face(&face, to_ttf_glyph(base_mark), to_ttf_glyph(mark), size_px)
+    }
+}
+
+pub(super) struct PreparedTtfFont<'a> {
+    face: Face<'a>,
+}
+
+impl<'a> PreparedTtfFont<'a> {
+    fn new(face: Face<'a>) -> Self {
+        Self { face }
+    }
+
+    pub(super) fn glyph_id_and_advance(
+        &self,
+        character: char,
+        size_px: u16,
+    ) -> Option<(GlyphId, Pixels)> {
+        let glyph = self.face.glyph_index(character)?;
+        let advance = glyph_advance_for_face(&self.face, glyph, size_px)?;
+
+        Some((GlyphId::new(glyph.0), advance))
     }
 }
 

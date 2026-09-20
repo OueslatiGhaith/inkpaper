@@ -370,9 +370,46 @@ pub enum FontRasterError {
     Unsupported,
 }
 
+enum PreparedFontKind<'font> {
+    Unprepared,
+
+    #[cfg(feature = "ttf")]
+    Ttf(ttf::PreparedTtfFont<'font>),
+}
+
+/// Internal hook used to reuse backend-specific parsed font state during one shaping operation.
+///
+/// FontFace implementors do not need to override preparation. The default simply continues
+/// through the ordinary FontFace methods.
+#[doc(hidden)]
+pub struct PreparedFontSource<'font> {
+    kind: PreparedFontKind<'font>,
+}
+
+impl PreparedFontSource<'_> {
+    pub const fn unprepared() -> Self {
+        Self {
+            kind: PreparedFontKind::Unprepared,
+        }
+    }
+}
+
+#[cfg(feature = "ttf")]
+impl<'font> PreparedFontSource<'font> {
+    fn from_ttf(font: ttf::PreparedTtfFont<'font>) -> Self {
+        Self {
+            kind: PreparedFontKind::Ttf(font),
+        }
+    }
+}
+
 pub trait FontFace {
     fn weight_range(&self) -> FontWeightRange {
         FontWeightRange::default()
+    }
+
+    fn prepare_with_properties(&self, _properties: FontProperties) -> PreparedFontSource<'_> {
+        PreparedFontSource::unprepared()
     }
 
     /// resolve one unicode scalar value to a font-local glyph.
@@ -790,5 +827,37 @@ impl<'font> ResolvedFont<'font> {
     ) -> Result<(), FontRasterError> {
         self.face
             .rasterize_with_properties(self.properties(), glyph, size_px, coverage)
+    }
+
+    pub(crate) fn prepare(self) -> PreparedFont<'font> {
+        let source = self.face.prepare_with_properties(self.properties());
+
+        PreparedFont {
+            resolved: self,
+            source,
+        }
+    }
+}
+
+pub(crate) struct PreparedFont<'font> {
+    resolved: ResolvedFont<'font>,
+    source: PreparedFontSource<'font>,
+}
+
+impl PreparedFont<'_> {
+    pub(crate) const fn instance(&self) -> FontInstance {
+        self.resolved.instance()
+    }
+
+    pub(crate) fn glyph_id_and_advance(
+        &self,
+        character: char,
+        size_px: u16,
+    ) -> Option<(GlyphId, Pixels)> {
+        match &self.source.kind {
+            PreparedFontKind::Unprepared => self.resolved.glyph_id_and_advance(character, size_px),
+            #[cfg(feature = "ttf")]
+            PreparedFontKind::Ttf(font) => font.glyph_id_and_advance(character, size_px),
+        }
     }
 }

@@ -1,7 +1,8 @@
 use inkpaper_trace::{TraceMetric, profile_metric_scope};
 
 use crate::{
-    FontFamilyId, FontInstance, FontProperties, FontWeight, FontWeightRange, Pixels, ResolvedFont,
+    FontFamilyId, FontInstance, FontProperties, FontWeight, FontWeightRange, Pixels, PreparedFont,
+    ResolvedFont,
 };
 
 use super::{FontFace, FontId, GlyphId};
@@ -202,6 +203,10 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         ))
     }
 
+    pub(crate) fn prepare_instance(&self, instance: FontInstance) -> Option<PreparedFont<'font>> {
+        self.resolve_instance(instance).map(ResolvedFont::prepare)
+    }
+
     pub fn resolve_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'font>> {
         self.resolve_family_weight(FontFamilyId::DEFAULT, weight)
     }
@@ -301,6 +306,26 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         Some((ResolvedGlyph::from_resolved_font(font, glyph), advance))
     }
 
+    fn glyph_with_advance_in_font_prepared(
+        &self,
+        font: FontInstance,
+        prepared: Option<&PreparedFont<'font>>,
+        character: char,
+        size_px: u16,
+    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+        let resolved = self.resolve_instance(font)?;
+
+        let (glyph, advance) = match prepared {
+            Some(prepared) if prepared.instance() == resolved.instance() => {
+                prepared.glyph_id_and_advance(character, size_px)?
+            }
+
+            _ => resolved.glyph_id_and_advance(character, size_px)?,
+        };
+
+        Some((ResolvedGlyph::from_resolved_font(resolved, glyph), advance))
+    }
+
     pub(crate) fn resolve_character_exact(
         &self,
         preferred: impl Into<FontInstance>,
@@ -377,6 +402,44 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         None
     }
 
+    pub(crate) fn resolve_character_with_advance_exact_prepared(
+        &self,
+        preferred: FontInstance,
+        prepared: Option<&PreparedFont<'font>>,
+        character: char,
+        size_px: u16,
+    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+        if let Some(glyph) =
+            self.glyph_with_advance_in_font_prepared(preferred, prepared, character, size_px)
+        {
+            return Some(glyph);
+        }
+
+        let requested_weight = preferred.weight();
+
+        for index in 0..self.len {
+            let index = u16::try_from(index).ok()?;
+            let id = FontId::new(index);
+
+            if id == preferred.font() {
+                continue;
+            }
+
+            let Some(entry) = self.entry(id) else {
+                continue;
+            };
+
+            let effective_weight = entry.weights.resolve(requested_weight);
+            let candidate = FontInstance::new(id, FontProperties::new(effective_weight));
+
+            if let Some(glyph) = self.glyph_with_advance_in_font(candidate, character, size_px) {
+                return Some(glyph);
+            }
+        }
+
+        None
+    }
+
     pub fn resolve_glyph(
         &self,
         preferred: impl Into<FontInstance>,
@@ -411,23 +474,33 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         character: char,
         size_px: u16,
     ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
-        let preferred = preferred.into();
+        self.resolve_glyph_with_advance_prepared(preferred.into(), None, character, size_px)
+    }
 
-        if let Some(glyph) =
-            self.resolve_character_with_advance_exact(preferred, character, size_px)
+    pub(crate) fn resolve_glyph_with_advance_prepared(
+        &self,
+        preferred: FontInstance,
+        prepared: Option<&PreparedFont<'font>>,
+        character: char,
+        size_px: u16,
+    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+        if let Some(glyph) = self
+            .resolve_character_with_advance_exact_prepared(preferred, prepared, character, size_px)
         {
             return Some(glyph);
         }
 
         if character != '\u{FFFD}'
-            && let Some(glyph) =
-                self.resolve_character_with_advance_exact(preferred, '\u{FFFD}', size_px)
+            && let Some(glyph) = self.resolve_character_with_advance_exact_prepared(
+                preferred, prepared, '\u{FFFD}', size_px,
+            )
         {
             return Some(glyph);
         }
 
         if character != '?'
-            && let Some(glyph) = self.resolve_character_with_advance_exact(preferred, '?', size_px)
+            && let Some(glyph) = self
+                .resolve_character_with_advance_exact_prepared(preferred, prepared, '?', size_px)
         {
             return Some(glyph);
         }
