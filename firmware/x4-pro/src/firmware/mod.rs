@@ -1,6 +1,6 @@
 use defmt::{debug, error, info, warn};
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either4, select4};
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
@@ -23,7 +23,7 @@ use xteink_display_probe::{Verdict, detect_x4_controller};
 use crate::firmware::{
     battery::{BATTERY_UPDATES, BatteryReading, battery_task},
     buttons::{Buttons, button_task},
-    display::X4Panel,
+    display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
     frontlight::{frontlight_off_and_wait, frontlight_task},
     input::{Button, ButtonEdge, INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
@@ -202,8 +202,12 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     let mut presenter = Presenter::default();
+    let mut display_power = DisplayPowerManager::default();
 
-    panel.prepare_present(&mut bus, &mut delay).await.unwrap();
+    display_power
+        .prepare(&mut panel, &mut bus, &mut delay)
+        .await
+        .unwrap();
 
     debug!("building UI frame...");
     let update = presenter.render_initial(runtime, frame);
@@ -221,8 +225,8 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     info!("presenting initial frame...");
-    panel
-        .present(&mut bus, &mut delay, frame, update)
+    display_power
+        .present_initial(&mut panel, &mut bus, &mut delay, frame, update)
         .await
         .unwrap();
     info!("initial display complete");
@@ -288,14 +292,15 @@ async fn main(spawner: Spawner) -> ! {
         // - the battery service has a new reading
         // `BATTERY_UPDATES` is a signal, so dropping its pending wait when input
         // wins this select is safe and doesn't lose a stored reading
-        match select3(
+        match select4(
             INPUT_EVENTS.receive(),
             BATTERY_UPDATES.wait(),
             RTC_UPDATES.wait(),
+            display_power.wait_idle_timeout(),
         )
         .await
         {
-            Either3::First(event) => {
+            Either4::First(event) => {
                 action = handle_input_event(runtime, app, event);
                 // combine events accumulated while the e-ink panel was busy.
                 while action == InputAction::Continue
@@ -307,8 +312,16 @@ async fn main(spawner: Spawner) -> ! {
                     action = handle_input_event(runtime, app, event);
                 }
             }
-            Either3::Second(reading) => apply_battery_reading(reading),
-            Either3::Third(state) => apply_rtc_state(state),
+            Either4::Second(reading) => apply_battery_reading(reading),
+            Either4::Third(state) => apply_rtc_state(state),
+            Either4::Fourth(()) => {
+                display_power
+                    .handle_idle_timeout(&mut panel, &mut bus, &mut delay)
+                    .await
+                    .unwrap();
+
+                continue;
+            }
         }
 
         if action == InputAction::Sleep {
@@ -361,7 +374,10 @@ async fn main(spawner: Spawner) -> ! {
         }
 
         if !runtime.render_invalidation().is_none() {
-            panel.prepare_present(&mut bus, &mut delay).await.unwrap();
+            display_power
+                .prepare(&mut panel, &mut bus, &mut delay)
+                .await
+                .unwrap();
         }
 
         if app_service.service_pending(runtime, app).await.is_err() {
@@ -373,7 +389,10 @@ async fn main(spawner: Spawner) -> ! {
         //
         // prepare_present() is idempotent, so trying again is cheap.
         if !runtime.render_invalidation().is_none() {
-            panel.prepare_present(&mut bus, &mut delay).await.unwrap();
+            display_power
+                .prepare(&mut panel, &mut bus, &mut delay)
+                .await
+                .unwrap();
         }
 
         let Some(update) = presenter.render_pending(runtime, frame, panel.capabilities()) else {
@@ -391,8 +410,8 @@ async fn main(spawner: Spawner) -> ! {
             damage.height,
         );
 
-        panel
-            .present(&mut bus, &mut delay, frame, update)
+        display_power
+            .present(&mut panel, &mut bus, &mut delay, frame, update)
             .await
             .unwrap();
     }

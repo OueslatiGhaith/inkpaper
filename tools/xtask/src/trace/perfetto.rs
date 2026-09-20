@@ -361,8 +361,11 @@ fn perfetto_track_for_event(event: TraceEvent) -> u64 {
 fn async_trace_name(event: TraceEvent, arg: u32) -> String {
     if event == TraceEvent::DisplayPhase {
         let phase = u8::try_from(arg).ok().and_then(DisplayPhase::from_id);
-        if phase == Some(DisplayPhase::PowerOff) {
-            return "power_off_pending".to_owned();
+
+        match phase {
+            Some(DisplayPhase::PowerOn) => return "power_on_pending".to_owned(),
+            Some(DisplayPhase::PowerOff) => return "power_off_pending".to_owned(),
+            _ => {}
         }
     }
 

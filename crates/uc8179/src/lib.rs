@@ -841,6 +841,18 @@ impl Uc8179 {
         Ok(())
     }
 
+    pub async fn begin_power_off<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.power_off(bus, delay).await
+    }
+
     async fn power_off<B, D>(&mut self, bus: &mut B, delay: &mut D) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,

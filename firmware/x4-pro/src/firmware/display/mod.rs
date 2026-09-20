@@ -22,11 +22,25 @@ use crate::firmware::{
     },
 };
 
+pub mod power;
+
 #[derive(Debug, Format)]
 pub enum Error<E> {
     Ssd1677(ssd1677::Error<E>),
     Uc8179(uc8179::Error<E>),
     Uc8279(uc8279_x4::Error<E>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PresentPower {
+    TurnOff,
+    KeepOn,
+}
+
+impl PresentPower {
+    const fn turn_off(self) -> bool {
+        matches!(self, Self::TurnOff)
+    }
 }
 
 pub enum X4Panel {
@@ -44,6 +58,10 @@ impl X4Panel {
         }
     }
 
+    pub const fn supports_idle_power_hold(&self) -> bool {
+        matches!(self, Self::Uc8179(_))
+    }
+
     pub async fn initialize<B, D>(
         &mut self,
         bus: &mut B,
@@ -57,6 +75,38 @@ impl X4Panel {
             X4Panel::Ssd1677(panel) => panel.initialize(bus, delay).await.map_err(Error::Ssd1677),
             X4Panel::Uc8179(panel) => panel.initialize(bus, delay).await.map_err(Error::Uc8179),
             X4Panel::Uc8279(panel) => panel.initialize(bus, delay).await.map_err(Error::Uc8279),
+        }
+    }
+
+    pub async fn begin_idle_power_off<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), Error<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        let Self::Uc8179(panel) = self else {
+            return Ok(());
+        };
+
+        #[cfg(feature = "performance")]
+        {
+            let mut profiled_bus = ProfiledEpdBus::new_preparation(bus);
+
+            panel
+                .begin_power_off(&mut profiled_bus, delay)
+                .await
+                .map_err(Error::Uc8179)
+        }
+
+        #[cfg(not(feature = "performance"))]
+        {
+            panel
+                .begin_power_off(bus, delay)
+                .await
+                .map_err(Error::Uc8179)
         }
     }
 
@@ -104,6 +154,7 @@ impl X4Panel {
         delay: &mut D,
         frame: &FramebufferStorage,
         update: FrameUpdate,
+        power: PresentPower,
     ) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
@@ -141,7 +192,7 @@ impl X4Panel {
             }
 
             let result = self
-                .present_inner(&mut profiled_bus, delay, frame, update)
+                .present_inner(&mut profiled_bus, delay, frame, update, power)
                 .await;
 
             let timings = profiled_bus.finish(timer.elapsed());
@@ -150,7 +201,7 @@ impl X4Panel {
         };
 
         #[cfg(not(feature = "performance"))]
-        let result = self.present_inner(bus, delay, frame, update).await;
+        let result = self.present_inner(bus, delay, frame, update, power).await;
 
         // close the top-level presentation span before finalizing the trace session.
         drop(present_trace);
@@ -176,15 +227,19 @@ impl X4Panel {
         delay: &mut D,
         frame: &FramebufferStorage,
         update: FrameUpdate,
+        power: PresentPower,
     ) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
         D: DelayNs,
     {
         match update.presentation() {
-            PresentationMode::Gray4 => self.present_grayscale(bus, delay, frame, update).await,
+            PresentationMode::Gray4 => {
+                self.present_grayscale(bus, delay, frame, update, power)
+                    .await
+            }
             PresentationMode::BinaryPreservingGray => {
-                self.present_binary_preserving_gray(bus, delay, frame, update)
+                self.present_binary_preserving_gray(bus, delay, frame, update, power)
                     .await
             }
             PresentationMode::Binary => {
@@ -192,7 +247,9 @@ impl X4Panel {
 
                 match self {
                     Self::Ssd1677(panel) => present_ssd1677(panel, bus, delay, frame, update).await,
-                    Self::Uc8179(panel) => present_uc8179(panel, bus, delay, frame, update).await,
+                    Self::Uc8179(panel) => {
+                        present_uc8179(panel, bus, delay, frame, update, power.turn_off()).await
+                    }
                     Self::Uc8279(panel) => present_uc8279(panel, bus, delay, frame, update).await,
                 }
             }
@@ -205,6 +262,7 @@ impl X4Panel {
         delay: &mut D,
         frame: &FramebufferStorage,
         update: FrameUpdate,
+        power: PresentPower,
     ) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
@@ -248,7 +306,7 @@ impl X4Panel {
                         msb,
                         Uc8179Region::new(damage.x, damage.y, damage.width, damage.height),
                         mode,
-                        true,
+                        power.turn_off(),
                     )
                     .await
                     .map(|_| ())
@@ -267,6 +325,7 @@ impl X4Panel {
         delay: &mut D,
         frame: &FramebufferStorage,
         update: FrameUpdate,
+        power: PresentPower,
     ) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
@@ -275,30 +334,28 @@ impl X4Panel {
         // a requested maintenance/full refresh should use the established grayscale-preserving
         // full path rather than the short differential window waveform.
         if update.refresh() == RefreshRequest::Full {
-            return self.present_grayscale(bus, delay, frame, update).await;
+            return self
+                .present_grayscale(bus, delay, frame, update, power)
+                .await;
         }
 
         let (lsb, msb) = frame.planes();
         let damage = update.physical_damage();
 
         match self {
-            Self::Ssd1677(panel) => {
-                // the SSD1677 grayscale-window implementation already handles a binary-only
-                // damaged region without disturbing grayscale elsewhere.
-                panel
-                    .display_grayscale_window(
-                        bus,
-                        delay,
-                        lsb,
-                        msb,
-                        SsdRegion::new(damage.x, damage.y, damage.width, damage.height),
-                        SsdRefreshMode::Fast,
-                        true,
-                    )
-                    .await
-                    .map(|_| ())
-                    .map_err(Error::Ssd1677)
-            }
+            Self::Ssd1677(panel) => panel
+                .display_grayscale_window(
+                    bus,
+                    delay,
+                    lsb,
+                    msb,
+                    SsdRegion::new(damage.x, damage.y, damage.width, damage.height),
+                    SsdRefreshMode::Fast,
+                    true,
+                )
+                .await
+                .map(|_| ())
+                .map_err(Error::Ssd1677),
 
             Self::Uc8179(panel) => panel
                 .display_binary_window_preserving_grayscale(
@@ -307,21 +364,16 @@ impl X4Panel {
                     lsb,
                     msb,
                     Uc8179Region::new(damage.x, damage.y, damage.width, damage.height),
-                    true,
+                    power.turn_off(),
                 )
                 .await
                 .map(|_| ())
                 .map_err(Error::Uc8179),
 
-            Self::Uc8279(panel) => {
-                // this branch should not normally be selected because the UC8279 capability
-                // says  BinaryOverGrayMode::Unsupported.
-                // preserve correctness if that invariant is ever broken.
-                panel
-                    .display_grayscale(bus, delay, lsb, msb, true)
-                    .await
-                    .map_err(Error::Uc8279)
-            }
+            Self::Uc8279(panel) => panel
+                .display_grayscale(bus, delay, lsb, msb, true)
+                .await
+                .map_err(Error::Uc8279),
         }
     }
 
@@ -410,6 +462,7 @@ async fn present_uc8179<B, D>(
     delay: &mut D,
     frame: &[u8],
     update: FrameUpdate,
+    turn_off: bool,
 ) -> Result<(), Error<B::Error>>
 where
     B: EpdInterface,
@@ -421,10 +474,12 @@ where
     };
 
     // UC8179 currently uses a whole-plane differential FAST refresh.
-    // do NOT program a sub-window here yet. FreeInk's hardware path also deliberately
-    // uses PTIN/PTOUT without PTL for ordinary B/W FAST refreshes.
+    //
+    // keep the controller powered across a short burst when requested by the display-power
+    // policy. The policy, not this hardware dispatch layer, decides how long that
+    // powered session lasts.
     panel
-        .display(bus, delay, frame, mode, true)
+        .display(bus, delay, frame, mode, turn_off)
         .await
         .map_err(Error::Uc8179)
 }
