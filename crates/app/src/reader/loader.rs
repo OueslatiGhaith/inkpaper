@@ -5,7 +5,10 @@ use inkpaper_reader::{ReaderSettings, ReadingPosition, paginate_chapter};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
 use crate::reader::{
-    default_reader_settings, images::load_chapter_images, progress::BookProgressMap,
+    default_reader_settings,
+    images::load_chapter_images,
+    perf::{ChapterTraceSpan, ChapterTraceStage, spine_trace_id},
+    progress::BookProgressMap,
 };
 
 use super::{
@@ -304,20 +307,34 @@ where
         return Ok(None);
     }
 
-    let Some(chapter) = epub
-        .load_spine_chapter(index)
-        .await
-        .map_err(ReaderLoadError::Epub)?
-    else {
+    let trace_id = spine_trace_id(index);
+
+    let chapter = {
+        let _trace = ChapterTraceSpan::start(ChapterTraceStage::Load, trace_id, trace_id);
+
+        epub.load_spine_chapter(index)
+            .await
+            .map_err(ReaderLoadError::Epub)?
+    };
+
+    let Some(chapter) = chapter else {
         return Ok(None);
     };
 
-    let styles = epub
-        .load_chapter_styles(&chapter)
-        .await
-        .map_err(ReaderLoadError::Epub)?;
+    let styles = {
+        let _trace = ChapterTraceSpan::start(ChapterTraceStage::Styles, trace_id, trace_id);
 
-    let loaded_images = load_chapter_images(epub, &chapter).await;
+        epub.load_chapter_styles(&chapter)
+            .await
+            .map_err(ReaderLoadError::Epub)?
+    };
+
+    let loaded_images = {
+        let _trace = ChapterTraceSpan::start(ChapterTraceStage::Images, trace_id, trace_id);
+
+        load_chapter_images(epub, &chapter).await
+    };
+
     let (image_metrics, chapter_images) = loaded_images.into_parts();
 
     let spine = SpineIndex::try_from_usize(index).ok_or(ReaderLoadError::SpineIndexOverflow)?;
@@ -326,15 +343,19 @@ where
 
     let mut measurer = ReaderMeasurer::new(image_metrics).map_err(ReaderLoadError::FontRegistry)?;
 
-    let pagination = paginate_chapter(
-        &chapter,
-        &styles,
-        spine,
-        reader_viewport(),
-        settings,
-        &mut measurer,
-    )
-    .map_err(ReaderLoadError::Shape)?;
+    let pagination = {
+        let _trace = ChapterTraceSpan::start(ChapterTraceStage::Paginate, trace_id, trace_id);
+
+        paginate_chapter(
+            &chapter,
+            &styles,
+            spine,
+            reader_viewport(),
+            settings,
+            &mut measurer,
+        )
+        .map_err(ReaderLoadError::Shape)?
+    };
 
     if pagination
         .pages()

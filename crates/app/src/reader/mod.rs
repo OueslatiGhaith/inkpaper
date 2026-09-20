@@ -4,6 +4,7 @@ mod document;
 mod images;
 mod loader;
 mod measurer;
+pub(crate) mod perf;
 mod preferences;
 mod progress;
 mod state;

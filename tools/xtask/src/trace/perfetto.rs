@@ -11,7 +11,8 @@ use crate::trace::{
 };
 
 const PERFETTO_ROOT_TRACK: u64 = 1;
-
+const PROTO_WIRE_VARINT: u8 = 0;
+const PROTO_WIRE_LENGTH_DELIMITED: u8 = 2;
 const PERFETTO_FRAMES_TRACK: u64 = 2;
 
 const PERFETTO_PACKET_SEQUENCE_ID: u64 = 1;
@@ -24,11 +25,12 @@ const PERFETTO_DISPLAY_GROUP: u64 = 6;
 const PERFETTO_DISPLAY_PRESENT_TRACK: u64 = 7;
 const PERFETTO_DISPLAY_BUSY_TRACK: u64 = 8;
 
-const PROTO_WIRE_VARINT: u8 = 0;
-const PROTO_WIRE_LENGTH_DELIMITED: u8 = 2;
-
 const PERFETTO_DISPLAY_PHASE_TRACK: u64 = 9;
 const PERFETTO_DISPLAY_STATE_TRACK: u64 = 10;
+
+const PERFETTO_READER_GROUP: u64 = 11;
+const PERFETTO_READER_TRANSITION_TRACK: u64 = 12;
+const PERFETTO_READER_STAGE_TRACK: u64 = 13;
 
 #[derive(Debug)]
 struct PerfettoTimedEvent {
@@ -141,7 +143,7 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
 
             push_perfetto_slice(
                 &mut events,
-                PERFETTO_DISPLAY_STATE_TRACK,
+                perfetto_async_track_for_event(span.event),
                 name,
                 cycles_to_ns_u64(start_cycles, hz),
                 cycles_to_ns_u64(end_cycles, hz),
@@ -249,6 +251,27 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
             event.name.as_deref(),
         );
     }
+
+    push_perfetto_track_descriptor(
+        &mut trace,
+        PERFETTO_READER_GROUP,
+        Some(PERFETTO_ROOT_TRACK),
+        "Reader",
+    );
+
+    push_perfetto_track_descriptor(
+        &mut trace,
+        PERFETTO_READER_TRANSITION_TRACK,
+        Some(PERFETTO_READER_GROUP),
+        "Chapter transition",
+    );
+
+    push_perfetto_track_descriptor(
+        &mut trace,
+        PERFETTO_READER_STAGE_TRACK,
+        Some(PERFETTO_READER_GROUP),
+        "Chapter loading",
+    );
 
     Ok(trace)
 }
@@ -359,18 +382,70 @@ fn perfetto_track_for_event(event: TraceEvent) -> u64 {
         TraceEvent::PresentBusy => PERFETTO_DISPLAY_BUSY_TRACK,
 
         TraceEvent::DisplayPhase => PERFETTO_DISPLAY_PHASE_TRACK,
+
+        TraceEvent::ReaderChapterTransition => PERFETTO_READER_TRANSITION_TRACK,
+
+        TraceEvent::ReaderChapterFind
+        | TraceEvent::ReaderChapterLoad
+        | TraceEvent::ReaderChapterStyles
+        | TraceEvent::ReaderChapterImages
+        | TraceEvent::ReaderChapterPaginate
+        | TraceEvent::ReaderChapterRegisterImages
+        | TraceEvent::ReaderChapterApply => PERFETTO_READER_STAGE_TRACK,
+    }
+}
+
+fn perfetto_async_track_for_event(event: TraceEvent) -> u64 {
+    match event {
+        TraceEvent::ReaderChapterTransition => PERFETTO_READER_TRANSITION_TRACK,
+
+        TraceEvent::ReaderChapterFind
+        | TraceEvent::ReaderChapterLoad
+        | TraceEvent::ReaderChapterStyles
+        | TraceEvent::ReaderChapterImages
+        | TraceEvent::ReaderChapterPaginate
+        | TraceEvent::ReaderChapterRegisterImages
+        | TraceEvent::ReaderChapterApply => PERFETTO_READER_STAGE_TRACK,
+
+        _ => PERFETTO_DISPLAY_STATE_TRACK,
     }
 }
 
 fn async_trace_name(event: TraceEvent, arg: u32) -> String {
-    if event == TraceEvent::DisplayPhase {
-        let phase = u8::try_from(arg).ok().and_then(DisplayPhase::from_id);
+    match event {
+        TraceEvent::DisplayPhase => {
+            let phase = u8::try_from(arg).ok().and_then(DisplayPhase::from_id);
 
-        match phase {
-            Some(DisplayPhase::PowerOn) => return "power_on_pending".to_owned(),
-            Some(DisplayPhase::PowerOff) => return "power_off_pending".to_owned(),
-            _ => {}
+            match phase {
+                Some(DisplayPhase::PowerOn) => return "power_on_pending".to_owned(),
+                Some(DisplayPhase::PowerOff) => return "power_off_pending".to_owned(),
+                _ => {}
+            }
         }
+
+        TraceEvent::ReaderChapterTransition => {
+            let direction = if arg & (1 << 31) != 0 {
+                "next"
+            } else {
+                "previous"
+            };
+
+            let from = arg & 0x7fff_ffff;
+
+            return format!("chapter_transition {direction} from={from}");
+        }
+
+        TraceEvent::ReaderChapterFind => return format!("chapter_find from={arg}"),
+        TraceEvent::ReaderChapterLoad => return format!("chapter_load spine={arg}"),
+        TraceEvent::ReaderChapterStyles => return format!("chapter_styles spine={arg}"),
+        TraceEvent::ReaderChapterImages => return format!("chapter_images spine={arg}"),
+        TraceEvent::ReaderChapterPaginate => return format!("chapter_paginate spine={arg}"),
+        TraceEvent::ReaderChapterApply => return format!("chapter_apply spine={arg}"),
+        TraceEvent::ReaderChapterRegisterImages => {
+            return format!("chapter_register_images spine={arg}");
+        }
+
+        _ => {}
     }
 
     trace_event_name(event, Some(arg))

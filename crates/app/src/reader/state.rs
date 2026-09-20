@@ -6,7 +6,8 @@ use crate::{
     ReaderChapter, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
     ReadingHistoryEntry,
     reader::{
-        READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN, READER_FONT_SIZE_STEP,
+        READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN,
+        READER_FONT_SIZE_STEP, perf,
     },
 };
 
@@ -320,6 +321,8 @@ impl ReaderState {
         let request = PendingChapterRequest { from, direction };
 
         self.pending_chapter = Some(request);
+
+        perf::begin_chapter_transition(from, direction);
 
         self.pending = Some(ReaderRequest::LoadAdjacentChapter {
             path: self.path.clone(),

@@ -87,6 +87,15 @@ define_named_u8_enum! {
         LayoutClearMeasureCaches = 16 => "layout_clear_measure_caches",
         LayoutFlow = 17 => "layout_flow",
         LayoutFinishBounds = 18 => "layout_finish_bounds",
+
+        ReaderChapterTransition = 19 => "reader_chapter_transition",
+        ReaderChapterFind = 20 => "reader_chapter_find",
+        ReaderChapterLoad = 21 => "reader_chapter_load",
+        ReaderChapterStyles = 22 => "reader_chapter_styles",
+        ReaderChapterImages = 23 => "reader_chapter_images",
+        ReaderChapterPaginate = 24 => "reader_chapter_paginate",
+        ReaderChapterRegisterImages = 25 => "reader_chapter_register_images",
+        ReaderChapterApply = 26 => "reader_chapter_apply",
     }
 }
 
