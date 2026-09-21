@@ -1,6 +1,8 @@
 use inkpaper_trace::{TraceEvent, profile_expr};
 
-use crate::{FontId, FontInstance, FontProperties, FontRegistry, GlyphId, Offset, Pixels};
+use crate::{
+    FontId, FontInstance, FontProperties, FontRegistry, GlyphId, Offset, Pixels, PreparedFont,
+};
 
 use self::arabic::MarkPlacement;
 
@@ -372,9 +374,8 @@ impl SimpleShaper {
         text: &str,
         output: &mut [ShapedGlyph],
     ) -> Result<ShapeSummary, ShapeError> {
-        let run = self.shape_into(registry, preferred_font, size_px, text, output)?;
-
-        Ok(ShapeSummary::new(run.len(), run.advance()))
+        self.prepare(registry, preferred_font)
+            .measure(registry, size_px, text, output)
     }
 
     pub fn shape_into<'out, 'font, const FONTS: usize>(
@@ -467,6 +468,97 @@ impl SimpleShaper {
                 prepared_font.as_ref(),
                 pair_positioning_cache,
             ),
+        )
+    }
+
+    pub fn prepare<'font, const FONTS: usize>(
+        self,
+        registry: &FontRegistry<'font, FONTS>,
+        preferred_font: FontId,
+    ) -> PreparedSimpleShaper<'font> {
+        let preferred_font = self.font_instance(preferred_font);
+        let prepared_font = registry.prepare_instance(preferred_font);
+
+        PreparedSimpleShaper {
+            shaper: self,
+            preferred_font,
+            prepared_font,
+        }
+    }
+}
+
+pub struct PreparedSimpleShaper<'font> {
+    shaper: SimpleShaper,
+    preferred_font: FontInstance,
+    prepared_font: Option<PreparedFont<'font>>,
+}
+
+impl<'font> PreparedSimpleShaper<'font> {
+    pub fn measure<const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        size_px: u16,
+        text: &str,
+        output: &mut [ShapedGlyph],
+    ) -> Result<ShapeSummary, ShapeError> {
+        let run = self.shape_into(registry, size_px, text, output)?;
+
+        Ok(ShapeSummary::new(run.len(), run.advance()))
+    }
+
+    pub fn shape_into<'out, const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        size_px: u16,
+        text: &str,
+        output: &'out mut [ShapedGlyph],
+    ) -> Result<ShapedRun<'out>, ShapeError> {
+        let mut state = ShapeState::new();
+
+        let summary = profile_expr!(
+            TraceEvent::LogicalShape,
+            arg = text.len(),
+            self.shaper.shape_piece_into_with_prepared_font(
+                registry,
+                self.preferred_font,
+                self.prepared_font.as_ref(),
+                size_px,
+                text,
+                &mut state,
+                output,
+            )?,
+        );
+
+        let glyph_count = summary.glyph_count();
+
+        profile_expr!(
+            TraceEvent::VisualOrder,
+            arg = glyph_count,
+            self.shaper.visual_order_with_prepared_font(
+                registry,
+                size_px,
+                text,
+                glyph_count,
+                &mut output[..glyph_count],
+                self.prepared_font.as_ref(),
+            ),
+        )
+    }
+
+    pub fn next_cluster_boundary<const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        size_px: u16,
+        text: &str,
+        from: usize,
+    ) -> Option<usize> {
+        self.shaper.next_cluster_boundary_with_prepared_font(
+            registry,
+            self.preferred_font,
+            self.prepared_font.as_ref(),
+            size_px,
+            text,
+            from,
         )
     }
 }

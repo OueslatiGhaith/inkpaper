@@ -1459,3 +1459,46 @@ fn gsub_required_ligature_shapes_lam_alef_without_presentation_glyphs() {
     assert_eq!(run.glyphs()[0].final_ligature_component(), Some(1));
     assert_eq!(run.advance(), px(9));
 }
+
+#[test]
+fn prepared_shaper_matches_regular_shaper_across_repeated_calls() {
+    static CHARACTERS: [char; 4] = ['A', 'B', ' ', '\u{0628}'];
+
+    static FONT: TestFont = TestFont {
+        characters: &CHARACTERS,
+        advance: px(8),
+        kerning: px(-1),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+
+    let font = registry.register(&FONT).unwrap();
+
+    let shaper = SimpleShaper::new();
+    let prepared = shaper.prepare(&registry, font);
+
+    for text in ["AB", "A B", "A \u{0628} B"] {
+        let mut regular = [ShapedGlyph::EMPTY; 16];
+
+        let mut reused = [ShapedGlyph::EMPTY; 16];
+
+        let regular_summary = shaper
+            .measure(&registry, font, 16, text, &mut regular)
+            .unwrap();
+
+        let prepared_summary = prepared.measure(&registry, 16, text, &mut reused).unwrap();
+
+        assert_eq!(prepared_summary, regular_summary);
+
+        let count = regular_summary.glyph_count();
+
+        assert_eq!(&reused[..count], &regular[..count]);
+
+        for from in text.char_indices().map(|(offset, _)| offset) {
+            assert_eq!(
+                prepared.next_cluster_boundary(&registry, 16, text, from),
+                shaper.next_cluster_boundary(&registry, font, 16, text, from),
+            );
+        }
+    }
+}

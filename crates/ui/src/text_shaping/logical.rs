@@ -268,6 +268,28 @@ impl SimpleShaper {
         text: &str,
         from: usize,
     ) -> Option<usize> {
+        let preferred_font = self.font_instance(preferred_font);
+        let prepared_font = registry.prepare_instance(preferred_font);
+
+        self.next_cluster_boundary_with_prepared_font(
+            registry,
+            preferred_font,
+            prepared_font.as_ref(),
+            size_px,
+            text,
+            from,
+        )
+    }
+
+    pub(super) fn next_cluster_boundary_with_prepared_font<'font, const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'font, FONTS>,
+        preferred_font: FontInstance,
+        prepared_font: Option<&PreparedFont<'font>>,
+        size_px: u16,
+        text: &str,
+        from: usize,
+    ) -> Option<usize> {
         if from >= text.len() || !text.is_char_boundary(from) {
             return None;
         }
@@ -275,26 +297,32 @@ impl SimpleShaper {
         let mut state = ShapeState::new();
         let mut next_boundary: Option<usize> = None;
 
-        self.shape_piece_with(
+        let result = self.try_shape_piece_with_prepared_font(
             registry,
             preferred_font,
+            prepared_font,
             size_px,
             text,
             &mut state,
             |glyph| {
                 let cluster = glyph.cluster();
                 if cluster <= from {
-                    return;
+                    return Ok::<(), Infallible>(());
                 }
 
                 next_boundary = Some(match next_boundary {
                     Some(current) => current.min(cluster),
                     None => cluster,
                 });
+
+                Ok(())
             },
         );
 
-        next_boundary.or(Some(text.len()))
+        match result {
+            Ok(_) => next_boundary.or(Some(text.len())),
+            Err(error) => match error {},
+        }
     }
 }
 
