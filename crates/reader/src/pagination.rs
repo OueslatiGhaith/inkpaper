@@ -332,6 +332,14 @@ where
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
     ) -> Result<(), M::Error> {
+        trace_aggregate!(self.trace, TraceAggregate::ReaderPaginationTextRuns);
+
+        trace_aggregate!(
+            self.trace,
+            TraceAggregate::ReaderPaginationTextRunBytes,
+            text.len(),
+        );
+
         let mut start = 0usize;
 
         while start < text.len() {

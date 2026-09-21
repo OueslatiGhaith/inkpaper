@@ -138,6 +138,12 @@ define_named_u8_enum! {
         ReaderPaginationLines = 11 => "reader_pagination_lines",
         ReaderPaginationPages = 12 => "reader_pagination_pages",
         ReaderPaginationImages = 13 => "reader_pagination_images",
+
+        ReaderMeasureResolveFont = 14 => "reader_measure_resolve_font",
+        ReaderMeasureShape = 15 => "reader_measure_shape",
+
+        ReaderPaginationTextRuns = 16 => "reader_pagination_text_runs",
+        ReaderPaginationTextRunBytes = 17 => "reader_pagination_text_run_bytes",
     }
 }
 

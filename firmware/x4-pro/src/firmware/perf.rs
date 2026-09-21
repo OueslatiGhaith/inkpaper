@@ -880,32 +880,28 @@ fn log_reader_pagination_aggregates(frame_id: u32) {
     use inkpaper_trace::{TraceAggregate, aggregate_record, clear_aggregate_records};
 
     let measure = aggregate_record(TraceAggregate::ReaderMeasureText);
-
     let measure_bytes = aggregate_record(TraceAggregate::ReaderMeasureTextBytes);
 
-    let boundary = aggregate_record(TraceAggregate::ReaderNextBoundary);
+    let resolve_font = aggregate_record(TraceAggregate::ReaderMeasureResolveFont);
+    let shape = aggregate_record(TraceAggregate::ReaderMeasureShape);
 
+    let boundary = aggregate_record(TraceAggregate::ReaderNextBoundary);
     let boundary_bytes = aggregate_record(TraceAggregate::ReaderNextBoundaryBytes);
 
     let line_height = aggregate_record(TraceAggregate::ReaderLineHeight);
 
     let blocks = aggregate_record(TraceAggregate::ReaderPaginationBlocks);
-
     let chars = aggregate_record(TraceAggregate::ReaderPaginationContentChars);
-
     let words = aggregate_record(TraceAggregate::ReaderPaginationWords);
-
     let whitespace = aggregate_record(TraceAggregate::ReaderPaginationWhitespaceRuns);
-
     let oversized = aggregate_record(TraceAggregate::ReaderPaginationOversizedWords);
-
     let fragments = aggregate_record(TraceAggregate::ReaderPaginationTextFragments);
-
     let lines = aggregate_record(TraceAggregate::ReaderPaginationLines);
-
     let pages = aggregate_record(TraceAggregate::ReaderPaginationPages);
-
     let images = aggregate_record(TraceAggregate::ReaderPaginationImages);
+
+    let text_runs = aggregate_record(TraceAggregate::ReaderPaginationTextRuns);
+    let text_run_bytes = aggregate_record(TraceAggregate::ReaderPaginationTextRunBytes);
 
     if measure.calls() != 0
         || boundary.calls() != 0
@@ -913,7 +909,7 @@ fn log_reader_pagination_aggregates(frame_id: u32) {
         || blocks.calls() != 0
     {
         info!(
-            "perf/reader_paginate frame={=u32} measure_calls={=u32} measure_cycles={=u64} measure_max_cycles={=u64} measure_bytes={=u64} measure_max_bytes={=u64} boundary_calls={=u32} boundary_cycles={=u64} boundary_max_cycles={=u64} boundary_bytes={=u64} boundary_max_bytes={=u64} line_height_calls={=u32} line_height_cycles={=u64} line_height_max_cycles={=u64}",
+            "perf/reader_paginate frame={=u32} measure_calls={=u32} measure_cycles={=u64} measure_max_cycles={=u64} measure_bytes={=u64} measure_max_bytes={=u64} boundary_calls={=u32} boundary_cycles={=u64} boundary_max_cycles={=u64} boundary_bytes={=u64} boundary_max_bytes={=u64} line_height_calls={=u32} line_height_cycles={=u64} line_height_max_cycles={=u64} resolve_calls={=u32} resolve_cycles={=u64} resolve_max_cycles={=u64} shape_calls={=u32} shape_cycles={=u64} shape_max_cycles={=u64}",
             frame_id,
             measure.calls(),
             measure.total(),
@@ -928,10 +924,16 @@ fn log_reader_pagination_aggregates(frame_id: u32) {
             line_height.calls(),
             line_height.total(),
             line_height.max(),
+            resolve_font.calls(),
+            resolve_font.total(),
+            resolve_font.max(),
+            shape.calls(),
+            shape.total(),
+            shape.max(),
         );
 
         info!(
-            "perf/reader_pagination_work frame={=u32} blocks={=u64} chars={=u64} words={=u64} whitespace_runs={=u64} oversized_words={=u64} fragments={=u64} lines={=u64} pages={=u64} images={=u64}",
+            "perf/reader_pagination_work frame={=u32} blocks={=u64} chars={=u64} words={=u64} whitespace_runs={=u64} oversized_words={=u64} fragments={=u64} lines={=u64} pages={=u64} images={=u64} text_runs={=u64} text_run_bytes={=u64} text_run_max_bytes={=u64}",
             frame_id,
             blocks.total(),
             chars.total(),
@@ -942,6 +944,9 @@ fn log_reader_pagination_aggregates(frame_id: u32) {
             lines.total(),
             pages.total(),
             images.total(),
+            text_runs.total(),
+            text_run_bytes.total(),
+            text_run_bytes.max(),
         );
     }
 

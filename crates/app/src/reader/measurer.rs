@@ -56,20 +56,28 @@ impl TextMeasurer for ReaderMeasurer {
         );
 
         profile_aggregate_expr!(self.trace, TraceAggregate::ReaderMeasureText, {
-            let font = self.resolve_font(style);
+            let font = profile_aggregate_expr!(
+                self.trace,
+                TraceAggregate::ReaderMeasureResolveFont,
+                self.resolve_font(style),
+            );
 
             let shaper = SimpleShaper::with_properties(font.properties());
 
-            let summary = shaper.measure(
-                &self.fonts,
-                font.id(),
-                style.font_size(),
-                text,
-                &mut self.glyphs,
+            let summary = profile_aggregate_expr!(
+                self.trace,
+                TraceAggregate::ReaderMeasureShape,
+                shaper.measure(
+                    &self.fonts,
+                    font.id(),
+                    style.font_size(),
+                    text,
+                    &mut self.glyphs,
+                ),
             )?;
 
             Ok(u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX))
-        },)
+        })
     }
 
     fn line_height(&mut self, style: ReaderTextStyle) -> Result<u32, Self::Error> {
@@ -83,7 +91,7 @@ impl TextMeasurer for ReaderMeasurer {
                     .get(),
             )
             .unwrap_or(u32::MAX))
-        },)
+        })
     }
 
     fn next_boundary(
@@ -104,7 +112,7 @@ impl TextMeasurer for ReaderMeasurer {
             let shaper = SimpleShaper::with_properties(font.properties());
 
             Ok(shaper.next_cluster_boundary(&self.fonts, font.id(), style.font_size(), text, from))
-        },)
+        })
     }
 }
 
