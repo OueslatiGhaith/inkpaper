@@ -144,6 +144,11 @@ define_named_u8_enum! {
 
         ReaderPaginationTextRuns = 16 => "reader_pagination_text_runs",
         ReaderPaginationTextRunBytes = 17 => "reader_pagination_text_run_bytes",
+
+        ReaderMeasureCacheHit = 18 => "reader_measure_cache_hit",
+        ReaderMeasureCacheMiss = 19 => "reader_measure_cache_miss",
+        ReaderMeasureCacheCollision = 20 => "reader_measure_cache_collision",
+        ReaderMeasureCacheBypass = 21 => "reader_measure_cache_bypass",
     }
 }
 
@@ -176,5 +181,14 @@ mod tests {
         }
 
         assert_eq!(TraceMetric::from_id(u8::MAX), None);
+    }
+
+    #[test]
+    fn trace_aggregate_ids_round_trip() {
+        for aggregate in TraceAggregate::ALL {
+            assert_eq!(TraceAggregate::from_id(aggregate.id()), Some(*aggregate),);
+        }
+
+        assert_eq!(TraceAggregate::from_id(u8::MAX), None);
     }
 }

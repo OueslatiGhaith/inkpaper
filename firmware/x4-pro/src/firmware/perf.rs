@@ -885,6 +885,11 @@ fn log_reader_pagination_aggregates(frame_id: u32) {
     let resolve_font = aggregate_record(TraceAggregate::ReaderMeasureResolveFont);
     let shape = aggregate_record(TraceAggregate::ReaderMeasureShape);
 
+    let cache_hits = aggregate_record(TraceAggregate::ReaderMeasureCacheHit);
+    let cache_misses = aggregate_record(TraceAggregate::ReaderMeasureCacheMiss);
+    let cache_collisions = aggregate_record(TraceAggregate::ReaderMeasureCacheCollision);
+    let cache_bypasses = aggregate_record(TraceAggregate::ReaderMeasureCacheBypass);
+
     let boundary = aggregate_record(TraceAggregate::ReaderNextBoundary);
     let boundary_bytes = aggregate_record(TraceAggregate::ReaderNextBoundaryBytes);
 
@@ -909,7 +914,7 @@ fn log_reader_pagination_aggregates(frame_id: u32) {
         || blocks.calls() != 0
     {
         info!(
-            "perf/reader_paginate frame={=u32} measure_calls={=u32} measure_cycles={=u64} measure_max_cycles={=u64} measure_bytes={=u64} measure_max_bytes={=u64} boundary_calls={=u32} boundary_cycles={=u64} boundary_max_cycles={=u64} boundary_bytes={=u64} boundary_max_bytes={=u64} line_height_calls={=u32} line_height_cycles={=u64} line_height_max_cycles={=u64} resolve_calls={=u32} resolve_cycles={=u64} resolve_max_cycles={=u64} shape_calls={=u32} shape_cycles={=u64} shape_max_cycles={=u64}",
+            "perf/reader_paginate frame={=u32} measure_calls={=u32} measure_cycles={=u64} measure_max_cycles={=u64} measure_bytes={=u64} measure_max_bytes={=u64} boundary_calls={=u32} boundary_cycles={=u64} boundary_max_cycles={=u64} boundary_bytes={=u64} boundary_max_bytes={=u64} line_height_calls={=u32} line_height_cycles={=u64} line_height_max_cycles={=u64} resolve_calls={=u32} resolve_cycles={=u64} resolve_max_cycles={=u64} shape_calls={=u32} shape_cycles={=u64} shape_max_cycles={=u64} cache_hits={=u32} cache_misses={=u32} cache_collisions={=u32} cache_bypasses={=u32}",
             frame_id,
             measure.calls(),
             measure.total(),
@@ -930,6 +935,10 @@ fn log_reader_pagination_aggregates(frame_id: u32) {
             shape.calls(),
             shape.total(),
             shape.max(),
+            cache_hits.calls(),
+            cache_misses.calls(),
+            cache_collisions.calls(),
+            cache_bypasses.calls(),
         );
 
         info!(

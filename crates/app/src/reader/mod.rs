@@ -3,6 +3,7 @@ use inkpaper_reader::{ReaderSettings, Viewport};
 mod document;
 mod images;
 mod loader;
+mod measure_cache;
 mod measurer;
 pub(crate) mod perf;
 mod preferences;

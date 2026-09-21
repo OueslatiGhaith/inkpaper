@@ -6,7 +6,13 @@ use inkpaper_ui::{
     PreparedSimpleShaper, ResolvedFont, ShapeError, ShapedGlyph, SimpleShaper,
 };
 
-use crate::reader::images::ChapterImageMetrics;
+use crate::reader::{
+    images::ChapterImageMetrics,
+    measure_cache::{
+        READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES, ReaderMeasureCache,
+        ReaderMeasureCacheLookup,
+    },
+};
 
 const READER_SHAPING_GLYPHS: usize = 128;
 
@@ -19,6 +25,8 @@ pub(super) struct ReaderMeasurer {
     glyphs: [ShapedGlyph; READER_SHAPING_GLYPHS],
     images: ChapterImageMetrics,
     trace: TraceAggregates,
+
+    measure_cache: ReaderMeasureCache<READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES>,
 }
 
 impl ReaderMeasurer {
@@ -50,6 +58,7 @@ impl ReaderMeasurer {
             glyphs: [ShapedGlyph::EMPTY; READER_SHAPING_GLYPHS],
             images,
             trace: TraceAggregates::new(),
+            measure_cache: ReaderMeasureCache::default(),
         })
     }
 
@@ -76,18 +85,54 @@ impl TextMeasurer for ReaderMeasurer {
         );
 
         profile_aggregate_expr!(self.trace, TraceAggregate::ReaderMeasureText, {
-            let shaper = match style.font_weight() {
-                ReaderFontWeight::Normal => &self.normal_shaper,
-                ReaderFontWeight::Bold => &self.bold_shaper,
+            let (cached_width, insertion_slot) = match self.measure_cache.lookup(text, style) {
+                ReaderMeasureCacheLookup::Hit(width) => {
+                    trace_aggregate!(self.trace, TraceAggregate::ReaderMeasureCacheHit,);
+
+                    (Some(width), None)
+                }
+
+                ReaderMeasureCacheLookup::Miss { slot, collision } => {
+                    trace_aggregate!(self.trace, TraceAggregate::ReaderMeasureCacheMiss,);
+
+                    if collision {
+                        trace_aggregate!(self.trace, TraceAggregate::ReaderMeasureCacheCollision,);
+                    }
+
+                    (None, Some(slot))
+                }
+
+                ReaderMeasureCacheLookup::Bypass => {
+                    trace_aggregate!(self.trace, TraceAggregate::ReaderMeasureCacheBypass,);
+
+                    (None, None)
+                }
             };
 
-            let summary = profile_aggregate_expr!(
-                self.trace,
-                TraceAggregate::ReaderMeasureShape,
-                shaper.measure(&self.fonts, style.font_size(), text, &mut self.glyphs,),
-            )?;
+            if let Some(width) = cached_width {
+                Ok(width)
+            } else {
+                let shaper = match style.font_weight() {
+                    ReaderFontWeight::Normal => &self.normal_shaper,
 
-            Ok(u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX))
+                    ReaderFontWeight::Bold => &self.bold_shaper,
+                };
+
+                let summary = profile_aggregate_expr!(
+                    self.trace,
+                    TraceAggregate::ReaderMeasureShape,
+                    shaper.measure(&self.fonts, style.font_size(), text, &mut self.glyphs,),
+                )?;
+
+                let width =
+                    u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX);
+
+                if let Some(slot) = insertion_slot {
+                    self.measure_cache.insert(slot, text, style, width);
+                }
+
+                Ok(width)
+            }
         },)
     }
 
