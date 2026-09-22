@@ -4,7 +4,6 @@ use clap::{Parser, Subcommand};
 
 mod fixtures;
 mod perf;
-mod trace;
 
 #[derive(Parser)]
 struct Cli {
@@ -21,24 +20,6 @@ enum Command {
     Perf {
         #[command(subcommand)]
         command: PerfCommand,
-    },
-
-    /// convert InkPaper firmware trace logs to Speedscope json
-    TraceSpeedscope {
-        /// firmware log containing trace/session and trace/span records
-        input: PathBuf,
-        /// output Speedscope json file
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-    },
-
-    /// convert InkPaper firmware trace logs to Perfetto trace
-    TracePerfetto {
-        /// firmware log containing trace/session and trace/span records
-        input: PathBuf,
-        /// output Perfetto trace file
-        #[arg(short, long)]
-        output: Option<PathBuf>,
     },
 }
 
@@ -59,14 +40,6 @@ fn main() -> anyhow::Result<()> {
             PerfCommand::Summary { input } => perf::summary(&input)?,
             PerfCommand::Compare { before, after } => perf::compare(&before, &after)?,
         },
-        Command::TraceSpeedscope { input, output } => {
-            let output = trace::convert_speedscope(&input, output.as_deref())?;
-            println!("wrote {}", output.display());
-        }
-        Command::TracePerfetto { input, output } => {
-            let output = trace::convert_perfetto(&input, output.as_deref())?;
-            println!("wrote {}", output.display());
-        }
     }
 
     Ok(())

@@ -80,7 +80,7 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
 
     #[cfg(feature = "trace")]
-    inkpaper_trace::set_clock(esp_hal::xtensa_lx::timer::get_cycle_count);
+    inkpaper_trace::set_clock(esp_hal::xtensa_lx::timer::get_cycle_count, perf::CLOCK_HZ);
 
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
     info!("PSRAM allocator initialized");

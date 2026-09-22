@@ -5,7 +5,6 @@ mod images;
 mod loader;
 mod measure_cache;
 mod measurer;
-pub(crate) mod perf;
 mod preferences;
 mod progress;
 mod state;

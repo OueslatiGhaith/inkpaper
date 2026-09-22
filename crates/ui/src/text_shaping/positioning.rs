@@ -1,5 +1,3 @@
-use inkpaper_trace::{TraceMetric, profile_metric_expr, profile_metric_scope};
-
 use crate::{
     FontRegistry, GlyphMetrics, Offset, PairPositioning, Pixels, PreparedFont,
     pair_cache::PairPositioningCache, px,
@@ -72,43 +70,39 @@ fn apply_visual_run_positioning<'font, const FONTS: usize, const SLOTS: usize>(
 
         let pair_positioning = match previous_base {
             Some(previous) if previous.font_instance() == shaped.font_instance() => {
-                profile_metric_expr!(
-                    TraceMetric::PairPositioning,
-                    match pair_positioning_cache.as_deref_mut() {
-                        Some(cache) => cache.get_or_compute(
-                            registry,
-                            prepared_font,
-                            shaped.font_instance(),
-                            previous.glyph(),
-                            shaped.glyph(),
-                            size_px,
-                            right_to_left,
-                        ),
+                match pair_positioning_cache.as_deref_mut() {
+                    Some(cache) => cache.get_or_compute(
+                        registry,
+                        prepared_font,
+                        shaped.font_instance(),
+                        previous.glyph(),
+                        shaped.glyph(),
+                        size_px,
+                        right_to_left,
+                    ),
 
-                        None => match prepared_font {
-                            Some(prepared) if prepared.instance() == shaped.font_instance() => {
-                                prepared.pair_positioning(
+                    None => match prepared_font {
+                        Some(prepared) if prepared.instance() == shaped.font_instance() => prepared
+                            .pair_positioning(
+                                previous.glyph(),
+                                shaped.glyph(),
+                                size_px,
+                                right_to_left,
+                            ),
+
+                        _ => registry
+                            .resolve_instance(shaped.font_instance())
+                            .map(|face| {
+                                face.pair_positioning(
                                     previous.glyph(),
                                     shaped.glyph(),
                                     size_px,
                                     right_to_left,
                                 )
-                            }
-
-                            _ => registry
-                                .resolve_instance(shaped.font_instance())
-                                .map(|face| {
-                                    face.pair_positioning(
-                                        previous.glyph(),
-                                        shaped.glyph(),
-                                        size_px,
-                                        right_to_left,
-                                    )
-                                })
-                                .unwrap_or(PairPositioning::Kerning(px(0)),),
-                        },
+                            })
+                            .unwrap_or(PairPositioning::Kerning(px(0))),
                     },
-                )
+                }
             }
 
             _ => PairPositioning::Kerning(px(0)),
@@ -192,8 +186,6 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
     base: ShapedGlyph,
     marks: &mut [ShapedGlyph],
 ) -> bool {
-    profile_metric_scope!(TraceMetric::MarkAnchors);
-
     let mut previous_mark: Option<ShapedGlyph> = None;
 
     for mark in marks.iter_mut() {
@@ -272,8 +264,6 @@ fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
     base: ShapedGlyph,
     marks: &mut [ShapedGlyph],
 ) {
-    profile_metric_scope!(TraceMetric::MarkMetrics);
-
     let fallback_offset = Offset::new(Pixels::ZERO - base.base_advance(), base.offset().y);
 
     let Some(base_metrics) = registry

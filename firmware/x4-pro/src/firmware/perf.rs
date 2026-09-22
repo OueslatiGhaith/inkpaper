@@ -1,3 +1,6 @@
+#[cfg(feature = "trace")]
+use core::fmt::Write;
+
 #[cfg(any(feature = "performance", feature = "trace"))]
 use defmt::info;
 #[cfg(feature = "performance")]
@@ -6,8 +9,6 @@ use embedded_hal_async::delay::DelayNs;
 use epd_bus::{BusyPolarity, EpdInterface};
 #[cfg(feature = "performance")]
 use esp_hal::xtensa_lx::timer::get_cycle_count;
-#[cfg(feature = "performance")]
-use inkpaper_trace::{DisplayPhase, TraceEvent, profile_expr, profile_span};
 
 #[cfg(feature = "performance")]
 use crate::firmware::{
@@ -225,7 +226,7 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
                 let phase = self
                     .trace_plan
                     .as_mut()
-                    .map(|plan| plan.next_refresh_phase())
+                    .map(DisplayTracePlan::next_refresh_phase)
                     .unwrap_or(DisplayPhase::Unknown);
 
                 Some(phase)
@@ -241,15 +242,6 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
         };
 
         self.pending_phase = Some(phase);
-
-        #[cfg(feature = "trace")]
-        {
-            let _ = inkpaper_trace::async_begin(
-                TraceEvent::DisplayPhase,
-                DISPLAY_ASYNC_TRACE_ID,
-                u32::from(phase.id()),
-            );
-        }
     }
 
     pub(crate) fn expect_power_off_completion(&mut self) {
@@ -335,11 +327,6 @@ where
 
         if ready && self.pending_phase == Some(DisplayPhase::PowerOff) {
             self.pending_phase = None;
-
-            #[cfg(feature = "trace")]
-            {
-                let _ = inkpaper_trace::async_end(TraceEvent::DisplayPhase, DISPLAY_ASYNC_TRACE_ID);
-            }
         }
 
         result
@@ -359,25 +346,18 @@ where
 
         let timer = CycleTimer::start();
 
-        let phase_trace = profile_span!(TraceEvent::DisplayPhase, arg = phase.id());
+        let phase_trace = phase.trace_span();
 
-        let result = profile_expr!(
-            TraceEvent::PresentBusy,
-            arg = wait_index,
-            self.inner.wait_busy(polarity, delay).await,
+        let busy_trace = inkpaper_trace::span!(
+            target: "display.present",
+            "busy_wait",
+            index = wait_index,
         );
 
-        drop(phase_trace);
+        let result = self.inner.wait_busy(polarity, delay).await;
 
-        // this intentionally runs even if this ProfiledEpdBus did not observe the command
-        // which started the operation.
-        //
-        // that is what lets a future deferred PowerOff begin during one presentation
-        // and be completed by a readiness wait in the next.
-        #[cfg(feature = "trace")]
-        if result.is_ok() {
-            let _ = inkpaper_trace::async_end(TraceEvent::DisplayPhase, DISPLAY_ASYNC_TRACE_ID);
-        }
+        drop(busy_trace);
+        drop(phase_trace);
 
         self.record_busy(timer.elapsed(), true);
 
@@ -425,15 +405,70 @@ const EPD_COMMAND_POWER_ON: u8 = 0x04;
 #[cfg(feature = "performance")]
 const EPD_COMMAND_DISPLAY_REFRESH: u8 = 0x12;
 
-#[cfg(feature = "trace")]
-const DISPLAY_ASYNC_TRACE_ID: u32 = 1;
-
 #[cfg(feature = "performance")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DisplayController {
     Ssd1677,
     Uc8179,
     Uc8279,
+}
+
+#[cfg(feature = "performance")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisplayPhase {
+    Unknown,
+    PowerOn,
+    BinaryFullRefresh,
+    BinaryFastRefresh,
+    GrayscaleBaseRefresh,
+    GrayscalePrecondition,
+    GrayscaleActivate,
+    GrayscaleRefresh,
+    PowerOff,
+}
+
+#[cfg(feature = "performance")]
+impl DisplayPhase {
+    #[inline(always)]
+    fn trace_span(self) -> inkpaper_trace::Span {
+        match self {
+            Self::Unknown => {
+                inkpaper_trace::span!(target: "display.phase", "unknown")
+            }
+
+            Self::PowerOn => {
+                inkpaper_trace::span!(target: "display.phase", "power_on")
+            }
+
+            Self::BinaryFullRefresh => {
+                inkpaper_trace::span!(target: "display.phase", "binary_full_refresh")
+            }
+
+            Self::BinaryFastRefresh => {
+                inkpaper_trace::span!(target: "display.phase", "binary_fast_refresh")
+            }
+
+            Self::GrayscaleBaseRefresh => {
+                inkpaper_trace::span!(target: "display.phase", "grayscale_base_refresh")
+            }
+
+            Self::GrayscalePrecondition => {
+                inkpaper_trace::span!(target: "display.phase", "grayscale_precondition")
+            }
+
+            Self::GrayscaleActivate => {
+                inkpaper_trace::span!(target: "display.phase", "grayscale_activate")
+            }
+
+            Self::GrayscaleRefresh => {
+                inkpaper_trace::span!(target: "display.phase", "grayscale_refresh")
+            }
+
+            Self::PowerOff => {
+                inkpaper_trace::span!(target: "display.phase", "power_off")
+            }
+        }
+    }
 }
 
 #[cfg(feature = "performance")]
@@ -750,66 +785,6 @@ pub(crate) fn log_ordered_coverage(frame_id: u32, calls: u64, pixels: u64, cycle
     );
 }
 
-#[cfg(feature = "trace")]
-pub(crate) fn log_trace(frame_id: u32, summary: inkpaper_trace::TraceSummary) {
-    let spans = u32::try_from(summary.records()).unwrap_or(u32::MAX);
-
-    info!(
-        "trace/session id={=u32} frame={=u32} hz={=u32} origin={=u32} spans={=u32} dropped={=u32} open={=u8}",
-        summary.session_id(),
-        frame_id,
-        CLOCK_HZ,
-        summary.origin_cycles(),
-        spans,
-        summary.dropped(),
-        summary.open_spans(),
-    );
-
-    for index in 0..summary.records() {
-        let Some(record) = inkpaper_trace::record(index) else {
-            continue;
-        };
-
-        info!(
-            "trace/span event={=u8} depth={=u8} start={=u32} cycles={=u32} arg={=u32}",
-            record.event().id(),
-            record.depth(),
-            record.start_cycles(),
-            record.duration_cycles(),
-            record.arg(),
-        );
-    }
-
-    log_trace_metrics(frame_id);
-    log_reader_pagination_aggregates(frame_id);
-
-    let async_records = inkpaper_trace::async_record_count();
-
-    info!(
-        "trace/async_summary records={=usize} dropped={=u32} open={=u8}",
-        async_records,
-        inkpaper_trace::async_dropped(),
-        inkpaper_trace::async_open_count(),
-    );
-
-    for index in 0..async_records {
-        let Some(record) = inkpaper_trace::async_record(index) else {
-            continue;
-        };
-
-        info!(
-            "trace/async event={=u8} id={=u32} start={=u32} cycles={=u32} arg={=u32}",
-            record.event().id(),
-            record.id(),
-            record.start_cycles(),
-            record.duration_cycles(),
-            record.arg(),
-        );
-    }
-
-    inkpaper_trace::clear_async_records();
-}
-
 #[cfg(feature = "performance")]
 pub(crate) fn log_render_invalidation(frame_id: u32, invalidation: inkpaper_ui::Invalidation) {
     info!(
@@ -819,145 +794,84 @@ pub(crate) fn log_render_invalidation(frame_id: u32, invalidation: inkpaper_ui::
 }
 
 #[cfg(feature = "trace")]
-fn log_trace_metrics(frame_id: u32) {
-    use inkpaper_trace::{TraceMetric, metric_record};
+struct DefmtTraceWriter<const N: usize> {
+    bytes: [u8; N],
+    len: usize,
+}
 
-    let text_measure = metric_record(TraceMetric::TextMeasure);
+#[cfg(feature = "trace")]
+impl<const N: usize> DefmtTraceWriter<N> {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; N],
+            len: 0,
+        }
+    }
 
-    let bidi_build = metric_record(TraceMetric::BidiBuildRuns);
-    let bidi_levels = metric_record(TraceMetric::BidiResolveLevels);
-    let bidi_mirror = metric_record(TraceMetric::BidiMirror);
-    let bidi_reorder = metric_record(TraceMetric::BidiReorder);
+    fn push(&mut self, value: &str) -> core::fmt::Result {
+        let end = self.len.checked_add(value.len()).ok_or(core::fmt::Error)?;
 
-    let font_resolve = metric_record(TraceMetric::FontResolve);
-    let pair = metric_record(TraceMetric::PairPositioning);
-    let face_parse = metric_record(TraceMetric::TtfFaceParse);
-    let gpos = metric_record(TraceMetric::GposPairLookup);
-    let legacy = metric_record(TraceMetric::LegacyKerning);
-    let mark_anchors = metric_record(TraceMetric::MarkAnchors);
-    let mark_metrics = metric_record(TraceMetric::MarkMetrics);
+        if end > self.bytes.len() {
+            return Err(core::fmt::Error);
+        }
 
-    if text_measure.calls() != 0
-        || bidi_build.calls() != 0
-        || pair.calls() != 0
-        || face_parse.calls() != 0
-    {
-        info!(
-            "perf/text_shape frame={=u32} measure_calls={=u32} measure_cycles={=u64} bidi_build_calls={=u32} bidi_build_cycles={=u64} bidi_levels_cycles={=u64} bidi_mirror_cycles={=u64} bidi_reorder_cycles={=u64}",
-            frame_id,
-            text_measure.calls(),
-            text_measure.cycles(),
-            bidi_build.calls(),
-            bidi_build.cycles(),
-            bidi_levels.cycles(),
-            bidi_mirror.cycles(),
-            bidi_reorder.cycles(),
-        );
+        self.bytes[self.len..end].copy_from_slice(value.as_bytes());
 
-        info!(
-            "perf/text_position frame={=u32} resolve_calls={=u32} resolve_cycles={=u64} pair_calls={=u32} pair_cycles={=u64} face_parse_calls={=u32} face_parse_cycles={=u64} gpos_calls={=u32} gpos_cycles={=u64} legacy_calls={=u32} legacy_cycles={=u64} mark_anchor_calls={=u32} mark_anchor_cycles={=u64} mark_metric_calls={=u32} mark_metric_cycles={=u64}",
-            frame_id,
-            font_resolve.calls(),
-            font_resolve.cycles(),
-            pair.calls(),
-            pair.cycles(),
-            face_parse.calls(),
-            face_parse.cycles(),
-            gpos.calls(),
-            gpos.cycles(),
-            legacy.calls(),
-            legacy.cycles(),
-            mark_anchors.calls(),
-            mark_anchors.cycles(),
-            mark_metrics.calls(),
-            mark_metrics.cycles(),
-        );
+        self.len = end;
+
+        Ok(())
+    }
+
+    fn flush_line(&mut self) -> core::fmt::Result {
+        if self.len == 0 {
+            return Ok(());
+        }
+
+        let line = core::str::from_utf8(&self.bytes[..self.len]).map_err(|_| core::fmt::Error)?;
+
+        defmt::info!("{=str}", line);
+
+        self.len = 0;
+
+        Ok(())
+    }
+
+    fn finish(&mut self) -> core::fmt::Result {
+        self.flush_line()
     }
 }
 
 #[cfg(feature = "trace")]
-fn log_reader_pagination_aggregates(frame_id: u32) {
-    use inkpaper_trace::{TraceAggregate, aggregate_record, clear_aggregate_records};
+impl<const N: usize> Write for DefmtTraceWriter<N> {
+    fn write_str(&mut self, value: &str) -> core::fmt::Result {
+        let mut remaining = value;
 
-    let measure = aggregate_record(TraceAggregate::ReaderMeasureText);
-    let measure_bytes = aggregate_record(TraceAggregate::ReaderMeasureTextBytes);
+        while let Some(newline) = remaining.find('\n') {
+            let line = &remaining[..newline];
 
-    let resolve_font = aggregate_record(TraceAggregate::ReaderMeasureResolveFont);
-    let shape = aggregate_record(TraceAggregate::ReaderMeasureShape);
+            self.push(line)?;
+            self.flush_line()?;
 
-    let cache_hits = aggregate_record(TraceAggregate::ReaderMeasureCacheHit);
-    let cache_misses = aggregate_record(TraceAggregate::ReaderMeasureCacheMiss);
-    let cache_collisions = aggregate_record(TraceAggregate::ReaderMeasureCacheCollision);
-    let cache_bypasses = aggregate_record(TraceAggregate::ReaderMeasureCacheBypass);
+            remaining = &remaining[newline + 1..];
+        }
 
-    let boundary = aggregate_record(TraceAggregate::ReaderNextBoundary);
-    let boundary_bytes = aggregate_record(TraceAggregate::ReaderNextBoundaryBytes);
-
-    let line_height = aggregate_record(TraceAggregate::ReaderLineHeight);
-
-    let blocks = aggregate_record(TraceAggregate::ReaderPaginationBlocks);
-    let chars = aggregate_record(TraceAggregate::ReaderPaginationContentChars);
-    let words = aggregate_record(TraceAggregate::ReaderPaginationWords);
-    let whitespace = aggregate_record(TraceAggregate::ReaderPaginationWhitespaceRuns);
-    let oversized = aggregate_record(TraceAggregate::ReaderPaginationOversizedWords);
-    let fragments = aggregate_record(TraceAggregate::ReaderPaginationTextFragments);
-    let lines = aggregate_record(TraceAggregate::ReaderPaginationLines);
-    let pages = aggregate_record(TraceAggregate::ReaderPaginationPages);
-    let images = aggregate_record(TraceAggregate::ReaderPaginationImages);
-
-    let text_runs = aggregate_record(TraceAggregate::ReaderPaginationTextRuns);
-    let text_run_bytes = aggregate_record(TraceAggregate::ReaderPaginationTextRunBytes);
-
-    if measure.calls() != 0
-        || boundary.calls() != 0
-        || line_height.calls() != 0
-        || blocks.calls() != 0
-    {
-        info!(
-            "perf/reader_paginate frame={=u32} measure_calls={=u32} measure_cycles={=u64} measure_max_cycles={=u64} measure_bytes={=u64} measure_max_bytes={=u64} boundary_calls={=u32} boundary_cycles={=u64} boundary_max_cycles={=u64} boundary_bytes={=u64} boundary_max_bytes={=u64} line_height_calls={=u32} line_height_cycles={=u64} line_height_max_cycles={=u64} resolve_calls={=u32} resolve_cycles={=u64} resolve_max_cycles={=u64} shape_calls={=u32} shape_cycles={=u64} shape_max_cycles={=u64} cache_hits={=u32} cache_misses={=u32} cache_collisions={=u32} cache_bypasses={=u32}",
-            frame_id,
-            measure.calls(),
-            measure.total(),
-            measure.max(),
-            measure_bytes.total(),
-            measure_bytes.max(),
-            boundary.calls(),
-            boundary.total(),
-            boundary.max(),
-            boundary_bytes.total(),
-            boundary_bytes.max(),
-            line_height.calls(),
-            line_height.total(),
-            line_height.max(),
-            resolve_font.calls(),
-            resolve_font.total(),
-            resolve_font.max(),
-            shape.calls(),
-            shape.total(),
-            shape.max(),
-            cache_hits.calls(),
-            cache_misses.calls(),
-            cache_collisions.calls(),
-            cache_bypasses.calls(),
-        );
-
-        info!(
-            "perf/reader_pagination_work frame={=u32} blocks={=u64} chars={=u64} words={=u64} whitespace_runs={=u64} oversized_words={=u64} fragments={=u64} lines={=u64} pages={=u64} images={=u64} text_runs={=u64} text_run_bytes={=u64} text_run_max_bytes={=u64}",
-            frame_id,
-            blocks.total(),
-            chars.total(),
-            words.total(),
-            whitespace.total(),
-            oversized.total(),
-            fragments.total(),
-            lines.total(),
-            pages.total(),
-            images.total(),
-            text_runs.total(),
-            text_run_bytes.total(),
-            text_run_bytes.max(),
-        );
+        self.push(remaining)
     }
+}
 
-    clear_aggregate_records();
+#[cfg(feature = "trace")]
+pub(crate) fn log_trace(capture: inkpaper_trace::TraceCapture) {
+    const TRACE_LINE_BYTES: usize = 512;
+
+    let mut writer = DefmtTraceWriter::<TRACE_LINE_BYTES>::new();
+
+    let result = inkpaper_trace::write_text_capture(capture, &mut writer).and_then(|_| {
+        writer
+            .finish()
+            .map_err(|_| inkpaper_trace::TextEncodeError::Write)
+    });
+
+    if result.is_err() {
+        info!("trace/v2 encode_error session={=u32}", capture.session_id(),);
+    }
 }

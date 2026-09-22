@@ -7,9 +7,6 @@ edition = "2024"
 default = []
 recording = []
 
-[dependencies]
-inkpaper-trace-macros = { path = "../trace-macros" }
-
 [target.'cfg(target_os = "none")'.dependencies]
 critical-section = { workspace = true }
 

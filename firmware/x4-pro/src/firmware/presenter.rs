@@ -1,6 +1,5 @@
 #[cfg(feature = "trace")]
 use inkpaper_trace::TraceSession;
-use inkpaper_trace::{TraceEvent, profile_expr, profile_span};
 use inkpaper_ui::{
     RuntimeResources,
     backend::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
@@ -377,7 +376,11 @@ fn render_invalidation(
     #[cfg(feature = "trace")]
     let trace_session = TraceSession::start();
 
-    let render_trace = profile_span!(TraceEvent::Render);
+    let render_trace = inkpaper_trace::span!(
+        target: "ui.render",
+        "render",
+        frame = frame_id,
+    );
 
     #[cfg(feature = "performance")]
     let mut timings = RenderTimings::default();
@@ -396,12 +399,16 @@ fn render_invalidation(
                 #[cfg(feature = "performance")]
                 let layout_timer = CycleTimer::start();
 
-                profile_expr!(
-                    TraceEvent::Layout,
+                {
+                    let _trace = inkpaper_trace::span!(
+                        target: "ui.render",
+                        "layout",
+                    );
+
                     runtime
                         .layout(DISPLAY_SIZE)
-                        .expect("layout requires a mounted root",),
-                );
+                        .expect("layout requires a mounted root");
+                }
 
                 #[cfg(feature = "performance")]
                 {
@@ -412,10 +419,14 @@ fn render_invalidation(
                 #[cfg(feature = "performance")]
                 let rebuild_timer = CycleTimer::start();
 
-                profile_expr!(
-                    TraceEvent::Rebuild,
-                    runtime.rebuild().expect("UI rebuild capacity exceeded",),
-                );
+                {
+                    let _trace = inkpaper_trace::span!(
+                        target: "ui.render",
+                        "rebuild",
+                    );
+
+                    runtime.rebuild().expect("UI rebuild capacity exceeded");
+                }
 
                 #[cfg(feature = "performance")]
                 {
@@ -425,12 +436,16 @@ fn render_invalidation(
                 #[cfg(feature = "performance")]
                 let layout_timer = CycleTimer::start();
 
-                profile_expr!(
-                    TraceEvent::Layout,
+                {
+                    let _trace = inkpaper_trace::span!(
+                        target: "ui.render",
+                        "layout",
+                    );
+
                     runtime
                         .layout(DISPLAY_SIZE)
-                        .expect("rebuilt UI must have a root",),
-                );
+                        .expect("rebuilt UI must have a root");
+                }
 
                 #[cfg(feature = "performance")]
                 {
@@ -442,10 +457,14 @@ fn render_invalidation(
         #[cfg(feature = "performance")]
         let clear_timer = CycleTimer::start();
 
-        profile_expr!(
-            TraceEvent::Clear,
-            painter.clear_damage(damage, Color::WHITE,).unwrap(),
-        );
+        {
+            let _trace = inkpaper_trace::span!(
+                target: "ui.render",
+                "clear",
+            );
+
+            painter.clear_damage(damage, Color::WHITE).unwrap();
+        }
 
         #[cfg(feature = "performance")]
         {
@@ -455,13 +474,17 @@ fn render_invalidation(
         #[cfg(feature = "performance")]
         let paint_timer = CycleTimer::start();
 
-        let paint_report = profile_expr!(
-            TraceEvent::Paint,
+        let paint_report = {
+            let _trace = inkpaper_trace::span!(
+                target: "ui.render",
+                "paint",
+            );
+
             runtime
-                .paint_with_damage(damage, &mut painter,)
+                .paint_with_damage(damage, &mut painter)
                 .unwrap()
-                .expect("painting requires a mounted root",),
-        );
+                .expect("painting requires a mounted root")
+        };
 
         #[cfg(feature = "performance")]
         {
@@ -476,7 +499,14 @@ fn render_invalidation(
     #[cfg(feature = "performance")]
     let damage_timer = CycleTimer::start();
 
-    let physical_damage = profile_expr!(TraceEvent::Damage, physical_damage(&display, damage,)?,);
+    let physical_damage = {
+        let _trace = inkpaper_trace::span!(
+            target: "ui.render",
+            "damage",
+        );
+
+        physical_damage(&display, damage)?
+    };
 
     #[cfg(feature = "performance")]
     {
@@ -502,7 +532,7 @@ fn render_invalidation(
     drop(render_trace);
 
     #[cfg(feature = "trace")]
-    let trace_summary = trace_session.finish();
+    let trace_capture = trace_session.finish();
 
     #[cfg(feature = "performance")]
     {
@@ -516,7 +546,7 @@ fn render_invalidation(
     }
 
     #[cfg(feature = "trace")]
-    crate::firmware::perf::log_trace(frame_id, trace_summary);
+    crate::firmware::perf::log_trace(trace_capture);
 
     #[cfg(feature = "performance")]
     let perf_report = FramePerfReport::new(timings);

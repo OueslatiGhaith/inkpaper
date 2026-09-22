@@ -1,5 +1,3 @@
-use inkpaper_trace::{TraceEvent, profile_expr};
-
 use crate::{
     FontId, FontInstance, FontProperties, FontRegistry, GlyphId, Offset, Pixels, PreparedFont,
 };
@@ -391,33 +389,25 @@ impl SimpleShaper {
 
         let mut state = ShapeState::new();
 
-        let summary = profile_expr!(
-            TraceEvent::LogicalShape,
-            arg = text.len(),
-            self.shape_piece_into_with_prepared_font(
-                registry,
-                preferred_font,
-                prepared_font.as_ref(),
-                size_px,
-                text,
-                &mut state,
-                output,
-            )?,
-        );
+        let summary = self.shape_piece_into_with_prepared_font(
+            registry,
+            preferred_font,
+            prepared_font.as_ref(),
+            size_px,
+            text,
+            &mut state,
+            output,
+        )?;
 
         let glyph_count = summary.glyph_count();
 
-        profile_expr!(
-            TraceEvent::VisualOrder,
-            arg = glyph_count,
-            self.visual_order_with_prepared_font(
-                registry,
-                size_px,
-                text,
-                glyph_count,
-                &mut output[..glyph_count],
-                prepared_font.as_ref(),
-            ),
+        self.visual_order_with_prepared_font(
+            registry,
+            size_px,
+            text,
+            glyph_count,
+            &mut output[..glyph_count],
+            prepared_font.as_ref(),
         )
     }
 
@@ -440,34 +430,26 @@ impl SimpleShaper {
 
         let mut state = ShapeState::new();
 
-        let summary = profile_expr!(
-            TraceEvent::LogicalShape,
-            arg = text.len(),
-            self.shape_piece_into_with_prepared_font(
-                registry,
-                preferred_font,
-                prepared_font.as_ref(),
-                size_px,
-                text,
-                &mut state,
-                output,
-            )?,
-        );
+        let summary = self.shape_piece_into_with_prepared_font(
+            registry,
+            preferred_font,
+            prepared_font.as_ref(),
+            size_px,
+            text,
+            &mut state,
+            output,
+        )?;
 
         let glyph_count = summary.glyph_count();
 
-        profile_expr!(
-            TraceEvent::VisualOrder,
-            arg = glyph_count,
-            self.visual_order_with_pair_positioning_cache(
-                registry,
-                size_px,
-                text,
-                glyph_count,
-                &mut output[..glyph_count],
-                prepared_font.as_ref(),
-                pair_positioning_cache,
-            ),
+        self.visual_order_with_pair_positioning_cache(
+            registry,
+            size_px,
+            text,
+            glyph_count,
+            &mut output[..glyph_count],
+            prepared_font.as_ref(),
+            pair_positioning_cache,
         )
     }
 
@@ -515,33 +497,25 @@ impl<'font> PreparedSimpleShaper<'font> {
     ) -> Result<ShapedRun<'out>, ShapeError> {
         let mut state = ShapeState::new();
 
-        let summary = profile_expr!(
-            TraceEvent::LogicalShape,
-            arg = text.len(),
-            self.shaper.shape_piece_into_with_prepared_font(
-                registry,
-                self.preferred_font,
-                self.prepared_font.as_ref(),
-                size_px,
-                text,
-                &mut state,
-                output,
-            )?,
-        );
+        let summary = self.shaper.shape_piece_into_with_prepared_font(
+            registry,
+            self.preferred_font,
+            self.prepared_font.as_ref(),
+            size_px,
+            text,
+            &mut state,
+            output,
+        )?;
 
         let glyph_count = summary.glyph_count();
 
-        profile_expr!(
-            TraceEvent::VisualOrder,
-            arg = glyph_count,
-            self.shaper.visual_order_with_prepared_font(
-                registry,
-                size_px,
-                text,
-                glyph_count,
-                &mut output[..glyph_count],
-                self.prepared_font.as_ref(),
-            ),
+        self.shaper.visual_order_with_prepared_font(
+            registry,
+            size_px,
+            text,
+            glyph_count,
+            &mut output[..glyph_count],
+            self.prepared_font.as_ref(),
         )
     }
 

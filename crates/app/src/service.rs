@@ -6,7 +6,6 @@ use inkpaper_ui::{Entity, EntityAccessError, ResourceRuntimeApi, RuntimeApi};
 use crate::{
     BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest, ReaderSession, ReadingHistory, ReadingHistoryRequest,
-    reader::perf::{self, ChapterTraceSpan, ChapterTraceStage},
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
@@ -285,65 +284,31 @@ where
                 from,
                 direction,
             } => {
-                let transition_id = perf::chapter_transition_id(from, direction);
+                let chapter = match self.reader_session.as_mut() {
+                    Some(session) if session.path() == path => session
+                        .load_adjacent_chapter(from, direction)
+                        .await
+                        .ok()
+                        .flatten(),
 
-                let chapter = {
-                    let _trace =
-                        ChapterTraceSpan::start(ChapterTraceStage::Find, transition_id, from.get());
-
-                    match self.reader_session.as_mut() {
-                        Some(session) if session.path() == path => session
-                            .load_adjacent_chapter(from, direction)
-                            .await
-                            .ok()
-                            .flatten(),
-
-                        _ => None,
-                    }
+                    _ => None,
                 };
 
-                let apply_result = match chapter {
+                match chapter {
                     Some(mut chapter) => {
-                        let spine = chapter.spine().get();
+                        chapter.register_images(runtime);
 
-                        {
-                            let _trace = ChapterTraceSpan::start(
-                                ChapterTraceStage::RegisterImages,
-                                spine,
-                                spine,
-                            );
-
-                            chapter.register_images(runtime);
-                        }
-
-                        {
-                            let _trace =
-                                ChapterTraceSpan::start(ChapterTraceStage::Apply, spine, spine);
-
-                            runtime.update(app, move |app, cx| {
-                                app.apply_reader_chapter(path, from, direction, chapter, cx)
-                            })
-                        }
+                        runtime.update(app, move |app, cx| {
+                            app.apply_reader_chapter(path, from, direction, chapter, cx)
+                        })?;
                     }
 
                     None => {
-                        let _trace = ChapterTraceSpan::start(
-                            ChapterTraceStage::Apply,
-                            transition_id,
-                            from.get(),
-                        );
-
                         runtime.update(app, move |app, _| {
                             app.finish_reader_chapter_request(path, from, direction)
-                        })
+                        })?;
                     }
-                };
-
-                // end this before propagating an EntityAccessError so a failed
-                // service operation cannot leave an async trace permanently open.
-                perf::end_chapter_transition(from, direction);
-
-                apply_result?;
+                }
             }
 
             ReaderRequest::RepaginateChapter {

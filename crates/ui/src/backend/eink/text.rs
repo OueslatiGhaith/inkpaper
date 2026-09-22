@@ -1,5 +1,4 @@
 use embedded_graphics::prelude::DrawTarget as EgDrawTarget;
-use inkpaper_trace::{TraceEvent, profile, profile_expr};
 
 use crate::{
     Color, FontId, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
@@ -162,7 +161,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[profile(TraceEvent::TextRun, arg = text.len())]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_text_run_to<
     D,
     const FONTS: usize,
@@ -200,42 +199,34 @@ where
 
     let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
 
-    let run = profile_expr!(
-        TraceEvent::Shape,
-        arg = text.len(),
-        shaper
-            .shape_into_with_pair_positioning_cache(
-                registry,
-                font_instance.font(),
-                size_px,
-                text,
-                &mut glyphs,
-                pair_positioning_cache,
-            )
-            .map_err(EInkError::Shape)?,
-    );
+    let run = shaper
+        .shape_into_with_pair_positioning_cache(
+            registry,
+            font_instance.font(),
+            size_px,
+            text,
+            &mut glyphs,
+            pair_positioning_cache,
+        )
+        .map_err(EInkError::Shape)?;
 
     let glyph_count = run.len();
 
-    // this run was already positioned by its caller. Do not perform another alignment/layout
-    // pass here.
+    // this run was already positioned by its caller. Do not perform another
+    // alignment/layout pass here.
     let mut pen_x = bounds.origin.x;
 
-    profile_expr!(
-        TraceEvent::Glyphs,
-        arg = glyph_count,
-        draw_shaped_run(
-            target,
-            report,
-            resources,
-            size_px,
-            &run,
-            baseline,
-            style.color,
-            clip,
-            coverage_mode,
-            &mut pen_x,
-        ),
+    draw_shaped_run(
+        target,
+        report,
+        resources,
+        size_px,
+        &run,
+        baseline,
+        style.color,
+        clip,
+        coverage_mode,
+        &mut pen_x,
     )?;
 
     Ok(u64::try_from(glyph_count).unwrap_or(u64::MAX))

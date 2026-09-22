@@ -1749,7 +1749,6 @@ dependencies = [
  "futures-lite",
  "inkpaper-epub",
  "inkpaper-reader",
- "inkpaper-trace",
  "inkpaper-ui",
  "postcard",
  "serde",
@@ -1773,7 +1772,6 @@ version = "0.1.0"
 dependencies = [
  "futures-lite",
  "inkpaper-epub",
- "inkpaper-trace",
 ]
 
 [[package]]
@@ -1793,7 +1791,6 @@ name = "inkpaper-trace"
 version = "0.1.0"
 dependencies = [
  "critical-section",
- "inkpaper-trace-macros",
 ]
 
 [[package]]
@@ -1814,7 +1811,6 @@ dependencies = [
  "embedded-graphics",
  "embedded-graphics-simulator",
  "heapless 0.9.3",
- "inkpaper-trace",
  "inkpaper-ui-macros",
  "inkpaper-ui-style-schema",
  "num-traits",
@@ -3275,10 +3271,7 @@ dependencies = [
  "anyhow",
  "clap",
  "indoc",
- "inkpaper-trace",
  "png",
- "serde",
- "serde_json",
  "zip",
 ]
 

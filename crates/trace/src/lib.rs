@@ -3,262 +3,239 @@
 #[cfg(test)]
 extern crate std;
 
+mod metadata;
+
 #[cfg(feature = "recording")]
 mod recording;
-mod schema;
+#[cfg(feature = "recording")]
+mod text;
 
-pub use inkpaper_trace_macros::profile;
-pub use schema::{DisplayPhase, TraceAggregate, TraceEvent, TraceMetric};
+pub use metadata::{Callsite, Field, IntoValue, Metadata, Value, ValueKind};
 
 #[cfg(feature = "recording")]
 pub use recording::{
-    TRACE_ASYNC_CAPACITY, TRACE_ASYNC_OPEN_CAPACITY, TRACE_CAPACITY, TraceAggregateRecord,
-    TraceAggregates, TraceAsyncRecord, TraceMetricRecord, TraceMetricTimer, TraceRecord,
-    TraceSession, TraceSpan, TraceSummary, aggregate_record, async_begin, async_dropped, async_end,
-    async_open_count, async_record, async_record_count, clear_aggregate_records,
-    clear_async_records, metric_record, record, set_clock,
+    CallsiteDefinition, CallsiteId, CaptureEntry, CapturedSpan, RecordedField, Span,
+    TRACE_CAPACITY, TraceCapture, TraceSession, set_clock,
 };
-
 #[cfg(feature = "recording")]
-#[doc(hidden)]
-#[inline(always)]
-pub fn __trace_arg<T>(value: T) -> u32
-where
-    u32: TryFrom<T>,
-{
-    u32::try_from(value).unwrap_or(u32::MAX)
-}
-
-#[cfg(feature = "recording")]
-#[doc(hidden)]
-#[inline(always)]
-pub fn __trace_value<T>(value: T) -> u64
-where
-    u64: TryFrom<T>,
-{
-    u64::try_from(value).unwrap_or(u64::MAX)
-}
+pub use text::{TextEncodeError, write_text_capture};
 
 #[cfg(not(feature = "recording"))]
-#[derive(Debug, Default)]
-pub struct TraceAggregates;
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Span;
 
 #[cfg(not(feature = "recording"))]
-impl TraceAggregates {
-    pub const fn new() -> Self {
+impl Span {
+    pub const fn disabled() -> Self {
         Self
+    }
+}
+
+#[doc(hidden)]
+pub mod __private {
+    #[inline(always)]
+    pub fn into_value<T>(value: T) -> crate::Value
+    where
+        T: crate::IntoValue,
+    {
+        crate::metadata::into_value(value)
+    }
+
+    #[cfg(feature = "recording")]
+    #[inline(always)]
+    pub fn enabled() -> bool {
+        crate::recording::is_recording()
+    }
+
+    #[cfg(feature = "recording")]
+    #[inline(always)]
+    pub fn start(callsite: &'static crate::Callsite, values: [crate::Value; 2]) -> crate::Span {
+        crate::Span::start(callsite, values)
     }
 }
 
 #[cfg(feature = "recording")]
 #[macro_export]
-macro_rules! profile_span {
-    ($event:expr $(,)?) => {
-        $crate::TraceSpan::start($event)
-    };
-
-    ($event:expr, arg = $arg:expr $(,)?) => {
-        $crate::TraceSpan::start_with_arg($event, $crate::__trace_arg($arg))
-    };
-}
-
-#[cfg(not(feature = "recording"))]
-#[macro_export]
-macro_rules! profile_span {
-    ($event:expr $(,)?) => {{
-        if false {
-            let _ = $event;
-        }
-
-        ()
-    }};
-
-    ($event:expr, arg = $arg:expr $(,)?) => {{
-        if false {
-            let _ = $event;
-        }
-
-        ()
-    }};
-}
-
-#[cfg(feature = "recording")]
-#[macro_export]
-macro_rules! profile_scope {
-    ($event:expr $(,)?) => {
-        let _inkpaper_trace_span = $crate::profile_span!($event);
-    };
-
-    ($event:expr, arg = $arg:expr $(,)?) => {
-        let _inkpaper_trace_span = $crate::profile_span!($event, arg = $arg);
-    };
-}
-
-#[cfg(not(feature = "recording"))]
-#[macro_export]
-macro_rules! profile_scope {
-    ($event:expr $(,)?) => {
-        if false {
-            let _ = $event;
-        }
-    };
-
-    ($event:expr, arg = $arg:expr $(,)?) => {
-        if false {
-            let _ = $event;
-        }
-    };
-}
-
-#[cfg(feature = "recording")]
-#[macro_export]
-macro_rules! profile_expr {
-    ($event:expr, $expression:expr $(,)?) => {{
-        let _inkpaper_trace_span = $crate::profile_span!($event);
-        $expression
-    }};
-
-    ($event:expr, arg = $arg:expr, $expression:expr $(,)?) => {{
-        let _inkpaper_trace_span = $crate::profile_span!($event, arg = $arg);
-        $expression
-    }};
-}
-
-#[cfg(not(feature = "recording"))]
-#[macro_export]
-macro_rules! profile_expr {
-    ($event:expr, arg = $arg:expr, $expression:expr $(,)?) => {{
-        if false {
-            let _ = $event;
-        }
-
-        $expression
-    }};
-
-    ($event:expr, $expression:expr $(,)?) => {{
-        if false {
-            let _ = $event;
-        }
-
-        $expression
-    }};
-}
-
-#[cfg(feature = "recording")]
-#[macro_export]
-macro_rules! profile_metric_scope {
-    ($metric:expr $(,)?) => {
-        let _inkpaper_trace_metric_timer = $crate::TraceMetricTimer::start($metric);
-    };
-}
-
-#[cfg(not(feature = "recording"))]
-#[macro_export]
-macro_rules! profile_metric_scope {
-    ($metric:expr $(,)?) => {
-        if false {
-            let _ = $metric;
-        }
-    };
-}
-
-#[cfg(feature = "recording")]
-#[macro_export]
-macro_rules! profile_metric_expr {
-    ($metric:expr, $expression:expr $(,)?) => {{
-        let _inkpaper_trace_metric_timer = $crate::TraceMetricTimer::start($metric);
-        $expression
-    }};
-}
-
-#[cfg(not(feature = "recording"))]
-#[macro_export]
-macro_rules! profile_metric_expr {
-    ($metric:expr, $expression:expr $(,)?) => {{
-        if false {
-            let _ = $metric;
-        }
-
-        $expression
-    }};
-}
-
-#[cfg(feature = "recording")]
-#[macro_export]
-macro_rules! profile_aggregate_expr {
+macro_rules! span {
     (
-        $aggregates:expr,
-        $aggregate:expr,
-        $expression:expr
-        $(,)?
-    ) => {{
-        let __inkpaper_trace_started = $aggregates.__start();
-
-        let __inkpaper_trace_result = $expression;
-
-        $aggregates.__finish($aggregate, __inkpaper_trace_started);
-
-        __inkpaper_trace_result
-    }};
-}
-
-#[cfg(not(feature = "recording"))]
-#[macro_export]
-macro_rules! profile_aggregate_expr {
-    (
-        $aggregates:expr,
-        $aggregate:expr,
-        $expression:expr
-        $(,)?
-    ) => {{
-        if false {
-            let _ = &$aggregates;
-            let _ = &$aggregate;
-        }
-
-        $expression
-    }};
-}
-
-#[cfg(feature = "recording")]
-#[macro_export]
-macro_rules! trace_aggregate {
-    ($aggregates:expr, $aggregate:expr $(,)?) => {{
-        $aggregates.__observe($aggregate, 1);
-    }};
+        target: $target:expr,
+        $name:literal,
+        $field0:ident = $value0:expr,
+        $field1:ident = $value1:expr,
+        $field2:ident = $value2:expr
+        $(, $rest:tt)*
+    ) => {
+        compile_error!(
+            "inkpaper_trace::span! supports at most two fields"
+        )
+    };
 
     (
-        $aggregates:expr,
-        $aggregate:expr,
-        $value:expr
+        target: $target:expr,
+        $name:literal,
+        $field0:ident = $value0:expr,
+        $field1:ident = $value1:expr
         $(,)?
     ) => {{
-        let __inkpaper_trace_value = $crate::__trace_value($value);
+        static __INKPAPER_TRACE_FIELDS: [$crate::Field; 2] = [
+            $crate::Field::new(stringify!($field0)),
+            $crate::Field::new(stringify!($field1)),
+        ];
 
-        $aggregates.__observe($aggregate, __inkpaper_trace_value);
-    }};
-}
+        static __INKPAPER_TRACE_CALLSITE: $crate::Callsite =
+            $crate::Callsite::new(
+                $name,
+                $target,
+                &__INKPAPER_TRACE_FIELDS,
+            );
 
-#[cfg(not(feature = "recording"))]
-#[macro_export]
-macro_rules! trace_aggregate {
-    ($aggregates:expr, $aggregate:expr $(,)?) => {{
-        if false {
-            let _ = &$aggregates;
-            let _ = &$aggregate;
+        if $crate::__private::enabled() {
+            $crate::__private::start(
+                &__INKPAPER_TRACE_CALLSITE,
+                [
+                    $crate::__private::into_value($value0),
+                    $crate::__private::into_value($value1),
+                ],
+            )
+        } else {
+            $crate::Span::disabled()
         }
     }};
 
     (
-        $aggregates:expr,
-        $aggregate:expr,
-        $value:expr
+        target: $target:expr,
+        $name:literal,
+        $field0:ident = $value0:expr
+        $(,)?
+    ) => {{
+        static __INKPAPER_TRACE_FIELDS: [$crate::Field; 1] = [
+            $crate::Field::new(stringify!($field0)),
+        ];
+
+        static __INKPAPER_TRACE_CALLSITE: $crate::Callsite =
+            $crate::Callsite::new(
+                $name,
+                $target,
+                &__INKPAPER_TRACE_FIELDS,
+            );
+
+        if $crate::__private::enabled() {
+            $crate::__private::start(
+                &__INKPAPER_TRACE_CALLSITE,
+                [
+                    $crate::__private::into_value($value0),
+                    $crate::Value::EMPTY,
+                ],
+            )
+        } else {
+            $crate::Span::disabled()
+        }
+    }};
+
+    (
+        target: $target:expr,
+        $name:literal
+        $(,)?
+    ) => {{
+        static __INKPAPER_TRACE_FIELDS: [$crate::Field; 0] = [];
+
+        static __INKPAPER_TRACE_CALLSITE: $crate::Callsite =
+            $crate::Callsite::new(
+                $name,
+                $target,
+                &__INKPAPER_TRACE_FIELDS,
+            );
+
+        if $crate::__private::enabled() {
+            $crate::__private::start(
+                &__INKPAPER_TRACE_CALLSITE,
+                [$crate::Value::EMPTY; 2],
+            )
+        } else {
+            $crate::Span::disabled()
+        }
+    }};
+
+    (
+        $name:literal,
+        $field0:ident = $value0:expr,
+        $field1:ident = $value1:expr
+        $(,)?
+    ) => {
+        $crate::span!(
+            target: module_path!(),
+            $name,
+            $field0 = $value0,
+            $field1 = $value1,
+        )
+    };
+
+    (
+        $name:literal,
+        $field0:ident = $value0:expr
+        $(,)?
+    ) => {
+        $crate::span!(
+            target: module_path!(),
+            $name,
+            $field0 = $value0,
+        )
+    };
+
+    (
+        $name:literal
+        $(,)?
+    ) => {
+        $crate::span!(
+            target: module_path!(),
+            $name,
+        )
+    };
+}
+
+#[cfg(not(feature = "recording"))]
+#[macro_export]
+macro_rules! span {
+    (
+        target: $target:expr,
+        $name:literal,
+        $field0:ident = $value0:expr,
+        $field1:ident = $value1:expr,
+        $field2:ident = $value2:expr
+        $(, $rest:tt)*
+    ) => {
+        compile_error!(
+            "inkpaper_trace::span! supports at most two fields"
+        )
+    };
+
+    (
+        target: $target:expr,
+        $name:literal
+        $(, $field:ident = $value:expr)*
         $(,)?
     ) => {{
         if false {
-            let _ = &$aggregates;
-            let _ = &$aggregate;
-            let _ = &$value;
+            let _: &'static str = $target;
+            let _: &'static str = $name;
+
+            $(
+                let _ = &$value;
+            )*
         }
+
+        $crate::Span::disabled()
     }};
+
+    (
+        $name:literal
+        $(, $field:ident = $value:expr)*
+        $(,)?
+    ) => {
+        $crate::span!(
+            target: module_path!(),
+            $name
+            $(, $field = $value)*
+        )
+    };
 }
