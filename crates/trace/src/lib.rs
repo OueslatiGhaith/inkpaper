@@ -1,5 +1,7 @@
 #![no_std]
 
+extern crate self as inkpaper_trace;
+
 #[cfg(test)]
 extern crate std;
 
@@ -9,6 +11,8 @@ mod metadata;
 mod recording;
 #[cfg(feature = "recording")]
 mod text;
+
+pub use inkpaper_trace_macros::instrument;
 
 pub use metadata::{
     Callsite, Field, IntoMetricValue, IntoValue, Metadata, MetricCallsite, MetricKind, Value,
