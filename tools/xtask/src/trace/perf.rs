@@ -20,6 +20,7 @@ struct Frame {
 
     phases: Vec<String>,
 
+    render: u64,
     rebuild: u64,
     layout: u64,
     clear: u64,
@@ -52,15 +53,11 @@ struct FrameSignature {
 
 impl Frame {
     fn render_cycles(&self) -> u64 {
-        self.rebuild
-            .saturating_add(self.layout)
-            .saturating_add(self.clear)
-            .saturating_add(self.paint)
-            .saturating_add(self.damage)
+        self.render
     }
 
     fn total_cycles(&self) -> u64 {
-        self.render_cycles().saturating_add(self.present)
+        self.render.saturating_add(self.present)
     }
 
     fn signature(&self) -> FrameSignature {
@@ -130,6 +127,8 @@ struct FrameBuilder {
 
 #[derive(Debug)]
 struct RenderFrame {
+    render: u64,
+
     rebuild: u64,
     layout: u64,
     clear: u64,
@@ -368,7 +367,6 @@ fn build_performance_capture(captures: &[Capture]) -> Result<PerformanceCapture>
     let mut frames: BTreeMap<u32, FrameBuilder> = BTreeMap::new();
 
     let mut overwritten = 0u64;
-
     let mut metric_dropped = 0u64;
 
     for capture in captures {
@@ -376,20 +374,26 @@ fn build_performance_capture(captures: &[Capture]) -> Result<PerformanceCapture>
 
         metric_dropped = metric_dropped.saturating_add(u64::from(capture.metric_dropped));
 
-        if has_metric(capture, "ui.render", "paint_cycles") {
-            let frame_id = frame_id_from_span(capture, "ui.render", "render")?
-                .context("render metrics have no matching ui.render/render frame span")?;
+        if let Some((render_span, render_callsite)) =
+            find_unique_span(capture, "ui.render", "render")?
+        {
+            let frame_id = span_u32_field(render_callsite, render_span, "frame")?;
 
             let render = RenderFrame {
-                rebuild: gauge_value(capture, "ui.render", "rebuild_cycles")?,
+                render: render_span.duration_cycles,
 
-                layout: gauge_value(capture, "ui.render", "layout_cycles")?,
+                rebuild: span_duration(capture, "ui.render", "rebuild")?.unwrap_or(0),
 
-                clear: gauge_value(capture, "ui.render", "clear_cycles")?,
+                layout: span_duration(capture, "ui.render", "layout")?.unwrap_or(0),
 
-                paint: gauge_value(capture, "ui.render", "paint_cycles")?,
+                clear: span_duration(capture, "ui.render", "clear")?
+                    .context("render capture is missing ui.render/clear span")?,
 
-                damage: gauge_value(capture, "ui.render", "damage_cycles")?,
+                paint: span_duration(capture, "ui.render", "paint")?
+                    .context("render capture is missing ui.render/paint span")?,
+
+                damage: span_duration(capture, "ui.render", "damage")?
+                    .context("render capture is missing ui.render/damage span")?,
 
                 framebuffer_pixels: gauge_value(capture, "ui.coverage", "framebuffer_pixels")?,
 
@@ -405,45 +409,42 @@ fn build_performance_capture(captures: &[Capture]) -> Result<PerformanceCapture>
             }
         }
 
-        if has_metric(capture, "display.present", "total_cycles") {
-            let frame_id = frame_id_from_span(capture, "display.present", "present")?.context(
-                "presentation metrics have no matching display.present/present frame span",
-            )?;
-
-            let present_busy_waits = gauge_value(capture, "display.present", "busy_waits")?;
+        if let Some((present_span, present_callsite)) =
+            find_unique_span(capture, "display.present", "present")?
+        {
+            let frame_id = span_u32_field(present_callsite, present_span, "frame")?;
 
             let busy_wait_cycles = busy_wait_cycles(capture)?;
 
-            if capture.overwritten == 0 {
-                let traced_waits = u64::try_from(busy_wait_cycles.len()).unwrap_or(u64::MAX);
+            let present_busy = busy_wait_cycles
+                .iter()
+                .copied()
+                .fold(0u64, u64::saturating_add);
 
-                if traced_waits != present_busy_waits {
-                    bail!(
-                        "frame {frame_id} reports {present_busy_waits} BUSY waits but trace contains {traced_waits}"
-                    );
-                }
-            }
+            let present_busy_waits = u64::try_from(busy_wait_cycles.len()).unwrap_or(u64::MAX);
+
+            let present_longest_busy = busy_wait_cycles.iter().copied().max().unwrap_or(0);
+
+            let present_io = gauge_value(capture, "display.present", "io_cycles")?;
+
+            let present = present_span.duration_cycles;
+
+            let present_other = present
+                .saturating_sub(present_io)
+                .saturating_sub(present_busy);
 
             let present = PresentFrame {
                 phases: display_phases(capture)?,
 
-                present: gauge_value(capture, "display.present", "total_cycles")?,
-
-                present_io: gauge_value(capture, "display.present", "io_cycles")?,
-
-                present_busy: gauge_value(capture, "display.present", "busy_cycles")?,
-
-                present_other: gauge_value(capture, "display.present", "other_cycles")?,
+                present,
+                present_io,
+                present_busy,
+                present_other,
 
                 present_bytes: gauge_value(capture, "display.present", "bytes")?,
 
                 present_busy_waits,
-
-                present_longest_busy: gauge_value(
-                    capture,
-                    "display.present",
-                    "longest_busy_cycles",
-                )?,
+                present_longest_busy,
 
                 busy_wait_cycles,
             };
@@ -457,7 +458,6 @@ fn build_performance_capture(captures: &[Capture]) -> Result<PerformanceCapture>
     }
 
     let mut complete_frames = Vec::new();
-
     let mut incomplete_frames = 0usize;
 
     for (id, builder) in frames {
@@ -471,6 +471,7 @@ fn build_performance_capture(captures: &[Capture]) -> Result<PerformanceCapture>
 
             phases: present.phases,
 
+            render: render.render,
             rebuild: render.rebuild,
             layout: render.layout,
             clear: render.clear,
@@ -504,13 +505,6 @@ fn build_performance_capture(captures: &[Capture]) -> Result<PerformanceCapture>
         metric_dropped,
         incomplete_frames,
     })
-}
-
-fn has_metric(capture: &Capture, target: &str, name: &str) -> bool {
-    capture
-        .metric_definitions
-        .values()
-        .any(|definition| definition.target == target && definition.name == name)
 }
 
 fn gauge_value(capture: &Capture, target: &str, name: &str) -> Result<u64> {
@@ -548,6 +542,10 @@ fn gauge_value(capture: &Capture, target: &str, name: &str) -> Result<u64> {
             capture.capture_id,
         )
     })
+}
+
+fn span_duration(capture: &Capture, target: &str, name: &str) -> Result<Option<u64>> {
+    Ok(find_unique_span(capture, target, name)?.map(|(span, _)| span.duration_cycles))
 }
 
 fn frame_id_from_span(capture: &Capture, target: &str, name: &str) -> Result<Option<u32>> {
@@ -737,50 +735,48 @@ mod tests {
 
     fn performance_log() -> &'static str {
         indoc! {r#"
-            1.000 INFO trace/v4 capture id=1 hz=240000000 at=2500 spans=1 overwritten=0 metrics=8 metric_dropped=0
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=2600 spans=6 overwritten=0 metrics=3 metric_dropped=0
             1.001 INFO trace/v4 define id=0 target=9:ui.render name=6:render fields=1 5:frame
-            1.002 INFO trace/v4 span id=0 kind=sync depth=0 start=1000 cycles=1200 values=1 u:1
-            1.003 INFO trace/v4 metric_define id=0 target=9:ui.render name=14:rebuild_cycles kind=gauge unit=6:cycles
-            1.004 INFO trace/v4 metric id=0 value=100
-            1.005 INFO trace/v4 metric_define id=1 target=9:ui.render name=13:layout_cycles kind=gauge unit=6:cycles
-            1.006 INFO trace/v4 metric id=1 value=200
-            1.007 INFO trace/v4 metric_define id=2 target=9:ui.render name=12:clear_cycles kind=gauge unit=6:cycles
-            1.008 INFO trace/v4 metric id=2 value=100
-            1.009 INFO trace/v4 metric_define id=3 target=9:ui.render name=12:paint_cycles kind=gauge unit=6:cycles
-            1.010 INFO trace/v4 metric id=3 value=700
-            1.011 INFO trace/v4 metric_define id=4 target=9:ui.render name=13:damage_cycles kind=gauge unit=6:cycles
-            1.012 INFO trace/v4 metric id=4 value=100
-            1.013 INFO trace/v4 metric_define id=5 target=11:ui.coverage name=18:framebuffer_pixels kind=gauge unit=6:pixels
-            1.014 INFO trace/v4 metric id=5 value=156480
-            1.015 INFO trace/v4 metric_define id=6 target=7:ui.text name=10:draw_calls kind=gauge unit=0:
-            1.016 INFO trace/v4 metric id=6 value=31
-            1.017 INFO trace/v4 metric_define id=7 target=7:ui.text name=13:shaped_glyphs kind=gauge unit=0:
-            1.018 INFO trace/v4 metric id=7 value=1021
+            1.002 INFO trace/v4 define id=1 target=9:ui.render name=7:rebuild fields=0
+            1.003 INFO trace/v4 define id=2 target=9:ui.render name=6:layout fields=0
+            1.004 INFO trace/v4 define id=3 target=9:ui.render name=5:clear fields=0
+            1.005 INFO trace/v4 define id=4 target=9:ui.render name=5:paint fields=0
+            1.006 INFO trace/v4 define id=5 target=9:ui.render name=6:damage fields=0
+            1.007 INFO trace/v4 span id=1 kind=sync depth=1 start=1050 cycles=100 values=0
+            1.008 INFO trace/v4 span id=2 kind=sync depth=1 start=1200 cycles=200 values=0
+            1.009 INFO trace/v4 span id=3 kind=sync depth=1 start=1450 cycles=100 values=0
+            1.010 INFO trace/v4 span id=4 kind=sync depth=1 start=1600 cycles=700 values=0
+            1.011 INFO trace/v4 span id=5 kind=sync depth=1 start=2350 cycles=100 values=0
+            1.012 INFO trace/v4 span id=0 kind=sync depth=0 start=1000 cycles=1500 values=1 u:1
+            1.013 INFO trace/v4 metric_define id=0 target=11:ui.coverage name=18:framebuffer_pixels kind=gauge unit=6:pixels
+            1.014 INFO trace/v4 metric id=0 value=156480
+            1.015 INFO trace/v4 metric_define id=1 target=7:ui.text name=10:draw_calls kind=gauge unit=0:
+            1.016 INFO trace/v4 metric id=1 value=31
+            1.017 INFO trace/v4 metric_define id=2 target=7:ui.text name=13:shaped_glyphs kind=gauge unit=0:
+            1.018 INFO trace/v4 metric id=2 value=1021
             1.019 INFO trace/v4 end id=1
 
-            2.000 INFO trace/v4 capture id=2 hz=240000000 at=5000 spans=4 overwritten=0 metrics=7 metric_dropped=0
-            2.001 INFO trace/v4 define id=1 target=15:display.present name=7:present fields=1 5:frame
-            2.002 INFO trace/v4 define id=2 target=13:display.phase name=19:binary_fast_refresh fields=0
-            2.003 INFO trace/v4 define id=3 target=15:display.present name=9:busy_wait fields=1 5:index
-            2.004 INFO trace/v4 span id=2 kind=async depth=0 start=3000 cycles=800 values=0
-            2.005 INFO trace/v4 span id=3 kind=async depth=0 start=3100 cycles=200 values=1 u:0
-            2.006 INFO trace/v4 span id=3 kind=async depth=0 start=3400 cycles=300 values=1 u:1
-            2.007 INFO trace/v4 span id=1 kind=async depth=0 start=2900 cycles=2000 values=1 u:1
-            2.008 INFO trace/v4 metric_define id=8 target=15:display.present name=12:total_cycles kind=gauge unit=6:cycles
-            2.009 INFO trace/v4 metric id=8 value=2000
-            2.010 INFO trace/v4 metric_define id=9 target=15:display.present name=9:io_cycles kind=gauge unit=6:cycles
-            2.011 INFO trace/v4 metric id=9 value=1000
-            2.012 INFO trace/v4 metric_define id=10 target=15:display.present name=11:busy_cycles kind=gauge unit=6:cycles
-            2.013 INFO trace/v4 metric id=10 value=500
-            2.014 INFO trace/v4 metric_define id=11 target=15:display.present name=12:other_cycles kind=gauge unit=6:cycles
-            2.015 INFO trace/v4 metric id=11 value=500
-            2.016 INFO trace/v4 metric_define id=12 target=15:display.present name=5:bytes kind=gauge unit=5:bytes
-            2.017 INFO trace/v4 metric id=12 value=120000
-            2.018 INFO trace/v4 metric_define id=13 target=15:display.present name=10:busy_waits kind=gauge unit=0:
-            2.019 INFO trace/v4 metric id=13 value=2
-            2.020 INFO trace/v4 metric_define id=14 target=15:display.present name=19:longest_busy_cycles kind=gauge unit=6:cycles
-            2.021 INFO trace/v4 metric id=14 value=300
-            2.022 INFO trace/v4 end id=2
+            2.000 INFO trace/v4 capture id=2 hz=240000000 at=5000 spans=4 overwritten=0 metrics=6 metric_dropped=0
+            2.001 INFO trace/v4 define id=6 target=15:display.present name=7:present fields=1 5:frame
+            2.002 INFO trace/v4 define id=7 target=13:display.phase name=19:binary_fast_refresh fields=0
+            2.003 INFO trace/v4 define id=8 target=15:display.present name=9:busy_wait fields=1 5:index
+            2.004 INFO trace/v4 span id=7 kind=async depth=0 start=3000 cycles=800 values=0
+            2.005 INFO trace/v4 span id=8 kind=async depth=0 start=3100 cycles=200 values=1 u:0
+            2.006 INFO trace/v4 span id=8 kind=async depth=0 start=3400 cycles=300 values=1 u:1
+            2.007 INFO trace/v4 span id=6 kind=async depth=0 start=2900 cycles=2000 values=1 u:1
+            2.008 INFO trace/v4 metric_define id=3 target=15:display.present name=9:io_cycles kind=gauge unit=6:cycles
+            2.009 INFO trace/v4 metric id=3 value=1000
+            2.010 INFO trace/v4 metric_define id=4 target=15:display.present name=5:bytes kind=gauge unit=5:bytes
+            2.011 INFO trace/v4 metric id=4 value=120000
+            2.012 INFO trace/v4 metric_define id=5 target=15:display.present name=8:io_calls kind=gauge unit=0:
+            2.013 INFO trace/v4 metric id=5 value=1203
+            2.014 INFO trace/v4 metric_define id=6 target=14:display.stream name=6:cycles kind=gauge unit=6:cycles
+            2.015 INFO trace/v4 metric id=6 value=900
+            2.016 INFO trace/v4 metric_define id=7 target=14:display.stream name=5:bytes kind=gauge unit=5:bytes
+            2.017 INFO trace/v4 metric id=7 value=120000
+            2.018 INFO trace/v4 metric_define id=8 target=14:display.stream name=5:calls kind=gauge unit=0:
+            2.019 INFO trace/v4 metric id=8 value=1200
+            2.020 INFO trace/v4 end id=2
         "#}
     }
 
@@ -791,37 +787,43 @@ mod tests {
         let performance = build_performance_capture(&captures).unwrap();
 
         assert_eq!(performance.hz, 240_000_000);
-
         assert_eq!(performance.frames.len(), 1);
 
         let frame = &performance.frames[0];
 
         assert_eq!(frame.id, 1);
 
-        assert_eq!(frame.render_cycles(), 1_200);
+        // The complete render duration comes from the outer render span.
+        assert_eq!(frame.render_cycles(), 1_500);
 
+        assert_eq!(frame.rebuild, 100);
+        assert_eq!(frame.layout, 200);
+        assert_eq!(frame.clear, 100);
         assert_eq!(frame.paint, 700);
+        assert_eq!(frame.damage, 100);
 
+        // Presentation timing also comes from spans.
         assert_eq!(frame.present, 2_000);
 
-        assert_eq!(frame.total_cycles(), 3_200);
+        assert_eq!(frame.present_io, 1_000);
+        assert_eq!(frame.present_busy, 500);
+        assert_eq!(frame.present_other, 500);
+
+        assert_eq!(frame.present_busy_waits, 2);
+        assert_eq!(frame.present_longest_busy, 300);
+        assert_eq!(frame.busy_wait_cycles, [200, 300]);
+
+        assert_eq!(frame.total_cycles(), 3_500);
 
         assert_eq!(frame.framebuffer_pixels, 156_480);
-
         assert_eq!(frame.text_draws, 31);
-
         assert_eq!(frame.glyphs, 1_021);
-
         assert_eq!(frame.present_bytes, 120_000);
 
         assert_eq!(frame.phase_label(), "binary/fast");
 
-        assert_eq!(frame.busy_wait_cycles, [200, 300]);
-
         assert_eq!(performance.overwritten, 0);
-
         assert_eq!(performance.metric_dropped, 0);
-
         assert_eq!(performance.incomplete_frames, 0);
     }
 

@@ -10,7 +10,7 @@ use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC
 use xteink_display_probe::Controller;
 
 #[cfg(feature = "trace")]
-use crate::firmware::perf::{CycleTimer, DisplayController, ProfiledEpdBus};
+use crate::firmware::perf::{DisplayController, ProfiledEpdBus};
 use crate::firmware::{
     framebuffer::FramebufferStorage,
     presenter::{FrameUpdate, PresentationMode},
@@ -164,9 +164,7 @@ impl X4Panel {
         );
 
         #[cfg(feature = "trace")]
-        let (result, present_timings) = {
-            let timer = CycleTimer::start();
-
+        let (result, present_metrics) = {
             let controller = match self {
                 Self::Ssd1677(_) => DisplayController::Ssd1677,
                 Self::Uc8179(_) => DisplayController::Uc8179,
@@ -194,9 +192,9 @@ impl X4Panel {
                 .present_inner(&mut profiled_bus, delay, frame, update, power)
                 .await;
 
-            let timings = profiled_bus.finish(timer.elapsed());
+            let metrics = profiled_bus.finish();
 
-            (result, timings)
+            (result, metrics)
         };
 
         #[cfg(not(feature = "trace"))]
@@ -207,7 +205,7 @@ impl X4Panel {
         drop(present_trace);
 
         #[cfg(feature = "trace")]
-        crate::firmware::perf::record_present_metrics(present_timings);
+        crate::firmware::perf::record_present_metrics(present_metrics);
 
         #[cfg(feature = "trace")]
         let trace_capture = inkpaper_trace::capture();

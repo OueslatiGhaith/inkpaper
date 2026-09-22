@@ -4,8 +4,6 @@ use inkpaper_ui::{
     prelude::*,
 };
 
-#[cfg(feature = "trace")]
-use crate::firmware::perf::{CycleTimer, RenderTimings};
 use crate::firmware::{
     framebuffer::{
         Framebuffer, FramebufferStorage, LOGICAL_HEIGHT, LOGICAL_WIDTH, Orientation,
@@ -321,9 +319,6 @@ fn render_invalidation(
         frame = frame_id,
     );
 
-    #[cfg(feature = "trace")]
-    let mut timings = RenderTimings::default();
-
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
 
     let (paint_report, eink_report) = {
@@ -335,29 +330,17 @@ fn render_invalidation(
             Invalidation::None => return None,
             Invalidation::Paint => {}
             Invalidation::Layout => {
-                #[cfg(feature = "trace")]
-                let layout_timer = CycleTimer::start();
+                let _trace = inkpaper_trace::span!(
+                    target: "ui.render",
+                    "layout",
+                );
 
-                {
-                    let _trace = inkpaper_trace::span!(
-                        target: "ui.render",
-                        "layout",
-                    );
-
-                    runtime
-                        .layout(DISPLAY_SIZE)
-                        .expect("layout requires a mounted root");
-                }
-
-                #[cfg(feature = "trace")]
-                {
-                    timings.layout_cycles = layout_timer.elapsed();
-                }
+                runtime
+                    .layout(DISPLAY_SIZE)
+                    .expect("layout requires a mounted root");
             }
-            Invalidation::Rebuild => {
-                #[cfg(feature = "trace")]
-                let rebuild_timer = CycleTimer::start();
 
+            Invalidation::Rebuild => {
                 {
                     let _trace = inkpaper_trace::span!(
                         target: "ui.render",
@@ -366,14 +349,6 @@ fn render_invalidation(
 
                     runtime.rebuild().expect("UI rebuild capacity exceeded");
                 }
-
-                #[cfg(feature = "trace")]
-                {
-                    timings.rebuild_cycles = rebuild_timer.elapsed();
-                }
-
-                #[cfg(feature = "trace")]
-                let layout_timer = CycleTimer::start();
 
                 {
                     let _trace = inkpaper_trace::span!(
@@ -385,16 +360,8 @@ fn render_invalidation(
                         .layout(DISPLAY_SIZE)
                         .expect("rebuilt UI must have a root");
                 }
-
-                #[cfg(feature = "trace")]
-                {
-                    timings.layout_cycles = layout_timer.elapsed();
-                }
             }
         }
-
-        #[cfg(feature = "trace")]
-        let clear_timer = CycleTimer::start();
 
         {
             let _trace = inkpaper_trace::span!(
@@ -404,14 +371,6 @@ fn render_invalidation(
 
             painter.clear_damage(damage, Color::WHITE).unwrap();
         }
-
-        #[cfg(feature = "trace")]
-        {
-            timings.clear_cycles = clear_timer.elapsed();
-        }
-
-        #[cfg(feature = "trace")]
-        let paint_timer = CycleTimer::start();
 
         let paint_report = {
             let _trace = inkpaper_trace::span!(
@@ -425,18 +384,10 @@ fn render_invalidation(
                 .expect("painting requires a mounted root")
         };
 
-        #[cfg(feature = "trace")]
-        {
-            timings.paint_cycles = paint_timer.elapsed();
-        }
-
         let eink_report = painter.report();
 
         (paint_report, eink_report)
     };
-
-    #[cfg(feature = "trace")]
-    let damage_timer = CycleTimer::start();
 
     let physical_damage = {
         let _trace = inkpaper_trace::span!(
@@ -446,11 +397,6 @@ fn render_invalidation(
 
         physical_damage(&display, damage)?
     };
-
-    #[cfg(feature = "trace")]
-    {
-        timings.damage_cycles = damage_timer.elapsed();
-    }
 
     #[cfg(feature = "trace")]
     let framebuffer_draw_iter_pixels = display.draw_iter_pixels();
@@ -466,14 +412,12 @@ fn render_invalidation(
 
     drop(display);
 
-    // the outer render span must close before the session is finalized so it is included
-    // in the exported trace.
+    // Close the outer render span before swapping the recorder buffer so this
+    // frame is part of the capture emitted below.
     drop(render_trace);
 
     #[cfg(feature = "trace")]
     {
-        crate::firmware::perf::record_render_metrics(timings);
-
         crate::firmware::perf::record_ordered_coverage_metrics(
             ordered_coverage_calls,
             ordered_coverage_pixels,

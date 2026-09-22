@@ -37,38 +37,20 @@ impl CycleTimer {
     }
 }
 
-const PRESENT_BUSY_WAIT_CAPACITY: usize = 8;
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PresentTimings {
-    total_cycles: u32,
+pub(crate) struct PresentMetrics {
     io_cycles: u64,
-    busy_cycles: u64,
     io_bytes: u64,
     io_calls: u32,
-    busy_waits: u32,
-    longest_busy_cycles: u32,
 
     stream_cycles: u64,
     stream_bytes: u64,
     stream_calls: u32,
-
-    busy_wait_samples: [u32; PRESENT_BUSY_WAIT_CAPACITY],
-    recorded_busy_waits: u8,
-    dropped_busy_waits: u32,
 }
 
-impl PresentTimings {
-    pub(crate) const fn total_cycles(self) -> u32 {
-        self.total_cycles
-    }
-
+impl PresentMetrics {
     pub(crate) const fn io_cycles(self) -> u64 {
         self.io_cycles
-    }
-
-    pub(crate) const fn busy_cycles(self) -> u64 {
-        self.busy_cycles
     }
 
     pub(crate) const fn io_bytes(self) -> u64 {
@@ -77,14 +59,6 @@ impl PresentTimings {
 
     pub(crate) const fn io_calls(self) -> u32 {
         self.io_calls
-    }
-
-    pub(crate) const fn busy_waits(self) -> u32 {
-        self.busy_waits
-    }
-
-    pub(crate) const fn longest_busy_cycles(self) -> u32 {
-        self.longest_busy_cycles
     }
 
     pub(crate) const fn stream_cycles(self) -> u64 {
@@ -99,59 +73,10 @@ impl PresentTimings {
         self.stream_calls
     }
 
-    pub(crate) const fn recorded_busy_waits(self) -> u8 {
-        self.recorded_busy_waits
-    }
-
-    pub(crate) const fn dropped_busy_waits(self) -> u32 {
-        self.dropped_busy_waits
-    }
-
-    pub(crate) fn busy_wait_cycles(self, index: u8) -> Option<u32> {
-        if index >= self.recorded_busy_waits {
-            return None;
-        }
-
-        self.busy_wait_samples.get(usize::from(index)).copied()
-    }
-
-    pub(crate) fn other_cycles(self) -> u64 {
-        u64::from(self.total_cycles)
-            .saturating_sub(self.io_cycles)
-            .saturating_sub(self.busy_cycles)
-    }
-
     fn record_io(&mut self, cycles: u32, bytes: u64) {
         self.io_cycles = self.io_cycles.saturating_add(u64::from(cycles));
         self.io_bytes = self.io_bytes.saturating_add(bytes);
         self.io_calls = self.io_calls.saturating_add(1);
-    }
-
-    fn record_busy(&mut self, cycles: u32, wait: bool) {
-        self.busy_cycles = self.busy_cycles.saturating_add(u64::from(cycles));
-
-        if !wait {
-            return;
-        }
-
-        let sample_index = self.busy_waits;
-
-        self.busy_waits = self.busy_waits.saturating_add(1);
-        self.longest_busy_cycles = self.longest_busy_cycles.max(cycles);
-
-        let Ok(sample_index) = usize::try_from(sample_index) else {
-            self.dropped_busy_waits = self.dropped_busy_waits.saturating_add(1);
-            return;
-        };
-
-        let Some(slot) = self.busy_wait_samples.get_mut(sample_index) else {
-            self.dropped_busy_waits = self.dropped_busy_waits.saturating_add(1);
-            return;
-        };
-
-        *slot = cycles;
-
-        self.recorded_busy_waits = self.recorded_busy_waits.saturating_add(1);
     }
 
     fn record_stream_io(&mut self, cycles: u32, bytes: u64) {
@@ -165,7 +90,9 @@ impl PresentTimings {
 
 pub(crate) struct ProfiledEpdBus<'a, B> {
     inner: &'a mut B,
-    timings: PresentTimings,
+    metrics: PresentMetrics,
+
+    next_busy_wait_index: u32,
 
     trace_plan: Option<DisplayTracePlan>,
     pending_phase: Option<DisplayPhase>,
@@ -179,7 +106,9 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
     ) -> Self {
         Self {
             inner,
-            timings: PresentTimings::default(),
+            metrics: PresentMetrics::default(),
+
+            next_busy_wait_index: 0,
 
             trace_plan: Some(DisplayTracePlan::new(controller, update)),
             pending_phase: None,
@@ -189,26 +118,22 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
     pub(crate) fn new_preparation(inner: &'a mut B) -> Self {
         Self {
             inner,
-            timings: PresentTimings::default(),
+            metrics: PresentMetrics::default(),
+
+            next_busy_wait_index: 0,
+
             trace_plan: None,
             pending_phase: None,
         }
     }
 
-    pub(crate) fn finish(mut self, total_cycles: u32) -> PresentTimings {
-        self.timings.total_cycles = total_cycles;
-
-        self.timings
+    pub(crate) fn finish(self) -> PresentMetrics {
+        self.metrics
     }
 
     #[inline(always)]
     fn record_io(&mut self, cycles: u32, bytes: u64) {
-        self.timings.record_io(cycles, bytes);
-    }
-
-    #[inline(always)]
-    fn record_busy(&mut self, cycles: u32, wait: bool) {
-        self.timings.record_busy(cycles, wait);
+        self.metrics.record_io(cycles, bytes);
     }
 
     fn observe_command(&mut self, command: u8) {
@@ -306,11 +231,7 @@ where
     }
 
     fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error> {
-        let timer = CycleTimer::start();
-
         let result = self.inner.is_busy(polarity);
-
-        self.record_busy(timer.elapsed(), false);
 
         let ready = match &result {
             Ok(busy) => !*busy,
@@ -332,11 +253,11 @@ where
     where
         D: DelayNs,
     {
-        let wait_index = self.timings.busy_waits();
+        let wait_index = self.next_busy_wait_index;
+
+        self.next_busy_wait_index = self.next_busy_wait_index.saturating_add(1);
 
         let phase = self.pending_phase.take().unwrap_or(DisplayPhase::Unknown);
-
-        let timer = CycleTimer::start();
 
         let phase_trace = phase.trace_async_span();
 
@@ -350,8 +271,6 @@ where
 
         drop(busy_trace);
         drop(phase_trace);
-
-        self.record_busy(timer.elapsed(), true);
 
         result
     }
@@ -371,7 +290,7 @@ where
 
         let result = self.inner.stream_data(data).await;
 
-        self.timings
+        self.metrics
             .record_stream_io(timer.elapsed(), usize_to_u64(data.len()));
 
         result
@@ -572,85 +491,45 @@ pub(crate) fn record_render_metrics(timings: RenderTimings) {
     );
 }
 
-pub(crate) fn record_present_metrics(timings: PresentTimings) {
-    inkpaper_trace::gauge!(
-        target: "display.present",
-        "total_cycles",
-        timings.total_cycles(),
-        unit: "cycles",
-    );
-
+pub(crate) fn record_present_metrics(metrics: PresentMetrics) {
     inkpaper_trace::gauge!(
         target: "display.present",
         "io_cycles",
-        timings.io_cycles(),
-        unit: "cycles",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "display.present",
-        "busy_cycles",
-        timings.busy_cycles(),
-        unit: "cycles",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "display.present",
-        "other_cycles",
-        timings.other_cycles(),
+        metrics.io_cycles(),
         unit: "cycles",
     );
 
     inkpaper_trace::gauge!(
         target: "display.present",
         "bytes",
-        timings.io_bytes(),
+        metrics.io_bytes(),
         unit: "bytes",
     );
 
     inkpaper_trace::gauge!(
         target: "display.present",
         "io_calls",
-        timings.io_calls(),
-    );
-
-    inkpaper_trace::gauge!(
-        target: "display.present",
-        "busy_waits",
-        timings.busy_waits(),
-    );
-
-    inkpaper_trace::gauge!(
-        target: "display.present",
-        "longest_busy_cycles",
-        timings.longest_busy_cycles(),
-        unit: "cycles",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "display.present",
-        "busy_waits_dropped",
-        timings.dropped_busy_waits(),
+        metrics.io_calls(),
     );
 
     inkpaper_trace::gauge!(
         target: "display.stream",
         "cycles",
-        timings.stream_cycles(),
+        metrics.stream_cycles(),
         unit: "cycles",
     );
 
     inkpaper_trace::gauge!(
         target: "display.stream",
         "bytes",
-        timings.stream_bytes(),
+        metrics.stream_bytes(),
         unit: "bytes",
     );
 
     inkpaper_trace::gauge!(
         target: "display.stream",
         "calls",
-        timings.stream_calls(),
+        metrics.stream_calls(),
     );
 }
 
