@@ -29,7 +29,7 @@ pub use recording::{
 pub use text::{TextEncodeError, write_text_capture};
 
 #[cfg(not(feature = "recording"))]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Default)]
 pub struct Span;
 
 #[cfg(not(feature = "recording"))]
@@ -40,7 +40,7 @@ impl Span {
 }
 
 #[cfg(not(feature = "recording"))]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Default)]
 pub struct AsyncSpan;
 
 #[cfg(not(feature = "recording"))]

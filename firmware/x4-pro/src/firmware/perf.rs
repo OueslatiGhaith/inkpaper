@@ -356,9 +356,9 @@ where
 
         let timer = CycleTimer::start();
 
-        let phase_trace = phase.trace_span();
+        let phase_trace = phase.trace_async_span();
 
-        let busy_trace = inkpaper_trace::span!(
+        let busy_trace = inkpaper_trace::async_span!(
             target: "display.present",
             "busy_wait",
             index = wait_index,
@@ -440,42 +440,42 @@ enum DisplayPhase {
 #[cfg(feature = "performance")]
 impl DisplayPhase {
     #[inline(always)]
-    fn trace_span(self) -> inkpaper_trace::Span {
+    fn trace_async_span(self) -> inkpaper_trace::AsyncSpan {
         match self {
             Self::Unknown => {
-                inkpaper_trace::span!(target: "display.phase", "unknown")
+                inkpaper_trace::async_span!(target: "display.phase", "unknown")
             }
 
             Self::PowerOn => {
-                inkpaper_trace::span!(target: "display.phase", "power_on")
+                inkpaper_trace::async_span!(target: "display.phase", "power_on")
             }
 
             Self::BinaryFullRefresh => {
-                inkpaper_trace::span!(target: "display.phase", "binary_full_refresh")
+                inkpaper_trace::async_span!(target: "display.phase", "binary_full_refresh")
             }
 
             Self::BinaryFastRefresh => {
-                inkpaper_trace::span!(target: "display.phase", "binary_fast_refresh")
+                inkpaper_trace::async_span!(target: "display.phase", "binary_fast_refresh")
             }
 
             Self::GrayscaleBaseRefresh => {
-                inkpaper_trace::span!(target: "display.phase", "grayscale_base_refresh")
+                inkpaper_trace::async_span!(target: "display.phase", "grayscale_base_refresh")
             }
 
             Self::GrayscalePrecondition => {
-                inkpaper_trace::span!(target: "display.phase", "grayscale_precondition")
+                inkpaper_trace::async_span!(target: "display.phase", "grayscale_precondition")
             }
 
             Self::GrayscaleActivate => {
-                inkpaper_trace::span!(target: "display.phase", "grayscale_activate")
+                inkpaper_trace::async_span!(target: "display.phase", "grayscale_activate")
             }
 
             Self::GrayscaleRefresh => {
-                inkpaper_trace::span!(target: "display.phase", "grayscale_refresh")
+                inkpaper_trace::async_span!(target: "display.phase", "grayscale_refresh")
             }
 
             Self::PowerOff => {
-                inkpaper_trace::span!(target: "display.phase", "power_off")
+                inkpaper_trace::async_span!(target: "display.phase", "power_off")
             }
         }
     }

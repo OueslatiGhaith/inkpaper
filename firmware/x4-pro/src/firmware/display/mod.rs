@@ -157,7 +157,7 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        let present_trace = inkpaper_trace::span!(
+        let present_trace = inkpaper_trace::async_span!(
             target: "display.present",
             "present",
             frame = update.frame_id(),
@@ -202,7 +202,8 @@ impl X4Panel {
         #[cfg(not(feature = "performance"))]
         let result = self.present_inner(bus, delay, frame, update, power).await;
 
-        // close the top-level presentation span before finalizing the trace session.
+        // finish the presentation interval before swapping the flight-recorder buffer
+        // so this presentation is included in the capture emitted below.
         drop(present_trace);
 
         #[cfg(feature = "trace")]
