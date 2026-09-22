@@ -3,9 +3,9 @@ use inkpaper_epub::SpineIndex;
 use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
-    BrowseListing, BrowseRequest, ReaderChapter, ReaderChapterDirection, ReaderDocument,
-    ReaderPreferences, ReaderPreferencesRequest, ReaderRequest, ReadingHistoryEntry,
-    ReadingHistoryRequest,
+    BatteryStatus, BrowseListing, BrowseRequest, ClockStatus, ReaderChapter,
+    ReaderChapterDirection, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
+    ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
     browser::BrowserState,
     reader::ReaderState,
     reader_page::paint_reader_page,
@@ -18,6 +18,7 @@ use crate::{
         recent_books::{RecentBooksScreen, RecentBooksScreenProps},
         settings::{SettingsScreen, SettingsScreenProps},
     },
+    system::SystemStatus,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,7 @@ pub struct InkPaperApp {
     browser: BrowserState,
     reader: ReaderState,
     reading_history: ReadingHistoryState,
+    system_status: SystemStatus,
     reader_return: Screen,
 }
 
@@ -45,6 +47,7 @@ impl Default for InkPaperApp {
             browser: BrowserState::default(),
             reader: ReaderState::default(),
             reading_history: ReadingHistoryState::default(),
+            system_status: SystemStatus::default(),
             reader_return: Screen::BrowseFiles,
         }
     }
@@ -391,6 +394,26 @@ impl InkPaperApp {
 
         paint_reader_page(page, document, paint);
     }
+
+    pub fn apply_battery_status(&mut self, battery: BatteryStatus, cx: &mut Context<'_, Self>) {
+        let visible_changed = self.system_status.set_battery(battery);
+
+        if visible_changed && self.screen != Screen::Reader {
+            cx.notify();
+        }
+    }
+
+    pub fn apply_clock_status(&mut self, clock: Option<ClockStatus>, cx: &mut Context<'_, Self>) {
+        let changed = self.system_status.set_clock(clock);
+
+        // The clock is currently rendered only by Settings.
+        //
+        // Keeping RTC updates out of the Reader avoids waking the e-ink display
+        // once per minute while somebody is reading.
+        if changed && self.screen == Screen::Settings {
+            cx.notify();
+        }
+    }
 }
 
 impl Render for InkPaperApp {
@@ -447,10 +470,14 @@ impl Render for InkPaperApp {
             Vec::new()
         };
 
+        let battery = self.system_status.battery();
+        let clock = self.system_status.clock();
+
         rsx! {
             {#if self.screen == Screen::Home}
                 <HomeScreen
                     current_book={self.reading_history.current()}
+                    battery={battery}
                     on_current_book={current_book}
                     on_browse_files={browse_files}
                     on_recent_books={recent_books}
@@ -465,6 +492,7 @@ impl Render for InkPaperApp {
                     entry_listeners={browse_entry_listeners}
                     revision={self.browser.revision()}
                     error={self.browser.error()}
+                    battery={battery}
                     on_back={browse_back}
                 />
             {:else if self.screen == Screen::Reader}
@@ -492,14 +520,18 @@ impl Render for InkPaperApp {
                     entry_listeners={recent_book_listeners}
                     revision={self.reading_history.revision()}
                     error={self.reading_history.error()}
+                    battery={battery}
                     on_back={home}
                 />
             {:else if self.screen == Screen::FileTransfer}
                 <FileTransferScreen
+                    battery={battery}
                     on_back={home}
                 />
             {:else}
                 <SettingsScreen
+                    battery={battery}
+                    clock={clock}
                     on_back={home}
                 />
             {/if}

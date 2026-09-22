@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    ReadingHistoryEntry,
+    BatteryStatus, ReadingHistoryEntry,
     components::{
         header::{BackHeader, BackHeaderProps},
         recent_book_row::{RecentBookRow, RecentBookRowProps},
@@ -16,6 +16,7 @@ pub(crate) struct RecentBooksScreen<'a> {
     entry_listeners: Vec<Listener<ActivateEvent>>,
     revision: u64,
     error: bool,
+    battery: Option<BatteryStatus>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -26,8 +27,7 @@ impl RenderOnce for RecentBooksScreen<'_> {
                 <div class="absolute left-0 top-[5px] w-[480px] h-[77px]">
                     <BackHeader
                         title="Recent Books"
-                        battery="72%"
-                        charging={false}
+                        battery={self.battery}
                         on_back={self.on_back}
                     />
                 </div>

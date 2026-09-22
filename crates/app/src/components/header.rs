@@ -1,18 +1,22 @@
+use alloc::format;
+
 use inkpaper_ui::prelude::*;
 
-use crate::components::icon::{Icon, IconKind, IconProps};
+use crate::{
+    BatteryStatus,
+    components::icon::{Icon, IconKind, IconProps},
+};
 
 #[component]
-pub(crate) struct HomeHeader<'a> {
-    battery: &'a str,
-    charging: bool,
+pub(crate) struct HomeHeader {
+    battery: Option<BatteryStatus>,
 }
 
-impl RenderOnce for HomeHeader<'_> {
+impl RenderOnce for HomeHeader {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-full h-full relative">
-                <BatteryStatus battery={self.battery} charging={self.charging} />
+                <BatteryIndicator battery={self.battery} />
             </div>
         }
     }
@@ -21,8 +25,7 @@ impl RenderOnce for HomeHeader<'_> {
 #[component]
 pub(crate) struct BackHeader<'a> {
     title: &'a str,
-    battery: &'a str,
-    charging: bool,
+    battery: Option<BatteryStatus>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -30,7 +33,7 @@ impl RenderOnce for BackHeader<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-full h-full relative">
-                <BatteryStatus battery={self.battery} charging={self.charging} />
+                <BatteryIndicator battery={self.battery} />
 
                 <div
                     id="back"
@@ -53,8 +56,7 @@ impl RenderOnce for BackHeader<'_> {
 #[component]
 pub(crate) struct FileBrowserHeader<'a> {
     title: &'a str,
-    battery: &'a str,
-    charging: bool,
+    battery: Option<BatteryStatus>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -65,7 +67,6 @@ impl RenderOnce for FileBrowserHeader<'_> {
                 <BackHeader
                     title={self.title}
                     battery={self.battery}
-                    charging={self.charging}
                     on_back={self.on_back}
                 />
 
@@ -78,61 +79,37 @@ impl RenderOnce for FileBrowserHeader<'_> {
 }
 
 #[component]
-struct BatteryStatus<'a> {
-    battery: &'a str,
-    charging: bool,
+struct BatteryIndicator {
+    battery: Option<BatteryStatus>,
 }
 
-impl RenderOnce for BatteryStatus<'_> {
+impl RenderOnce for BatteryIndicator {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let icon = battery_icon(self.battery, self.charging);
+        let label = match self.battery {
+            Some(battery) => format!("{}%", battery.percent()),
+            None => format!("--%"),
+        };
+
+        let icon = self.battery.map(battery_icon);
 
         rsx! {
             <div class="absolute top-0 right-[18px] flex items-center gap-1">
-                <text class="text-base">{self.battery}</text>
-                <Icon kind={icon} size={px(24)} />
+                <text class="text-base">{label}</text>
+
+                {#if let Some(icon) = icon}
+                    <Icon kind={icon} size={px(24)} />
+                {/if}
             </div>
         }
     }
 }
 
-fn battery_icon(battery: &str, charging: bool) -> IconKind {
-    if charging {
-        return IconKind::BatteryCharging;
-    }
-
-    match parse_battery_percent(battery) {
+fn battery_icon(battery: BatteryStatus) -> IconKind {
+    match battery.percent() {
         0..=10 => IconKind::BatteryWarning,
         11..=35 => IconKind::BatteryLow,
         36..=70 => IconKind::BatteryMedium,
         71..=100 => IconKind::BatteryFull,
         _ => unreachable!(),
     }
-}
-
-fn parse_battery_percent(value: &str) -> u8 {
-    let mut percent = 0u16;
-    let mut has_digit = false;
-
-    for byte in value.bytes() {
-        if byte == b'%' {
-            break;
-        }
-
-        if !byte.is_ascii_digit() {
-            return 0;
-        }
-
-        has_digit = true;
-
-        percent = percent
-            .saturating_mul(10)
-            .saturating_add(u16::from(byte - b'0'));
-    }
-
-    if !has_digit {
-        return 0;
-    }
-
-    percent.min(100) as u8
 }

@@ -10,10 +10,12 @@ mod reader_page;
 mod reading_history;
 mod screens;
 mod service;
+mod system;
 mod typography;
 
 pub use app::InkPaperApp;
 pub use service::{AppPlatform, AppService, AppServiceError, PlatformEntry};
+pub use system::{BatteryStatus, ClockStatus};
 
 // internal application domain/effect types.
 //

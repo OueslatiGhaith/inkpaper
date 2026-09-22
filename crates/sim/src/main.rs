@@ -4,7 +4,7 @@ use embedded_graphics_simulator::{
     sdl2::{Keycode, MouseButton},
 };
 use futures_lite::future;
-use inkpaper_app::{AppService, InkPaperApp};
+use inkpaper_app::{AppService, BatteryStatus, ClockStatus, InkPaperApp};
 use inkpaper_ui::prelude::*;
 
 use crate::{
@@ -31,6 +31,8 @@ fn main() {
     let app = runtime
         .create_root(|_| InkPaperApp::default())
         .expect("InkPaper application root must fit");
+
+    seed_system_status(&mut runtime, app);
 
     let mut app_service = AppService::new(SimulatorPlatform::new());
     future::block_on(app_service.service_pending(&mut runtime, app))
@@ -167,4 +169,16 @@ fn main() {
             render_pending_ui(&mut runtime, &mut display);
         }
     }
+}
+
+fn seed_system_status(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>) {
+    let battery = BatteryStatus::new(72, 3_880).expect("simulated battery must be valid");
+    let clock = ClockStatus::new(2026, 9, 23, 12, 34).expect("simulated clock must be valid");
+
+    runtime
+        .update(app, move |app, cx| {
+            app.apply_battery_status(battery, cx);
+            app.apply_clock_status(Some(clock), cx);
+        })
+        .expect("application root must remain available");
 }

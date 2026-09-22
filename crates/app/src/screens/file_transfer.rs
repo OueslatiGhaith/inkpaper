@@ -1,13 +1,17 @@
 use inkpaper_ui::prelude::*;
 
-use crate::components::{
-    header::{BackHeader, BackHeaderProps},
-    icon::IconKind,
-    transfer_mode_row::{TransferModeRow, TransferModeRowProps},
+use crate::{
+    BatteryStatus,
+    components::{
+        header::{BackHeader, BackHeaderProps},
+        icon::IconKind,
+        transfer_mode_row::{TransferModeRow, TransferModeRowProps},
+    },
 };
 
 #[component]
 pub(crate) struct FileTransferScreen {
+    battery: Option<BatteryStatus>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -18,8 +22,7 @@ impl RenderOnce for FileTransferScreen {
                 <div class="absolute left-0 top-[5px] w-[480px] h-[77px]">
                     <BackHeader
                         title="File Transfer"
-                        battery="72%"
-                        charging={false}
+                        battery={self.battery}
                         on_back={self.on_back}
                     />
                 </div>

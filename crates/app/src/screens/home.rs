@@ -1,7 +1,7 @@
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    ReadingHistoryEntry,
+    BatteryStatus, ReadingHistoryEntry,
     components::{
         current_book_card::{CurrentBookCard, CurrentBookCardProps},
         header::{HomeHeader, HomeHeaderProps},
@@ -12,6 +12,7 @@ use crate::{
 #[component]
 pub(crate) struct HomeScreen<'a> {
     current_book: Option<&'a ReadingHistoryEntry>,
+    battery: Option<BatteryStatus>,
     on_current_book: Listener<ActivateEvent>,
     on_browse_files: Listener<ActivateEvent>,
     on_recent_books: Listener<ActivateEvent>,
@@ -24,7 +25,7 @@ impl RenderOnce for HomeScreen<'_> {
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
                 <div class="absolute left-0 top-[5px] w-[480px] h-14">
-                    <HomeHeader battery="72%" charging={false} />
+                    <HomeHeader battery={self.battery} />
                 </div>
 
                 <div class="absolute left-5 top-14 w-[440px] h-[242px]">

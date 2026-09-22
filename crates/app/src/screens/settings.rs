@@ -1,33 +1,51 @@
+use alloc::{format, string::String};
 use inkpaper_ui::prelude::*;
 
-use crate::components::{
-    header::{BackHeader, BackHeaderProps},
-    settings_row::{
-        SettingsSubmenuRow, SettingsSubmenuRowProps, SettingsToggleRow, SettingsToggleRowProps,
-        SettingsValueRow, SettingsValueRowProps,
+use crate::{
+    BatteryStatus, ClockStatus,
+    components::{
+        header::{BackHeader, BackHeaderProps},
+        settings_row::{
+            SettingsSubmenuRow, SettingsSubmenuRowProps, SettingsToggleRow, SettingsToggleRowProps,
+            SettingsValueRow, SettingsValueRowProps,
+        },
     },
 };
 
 #[component]
 pub(crate) struct SettingsScreen {
+    battery: Option<BatteryStatus>,
+    clock: Option<ClockStatus>,
     on_back: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for SettingsScreen {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let clock = match self.clock {
+            None => String::from("Date/time unavailable"),
+            Some(clock) => format!(
+                "{:02}/{:02}/{:04}  {:02}:{:02}",
+                clock.day(),
+                clock.month(),
+                clock.year(),
+                clock.hour(),
+                clock.minute(),
+            ),
+        };
+
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
                 <div class="absolute left-0 top-[5px] w-[480px] h-[77px]">
                     <BackHeader
                         title="Settings"
-                        battery="72%"
-                        charging={false}
+                        battery={self.battery}
                         on_back={self.on_back}
                     />
 
-                    // TODO: replace with RTC-backed date once app state is wired.
-                    <div class="absolute right-3 top-6">
-                        <text class="text-xl">{"15/09/2026"}</text>
+                    <div class="absolute right-3 top-[32px]">
+                        <text class="text-base">
+                            {clock}
+                        </text>
                     </div>
                 </div>
 

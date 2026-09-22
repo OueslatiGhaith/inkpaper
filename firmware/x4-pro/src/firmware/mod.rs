@@ -15,7 +15,9 @@ use esp_hal::{
     time::Rate,
     timer::timg::TimerGroup,
 };
-use inkpaper_app::{AppService, InkPaperApp};
+use inkpaper_app::{
+    AppService, BatteryStatus as AppBatteryStatus, ClockStatus as AppClockStatus, InkPaperApp,
+};
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
@@ -314,8 +316,8 @@ async fn main(spawner: Spawner) -> ! {
                     action = handle_input_event(runtime, app, event);
                 }
             }
-            Either4::Second(reading) => apply_battery_reading(reading),
-            Either4::Third(state) => apply_rtc_state(state),
+            Either4::Second(reading) => apply_battery_reading(runtime, app, reading),
+            Either4::Third(state) => apply_rtc_state(runtime, app, state),
             Either4::Fourth(()) => {
                 display_power
                     .handle_idle_timeout(&mut panel, &mut bus, &mut delay)
@@ -520,26 +522,64 @@ fn handle_input_event(
     }
 }
 
-fn apply_battery_reading(reading: BatteryReading) {
+fn apply_battery_reading(
+    runtime: &mut UiRuntime,
+    app: Entity<InkPaperApp>,
+    reading: BatteryReading,
+) {
     debug!(
         "battery update percent={} millivolts={}",
         reading.percent(),
         reading.millivolts(),
     );
 
-    // TODO: update app once app state is introduced
+    let Some(status) = AppBatteryStatus::new(reading.percent(), reading.millivolts()) else {
+        warn!("ignoring invalid battery percentage {}", reading.percent());
+        return;
+    };
+
+    if runtime
+        .update(app, move |app, cx| app.apply_battery_status(status, cx))
+        .is_err()
+    {
+        warn!("failed to apply battery status to app");
+    }
 }
 
-fn apply_rtc_state(state: RtcState) {
-    match state {
-        RtcState::Invalid => debug!("rtc update invalid"),
+fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: RtcState) {
+    let clock = match state {
+        RtcState::Invalid => {
+            debug!("rtc update invalid");
+            None
+        }
         RtcState::Valid(datetime) => {
             debug!(
                 "rtc update hour={} minute={}",
                 datetime.hour(),
                 datetime.minute(),
             );
+
+            let clock = AppClockStatus::new(
+                datetime.year(),
+                datetime.month(),
+                datetime.day(),
+                datetime.hour(),
+                datetime.minute(),
+            );
+
+            if clock.is_none() {
+                warn!("RTC produced an invalid application datetime");
+            }
+
+            clock
         }
+    };
+
+    if runtime
+        .update(app, move |app, cx| app.apply_clock_status(clock, cx))
+        .is_err()
+    {
+        warn!("failed to apply RTC status to app");
     }
 
     // TODO: update app once app state is introduced
