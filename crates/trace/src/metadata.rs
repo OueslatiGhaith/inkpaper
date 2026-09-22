@@ -79,6 +79,7 @@ static METRIC_FIELDS: [Field; 0] = [];
 pub enum MetricKind {
     Counter,
     Distribution,
+    Gauge,
 }
 
 impl MetricKind {
@@ -86,6 +87,7 @@ impl MetricKind {
         match self {
             Self::Counter => "counter",
             Self::Distribution => "distribution",
+            Self::Gauge => "gauge",
         }
     }
 }
@@ -130,7 +132,7 @@ impl MetricCallsite {
 }
 
 pub trait IntoMetricValue {
-    fn into_metric_value(self) -> u32;
+    fn into_metric_value(self) -> u64;
 }
 
 macro_rules! impl_unsigned_metric_value {
@@ -138,26 +140,26 @@ macro_rules! impl_unsigned_metric_value {
         $(
             impl IntoMetricValue for $ty {
                 #[inline(always)]
-                fn into_metric_value(self) -> u32 {
-                    u32::from(self)
+                fn into_metric_value(self) -> u64 {
+                    u64::from(self)
                 }
             }
         )+
     };
 }
 
-impl_unsigned_metric_value!(u8, u16, u32);
+impl_unsigned_metric_value!(u8, u16, u32, u64);
 
 impl IntoMetricValue for usize {
     #[inline(always)]
-    fn into_metric_value(self) -> u32 {
-        u32::try_from(self).unwrap_or(u32::MAX)
+    fn into_metric_value(self) -> u64 {
+        u64::try_from(self).unwrap_or(u64::MAX)
     }
 }
 
 #[doc(hidden)]
 #[inline(always)]
-pub fn into_metric_value<T>(value: T) -> u32
+pub fn into_metric_value<T>(value: T) -> u64
 where
     T: IntoMetricValue,
 {

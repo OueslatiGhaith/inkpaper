@@ -207,6 +207,9 @@ impl X4Panel {
         drop(present_trace);
 
         #[cfg(feature = "trace")]
+        crate::firmware::perf::record_present_metrics(present_timings);
+
+        #[cfg(feature = "trace")]
         let trace_capture = inkpaper_trace::capture();
 
         #[cfg(feature = "performance")]

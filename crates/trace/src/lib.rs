@@ -93,7 +93,7 @@ pub mod __private {
     }
 
     #[inline(always)]
-    pub fn into_metric_value<T>(value: T) -> u32
+    pub fn into_metric_value<T>(value: T) -> u64
     where
         T: crate::IntoMetricValue,
     {
@@ -102,7 +102,7 @@ pub mod __private {
 
     #[cfg(feature = "recording")]
     #[inline(always)]
-    pub fn observe_metric(callsite: &'static crate::MetricCallsite, value: u32) {
+    pub fn observe_metric(callsite: &'static crate::MetricCallsite, value: u64) {
         crate::recording::observe_metric(callsite, value);
     }
 
@@ -556,6 +556,146 @@ macro_rules! counter {
             target: module_path!(),
             $name,
             $value,
+        )
+    };
+}
+
+#[cfg(feature = "recording")]
+#[macro_export]
+macro_rules! gauge {
+    (
+        target: $target:expr,
+        $name:literal,
+        $value:expr,
+        unit: $unit:expr
+        $(,)?
+    ) => {{
+        static __INKPAPER_METRIC_CALLSITE:
+            $crate::MetricCallsite =
+            $crate::MetricCallsite::new(
+                $name,
+                $target,
+                $crate::MetricKind::Gauge,
+                $unit,
+            );
+
+        if $crate::__private::enabled() {
+            let value =
+                $crate::__private::into_metric_value(
+                    $value,
+                );
+
+            $crate::__private::observe_metric(
+                &__INKPAPER_METRIC_CALLSITE,
+                value,
+            );
+        }
+    }};
+
+    (
+        target: $target:expr,
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {
+        $crate::gauge!(
+            target: $target,
+            $name,
+            $value,
+            unit: "",
+        )
+    };
+
+    (
+        $name:literal,
+        $value:expr,
+        unit: $unit:expr
+        $(,)?
+    ) => {
+        $crate::gauge!(
+            target: module_path!(),
+            $name,
+            $value,
+            unit: $unit,
+        )
+    };
+
+    (
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {
+        $crate::gauge!(
+            target: module_path!(),
+            $name,
+            $value,
+            unit: "",
+        )
+    };
+}
+
+#[cfg(not(feature = "recording"))]
+#[macro_export]
+macro_rules! gauge {
+    (
+        target: $target:expr,
+        $name:literal,
+        $value:expr,
+        unit: $unit:expr
+        $(,)?
+    ) => {{
+        if false {
+            let _: &'static str =
+                $target;
+
+            let _: &'static str =
+                $name;
+
+            let _: &'static str =
+                $unit;
+
+            let _ = &$value;
+        }
+    }};
+
+    (
+        target: $target:expr,
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {
+        $crate::gauge!(
+            target: $target,
+            $name,
+            $value,
+            unit: "",
+        )
+    };
+
+    (
+        $name:literal,
+        $value:expr,
+        unit: $unit:expr
+        $(,)?
+    ) => {
+        $crate::gauge!(
+            target: module_path!(),
+            $name,
+            $value,
+            unit: $unit,
+        )
+    };
+
+    (
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {
+        $crate::gauge!(
+            target: module_path!(),
+            $name,
+            $value,
+            unit: "",
         )
     };
 }

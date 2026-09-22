@@ -23,7 +23,7 @@ x4-perf features="performance,ui-metrics":
         --target {{x4_pro_target}} --profile profiling --features {{features}}
 
 x4-trace:
-    just x4-perf "performance,ui-metrics,trace"
+    just x4-perf "trace"
 
 x4-perf-log output="target/perf/latest.log":
     mkdir -p target/perf/history

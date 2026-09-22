@@ -66,6 +66,7 @@ struct Callsite {
 enum MetricKind {
     Counter,
     Distribution,
+    Gauge,
 }
 
 impl MetricKind {
@@ -73,6 +74,7 @@ impl MetricKind {
         match value {
             "counter" => Ok(Self::Counter),
             "distribution" => Ok(Self::Distribution),
+            "gauge" => Ok(Self::Gauge),
             _ => bail!("unknown metric kind `{value}`"),
         }
     }
@@ -81,6 +83,7 @@ impl MetricKind {
         match self {
             Self::Counter => "counter",
             Self::Distribution => "distribution",
+            Self::Gauge => "gauge",
         }
     }
 }
@@ -99,7 +102,7 @@ struct Metric {
     id: u16,
     count: u32,
     sum: u64,
-    max: u32,
+    max: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,13 +317,12 @@ fn parse_metric(payload: &str, capture: &mut Capture) -> Result<()> {
 
     parser.finish()?;
 
-    if !capture.metric_definitions.contains_key(&id) {
-        bail!(
+    let definition = capture.metric_definitions.get(&id).with_context(|| {
+        format!(
             "trace capture {} uses undefined metric {}",
-            capture.capture_id,
-            id,
-        );
-    }
+            capture.capture_id, id,
+        )
+    })?;
 
     if capture.metrics.contains_key(&id) {
         bail!(
@@ -334,8 +336,22 @@ fn parse_metric(payload: &str, capture: &mut Capture) -> Result<()> {
         bail!("metric {} has zero observations", id);
     }
 
-    if u64::from(max) > sum {
-        bail!("metric {} has max {} greater than sum {}", id, max, sum);
+    match definition.kind {
+        MetricKind::Counter | MetricKind::Distribution => {
+            if max > sum {
+                bail!("metric {id} has max {max} greater than sum {sum}");
+            }
+        }
+
+        MetricKind::Gauge => {
+            if count != 1 {
+                bail!("gauge metric {id} must contain exactly one effective observation");
+            }
+
+            if max != sum {
+                bail!("gauge metric {id} has inconsistent value: sum={sum} max={max}");
+            }
+        }
     }
 
     capture.metrics.insert(
@@ -907,5 +923,33 @@ mod tests {
         assert_eq!(span.start_cycles, 100);
 
         assert_eq!(span.duration_cycles, 300);
+    }
+
+    #[test]
+    fn parses_u64_gauge_metric() {
+        let log = indoc! {r#"
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=1 metric_dropped=0
+            1.001 INFO trace/v3 metric_define id=0 target=11:ui.coverage name=6:pixels kind=gauge unit=6:pixels
+            1.002 INFO trace/v3 metric id=0 count=1 sum=4294967418 max=4294967418
+            1.003 INFO trace/v3 end id=1
+        "#};
+
+        let captures = parse_captures(log).unwrap();
+
+        let capture = &captures[0];
+
+        let definition = capture.metric_definitions.get(&0).unwrap();
+
+        assert_eq!(definition.kind, MetricKind::Gauge);
+
+        assert_eq!(definition.unit, "pixels");
+
+        let metric = capture.metrics.get(&0).unwrap();
+
+        assert_eq!(metric.count, 1);
+
+        assert_eq!(metric.sum, 4_294_967_418);
+
+        assert_eq!(metric.max, 4_294_967_418);
     }
 }

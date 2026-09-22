@@ -527,6 +527,28 @@ fn render_invalidation(
     drop(render_trace);
 
     #[cfg(feature = "trace")]
+    {
+        crate::firmware::perf::record_render_metrics(timings);
+
+        crate::firmware::perf::record_ordered_coverage_metrics(
+            ordered_coverage_calls,
+            ordered_coverage_pixels,
+            ordered_coverage_cycles,
+        );
+
+        crate::firmware::perf::record_ui_metrics(runtime.performance_metrics());
+
+        crate::firmware::perf::record_text_metrics(
+            eink_report,
+            runtime.glyph_cache_metrics(),
+            runtime.glyph_cache_used_bytes(),
+            runtime.glyph_cache_capacity_bytes(),
+        );
+
+        crate::firmware::perf::record_coverage_metrics(eink_report, framebuffer_draw_iter_pixels);
+    }
+
+    #[cfg(feature = "trace")]
     let trace_capture = inkpaper_trace::capture();
 
     #[cfg(feature = "performance")]

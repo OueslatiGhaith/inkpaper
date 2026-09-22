@@ -612,6 +612,515 @@ impl FramePerfReport {
     }
 }
 
+#[cfg(feature = "trace")]
+pub(crate) fn record_render_metrics(timings: RenderTimings) {
+    inkpaper_trace::gauge!(
+        target: "ui.render",
+        "rebuild_cycles",
+        timings.rebuild_cycles,
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.render",
+        "layout_cycles",
+        timings.layout_cycles,
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.render",
+        "clear_cycles",
+        timings.clear_cycles,
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.render",
+        "paint_cycles",
+        timings.paint_cycles,
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.render",
+        "damage_cycles",
+        timings.damage_cycles,
+        unit: "cycles",
+    );
+}
+
+#[cfg(feature = "trace")]
+pub(crate) fn record_present_metrics(timings: PresentTimings) {
+    inkpaper_trace::gauge!(
+        target: "display.present",
+        "total_cycles",
+        timings.total_cycles(),
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.present",
+        "io_cycles",
+        timings.io_cycles(),
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.present",
+        "busy_cycles",
+        timings.busy_cycles(),
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.present",
+        "other_cycles",
+        timings.other_cycles(),
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.present",
+        "bytes",
+        timings.io_bytes(),
+        unit: "bytes",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.present",
+        "io_calls",
+        timings.io_calls(),
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.present",
+        "busy_waits",
+        timings.busy_waits(),
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.present",
+        "longest_busy_cycles",
+        timings.longest_busy_cycles(),
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.present",
+        "busy_waits_dropped",
+        timings.dropped_busy_waits(),
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.stream",
+        "cycles",
+        timings.stream_cycles(),
+        unit: "cycles",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.stream",
+        "bytes",
+        timings.stream_bytes(),
+        unit: "bytes",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "display.stream",
+        "calls",
+        timings.stream_calls(),
+    );
+}
+
+#[cfg(feature = "trace")]
+pub(crate) fn record_ui_metrics(metrics: inkpaper_ui::PerformanceMetrics) {
+    inkpaper_trace::gauge!(
+        target: "ui.render",
+        "entity_render_calls",
+        metrics.entity_render_calls,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.render",
+        "nodes_mounted",
+        metrics.nodes_mounted,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.layout",
+        "measure_node_calls",
+        metrics.measure_node_calls,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.layout",
+        "measurement_cache_hits",
+        metrics.measurement_cache_hits,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.layout",
+        "measurement_cache_misses",
+        metrics.measurement_cache_misses,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.layout",
+        "text_measurements",
+        metrics.text_measurements,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.layout",
+        "flex_base_main_size_calls",
+        metrics.flex_base_main_size_calls,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.layout",
+        "flex_item_main_size_calls",
+        metrics.flex_item_main_size_calls,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.layout",
+        "flex_sibling_visits",
+        metrics.flex_sibling_visits,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.layout",
+        "nodes_laid_out",
+        metrics.nodes_laid_out,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_traversal_passes",
+        metrics.visual_traversal_passes,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_traversal_nodes",
+        metrics.visual_traversal_nodes,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_context_derivations",
+        metrics.visual_context_derivations,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_clip_intersections",
+        metrics.visual_clip_intersections,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_ancestor_pushes",
+        metrics.visual_ancestor_pushes,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_ancestor_pops",
+        metrics.visual_ancestor_pops,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_ancestor_depth_peak",
+        metrics.visual_ancestor_depth_peak,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_context_stack_pushes",
+        metrics.visual_context_stack_pushes,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_context_stack_pops",
+        metrics.visual_context_stack_pops,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_context_stack_depth_peak",
+        metrics.visual_context_stack_depth_peak,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_context_stack_overflows",
+        metrics.visual_context_stack_overflows,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_context_recomputations",
+        metrics.visual_context_recomputations,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_bounds_ancestor_visits",
+        metrics.visual_bounds_ancestor_visits,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "scroll_into_view_ancestor_visits",
+        metrics.scroll_into_view_ancestor_visits,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "render_invalidations_consumed",
+        metrics.render_invalidations_consumed,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "full_damage_invalidations",
+        metrics.full_damage_invalidations,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "partial_damage_invalidations",
+        metrics.partial_damage_invalidations,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "damage_rectangles",
+        metrics.damage_rectangles,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "damage_culled_nodes",
+        metrics.damage_culled_nodes,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "damage_pruned_subtrees",
+        metrics.damage_pruned_subtrees,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "damage_extent_pruned_subtrees",
+        metrics.damage_extent_pruned_subtrees,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "damage_pruned_sibling_runs",
+        metrics.damage_pruned_sibling_runs,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "damage_pruned_sibling_prefixes",
+        metrics.damage_pruned_sibling_prefixes,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "damage_prefix_search_steps",
+        metrics.damage_prefix_search_steps,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.damage",
+        "damage_clip_paints",
+        metrics.damage_clip_paints,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visual_nodes_visited",
+        metrics.visual_nodes_visited,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.visual",
+        "visible_nodes",
+        metrics.visible_nodes,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.paint",
+        "nodes_painted",
+        metrics.nodes_painted,
+    );
+}
+
+#[cfg(feature = "trace")]
+pub(crate) fn record_text_metrics(
+    paint: inkpaper_ui::backend::EInkPaintReport,
+    cache: inkpaper_ui::GlyphCacheMetrics,
+    bytes_used: usize,
+    bytes_capacity: usize,
+) {
+    inkpaper_trace::gauge!(
+        target: "ui.text",
+        "draw_calls",
+        paint.text_draw_calls(),
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.text",
+        "shaped_glyphs",
+        paint.shaped_glyphs(),
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.glyph_cache",
+        "lookups",
+        cache.lookups,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.glyph_cache",
+        "hits",
+        cache.hits,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.glyph_cache",
+        "misses",
+        cache.misses,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.glyph_cache",
+        "collisions",
+        cache.collisions,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.glyph_cache",
+        "rasterizations",
+        cache.rasterizations,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.glyph_cache",
+        "clears",
+        cache.clears,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.glyph_cache",
+        "bytes_used",
+        bytes_used,
+        unit: "bytes",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.glyph_cache",
+        "bytes_peak",
+        cache.bytes_peak,
+        unit: "bytes",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.glyph_cache",
+        "bytes_capacity",
+        bytes_capacity,
+        unit: "bytes",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.pair_cache",
+        "lookups",
+        paint.pair_positioning_cache_lookups(),
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.pair_cache",
+        "hits",
+        paint.pair_positioning_cache_hits(),
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.pair_cache",
+        "misses",
+        paint.pair_positioning_cache_misses(),
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.pair_cache",
+        "collisions",
+        paint.pair_positioning_cache_collisions(),
+    );
+}
+
+#[cfg(feature = "trace")]
+pub(crate) fn record_coverage_metrics(
+    paint: inkpaper_ui::backend::EInkPaintReport,
+    framebuffer_draw_iter_pixels: u64,
+) {
+    inkpaper_trace::gauge!(
+        target: "ui.coverage",
+        "bitmaps",
+        paint.coverage_bitmaps(),
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.coverage",
+        "samples",
+        paint.coverage_samples(),
+        unit: "pixels",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.coverage",
+        "accepted",
+        paint.coverage_accepted(),
+        unit: "pixels",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.coverage",
+        "framebuffer_pixels",
+        framebuffer_draw_iter_pixels,
+        unit: "pixels",
+    );
+}
+
+#[cfg(feature = "trace")]
+pub(crate) fn record_ordered_coverage_metrics(calls: u64, pixels: u64, cycles: u64) {
+    inkpaper_trace::gauge!(
+        target: "ui.coverage_fast",
+        "calls",
+        calls,
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.coverage_fast",
+        "pixels",
+        pixels,
+        unit: "pixels",
+    );
+
+    inkpaper_trace::gauge!(
+        target: "ui.coverage_fast",
+        "cycles",
+        cycles,
+        unit: "cycles",
+    );
+}
+
 #[cfg(feature = "performance")]
 pub(crate) fn log_config() {
     info!("perf/config hz={=u32}", CLOCK_HZ);

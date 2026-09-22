@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
-use crate::trace::{Metric, MetricDefinition, SpanKind};
+use crate::trace::{Metric, MetricDefinition, MetricKind, SpanKind};
 
 use super::{Callsite, Capture, Span, Value, parse_captures};
 
@@ -397,25 +397,35 @@ fn push_metric(
     metric: &Metric,
     timestamp_ns: u64,
 ) {
-    let annotations = vec![
-        (
-            "count".to_owned(),
-            AnnotationValue::Unsigned(u64::from(metric.count)),
-        ),
-        ("sum".to_owned(), AnnotationValue::Unsigned(metric.sum)),
-        (
-            "max".to_owned(),
-            AnnotationValue::Unsigned(u64::from(metric.max)),
-        ),
-        (
-            "kind".to_owned(),
-            AnnotationValue::String(definition.kind.as_str().to_owned()),
-        ),
-        (
+    let mut annotations = Vec::new();
+
+    match definition.kind {
+        MetricKind::Gauge => {
+            annotations.push(("value".to_owned(), AnnotationValue::Unsigned(metric.sum)));
+        }
+
+        MetricKind::Counter | MetricKind::Distribution => {
+            annotations.push((
+                "count".to_owned(),
+                AnnotationValue::Unsigned(u64::from(metric.count)),
+            ));
+
+            annotations.push(("sum".to_owned(), AnnotationValue::Unsigned(metric.sum)));
+            annotations.push(("max".to_owned(), AnnotationValue::Unsigned(metric.max)));
+        }
+    }
+
+    annotations.push((
+        "kind".to_owned(),
+        AnnotationValue::String(definition.kind.as_str().to_owned()),
+    ));
+
+    if !definition.unit.is_empty() {
+        annotations.push((
             "unit".to_owned(),
             AnnotationValue::String(definition.unit.clone()),
-        ),
-    ];
+        ));
+    }
 
     events.push(TimedEvent {
         kind: EventKind::Instant,
@@ -802,5 +812,29 @@ mod tests {
         assert!(contains_bytes(&trace, b"async 0"));
 
         assert!(contains_bytes(&trace, b"async 1"));
+    }
+
+    #[test]
+    fn perfetto_exports_gauge_value() {
+        let log = indoc! {r#"
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=1 metric_dropped=0
+            1.001 INFO trace/v3 metric_define id=0 target=9:ui.render name=12:paint_cycles kind=gauge unit=6:cycles
+            1.002 INFO trace/v3 metric id=0 count=1 sum=154790196 max=154790196
+            1.003 INFO trace/v3 end id=1
+        "#};
+
+        let captures = parse_captures(log).unwrap();
+
+        let trace = build_perfetto(&captures).unwrap();
+
+        assert!(contains_bytes(&trace, b"ui.render"));
+
+        assert!(contains_bytes(&trace, b"paint_cycles"));
+
+        assert!(contains_bytes(&trace, b"value"));
+
+        assert!(contains_bytes(&trace, b"gauge"));
+
+        assert!(contains_bytes(&trace, b"cycles"));
     }
 }

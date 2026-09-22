@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub const TRACE_CAPACITY: usize = 256;
-pub const METRIC_CAPACITY: usize = 32;
+pub const METRIC_CAPACITY: usize = 128;
 
 type CycleClockFn = fn() -> u32;
 type MonotonicClockFn = fn() -> u64;
@@ -315,7 +315,7 @@ struct MetricRecord {
 
     count: u32,
     sum: u64,
-    max: u32,
+    max: u64,
 }
 
 impl MetricRecord {
@@ -335,12 +335,21 @@ impl MetricRecord {
         }
     }
 
-    fn observe(&mut self, value: u32) {
-        self.count = self.count.saturating_add(1);
+    fn observe(&mut self, value: u64) {
+        match self.callsite.kind() {
+            MetricKind::Counter | MetricKind::Distribution => {
+                self.count = self.count.saturating_add(1);
+                self.sum = self.sum.saturating_add(value);
+                self.max = self.max.max(value);
+            }
 
-        self.sum = self.sum.saturating_add(u64::from(value));
-
-        self.max = self.max.max(value);
+            MetricKind::Gauge => {
+                // A gauge represents the latest snapshot, not an aggregate.
+                self.count = 1;
+                self.sum = value;
+                self.max = value;
+            }
+        }
     }
 }
 
@@ -392,7 +401,7 @@ impl CapturedMetric {
         self.record.sum
     }
 
-    pub const fn max(self) -> u32 {
+    pub const fn max(self) -> u64 {
         self.record.max
     }
 }
@@ -463,7 +472,7 @@ impl TraceBuffer {
         self.records.get(physical_index).copied()
     }
 
-    fn observe_metric(&mut self, callsite: &'static MetricCallsite, value: u32) {
+    fn observe_metric(&mut self, callsite: &'static MetricCallsite, value: u64) {
         let existing = self.metrics[..self.metric_len]
             .iter()
             .position(|metric| core::ptr::eq(metric.callsite, callsite));
@@ -824,15 +833,15 @@ fn callsite_id_for(buffer: &TraceBuffer, index: usize) -> Option<CallsiteId> {
 }
 
 #[inline(always)]
-pub(crate) fn observe_metric(callsite: &'static MetricCallsite, value: u32) {
+pub(crate) fn observe_metric(callsite: &'static MetricCallsite, value: u64) {
     record_metric(callsite, value, None);
 }
 
-fn observe_metric_for_generation(generation: u32, callsite: &'static MetricCallsite, value: u32) {
+fn observe_metric_for_generation(generation: u32, callsite: &'static MetricCallsite, value: u64) {
     record_metric(callsite, value, Some(generation));
 }
 
-fn record_metric(callsite: &'static MetricCallsite, value: u32, expected_generation: Option<u32>) {
+fn record_metric(callsite: &'static MetricCallsite, value: u64, expected_generation: Option<u32>) {
     if !is_recording() {
         return;
     }
@@ -1098,8 +1107,6 @@ impl Drop for MetricTimer {
         let ended_at = clock.now_cycles();
 
         let duration = ended_at.saturating_sub(self.start_cycles);
-
-        let duration = u32::try_from(duration).unwrap_or(u32::MAX);
 
         observe_metric_for_generation(self.generation, self.callsite, duration);
     }
@@ -1464,6 +1471,14 @@ mod tests {
         );
 
         assert_eq!(FIELD_EVALUATIONS.load(Ordering::Relaxed), 0);
+
+        crate::gauge!(
+            target: "test",
+            "disabled_gauge",
+            evaluated_field(),
+        );
+
+        assert_eq!(FIELD_EVALUATIONS.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -1497,5 +1512,44 @@ mod tests {
             capture.span(0).unwrap().callsite_id(),
             capture.span(1).unwrap().callsite_id(),
         );
+    }
+
+    #[test]
+    fn gauge_keeps_latest_u64_value() {
+        let _test = test_lock();
+
+        reset();
+        init_trace();
+
+        fn record_bytes(value: u64) {
+            crate::gauge!(
+                target: "test.gauge",
+                "bytes",
+                value,
+                unit: "bytes",
+            );
+        }
+
+        record_bytes(12);
+
+        let large = u64::from(u32::MAX).saturating_add(123);
+
+        record_bytes(large);
+
+        let capture = capture().unwrap();
+
+        assert_eq!(capture.metrics(), 1);
+
+        let metric = capture.metric(0).unwrap();
+
+        assert_eq!(metric.kind(), MetricKind::Gauge);
+
+        assert_eq!(metric.unit(), "bytes");
+
+        assert_eq!(metric.count(), 1);
+
+        assert_eq!(metric.sum(), large);
+
+        assert_eq!(metric.max(), large);
     }
 }
