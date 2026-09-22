@@ -11,11 +11,19 @@ struct Capture {
     session_id: u32,
     clock_hz: u32,
     origin_cycles: u32,
+
     expected_spans: usize,
     dropped: u32,
     open_spans: u8,
+
     callsites: BTreeMap<u16, Callsite>,
     spans: Vec<Span>,
+
+    metrics_declared: bool,
+    expected_metrics: usize,
+    metric_dropped: u32,
+    metric_definitions: BTreeMap<u16, MetricDefinition>,
+    metrics: BTreeMap<u16, Metric>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +44,46 @@ struct Span {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MetricKind {
+    Counter,
+    Distribution,
+}
+
+impl MetricKind {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "counter" => Ok(Self::Counter),
+            "distribution" => Ok(Self::Distribution),
+            _ => bail!("unknown metric kind `{value}`"),
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Counter => "counter",
+            Self::Distribution => "distribution",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MetricDefinition {
+    id: u16,
+    target: String,
+    name: String,
+    kind: MetricKind,
+    unit: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Metric {
+    id: u16,
+    count: u32,
+    sum: u64,
+    max: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Value {
     Unsigned(u32),
     Signed(i32),
@@ -44,7 +92,9 @@ enum Value {
 
 fn parse_captures(log: &str) -> Result<Vec<Capture>> {
     let mut captures = Vec::new();
+
     let mut current: Option<Capture> = None;
+
     let mut session_ids = BTreeSet::new();
 
     for (line_index, line) in log.lines().enumerate() {
@@ -97,6 +147,41 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
 
             parse_span(payload, capture)
                 .with_context(|| format!("invalid trace span on log line {line_number}"))?;
+
+            continue;
+        }
+
+        if let Some(payload) = record.strip_prefix("metrics ") {
+            let capture = current.as_mut().with_context(|| {
+                format!("trace metric summary outside a capture on log line {line_number}")
+            })?;
+
+            parse_metrics_header(payload, capture).with_context(|| {
+                format!("invalid trace metric summary on log line {line_number}")
+            })?;
+
+            continue;
+        }
+
+        if let Some(payload) = record.strip_prefix("metric_define ") {
+            let capture = current.as_mut().with_context(|| {
+                format!("trace metric definition outside a capture on log line {line_number}")
+            })?;
+
+            parse_metric_definition(payload, capture).with_context(|| {
+                format!("invalid trace metric definition on log line {line_number}")
+            })?;
+
+            continue;
+        }
+
+        if let Some(payload) = record.strip_prefix("metric ") {
+            let capture = current.as_mut().with_context(|| {
+                format!("trace metric outside a capture on log line {line_number}")
+            })?;
+
+            parse_metric(payload, capture)
+                .with_context(|| format!("invalid trace metric on log line {line_number}"))?;
 
             continue;
         }
@@ -171,7 +256,131 @@ fn parse_capture_header(payload: &str) -> Result<Capture> {
         open_spans,
         callsites: BTreeMap::new(),
         spans: Vec::with_capacity(expected_spans),
+        metrics_declared: false,
+        expected_metrics: 0,
+        metric_dropped: 0,
+        metric_definitions: BTreeMap::new(),
+        metrics: BTreeMap::new(),
     })
+}
+
+fn parse_metrics_header(payload: &str, capture: &mut Capture) -> Result<()> {
+    if capture.metrics_declared {
+        bail!(
+            "trace session {} declares metrics more than once",
+            capture.session_id,
+        );
+    }
+
+    let mut parser = LineParser::new(payload);
+
+    let expected_metrics = parser.number("count=")?;
+
+    let metric_dropped = parser.number("dropped=")?;
+
+    parser.finish()?;
+
+    capture.metrics_declared = true;
+
+    capture.expected_metrics = expected_metrics;
+
+    capture.metric_dropped = metric_dropped;
+
+    Ok(())
+}
+
+fn parse_metric_definition(payload: &str, capture: &mut Capture) -> Result<()> {
+    if !capture.metrics_declared {
+        bail!("metric definition appeared before trace/v2 metrics summary");
+    }
+
+    let mut parser = LineParser::new(payload);
+
+    let id = parser.number("id=")?;
+
+    let target = parser.component("target=")?;
+
+    let name = parser.component("name=")?;
+
+    let kind_text = parser.token("kind=")?;
+
+    let kind = MetricKind::parse(kind_text)?;
+
+    let unit = parser.component("unit=")?;
+
+    parser.finish()?;
+
+    if capture.metric_definitions.contains_key(&id) {
+        bail!(
+            "trace session {} defines metric {} more than once",
+            capture.session_id,
+            id,
+        );
+    }
+
+    capture.metric_definitions.insert(
+        id,
+        MetricDefinition {
+            id,
+            target,
+            name,
+            kind,
+            unit,
+        },
+    );
+
+    Ok(())
+}
+
+fn parse_metric(payload: &str, capture: &mut Capture) -> Result<()> {
+    if !capture.metrics_declared {
+        bail!("metric appeared before trace/v2 metrics summary");
+    }
+
+    let mut parser = LineParser::new(payload);
+
+    let id = parser.number("id=")?;
+    let count = parser.number("count=")?;
+    let sum = parser.number("sum=")?;
+    let max = parser.number("max=")?;
+
+    parser.finish()?;
+
+    if !capture.metric_definitions.contains_key(&id) {
+        bail!(
+            "trace session {} uses undefined metric {}",
+            capture.session_id,
+            id,
+        );
+    }
+
+    if capture.metrics.contains_key(&id) {
+        bail!(
+            "trace session {} records metric {} more than once",
+            capture.session_id,
+            id,
+        );
+    }
+
+    if count == 0 {
+        bail!("metric {} has zero observations", id);
+    }
+
+    if u64::from(max) > sum {
+        bail!("metric {} has max {} greater than sum {}", id, max, sum);
+    }
+
+    capture.metrics.insert(
+        id,
+        Metric {
+            id,
+            count,
+            sum,
+            max,
+        },
+    );
+
+    Ok(())
 }
 
 fn parse_definition(payload: &str, capture: &mut Capture) -> Result<()> {
@@ -298,6 +507,43 @@ fn validate_capture(capture: &Capture) -> Result<()> {
         );
     }
 
+    if !capture.metrics_declared {
+        if !capture.metric_definitions.is_empty() || !capture.metrics.is_empty() {
+            bail!(
+                "trace session {} contains metrics without a metrics summary",
+                capture.session_id,
+            );
+        }
+
+        return Ok(());
+    }
+
+    if capture.metric_dropped != 0 {
+        bail!(
+            "trace session {} overflowed: {} metric observations were dropped",
+            capture.session_id,
+            capture.metric_dropped,
+        );
+    }
+
+    if capture.expected_metrics != capture.metric_definitions.len() {
+        bail!(
+            "trace session {} declares {} metrics but contains {} definitions",
+            capture.session_id,
+            capture.expected_metrics,
+            capture.metric_definitions.len(),
+        );
+    }
+
+    if capture.expected_metrics != capture.metrics.len() {
+        bail!(
+            "trace session {} declares {} metrics but contains {} metric records",
+            capture.session_id,
+            capture.expected_metrics,
+            capture.metrics.len(),
+        );
+    }
+
     Ok(())
 }
 
@@ -334,7 +580,7 @@ impl<'a> LineParser<'a> {
         let rest = self
             .rest
             .strip_prefix(prefix)
-            .with_context(|| format!("expected `{prefix}` in trace record `{}`", self.original,))?;
+            .with_context(|| format!("expected `{prefix}` in trace record `{}`", self.original))?;
 
         let colon = rest.find(':').with_context(|| {
             format!(
@@ -429,7 +675,7 @@ impl<'a> LineParser<'a> {
         let rest = self
             .rest
             .strip_prefix(prefix)
-            .with_context(|| format!("expected `{prefix}` in trace record `{}`", self.original,))?;
+            .with_context(|| format!("expected `{prefix}` in trace record `{}`", self.original))?;
 
         let end = rest
             .char_indices()
@@ -439,7 +685,7 @@ impl<'a> LineParser<'a> {
         let token = &rest[..end];
 
         if token.is_empty() {
-            bail!("missing value after `{prefix}` in `{}`", self.original,);
+            bail!("missing value after `{prefix}` in `{}`", self.original);
         }
 
         self.rest = &rest[end..];
@@ -469,6 +715,8 @@ impl<'a> LineParser<'a> {
 #[cfg(test)]
 mod tests {
     use indoc::indoc;
+
+    use crate::trace::{Metric, MetricKind};
 
     use super::{Value, parse_captures};
 
@@ -507,7 +755,7 @@ mod tests {
         assert_eq!(callsite.id, 0);
         assert_eq!(callsite.target, "reader.pagination");
         assert_eq!(callsite.name, "measure");
-        assert_eq!(callsite.fields, ["bytes", "cached"],);
+        assert_eq!(callsite.fields, ["bytes", "cached"]);
 
         assert_eq!(
             capture.spans[0].values,
@@ -557,10 +805,10 @@ mod tests {
     #[test]
     fn rejects_undefined_callsites() {
         let log = indoc! {r#"
-        1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
-        1.001 INFO trace/v2 span id=4 depth=0 start=0 cycles=1 values=0
-        1.002 INFO trace/v2 end session=1
-    "#};
+            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
+            1.001 INFO trace/v2 span id=4 depth=0 start=0 cycles=1 values=0
+            1.002 INFO trace/v2 end session=1
+        "#};
 
         let error = parse_captures(log).unwrap_err();
 
@@ -570,11 +818,11 @@ mod tests {
     #[test]
     fn rejects_field_value_count_mismatch() {
         let log = indoc! {r#"
-        1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
-        1.001 INFO trace/v2 define id=0 target=4:test name=4:span fields=1 5:value
-        1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=1 values=0
-        1.003 INFO trace/v2 end session=1
-    "#};
+            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
+            1.001 INFO trace/v2 define id=0 target=4:test name=4:span fields=1 5:value
+            1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=1 values=0
+            1.003 INFO trace/v2 end session=1
+        "#};
 
         let error = parse_captures(log).unwrap_err();
 
@@ -584,10 +832,10 @@ mod tests {
     #[test]
     fn rejects_incomplete_capture() {
         let log = indoc! {r#"
-        1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
-        1.001 INFO trace/v2 define id=0 target=4:test name=4:span fields=0
-        1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=1 values=0
-    "#};
+            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
+            1.001 INFO trace/v2 define id=0 target=4:test name=4:span fields=0
+            1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=1 values=0
+        "#};
 
         let error = parse_captures(log).unwrap_err();
 
@@ -607,12 +855,86 @@ mod tests {
     #[test]
     fn rejects_dropped_spans() {
         let log = indoc! {r#"
-        1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=0 dropped=1 open=0
-        1.001 INFO trace/v2 end session=1
-    "#};
+            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=0 dropped=1 open=0
+            1.001 INFO trace/v2 end session=1
+        "#};
 
         let error = parse_captures(log).unwrap_err();
 
         assert_error_contains(&error, "1 spans were dropped");
+    }
+
+    #[test]
+    fn parses_metric_summaries() {
+        let log = indoc! {r#"
+            1.000 INFO trace/v2 capture session=7 hz=240000000 origin=100 spans=0 dropped=0 open=0
+            1.001 INFO trace/v2 metrics count=2 dropped=0
+            1.002 INFO trace/v2 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
+            1.003 INFO trace/v2 metric id=0 count=3 sum=5 max=3
+            1.004 INFO trace/v2 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
+            1.005 INFO trace/v2 metric id=1 count=4 sum=120 max=50
+            1.006 INFO trace/v2 end session=7
+        "#};
+
+        let captures = parse_captures(log).unwrap();
+
+        let capture = &captures[0];
+
+        assert_eq!(capture.expected_metrics, 2);
+
+        assert_eq!(capture.metrics.len(), 2);
+
+        let counter = capture.metric_definitions.get(&0).unwrap();
+
+        assert_eq!(counter.target, "reader.pagination");
+
+        assert_eq!(counter.name, "cache_hits");
+
+        assert_eq!(counter.kind, MetricKind::Counter);
+
+        assert_eq!(counter.unit, "");
+
+        let timer = capture.metric_definitions.get(&1).unwrap();
+
+        assert_eq!(timer.kind, MetricKind::Distribution);
+
+        assert_eq!(timer.unit, "cycles");
+
+        assert_eq!(
+            capture.metrics.get(&1),
+            Some(&Metric {
+                id: 1,
+                count: 4,
+                sum: 120,
+                max: 50,
+            }),
+        );
+    }
+
+    #[test]
+    fn rejects_metric_without_definition() {
+        let log = indoc! {r#"
+            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=0 dropped=0 open=0
+            1.001 INFO trace/v2 metrics count=1 dropped=0
+            1.002 INFO trace/v2 metric id=0 count=1 sum=4 max=4
+            1.003 INFO trace/v2 end session=1
+        "#};
+
+        let error = parse_captures(log).unwrap_err();
+
+        assert_error_contains(&error, "undefined metric 0");
+    }
+
+    #[test]
+    fn rejects_dropped_metrics() {
+        let log = indoc! {r#"
+            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=0 dropped=0 open=0
+            1.001 INFO trace/v2 metrics count=0 dropped=1
+            1.002 INFO trace/v2 end session=1
+        "#};
+
+        let error = parse_captures(log).unwrap_err();
+
+        assert_error_contains(&error, "1 metric observations were dropped");
     }
 }

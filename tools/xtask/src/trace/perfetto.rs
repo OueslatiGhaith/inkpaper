@@ -5,6 +5,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
+use crate::trace::{Metric, MetricDefinition};
+
 use super::{Callsite, Capture, Span, Value, parse_captures};
 
 const PERFETTO_ROOT_TRACK: u64 = 1;
@@ -16,7 +18,16 @@ const PROTO_WIRE_LENGTH_DELIMITED: u8 = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EventKind {
     Close,
+    Instant,
     Open,
+}
+
+#[derive(Debug)]
+enum AnnotationValue {
+    Unsigned(u64),
+    Signed(i64),
+    Bool(bool),
+    String(String),
 }
 
 #[derive(Debug)]
@@ -26,13 +37,13 @@ struct TimedEvent {
     track_uuid: u64,
     name: Option<String>,
     category: Option<String>,
-    annotations: Vec<(String, Value)>,
+    annotations: Vec<(String, AnnotationValue)>,
     depth: u8,
 }
 
 pub fn convert_perfetto(input: &Path, output: Option<&Path>) -> Result<PathBuf> {
     let log = std::fs::read_to_string(input)
-        .with_context(|| format!("failed to read {}", input.display(),))?;
+        .with_context(|| format!("failed to read {}", input.display()))?;
 
     let captures = parse_captures(&log)?;
 
@@ -43,7 +54,7 @@ pub fn convert_perfetto(input: &Path, output: Option<&Path>) -> Result<PathBuf> 
         .unwrap_or_else(|| default_perfetto_output_path(input));
 
     std::fs::write(&output, trace)
-        .with_context(|| format!("failed to write {}", output.display(),))?;
+        .with_context(|| format!("failed to write {}", output.display()))?;
 
     Ok(output)
 }
@@ -56,7 +67,7 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
     let clock_hz = first.clock_hz;
 
     if captures.iter().any(|capture| capture.clock_hz != clock_hz) {
-        bail!("Perfetto export requires one stable trace clock frequency",);
+        bail!("Perfetto export requires one stable trace clock frequency");
     }
 
     let origins = unwrap_capture_origins(captures)?;
@@ -81,7 +92,7 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
             })?;
 
             let track_uuid = *tracks.get(&callsite.target).with_context(|| {
-                format!("missing Perfetto track for target `{}`", callsite.target,)
+                format!("missing Perfetto track for target `{}`", callsite.target)
             })?;
 
             let start_cycles = relative_origin
@@ -97,12 +108,40 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
             let raw_end_ns = cycles_to_ns(end_cycles, clock_hz);
 
             // Perfetto slices are BEGIN/END pairs.
-            // Preserve zero-cycle and sub-nanosecond
-            // spans as the smallest representable
+            // Preserve zero-cycle and sub-nanosecond spans as the smallest representable
             // positive slice.
             let end_ns = raw_end_ns.max(start_ns.saturating_add(1));
 
             push_slice(&mut events, track_uuid, callsite, span, start_ns, end_ns);
+        }
+
+        let metric_timestamp_ns = cycles_to_ns(relative_origin, clock_hz);
+
+        for metric in capture.metrics.values() {
+            let definition = capture
+                .metric_definitions
+                .get(&metric.id)
+                .with_context(|| {
+                    format!(
+                        "session {} references missing metric definition {}",
+                        capture.session_id, metric.id,
+                    )
+                })?;
+
+            let track_uuid = *tracks.get(&definition.target).with_context(|| {
+                format!(
+                    "missing Perfetto track for metric target `{}`",
+                    definition.target,
+                )
+            })?;
+
+            push_metric(
+                &mut events,
+                track_uuid,
+                definition,
+                metric,
+                metric_timestamp_ns,
+            );
         }
     }
 
@@ -137,6 +176,10 @@ fn build_target_tracks(captures: &[Capture]) -> BTreeMap<String, u64> {
     for capture in captures {
         for callsite in capture.callsites.values() {
             targets.insert(callsite.target.clone());
+        }
+
+        for metric in capture.metric_definitions.values() {
+            targets.insert(metric.target.clone());
         }
     }
 
@@ -193,7 +236,7 @@ fn push_slice(
         .fields
         .iter()
         .cloned()
-        .zip(span.values.iter().copied())
+        .zip(span.values.iter().copied().map(annotation_from_value))
         .collect();
 
     events.push(TimedEvent {
@@ -217,19 +260,74 @@ fn push_slice(
     });
 }
 
+fn annotation_from_value(value: Value) -> AnnotationValue {
+    match value {
+        Value::Unsigned(value) => AnnotationValue::Unsigned(u64::from(value)),
+
+        Value::Signed(value) => AnnotationValue::Signed(i64::from(value)),
+
+        Value::Bool(value) => AnnotationValue::Bool(value),
+    }
+}
+
+fn push_metric(
+    events: &mut Vec<TimedEvent>,
+    track_uuid: u64,
+    definition: &MetricDefinition,
+    metric: &Metric,
+    timestamp_ns: u64,
+) {
+    let annotations = vec![
+        (
+            "count".to_owned(),
+            AnnotationValue::Unsigned(u64::from(metric.count)),
+        ),
+        ("sum".to_owned(), AnnotationValue::Unsigned(metric.sum)),
+        (
+            "max".to_owned(),
+            AnnotationValue::Unsigned(u64::from(metric.max)),
+        ),
+        (
+            "kind".to_owned(),
+            AnnotationValue::String(definition.kind.as_str().to_owned()),
+        ),
+        (
+            "unit".to_owned(),
+            AnnotationValue::String(definition.unit.clone()),
+        ),
+    ];
+
+    events.push(TimedEvent {
+        kind: EventKind::Instant,
+        timestamp_ns,
+        track_uuid,
+        name: Some(definition.name.clone()),
+        category: Some(definition.target.clone()),
+        annotations,
+        depth: 0,
+    });
+}
+
 fn compare_events(left: &TimedEvent, right: &TimedEvent) -> core::cmp::Ordering {
     left.timestamp_ns
         .cmp(&right.timestamp_ns)
         .then_with(|| left.track_uuid.cmp(&right.track_uuid))
+        .then_with(|| event_kind_rank(left.kind).cmp(&event_kind_rank(right.kind)))
         .then_with(|| match (left.kind, right.kind) {
-            (EventKind::Close, EventKind::Open) => core::cmp::Ordering::Less,
-
-            (EventKind::Open, EventKind::Close) => core::cmp::Ordering::Greater,
-
             (EventKind::Open, EventKind::Open) => left.depth.cmp(&right.depth),
 
             (EventKind::Close, EventKind::Close) => right.depth.cmp(&left.depth),
+
+            _ => core::cmp::Ordering::Equal,
         })
+}
+
+const fn event_kind_rank(kind: EventKind) -> u8 {
+    match kind {
+        EventKind::Close => 0,
+        EventKind::Instant => 1,
+        EventKind::Open => 2,
+    }
 }
 
 fn cycles_to_ns(cycles: u64, clock_hz: u32) -> u64 {
@@ -276,13 +374,14 @@ fn push_track_event(
     kind: EventKind,
     name: Option<&str>,
     category: Option<&str>,
-    annotations: &[(String, Value)],
+    annotations: &[(String, AnnotationValue)],
 ) {
     let mut event = Vec::new();
 
     let event_type = match kind {
         EventKind::Open => 1,
         EventKind::Close => 2,
+        EventKind::Instant => 3,
     };
 
     // TrackEvent.type = 9
@@ -301,9 +400,8 @@ fn push_track_event(
         proto_bytes_field(&mut event, 22, category.as_bytes());
     }
 
-    // TrackEvent.debug_annotations = 4
     for (name, value) in annotations {
-        push_debug_annotation(&mut event, name, *value);
+        push_debug_annotation(&mut event, name, value);
     }
 
     let mut packet = Vec::new();
@@ -320,32 +418,35 @@ fn push_track_event(
     push_packet(trace, &packet);
 }
 
-fn push_debug_annotation(event: &mut Vec<u8>, name: &str, value: Value) {
+fn push_debug_annotation(event: &mut Vec<u8>, name: &str, value: &AnnotationValue) {
     let mut annotation = Vec::new();
 
     // DebugAnnotation.name = 10
     proto_bytes_field(&mut annotation, 10, name.as_bytes());
 
     match value {
-        Value::Bool(value) => {
-            // DebugAnnotation.bool_value = 2
-            proto_varint_field(&mut annotation, 2, u64::from(value));
+        AnnotationValue::Bool(value) => {
+            // bool_value = 2
+            proto_varint_field(&mut annotation, 2, u64::from(*value));
         }
 
-        Value::Unsigned(value) => {
-            // DebugAnnotation.uint_value = 3
-            proto_varint_field(&mut annotation, 3, u64::from(value));
+        AnnotationValue::Unsigned(value) => {
+            // uint_value = 3
+            proto_varint_field(&mut annotation, 3, *value);
         }
 
-        Value::Signed(value) => {
-            // DebugAnnotation.int_value = 4.
-            //
-            // protobuf int64 uses ordinary two's
-            // complement varint encoding.
-            proto_varint_field(&mut annotation, 4, i64::from(value) as u64);
+        AnnotationValue::Signed(value) => {
+            // int_value = 4
+            proto_varint_field(&mut annotation, 4, *value as u64);
+        }
+
+        AnnotationValue::String(value) => {
+            // string_value = 6
+            proto_bytes_field(&mut annotation, 6, value.as_bytes());
         }
     }
 
+    // TrackEvent.debug_annotations = 4
     proto_bytes_field(event, 4, &annotation);
 }
 
@@ -416,36 +517,36 @@ mod tests {
 
         assert!(!trace.is_empty());
 
-        assert!(contains_bytes(&trace, b"InkPaper",),);
+        assert!(contains_bytes(&trace, b"InkPaper"));
 
-        assert!(contains_bytes(&trace, b"ui.render",),);
+        assert!(contains_bytes(&trace, b"ui.render"));
 
-        assert!(contains_bytes(&trace, b"display.present",),);
+        assert!(contains_bytes(&trace, b"display.present"));
 
-        assert!(contains_bytes(&trace, b"paint",),);
+        assert!(contains_bytes(&trace, b"paint"));
 
-        assert!(contains_bytes(&trace, b"busy_wait",),);
+        assert!(contains_bytes(&trace, b"busy_wait"));
 
         // Annotation names should also be
         // present in the protobuf.
-        assert!(contains_bytes(&trace, b"frame",),);
+        assert!(contains_bytes(&trace, b"frame"));
 
-        assert!(contains_bytes(&trace, b"index",),);
+        assert!(contains_bytes(&trace, b"index"));
     }
 
     #[test]
     fn perfetto_origin_unwraps_cycle_counter_wrap() {
         let log = indoc! {r#"
-        1.000 INFO trace/v2 capture session=1 hz=240000000 origin=4294967000 spans=1 dropped=0 open=0
-        1.001 INFO trace/v2 define id=0 target=4:test name=5:first fields=0
-        1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=100 values=0
-        1.003 INFO trace/v2 end session=1
+            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=4294967000 spans=1 dropped=0 open=0
+            1.001 INFO trace/v2 define id=0 target=4:test name=5:first fields=0
+            1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=100 values=0
+            1.003 INFO trace/v2 end session=1
 
-        2.000 INFO trace/v2 capture session=2 hz=240000000 origin=1000 spans=1 dropped=0 open=0
-        2.001 INFO trace/v2 define id=0 target=4:test name=6:second fields=0
-        2.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=100 values=0
-        2.003 INFO trace/v2 end session=2
-    "#};
+            2.000 INFO trace/v2 capture session=2 hz=240000000 origin=1000 spans=1 dropped=0 open=0
+            2.001 INFO trace/v2 define id=0 target=4:test name=6:second fields=0
+            2.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=100 values=0
+            2.003 INFO trace/v2 end session=2
+        "#};
 
         let captures = parse_captures(log).unwrap();
 
@@ -455,7 +556,7 @@ mod tests {
 
         assert_eq!(origins.len(), 2);
 
-        assert_eq!(origins[1] - origins[0], u64::from(expected_delta),);
+        assert_eq!(origins[1] - origins[0], u64::from(expected_delta));
     }
 
     #[test]
@@ -471,14 +572,51 @@ mod tests {
 
         let trace = build_perfetto(&captures).unwrap();
 
-        assert!(contains_bytes(&trace, b"delta",),);
+        assert!(contains_bytes(&trace, b"delta"));
 
-        assert!(contains_bytes(&trace, b"ready",),);
+        assert!(contains_bytes(&trace, b"ready"));
     }
 
     fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
         haystack
             .windows(needle.len())
             .any(|window| window == needle)
+    }
+
+    #[test]
+    fn perfetto_exports_metric_summaries_as_instants() {
+        let log = indoc! {r#"
+            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=100 spans=0 dropped=0 open=0
+            1.001 INFO trace/v2 metrics count=2 dropped=0
+            1.002 INFO trace/v2 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
+            1.003 INFO trace/v2 metric id=0 count=3 sum=5 max=3
+            1.004 INFO trace/v2 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
+            1.005 INFO trace/v2 metric id=1 count=4 sum=120 max=50
+            1.006 INFO trace/v2 end session=1
+        "#};
+
+        let captures = parse_captures(log).unwrap();
+
+        let trace = build_perfetto(&captures).unwrap();
+
+        assert!(contains_bytes(&trace, b"reader.pagination"));
+
+        assert!(contains_bytes(&trace, b"cache_hits"));
+
+        assert!(contains_bytes(&trace, b"measure_text"));
+
+        assert!(contains_bytes(&trace, b"count"));
+
+        assert!(contains_bytes(&trace, b"sum"));
+
+        assert!(contains_bytes(&trace, b"max"));
+
+        assert!(contains_bytes(&trace, b"kind"));
+
+        assert!(contains_bytes(&trace, b"unit"));
+
+        assert!(contains_bytes(&trace, b"distribution"));
+
+        assert!(contains_bytes(&trace, b"cycles"));
     }
 }

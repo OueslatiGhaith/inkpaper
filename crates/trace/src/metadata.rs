@@ -73,6 +73,97 @@ impl Callsite {
     }
 }
 
+static METRIC_FIELDS: [Field; 0] = [];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetricKind {
+    Counter,
+    Distribution,
+}
+
+impl MetricKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Counter => "counter",
+            Self::Distribution => "distribution",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct MetricCallsite {
+    metadata: Metadata,
+    kind: MetricKind,
+    unit: &'static str,
+}
+
+impl MetricCallsite {
+    #[doc(hidden)]
+    pub const fn new(
+        name: &'static str,
+        target: &'static str,
+        kind: MetricKind,
+        unit: &'static str,
+    ) -> Self {
+        assert_single_line(name);
+        assert_single_line(target);
+        assert_single_line(unit);
+
+        Self {
+            metadata: Metadata::new(name, target, &METRIC_FIELDS),
+            kind,
+            unit,
+        }
+    }
+
+    pub const fn metadata(&self) -> &Metadata {
+        &self.metadata
+    }
+
+    pub const fn kind(&self) -> MetricKind {
+        self.kind
+    }
+
+    pub const fn unit(&self) -> &'static str {
+        self.unit
+    }
+}
+
+pub trait IntoMetricValue {
+    fn into_metric_value(self) -> u32;
+}
+
+macro_rules! impl_unsigned_metric_value {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl IntoMetricValue for $ty {
+                #[inline(always)]
+                fn into_metric_value(self) -> u32 {
+                    u32::from(self)
+                }
+            }
+        )+
+    };
+}
+
+impl_unsigned_metric_value!(u8, u16, u32);
+
+impl IntoMetricValue for usize {
+    #[inline(always)]
+    fn into_metric_value(self) -> u32 {
+        u32::try_from(self).unwrap_or(u32::MAX)
+    }
+}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn into_metric_value<T>(value: T) -> u32
+where
+    T: IntoMetricValue,
+{
+    value.into_metric_value()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ValueKind {

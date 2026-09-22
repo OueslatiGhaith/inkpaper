@@ -5,14 +5,20 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use critical_section::Mutex;
 
-use crate::{Callsite, Field, Value, ValueKind};
+use crate::{
+    Callsite, Field, Value, ValueKind,
+    metadata::{MetricCallsite, MetricKind},
+};
 
 pub const TRACE_CAPACITY: usize = 256;
+pub const METRIC_CAPACITY: usize = 32;
 
 type ClockFn = fn() -> u32;
 
 static EMPTY_FIELDS: [Field; 0] = [];
 static EMPTY_CALLSITE: Callsite = Callsite::new("<empty>", "trace", &EMPTY_FIELDS);
+static EMPTY_METRIC_CALLSITE: MetricCallsite =
+    MetricCallsite::new("<empty>", "trace", MetricKind::Counter, "");
 
 #[cfg(target_has_atomic = "32")]
 static RECORDING_ENABLED: AtomicU32 = AtomicU32::new(0);
@@ -190,14 +196,105 @@ impl CapturedSpan {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct MetricRecord {
+    callsite: &'static MetricCallsite,
+    count: u32,
+    sum: u64,
+    max: u32,
+}
+
+impl MetricRecord {
+    const EMPTY: Self = Self {
+        callsite: &EMPTY_METRIC_CALLSITE,
+        count: 0,
+        sum: 0,
+        max: 0,
+    };
+
+    const fn new(callsite: &'static MetricCallsite) -> Self {
+        Self {
+            callsite,
+            count: 0,
+            sum: 0,
+            max: 0,
+        }
+    }
+
+    fn observe(&mut self, value: u32) {
+        self.count = self.count.saturating_add(1);
+
+        self.sum = self.sum.saturating_add(u64::from(value));
+
+        self.max = self.max.max(value);
+    }
+}
+
+#[cfg(target_pointer_width = "32")]
+const _: () = {
+    assert!(
+        core::mem::size_of::<MetricRecord>() <= 24,
+        "MetricRecord exceeded the 24-byte 32-bit target budget",
+    );
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MetricId(u16);
+
+impl MetricId {
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CapturedMetric {
+    id: MetricId,
+    record: MetricRecord,
+}
+
+impl CapturedMetric {
+    pub const fn id(self) -> MetricId {
+        self.id
+    }
+
+    pub const fn metadata(self) -> &'static crate::Metadata {
+        self.record.callsite.metadata()
+    }
+
+    pub const fn kind(self) -> MetricKind {
+        self.record.callsite.kind()
+    }
+
+    pub const fn unit(self) -> &'static str {
+        self.record.callsite.unit()
+    }
+
+    pub const fn count(self) -> u32 {
+        self.record.count
+    }
+
+    pub const fn sum(self) -> u64 {
+        self.record.sum
+    }
+
+    pub const fn max(self) -> u32 {
+        self.record.max
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TraceCapture {
     session_id: u32,
     clock_hz: u32,
     origin_cycles: u32,
+
     spans: usize,
     dropped: u32,
     open_spans: u8,
+
+    metrics: usize,
+    metric_dropped: u32,
 }
 
 impl TraceCapture {
@@ -205,9 +302,13 @@ impl TraceCapture {
         session_id: 0,
         clock_hz: 0,
         origin_cycles: 0,
+
         spans: 0,
         dropped: 0,
         open_spans: 0,
+
+        metrics: 0,
+        metric_dropped: 0,
     };
 
     pub const fn session_id(self) -> u32 {
@@ -232,6 +333,14 @@ impl TraceCapture {
 
     pub const fn open_spans(self) -> u8 {
         self.open_spans
+    }
+
+    pub const fn metrics(self) -> usize {
+        self.metrics
+    }
+
+    pub const fn metric_dropped(self) -> u32 {
+        self.metric_dropped
     }
 
     pub fn entry(self, index: usize) -> Option<CaptureEntry> {
@@ -273,11 +382,28 @@ impl TraceCapture {
         self.entry(index).and_then(CaptureEntry::definition)
     }
 
+    pub fn metric(self, index: usize) -> Option<CapturedMetric> {
+        critical_section::with(|cs| {
+            let state = TRACE.borrow(cs).borrow();
+
+            if !self.matches(&state) || index >= self.metrics {
+                return None;
+            }
+
+            let record = *state.metrics.get(index)?;
+
+            let id = MetricId(u16::try_from(index).ok()?);
+
+            Some(CapturedMetric { id, record })
+        })
+    }
+
     fn matches(self, state: &TraceState) -> bool {
         self.session_id != 0
             && !state.active
             && state.session_id == self.session_id
             && state.len == self.spans
+            && state.metric_len == self.metrics
     }
 }
 
@@ -319,8 +445,11 @@ struct TraceState {
 
     len: usize,
     dropped: u32,
-
     records: [TraceRecord; TRACE_CAPACITY],
+
+    metric_len: usize,
+    metric_dropped: u32,
+    metrics: [MetricRecord; METRIC_CAPACITY],
 }
 
 impl TraceState {
@@ -337,8 +466,11 @@ impl TraceState {
 
             len: 0,
             dropped: 0,
-
             records: [TraceRecord::EMPTY; TRACE_CAPACITY],
+
+            metric_len: 0,
+            metric_dropped: 0,
+            metrics: [MetricRecord::EMPTY; METRIC_CAPACITY],
         }
     }
 }
@@ -382,6 +514,59 @@ pub(crate) fn is_recording() -> bool {
     critical_section::with(|cs| *RECORDING_ENABLED.borrow(cs).borrow())
 }
 
+#[inline(always)]
+pub(crate) fn observe_metric(callsite: &'static MetricCallsite, value: u32) {
+    record_metric(callsite, value, None);
+}
+
+fn observe_metric_for_session(session_id: u32, callsite: &'static MetricCallsite, value: u32) {
+    record_metric(callsite, value, Some(session_id));
+}
+
+fn record_metric(callsite: &'static MetricCallsite, value: u32, expected_session: Option<u32>) {
+    if !is_recording() {
+        return;
+    }
+
+    critical_section::with(|cs| {
+        let mut state = TRACE.borrow(cs).borrow_mut();
+
+        if !state.active {
+            return;
+        }
+
+        if let Some(session_id) = expected_session
+            && state.session_id != session_id
+        {
+            return;
+        }
+
+        let existing = state.metrics[..state.metric_len]
+            .iter()
+            .position(|metric| core::ptr::eq(metric.callsite, callsite));
+
+        let index = if let Some(index) = existing {
+            index
+        } else {
+            if state.metric_len >= METRIC_CAPACITY {
+                state.metric_dropped = state.metric_dropped.saturating_add(1);
+
+                return;
+            }
+
+            let index = state.metric_len;
+
+            state.metrics[index] = MetricRecord::new(callsite);
+
+            state.metric_len = index + 1;
+
+            index
+        };
+
+        state.metrics[index].observe(value);
+    });
+}
+
 pub struct TraceSession {
     session_id: u32,
     active: bool,
@@ -418,6 +603,9 @@ impl TraceSession {
 
             state.len = 0;
             state.dropped = 0;
+
+            state.metric_len = 0;
+            state.metric_dropped = 0;
 
             session_id
         });
@@ -457,9 +645,13 @@ impl TraceSession {
                 session_id: state.session_id,
                 clock_hz: state.clock_hz,
                 origin_cycles: state.origin_cycles,
+
                 spans: state.len,
                 dropped: state.dropped,
                 open_spans: state.depth,
+
+                metrics: state.metric_len,
+                metric_dropped: state.metric_dropped,
             };
 
             state.depth = 0;
@@ -593,13 +785,72 @@ impl Drop for Span {
     }
 }
 
+pub struct MetricTimer {
+    session_id: u32,
+    callsite: &'static MetricCallsite,
+    clock: Option<ClockFn>,
+    start_cycles: u32,
+}
+
+impl MetricTimer {
+    pub const fn disabled() -> Self {
+        Self {
+            session_id: 0,
+            callsite: &EMPTY_METRIC_CALLSITE,
+            clock: None,
+            start_cycles: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn start(callsite: &'static MetricCallsite) -> Self {
+        if !is_recording() {
+            return Self::disabled();
+        }
+
+        critical_section::with(|cs| {
+            let state = TRACE.borrow(cs).borrow();
+
+            if !state.active {
+                return Self::disabled();
+            }
+
+            let Some(clock) = state.clock else {
+                return Self::disabled();
+            };
+
+            Self {
+                session_id: state.session_id,
+                callsite,
+                clock: Some(clock),
+                start_cycles: clock(),
+            }
+        })
+    }
+}
+
+impl Drop for MetricTimer {
+    #[inline(always)]
+    fn drop(&mut self) {
+        let Some(clock) = self.clock else {
+            return;
+        };
+
+        let end_cycles = clock();
+
+        let duration_cycles = end_cycles.wrapping_sub(self.start_cycles);
+
+        observe_metric_for_session(self.session_id, self.callsite, duration_cycles);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::{AtomicU32, Ordering};
 
     use std::sync::Mutex as StdMutex;
 
-    use crate::{TraceSession, set_clock};
+    use crate::{MetricKind, TraceSession, set_clock};
 
     static TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
@@ -989,5 +1240,220 @@ mod tests {
         crate::write_text_capture(capture, &mut output).unwrap();
 
         assert!(output.contains("values=2 i:-17 b:0"));
+    }
+
+    #[test]
+    fn aggregates_metrics_by_static_callsite() {
+        let _test = test_lock();
+
+        set_clock(test_clock, 240_000_000);
+
+        CLOCK.store(100, Ordering::Relaxed);
+
+        let session = TraceSession::start();
+
+        fn cache_hit(value: u32) {
+            crate::counter!(
+                target: "reader.pagination",
+                "cache_hits",
+                value,
+            );
+        }
+
+        fn measured_bytes(value: u32) {
+            crate::distribution!(
+                target: "reader.pagination",
+                "word_bytes",
+                value,
+            );
+        }
+
+        cache_hit(1);
+        cache_hit(1);
+        cache_hit(3);
+
+        measured_bytes(12);
+        measured_bytes(7);
+        measured_bytes(21);
+
+        let capture = session.finish();
+
+        assert_eq!(capture.metrics(), 2);
+        assert_eq!(capture.metric_dropped(), 0);
+
+        let counter = capture.metric(0).unwrap();
+
+        assert_eq!(counter.metadata().target(), "reader.pagination");
+
+        assert_eq!(counter.metadata().name(), "cache_hits");
+
+        assert_eq!(counter.kind(), MetricKind::Counter);
+
+        assert_eq!(counter.unit(), "");
+        assert_eq!(counter.count(), 3);
+        assert_eq!(counter.sum(), 5);
+        assert_eq!(counter.max(), 3);
+
+        let distribution = capture.metric(1).unwrap();
+
+        assert_eq!(distribution.metadata().name(), "word_bytes");
+
+        assert_eq!(distribution.kind(), MetricKind::Distribution);
+
+        assert_eq!(distribution.count(), 3);
+
+        assert_eq!(distribution.sum(), 40);
+
+        assert_eq!(distribution.max(), 21);
+
+        assert!(capture.metric(2).is_none());
+    }
+
+    #[test]
+    fn timer_records_cycle_distribution() {
+        let _test = test_lock();
+
+        set_clock(test_clock, 240_000_000);
+
+        CLOCK.store(100, Ordering::Relaxed);
+
+        let session = TraceSession::start();
+
+        CLOCK.store(110, Ordering::Relaxed);
+
+        let timer = crate::timer!(
+            target: "reader.pagination",
+            "measure_text",
+        );
+
+        CLOCK.store(170, Ordering::Relaxed);
+
+        drop(timer);
+
+        let capture = session.finish();
+
+        assert_eq!(capture.metrics(), 1);
+
+        let metric = capture.metric(0).unwrap();
+
+        assert_eq!(metric.kind(), MetricKind::Distribution);
+
+        assert_eq!(metric.unit(), "cycles");
+
+        assert_eq!(metric.count(), 1);
+        assert_eq!(metric.sum(), 60);
+        assert_eq!(metric.max(), 60);
+    }
+
+    #[test]
+    fn timer_handles_cycle_counter_wrap() {
+        let _test = test_lock();
+
+        set_clock(test_clock, 240_000_000);
+
+        CLOCK.store(u32::MAX - 20, Ordering::Relaxed);
+
+        let session = TraceSession::start();
+
+        CLOCK.store(u32::MAX - 10, Ordering::Relaxed);
+
+        let timer = crate::timer!(
+            target: "test",
+            "wrapped_timer",
+        );
+
+        CLOCK.store(15, Ordering::Relaxed);
+
+        drop(timer);
+
+        let capture = session.finish();
+
+        let metric = capture.metric(0).unwrap();
+
+        assert_eq!(metric.count(), 1);
+        assert_eq!(metric.sum(), 26);
+        assert_eq!(metric.max(), 26);
+    }
+
+    #[test]
+    fn metric_values_are_not_evaluated_without_session() {
+        let _test = test_lock();
+
+        set_clock(test_clock, 240_000_000);
+
+        FIELD_EVALUATIONS.store(0, Ordering::Relaxed);
+
+        crate::counter!(
+            target: "test",
+            "disabled_counter",
+            evaluated_field(),
+        );
+
+        crate::distribution!(
+            target: "test",
+            "disabled_distribution",
+            evaluated_field(),
+        );
+
+        assert_eq!(FIELD_EVALUATIONS.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn text_capture_writes_metric_summaries() {
+        let _test = test_lock();
+
+        set_clock(test_clock, 240_000_000);
+
+        CLOCK.store(100, Ordering::Relaxed);
+
+        let session = TraceSession::start();
+
+        fn cache_hit(value: u32) {
+            crate::counter!(
+                target: "reader.pagination",
+                "cache_hits",
+                value,
+            );
+        }
+
+        fn word_bytes(value: u32) {
+            crate::distribution!(
+                target: "reader.pagination",
+                "word_bytes",
+                value,
+            );
+        }
+
+        cache_hit(1);
+        cache_hit(1);
+
+        word_bytes(12);
+        word_bytes(7);
+
+        let capture = session.finish();
+
+        let mut output = std::string::String::new();
+
+        crate::write_text_capture(capture, &mut output).unwrap();
+
+        assert!(output.contains("trace/v2 metrics count=2 dropped=0"));
+
+        assert!(output.contains(concat!(
+            "trace/v2 metric_define id=0 ",
+            "target=17:reader.pagination ",
+            "name=10:cache_hits ",
+            "kind=counter unit=0:",
+        )));
+
+        assert!(output.contains("trace/v2 metric id=0 count=2 sum=2 max=1"));
+
+        assert!(output.contains(concat!(
+            "trace/v2 metric_define id=1 ",
+            "target=17:reader.pagination ",
+            "name=10:word_bytes ",
+            "kind=distribution unit=0:",
+        )));
+
+        assert!(output.contains("trace/v2 metric id=1 count=2 sum=19 max=12"));
     }
 }

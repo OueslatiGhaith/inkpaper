@@ -1,6 +1,6 @@
 use core::fmt::{self, Write};
 
-use crate::{CallsiteDefinition, CapturedSpan, TraceCapture, ValueKind};
+use crate::{CallsiteDefinition, CapturedMetric, CapturedSpan, TraceCapture, ValueKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextEncodeError {
@@ -37,6 +37,23 @@ where
         }
 
         write_span(writer, entry.span())?;
+    }
+
+    if capture.metrics() != 0 || capture.metric_dropped() != 0 {
+        writeln!(
+            writer,
+            "trace/v2 metrics count={} dropped={}",
+            capture.metrics(),
+            capture.metric_dropped(),
+        )?;
+
+        for index in 0..capture.metrics() {
+            let metric = capture.metric(index).ok_or(TextEncodeError::StaleCapture)?;
+
+            write_metric_definition(writer, metric)?;
+
+            write_metric(writer, metric)?;
+        }
     }
 
     writeln!(writer, "trace/v2 end session={}", capture.session_id())?;
@@ -97,13 +114,60 @@ where
         let value = field.value();
 
         match value.kind() {
-            ValueKind::Unsigned => write!(writer, " u:{}", value.raw())?,
-            ValueKind::Signed => write!(writer, " i:{}", value.raw() as i32)?,
-            ValueKind::Bool => write!(writer, " b:{}", u8::from(value.raw() != 0))?,
+            ValueKind::Unsigned => {
+                write!(writer, " u:{}", value.raw())?;
+            }
+
+            ValueKind::Signed => {
+                write!(writer, " i:{}", value.raw() as i32)?;
+            }
+
+            ValueKind::Bool => {
+                write!(writer, " b:{}", u8::from(value.raw() != 0))?;
+            }
         }
     }
 
     writeln!(writer)
+}
+
+fn write_metric_definition<W>(writer: &mut W, metric: CapturedMetric) -> fmt::Result
+where
+    W: Write,
+{
+    let metadata = metric.metadata();
+
+    write!(
+        writer,
+        "trace/v2 metric_define id={} target=",
+        metric.id().get(),
+    )?;
+
+    write_component(writer, metadata.target())?;
+
+    write!(writer, " name=")?;
+
+    write_component(writer, metadata.name())?;
+
+    write!(writer, " kind={} unit=", metric.kind().as_str())?;
+
+    write_component(writer, metric.unit())?;
+
+    writeln!(writer)
+}
+
+fn write_metric<W>(writer: &mut W, metric: CapturedMetric) -> fmt::Result
+where
+    W: Write,
+{
+    writeln!(
+        writer,
+        "trace/v2 metric id={} count={} sum={} max={}",
+        metric.id().get(),
+        metric.count(),
+        metric.sum(),
+        metric.max(),
+    )
 }
 
 fn write_component<W>(writer: &mut W, value: &str) -> fmt::Result

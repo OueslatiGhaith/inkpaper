@@ -10,12 +10,16 @@ mod recording;
 #[cfg(feature = "recording")]
 mod text;
 
-pub use metadata::{Callsite, Field, IntoValue, Metadata, Value, ValueKind};
+pub use metadata::{
+    Callsite, Field, IntoMetricValue, IntoValue, Metadata, MetricCallsite, MetricKind, Value,
+    ValueKind,
+};
 
 #[cfg(feature = "recording")]
 pub use recording::{
-    CallsiteDefinition, CallsiteId, CaptureEntry, CapturedSpan, RecordedField, Span,
-    TRACE_CAPACITY, TraceCapture, TraceSession, set_clock,
+    CallsiteDefinition, CallsiteId, CaptureEntry, CapturedMetric, CapturedSpan, METRIC_CAPACITY,
+    MetricId, MetricTimer, RecordedField, Span, TRACE_CAPACITY, TraceCapture, TraceSession,
+    set_clock,
 };
 #[cfg(feature = "recording")]
 pub use text::{TextEncodeError, write_text_capture};
@@ -26,6 +30,17 @@ pub struct Span;
 
 #[cfg(not(feature = "recording"))]
 impl Span {
+    pub const fn disabled() -> Self {
+        Self
+    }
+}
+
+#[cfg(not(feature = "recording"))]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MetricTimer;
+
+#[cfg(not(feature = "recording"))]
+impl MetricTimer {
     pub const fn disabled() -> Self {
         Self
     }
@@ -51,6 +66,26 @@ pub mod __private {
     #[inline(always)]
     pub fn start(callsite: &'static crate::Callsite, values: [crate::Value; 2]) -> crate::Span {
         crate::Span::start(callsite, values)
+    }
+
+    #[inline(always)]
+    pub fn into_metric_value<T>(value: T) -> u32
+    where
+        T: crate::IntoMetricValue,
+    {
+        crate::metadata::into_metric_value(value)
+    }
+
+    #[cfg(feature = "recording")]
+    #[inline(always)]
+    pub fn observe_metric(callsite: &'static crate::MetricCallsite, value: u32) {
+        crate::recording::observe_metric(callsite, value);
+    }
+
+    #[cfg(feature = "recording")]
+    #[inline(always)]
+    pub fn start_metric_timer(callsite: &'static crate::MetricCallsite) -> crate::MetricTimer {
+        crate::MetricTimer::start(callsite)
     }
 }
 
@@ -236,6 +271,222 @@ macro_rules! span {
             target: module_path!(),
             $name
             $(, $field = $value)*
+        )
+    };
+}
+
+#[cfg(feature = "recording")]
+#[macro_export]
+macro_rules! counter {
+    (
+        target: $target:expr,
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {{
+        static __INKPAPER_METRIC_CALLSITE:
+            $crate::MetricCallsite =
+            $crate::MetricCallsite::new(
+                $name,
+                $target,
+                $crate::MetricKind::Counter,
+                "",
+            );
+
+        if $crate::__private::enabled() {
+            let value =
+                $crate::__private::into_metric_value(
+                    $value,
+                );
+
+            $crate::__private::observe_metric(
+                &__INKPAPER_METRIC_CALLSITE,
+                value,
+            );
+        }
+    }};
+
+    (
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {
+        $crate::counter!(
+            target: module_path!(),
+            $name,
+            $value,
+        )
+    };
+}
+
+#[cfg(not(feature = "recording"))]
+#[macro_export]
+macro_rules! counter {
+    (
+        target: $target:expr,
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {{
+        if false {
+            let _: &'static str =
+                $target;
+            let _: &'static str =
+                $name;
+            let _ = &$value;
+        }
+    }};
+
+    (
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {
+        $crate::counter!(
+            target: module_path!(),
+            $name,
+            $value,
+        )
+    };
+}
+
+#[cfg(feature = "recording")]
+#[macro_export]
+macro_rules! distribution {
+    (
+        target: $target:expr,
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {{
+        static __INKPAPER_METRIC_CALLSITE:
+            $crate::MetricCallsite =
+            $crate::MetricCallsite::new(
+                $name,
+                $target,
+                $crate::MetricKind::Distribution,
+                "",
+            );
+
+        if $crate::__private::enabled() {
+            let value =
+                $crate::__private::into_metric_value(
+                    $value,
+                );
+
+            $crate::__private::observe_metric(
+                &__INKPAPER_METRIC_CALLSITE,
+                value,
+            );
+        }
+    }};
+
+    (
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {
+        $crate::distribution!(
+            target: module_path!(),
+            $name,
+            $value,
+        )
+    };
+}
+
+#[cfg(not(feature = "recording"))]
+#[macro_export]
+macro_rules! distribution {
+    (
+        target: $target:expr,
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {{
+        if false {
+            let _: &'static str =
+                $target;
+            let _: &'static str =
+                $name;
+            let _ = &$value;
+        }
+    }};
+
+    (
+        $name:literal,
+        $value:expr
+        $(,)?
+    ) => {
+        $crate::distribution!(
+            target: module_path!(),
+            $name,
+            $value,
+        )
+    };
+}
+
+#[cfg(feature = "recording")]
+#[macro_export]
+macro_rules! timer {
+    (
+        target: $target:expr,
+        $name:literal
+        $(,)?
+    ) => {{
+        static __INKPAPER_METRIC_CALLSITE:
+            $crate::MetricCallsite =
+            $crate::MetricCallsite::new(
+                $name,
+                $target,
+                $crate::MetricKind::Distribution,
+                "cycles",
+            );
+
+        if $crate::__private::enabled() {
+            $crate::__private::start_metric_timer(
+                &__INKPAPER_METRIC_CALLSITE,
+            )
+        } else {
+            $crate::MetricTimer::disabled()
+        }
+    }};
+
+    (
+        $name:literal
+        $(,)?
+    ) => {
+        $crate::timer!(
+            target: module_path!(),
+            $name,
+        )
+    };
+}
+
+#[cfg(not(feature = "recording"))]
+#[macro_export]
+macro_rules! timer {
+    (
+        target: $target:expr,
+        $name:literal
+        $(,)?
+    ) => {{
+        if false {
+            let _: &'static str =
+                $target;
+            let _: &'static str =
+                $name;
+        }
+
+        $crate::MetricTimer::disabled()
+    }};
+
+    (
+        $name:literal
+        $(,)?
+    ) => {
+        $crate::timer!(
+            target: module_path!(),
+            $name,
         )
     };
 }
