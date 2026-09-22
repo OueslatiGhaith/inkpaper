@@ -152,13 +152,13 @@ impl DateTime {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Reading {
-    datetime: DateTime,
+    datetime: Option<DateTime>,
     voltage_low: bool,
     century: bool,
 }
 
 impl Reading {
-    pub const fn datetime(self) -> DateTime {
+    pub const fn datetime(self) -> Option<DateTime> {
         self.datetime
     }
 
@@ -168,6 +168,10 @@ impl Reading {
 
     pub const fn century(self) -> bool {
         self.century
+    }
+
+    pub const fn valid(self) -> bool {
+        self.datetime.is_some() && !self.voltage_low
     }
 }
 
@@ -267,7 +271,7 @@ fn decode_reading(registers: [u8; 7]) -> Result<Reading, DecodeError> {
     // exposing it separately is safer than pretending it uniquely identifies
     // an absolute century.
     let datetime = DateTime::new(
-        2000 + year as u16,
+        2000 + u16::from(year),
         month,
         day,
         weekday,
@@ -275,7 +279,7 @@ fn decode_reading(registers: [u8; 7]) -> Result<Reading, DecodeError> {
         minute,
         second,
     )
-    .map_err(DecodeError::InvalidDateTime)?;
+    .ok();
 
     Ok(Reading {
         datetime,

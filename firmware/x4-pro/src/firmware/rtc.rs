@@ -132,7 +132,10 @@ async fn synchronize(rtc: &mut Bm8563<SharedI2cDevice>, requested: DateTime) -> 
         return RtcSyncResult::Failed(RtcSyncFailure::VoltageLow);
     }
 
-    let actual = reading.datetime();
+    let Some(actual) = reading.datetime() else {
+        warn!("BM8563 sync read-back contains invalid datetime");
+        return RtcSyncResult::Failed(RtcSyncFailure::ReadBack);
+    };
     let verified = requested
         .elapsed_seconds_to(actual)
         .is_some_and(|elapsed| elapsed <= READBACK_TOLERANCE_SECS);
@@ -183,10 +186,25 @@ async fn poll_rtc(
         }
     };
 
+    let Some(datetime) = reading.datetime() else {
+        if !*invalid_reported {
+            warn!("BM8563 clock contains no valid datetime");
+
+            RTC_UPDATES.signal(RtcState::Invalid);
+
+            *invalid_reported = true;
+            *last_minute = None;
+        }
+
+        return Duration::from_secs(INVALID_RECHECK_SECS);
+    };
+
     if reading.voltage_low() {
         if !*invalid_reported {
             warn!("BM8563 clock invalid: voltage-low flag is set");
+
             RTC_UPDATES.signal(RtcState::Invalid);
+
             *invalid_reported = true;
             *last_minute = None;
         }
@@ -196,7 +214,6 @@ async fn poll_rtc(
 
     *invalid_reported = false;
 
-    let datetime = reading.datetime();
     let current_minute = minute_key(datetime);
 
     if *last_minute != Some(current_minute) {
@@ -211,6 +228,7 @@ async fn poll_rtc(
         );
 
         RTC_UPDATES.signal(RtcState::Valid(datetime));
+
         *last_minute = Some(current_minute);
     }
 
