@@ -1749,6 +1749,7 @@ dependencies = [
  "futures-lite",
  "inkpaper-epub",
  "inkpaper-reader",
+ "inkpaper-trace",
  "inkpaper-ui",
  "postcard",
  "serde",

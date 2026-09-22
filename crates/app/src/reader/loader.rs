@@ -2,6 +2,7 @@ use alloc::string::String;
 
 use inkpaper_epub::{Epub, EpubSource, Error as EpubError, SpineIndex};
 use inkpaper_reader::{ReaderSettings, ReadingPosition, paginate_chapter};
+use inkpaper_trace::{async_span, span};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
 use crate::reader::{
@@ -39,8 +40,12 @@ impl<S> ReaderSession<S>
 where
     S: EpubSource,
 {
+    #[inkpaper_trace::instrument(target = "reader.session", name = "open")]
     pub async fn open(path: String, source: S) -> Result<Self, ReaderLoadError<S::Error>> {
-        let mut epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
+        let mut epub = {
+            let _trace = span!(target: "reader.epub", "open");
+            Epub::open(source).await.map_err(ReaderLoadError::Epub)?
+        };
         let progress = load_book_progress_map(&mut epub).await?;
 
         Ok(Self {
@@ -99,6 +104,14 @@ where
         load_adjacent_reader_chapter_from_epub(&mut self.epub, from, direction, self.settings).await
     }
 
+    #[inkpaper_trace::instrument(
+        target = "reader.document",
+        name = "repaginate",
+        fields(
+            spine = spine.get(),
+            font_size = font_size,
+        )
+    )]
     pub async fn repaginate_chapter(
         &mut self,
         spine: SpineIndex,
@@ -147,6 +160,11 @@ where
         .await
 }
 
+#[inkpaper_trace::instrument(
+    target = "reader.document",
+    name = "load",
+    fields(resume = resume.is_some(), spine_len = epub.spine().items().len())
+)]
 async fn load_reader_document_from_epub<S>(
     path: String,
     epub: &mut Epub<S>,
@@ -206,6 +224,14 @@ where
     Err(ReaderLoadError::NoReadableChapter)
 }
 
+#[inkpaper_trace::instrument(
+    target = "reader.document",
+    name = "load_adjacent",
+    fields(
+        from = from.get(),
+        next = direction == ReaderChapterDirection::Next,
+    )
+)]
 async fn load_adjacent_reader_chapter_from_epub<S>(
     epub: &mut Epub<S>,
     from: SpineIndex,
@@ -244,6 +270,11 @@ where
     Ok(None)
 }
 
+#[inkpaper_trace::instrument(
+    target = "reader.session",
+    name = "progress_map",
+    fields(spine_len = epub.spine().items().len())
+)]
 async fn load_book_progress_map<S>(
     epub: &mut Epub<S>,
 ) -> Result<BookProgressMap, ReaderLoadError<S::Error>>
@@ -277,6 +308,11 @@ where
     Ok(BookProgressMap::from_weights(weights))
 }
 
+#[inkpaper_trace::instrument(
+    target = "reader.chapter",
+    name = "load",
+    fields(spine = index, font_size = settings.font_size())
+)]
 async fn load_readable_chapter_at<S>(
     epub: &mut Epub<S>,
     index: usize,
@@ -304,21 +340,43 @@ where
         return Ok(None);
     }
 
-    let chapter = epub
-        .load_spine_chapter(index)
-        .await
-        .map_err(ReaderLoadError::Epub)?;
+    let chapter = {
+        let _trace = async_span!(
+            target: "reader.chapter",
+            "content",
+            spine = index,
+        );
+
+        epub.load_spine_chapter(index)
+            .await
+            .map_err(ReaderLoadError::Epub)?
+    };
 
     let Some(chapter) = chapter else {
         return Ok(None);
     };
 
-    let styles = epub
-        .load_chapter_styles(&chapter)
-        .await
-        .map_err(ReaderLoadError::Epub)?;
+    let styles = {
+        let _trace = async_span!(
+            target: "reader.chapter",
+            "styles",
+            spine = index,
+        );
 
-    let loaded_images = load_chapter_images(epub, &chapter).await;
+        epub.load_chapter_styles(&chapter)
+            .await
+            .map_err(ReaderLoadError::Epub)?
+    };
+
+    let loaded_images = {
+        let _trace = async_span!(
+            target: "reader.chapter",
+            "images",
+            spine = index,
+        );
+
+        load_chapter_images(epub, &chapter).await
+    };
 
     let (image_metrics, chapter_images) = loaded_images.into_parts();
 
@@ -328,15 +386,24 @@ where
 
     let mut measurer = ReaderMeasurer::new(image_metrics).map_err(ReaderLoadError::FontRegistry)?;
 
-    let pagination = paginate_chapter(
-        &chapter,
-        &styles,
-        spine,
-        reader_viewport(),
-        settings,
-        &mut measurer,
-    )
-    .map_err(ReaderLoadError::Shape)?;
+    let pagination = {
+        let _trace = inkpaper_trace::span!(
+            target: "reader.pagination",
+            "paginate",
+            spine = index,
+            font_size = settings.font_size(),
+        );
+
+        paginate_chapter(
+            &chapter,
+            &styles,
+            spine,
+            reader_viewport(),
+            settings,
+            &mut measurer,
+        )
+        .map_err(ReaderLoadError::Shape)?
+    };
 
     if pagination
         .pages()
@@ -346,10 +413,21 @@ where
         return Ok(None);
     }
 
+    let pagination = {
+        let _trace = inkpaper_trace::span!(
+            target: "reader.pagination",
+            "own_pages",
+            spine = index,
+            pages = pagination.len(),
+        );
+
+        pagination.into_owned()
+    };
+
     Ok(Some(ReaderChapter::with_images(
         chapter_path,
         spine,
-        pagination.into_owned(),
+        pagination,
         chapter_images,
     )))
 }
