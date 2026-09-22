@@ -2,8 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, anyhow, bail};
 
+mod perf;
 mod perfetto;
 
+pub use perf::{compare_performance, summarize_performance};
 pub use perfetto::convert_perfetto;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

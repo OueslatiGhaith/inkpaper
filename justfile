@@ -27,6 +27,7 @@ x4-trace:
 x4-trace-log output="target/perf/latest-trace.log":
     mkdir -p target/perf/trace-history
     if [[ -f "{{output}}" ]]; then \
+        cp "{{output}}" target/perf/before-trace.log; \
         stamp="$(date '+%Y%m%d-%H%M%S')"; \
         archive="target/perf/trace-history/trace-${stamp}.log"; \
         suffix=1; \
@@ -35,9 +36,14 @@ x4-trace-log output="target/perf/latest-trace.log":
             suffix=$((suffix + 1)); \
         done; \
         mv "{{output}}" "${archive}"; \
+        echo "previous run:   target/perf/before-trace.log"; \
         echo "archived trace: ${archive}"; \
     fi
     just x4-trace 2>&1 | tee "{{output}}"
 
 x4-trace-report log="target/perf/latest-trace.log":
+    cargo xtask perf summary "{{log}}"
     cargo xtask trace-perfetto "{{log}}"
+
+x4-trace-compare before="target/perf/before-trace.log" after="target/perf/latest-trace.log":
+    cargo xtask perf compare "{{before}}" "{{after}}"
