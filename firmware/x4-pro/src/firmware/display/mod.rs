@@ -1,8 +1,6 @@
 use defmt::Format;
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::EpdInterface;
-#[cfg(feature = "trace")]
-use inkpaper_trace::TraceSession;
 use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Region as SsdRegion, Ssd1677};
 use uc8179::{
     RefreshMode as Uc8179RefreshMode, Region as Uc8179Region, Uc8179,
@@ -159,9 +157,6 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        #[cfg(feature = "trace")]
-        let trace_session = TraceSession::start();
-
         let present_trace = inkpaper_trace::span!(
             target: "display.present",
             "present",
@@ -211,7 +206,7 @@ impl X4Panel {
         drop(present_trace);
 
         #[cfg(feature = "trace")]
-        let trace_capture = trace_session.finish();
+        let trace_capture = inkpaper_trace::capture();
 
         #[cfg(feature = "performance")]
         {
@@ -220,7 +215,9 @@ impl X4Panel {
         }
 
         #[cfg(feature = "trace")]
-        crate::firmware::perf::log_trace(trace_capture);
+        if let Some(trace_capture) = trace_capture {
+            crate::firmware::perf::log_trace(trace_capture);
+        }
 
         result
     }

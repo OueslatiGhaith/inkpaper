@@ -1,5 +1,3 @@
-#[cfg(feature = "trace")]
-use inkpaper_trace::TraceSession;
 use inkpaper_ui::{
     RuntimeResources,
     backend::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
@@ -373,9 +371,6 @@ fn render_invalidation(
     #[cfg(feature = "performance")]
     crate::firmware::perf::log_render_invalidation(frame_id, invalidation.kind());
 
-    #[cfg(feature = "trace")]
-    let trace_session = TraceSession::start();
-
     let render_trace = inkpaper_trace::span!(
         target: "ui.render",
         "render",
@@ -532,7 +527,7 @@ fn render_invalidation(
     drop(render_trace);
 
     #[cfg(feature = "trace")]
-    let trace_capture = trace_session.finish();
+    let trace_capture = inkpaper_trace::capture();
 
     #[cfg(feature = "performance")]
     {
@@ -546,7 +541,9 @@ fn render_invalidation(
     }
 
     #[cfg(feature = "trace")]
-    crate::firmware::perf::log_trace(trace_capture);
+    if let Some(trace_capture) = trace_capture {
+        crate::firmware::perf::log_trace(trace_capture);
+    }
 
     #[cfg(feature = "performance")]
     let perf_report = FramePerfReport::new(timings);

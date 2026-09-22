@@ -18,8 +18,7 @@ pub use metadata::{
 #[cfg(feature = "recording")]
 pub use recording::{
     CallsiteDefinition, CallsiteId, CaptureEntry, CapturedMetric, CapturedSpan, METRIC_CAPACITY,
-    MetricId, MetricTimer, RecordedField, Span, TRACE_CAPACITY, TraceCapture, TraceSession,
-    set_clock,
+    MetricId, MetricTimer, RecordedField, Span, TRACE_CAPACITY, TraceCapture, capture, init,
 };
 #[cfg(feature = "recording")]
 pub use text::{TextEncodeError, write_text_capture};

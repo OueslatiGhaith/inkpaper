@@ -8,22 +8,32 @@ pub use perfetto::convert_perfetto;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Capture {
-    session_id: u32,
+    capture_id: u32,
     clock_hz: u32,
-    origin_cycles: u32,
+    captured_at_cycles: u64,
 
     expected_spans: usize,
-    dropped: u32,
-    open_spans: u8,
+    overwritten: u64,
 
-    callsites: BTreeMap<u16, Callsite>,
-    spans: Vec<Span>,
-
-    metrics_declared: bool,
     expected_metrics: usize,
     metric_dropped: u32,
+
+    callsites: BTreeMap<u16, Callsite>,
+
+    spans: Vec<Span>,
+
     metric_definitions: BTreeMap<u16, MetricDefinition>,
+
     metrics: BTreeMap<u16, Metric>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Span {
+    callsite_id: u16,
+    depth: u8,
+    start_cycles: u64,
+    duration_cycles: u64,
+    values: Vec<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,15 +42,6 @@ struct Callsite {
     target: String,
     name: String,
     fields: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Span {
-    callsite_id: u16,
-    depth: u8,
-    start_cycles: u32,
-    duration_cycles: u32,
-    values: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,10 +96,10 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
 
     let mut current: Option<Capture> = None;
 
-    let mut session_ids = BTreeSet::new();
+    let mut capture_ids = BTreeSet::new();
 
     for (line_index, line) in log.lines().enumerate() {
-        let Some((_, record)) = line.split_once("trace/v2 ") else {
+        let Some((_, record)) = line.split_once("trace/v3 ") else {
             continue;
         };
 
@@ -107,8 +108,8 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
         if let Some(payload) = record.strip_prefix("capture ") {
             if let Some(open) = current.as_ref() {
                 bail!(
-                    "trace session {} did not end before a new capture started on log line {}",
-                    open.session_id,
+                    "trace capture {} did not end before a new capture started on log line {}",
+                    open.capture_id,
                     line_number,
                 );
             }
@@ -116,10 +117,10 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
             let capture = parse_capture_header(payload)
                 .with_context(|| format!("invalid trace capture on log line {line_number}"))?;
 
-            if !session_ids.insert(capture.session_id) {
+            if !capture_ids.insert(capture.capture_id) {
                 bail!(
-                    "duplicate trace session {} on log line {}",
-                    capture.session_id,
+                    "duplicate trace capture {} on log line {}",
+                    capture.capture_id,
                     line_number,
                 );
             }
@@ -147,18 +148,6 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
 
             parse_span(payload, capture)
                 .with_context(|| format!("invalid trace span on log line {line_number}"))?;
-
-            continue;
-        }
-
-        if let Some(payload) = record.strip_prefix("metrics ") {
-            let capture = current.as_mut().with_context(|| {
-                format!("trace metric summary outside a capture on log line {line_number}")
-            })?;
-
-            parse_metrics_header(payload, capture).with_context(|| {
-                format!("invalid trace metric summary on log line {line_number}")
-            })?;
 
             continue;
         }
@@ -191,14 +180,14 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
                 format!("trace end outside a capture on log line {line_number}")
             })?;
 
-            let end_session = parse_end(payload)
+            let end_id = parse_end(payload)
                 .with_context(|| format!("invalid trace end on log line {line_number}"))?;
 
-            if end_session != capture.session_id {
+            if end_id != capture.capture_id {
                 bail!(
-                    "trace session {} ended as session {} on log line {}",
-                    capture.session_id,
-                    end_session,
+                    "trace capture {} ended as capture {} on log line {}",
+                    capture.capture_id,
+                    end_id,
                     line_number,
                 );
             }
@@ -214,18 +203,18 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
             bail!("firmware reported trace encoding failure on log line {line_number}: {payload}");
         }
 
-        bail!("unknown trace/v2 record on log line {line_number}: {record}");
+        bail!("unknown trace/v3 record on log line {line_number}: {record}");
     }
 
     if let Some(capture) = current {
         bail!(
-            "trace session {} is incomplete: missing matching trace/v2 end",
-            capture.session_id,
+            "trace capture {} is incomplete: missing matching trace/v3 end",
+            capture.capture_id,
         );
     }
 
     if captures.is_empty() {
-        bail!("no trace/v2 captures found in log");
+        bail!("no trace/v3 captures found in log");
     }
 
     Ok(captures)
@@ -234,12 +223,13 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
 fn parse_capture_header(payload: &str) -> Result<Capture> {
     let mut parser = LineParser::new(payload);
 
-    let session_id = parser.number("session=")?;
+    let capture_id = parser.number("id=")?;
     let clock_hz = parser.number("hz=")?;
-    let origin_cycles = parser.number("origin=")?;
+    let captured_at_cycles = parser.number("at=")?;
     let expected_spans = parser.number("spans=")?;
-    let dropped = parser.number("dropped=")?;
-    let open_spans = parser.number("open=")?;
+    let overwritten = parser.number("overwritten=")?;
+    let expected_metrics = parser.number("metrics=")?;
+    let metric_dropped = parser.number("metric_dropped=")?;
 
     parser.finish()?;
 
@@ -248,72 +238,36 @@ fn parse_capture_header(payload: &str) -> Result<Capture> {
     }
 
     Ok(Capture {
-        session_id,
+        capture_id,
         clock_hz,
-        origin_cycles,
+        captured_at_cycles,
         expected_spans,
-        dropped,
-        open_spans,
+        overwritten,
+        expected_metrics,
+        metric_dropped,
         callsites: BTreeMap::new(),
         spans: Vec::with_capacity(expected_spans),
-        metrics_declared: false,
-        expected_metrics: 0,
-        metric_dropped: 0,
         metric_definitions: BTreeMap::new(),
         metrics: BTreeMap::new(),
     })
 }
 
-fn parse_metrics_header(payload: &str, capture: &mut Capture) -> Result<()> {
-    if capture.metrics_declared {
-        bail!(
-            "trace session {} declares metrics more than once",
-            capture.session_id,
-        );
-    }
-
-    let mut parser = LineParser::new(payload);
-
-    let expected_metrics = parser.number("count=")?;
-
-    let metric_dropped = parser.number("dropped=")?;
-
-    parser.finish()?;
-
-    capture.metrics_declared = true;
-
-    capture.expected_metrics = expected_metrics;
-
-    capture.metric_dropped = metric_dropped;
-
-    Ok(())
-}
-
 fn parse_metric_definition(payload: &str, capture: &mut Capture) -> Result<()> {
-    if !capture.metrics_declared {
-        bail!("metric definition appeared before trace/v2 metrics summary");
-    }
-
     let mut parser = LineParser::new(payload);
 
     let id = parser.number("id=")?;
-
     let target = parser.component("target=")?;
-
     let name = parser.component("name=")?;
-
     let kind_text = parser.token("kind=")?;
-
     let kind = MetricKind::parse(kind_text)?;
-
     let unit = parser.component("unit=")?;
 
     parser.finish()?;
 
     if capture.metric_definitions.contains_key(&id) {
         bail!(
-            "trace session {} defines metric {} more than once",
-            capture.session_id,
+            "trace capture {} defines metric {} more than once",
+            capture.capture_id,
             id,
         );
     }
@@ -333,10 +287,6 @@ fn parse_metric_definition(payload: &str, capture: &mut Capture) -> Result<()> {
 }
 
 fn parse_metric(payload: &str, capture: &mut Capture) -> Result<()> {
-    if !capture.metrics_declared {
-        bail!("metric appeared before trace/v2 metrics summary");
-    }
-
     let mut parser = LineParser::new(payload);
 
     let id = parser.number("id=")?;
@@ -348,16 +298,16 @@ fn parse_metric(payload: &str, capture: &mut Capture) -> Result<()> {
 
     if !capture.metric_definitions.contains_key(&id) {
         bail!(
-            "trace session {} uses undefined metric {}",
-            capture.session_id,
+            "trace capture {} uses undefined metric {}",
+            capture.capture_id,
             id,
         );
     }
 
     if capture.metrics.contains_key(&id) {
         bail!(
-            "trace session {} records metric {} more than once",
-            capture.session_id,
+            "trace capture {} records metric {} more than once",
+            capture.capture_id,
             id,
         );
     }
@@ -401,8 +351,8 @@ fn parse_definition(payload: &str, capture: &mut Capture) -> Result<()> {
 
     if capture.callsites.contains_key(&id) {
         bail!(
-            "trace session {} defines callsite {} more than once",
-            capture.session_id,
+            "trace capture {} defines callsite {} more than once",
+            capture.capture_id,
             id,
         );
     }
@@ -431,8 +381,8 @@ fn parse_span(payload: &str, capture: &mut Capture) -> Result<()> {
 
     let callsite = capture.callsites.get(&callsite_id).with_context(|| {
         format!(
-            "trace session {} uses undefined callsite {}",
-            capture.session_id, callsite_id,
+            "trace capture {} uses undefined callsite {}",
+            capture.capture_id, callsite_id,
         )
     })?;
 
@@ -455,8 +405,8 @@ fn parse_span(payload: &str, capture: &mut Capture) -> Result<()> {
 
     if capture.spans.len() >= capture.expected_spans {
         bail!(
-            "trace session {} contains more spans than its header declared",
-            capture.session_id,
+            "trace capture {} contains more spans than its header declared",
+            capture.capture_id,
         );
     }
 
@@ -474,62 +424,27 @@ fn parse_span(payload: &str, capture: &mut Capture) -> Result<()> {
 fn parse_end(payload: &str) -> Result<u32> {
     let mut parser = LineParser::new(payload);
 
-    let session_id = parser.number("session=")?;
+    let capture_id = parser.number("id=")?;
 
     parser.finish()?;
 
-    Ok(session_id)
+    Ok(capture_id)
 }
 
 fn validate_capture(capture: &Capture) -> Result<()> {
     if capture.expected_spans != capture.spans.len() {
         bail!(
-            "trace session {} is incomplete: header declares {} spans but {} were parsed",
-            capture.session_id,
+            "trace capture {} declares {} spans but contains {}",
+            capture.capture_id,
             capture.expected_spans,
             capture.spans.len(),
         );
     }
 
-    if capture.dropped != 0 {
-        bail!(
-            "trace session {} overflowed: {} spans were dropped",
-            capture.session_id,
-            capture.dropped,
-        );
-    }
-
-    if capture.open_spans != 0 {
-        bail!(
-            "trace session {} ended with {} open spans",
-            capture.session_id,
-            capture.open_spans,
-        );
-    }
-
-    if !capture.metrics_declared {
-        if !capture.metric_definitions.is_empty() || !capture.metrics.is_empty() {
-            bail!(
-                "trace session {} contains metrics without a metrics summary",
-                capture.session_id,
-            );
-        }
-
-        return Ok(());
-    }
-
-    if capture.metric_dropped != 0 {
-        bail!(
-            "trace session {} overflowed: {} metric observations were dropped",
-            capture.session_id,
-            capture.metric_dropped,
-        );
-    }
-
     if capture.expected_metrics != capture.metric_definitions.len() {
         bail!(
-            "trace session {} declares {} metrics but contains {} definitions",
-            capture.session_id,
+            "trace capture {} declares {} metrics but contains {} definitions",
+            capture.capture_id,
             capture.expected_metrics,
             capture.metric_definitions.len(),
         );
@@ -537,8 +452,8 @@ fn validate_capture(capture: &Capture) -> Result<()> {
 
     if capture.expected_metrics != capture.metrics.len() {
         bail!(
-            "trace session {} declares {} metrics but contains {} metric records",
-            capture.session_id,
+            "trace capture {} declares {} metrics but contains {} metric records",
+            capture.capture_id,
             capture.expected_metrics,
             capture.metrics.len(),
         );
@@ -732,11 +647,11 @@ mod tests {
     #[test]
     fn parses_self_describing_capture() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=7 hz=240000000 origin=100 spans=2 dropped=0 open=0
-            1.001 INFO trace/v2 define id=0 target=17:reader.pagination name=7:measure fields=2 5:bytes 6:cached
-            1.002 INFO trace/v2 span id=0 depth=1 start=10 cycles=20 values=2 u:12 b:1
-            1.003 INFO trace/v2 span id=0 depth=1 start=40 cycles=30 values=2 u:17 b:0
-            1.004 INFO trace/v2 end session=7
+            1.000 INFO trace/v3 capture id=7 hz=240000000 at=180 spans=2 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=0 target=17:reader.pagination name=7:measure fields=2 5:bytes 6:cached
+            1.002 INFO trace/v3 span id=0 depth=1 start=110 cycles=20 values=2 u:12 b:1
+            1.003 INFO trace/v3 span id=0 depth=1 start=140 cycles=30 values=2 u:17 b:0
+            1.004 INFO trace/v3 end id=7
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -745,22 +660,42 @@ mod tests {
 
         let capture = &captures[0];
 
-        assert_eq!(capture.session_id, 7);
+        assert_eq!(capture.capture_id, 7);
+
         assert_eq!(capture.clock_hz, 240_000_000);
-        assert_eq!(capture.origin_cycles, 100);
+
+        assert_eq!(capture.captured_at_cycles, 180);
+
         assert_eq!(capture.spans.len(), 2);
+
+        assert_eq!(capture.overwritten, 0);
+
+        assert_eq!(capture.expected_metrics, 0);
+
+        assert_eq!(capture.metric_dropped, 0);
 
         let callsite = capture.callsites.get(&0).unwrap();
 
         assert_eq!(callsite.id, 0);
+
         assert_eq!(callsite.target, "reader.pagination");
+
         assert_eq!(callsite.name, "measure");
+
         assert_eq!(callsite.fields, ["bytes", "cached"]);
+
+        assert_eq!(capture.spans[0].start_cycles, 110);
+
+        assert_eq!(capture.spans[0].duration_cycles, 20);
 
         assert_eq!(
             capture.spans[0].values,
             [Value::Unsigned(12), Value::Bool(true),],
         );
+
+        assert_eq!(capture.spans[1].start_cycles, 140);
+
+        assert_eq!(capture.spans[1].duration_cycles, 30);
 
         assert_eq!(
             capture.spans[1].values,
@@ -771,27 +706,30 @@ mod tests {
     #[test]
     fn parses_length_prefixed_components_with_spaces() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=10 spans=1 dropped=0 open=0
-            1.001 INFO trace/v2 define id=5 target=11:reader text name=11:shape piece fields=1 10:byte count
-            1.002 INFO trace/v2 span id=5 depth=0 start=1 cycles=2 values=1 u:12
-            1.003 INFO trace/v2 end session=1
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=20 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=5 target=11:reader text name=11:shape piece fields=1 10:byte count
+            1.002 INFO trace/v3 span id=5 depth=0 start=11 cycles=2 values=1 u:12
+            1.003 INFO trace/v3 end id=1
         "#};
 
         let captures = parse_captures(log).unwrap();
+
         let callsite = captures[0].callsites.get(&5).unwrap();
 
         assert_eq!(callsite.target, "reader text");
+
         assert_eq!(callsite.name, "shape piece");
+
         assert_eq!(callsite.fields, ["byte count"]);
     }
 
     #[test]
     fn parses_signed_and_boolean_values() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=3 hz=240000000 origin=100 spans=1 dropped=0 open=0
-            1.001 INFO trace/v2 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
-            1.002 INFO trace/v2 span id=0 depth=0 start=5 cycles=10 values=2 i:-17 b:0
-            1.003 INFO trace/v2 end session=3
+            1.000 INFO trace/v3 capture id=3 hz=240000000 at=120 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
+            1.002 INFO trace/v3 span id=0 depth=0 start=105 cycles=10 values=2 i:-17 b:0
+            1.003 INFO trace/v3 end id=3
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -805,9 +743,9 @@ mod tests {
     #[test]
     fn rejects_undefined_callsites() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
-            1.001 INFO trace/v2 span id=4 depth=0 start=0 cycles=1 values=0
-            1.002 INFO trace/v2 end session=1
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 span id=4 depth=0 start=0 cycles=1 values=0
+            1.002 INFO trace/v3 end id=1
         "#};
 
         let error = parse_captures(log).unwrap_err();
@@ -818,10 +756,10 @@ mod tests {
     #[test]
     fn rejects_field_value_count_mismatch() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
-            1.001 INFO trace/v2 define id=0 target=4:test name=4:span fields=1 5:value
-            1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=1 values=0
-            1.003 INFO trace/v2 end session=1
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=0 target=4:test name=4:span fields=1 5:value
+            1.002 INFO trace/v3 span id=0 depth=0 start=0 cycles=1 values=0
+            1.003 INFO trace/v3 end id=1
         "#};
 
         let error = parse_captures(log).unwrap_err();
@@ -832,48 +770,47 @@ mod tests {
     #[test]
     fn rejects_incomplete_capture() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
-            1.001 INFO trace/v2 define id=0 target=4:test name=4:span fields=0
-            1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=1 values=0
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=0 target=4:test name=4:span fields=0
+            1.002 INFO trace/v3 span id=0 depth=0 start=0 cycles=1 values=0
         "#};
 
         let error = parse_captures(log).unwrap_err();
 
-        assert_error_contains(&error, "missing matching trace/v2 end");
+        assert_error_contains(&error, "missing matching trace/v3 end");
     }
 
     #[test]
     fn rejects_bad_component_length() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=1 dropped=0 open=0
-            1.001 INFO trace/v2 define id=0 target=99:test name=4:span fields=0
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=0 target=99:test name=4:span fields=0
         "#};
 
         assert!(parse_captures(log).is_err());
     }
 
     #[test]
-    fn rejects_dropped_spans() {
+    fn accepts_overwritten_span_history() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=0 dropped=1 open=0
-            1.001 INFO trace/v2 end session=1
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=17 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 end id=1
         "#};
 
-        let error = parse_captures(log).unwrap_err();
+        let captures = parse_captures(log).unwrap();
 
-        assert_error_contains(&error, "1 spans were dropped");
+        assert_eq!(captures[0].overwritten, 17);
     }
 
     #[test]
     fn parses_metric_summaries() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=7 hz=240000000 origin=100 spans=0 dropped=0 open=0
-            1.001 INFO trace/v2 metrics count=2 dropped=0
-            1.002 INFO trace/v2 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
-            1.003 INFO trace/v2 metric id=0 count=3 sum=5 max=3
-            1.004 INFO trace/v2 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
-            1.005 INFO trace/v2 metric id=1 count=4 sum=120 max=50
-            1.006 INFO trace/v2 end session=7
+            1.000 INFO trace/v3 capture id=7 hz=240000000 at=100 spans=0 overwritten=0 metrics=2 metric_dropped=0
+            1.001 INFO trace/v3 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
+            1.002 INFO trace/v3 metric id=0 count=3 sum=5 max=3
+            1.003 INFO trace/v3 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
+            1.004 INFO trace/v3 metric id=1 count=4 sum=120 max=50
+            1.005 INFO trace/v3 end id=7
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -914,10 +851,9 @@ mod tests {
     #[test]
     fn rejects_metric_without_definition() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=0 dropped=0 open=0
-            1.001 INFO trace/v2 metrics count=1 dropped=0
-            1.002 INFO trace/v2 metric id=0 count=1 sum=4 max=4
-            1.003 INFO trace/v2 end session=1
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=1 metric_dropped=0
+            1.001 INFO trace/v3 metric id=0 count=1 sum=4 max=4
+            1.002 INFO trace/v3 end id=1
         "#};
 
         let error = parse_captures(log).unwrap_err();
@@ -926,15 +862,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_dropped_metrics() {
+    fn accepts_dropped_metric_observations() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=0 spans=0 dropped=0 open=0
-            1.001 INFO trace/v2 metrics count=0 dropped=1
-            1.002 INFO trace/v2 end session=1
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=0 metric_dropped=3
+            1.001 INFO trace/v3 end id=1
         "#};
 
-        let error = parse_captures(log).unwrap_err();
+        let captures = parse_captures(log).unwrap();
 
-        assert_error_contains(&error, "1 metric observations were dropped");
+        assert_eq!(captures[0].metric_dropped, 3);
     }
 }

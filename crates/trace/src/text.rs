@@ -14,19 +14,20 @@ impl From<fmt::Error> for TextEncodeError {
     }
 }
 
-pub fn write_text_capture<W>(capture: TraceCapture, writer: &mut W) -> Result<(), TextEncodeError>
+pub fn write_text_capture<W>(capture: &TraceCapture, writer: &mut W) -> Result<(), TextEncodeError>
 where
     W: Write,
 {
     writeln!(
         writer,
-        "trace/v2 capture session={} hz={} origin={} spans={} dropped={} open={}",
-        capture.session_id(),
+        "trace/v3 capture id={} hz={} at={} spans={} overwritten={} metrics={} metric_dropped={}",
+        capture.id(),
         capture.clock_hz(),
-        capture.origin_cycles(),
+        capture.captured_at_cycles(),
         capture.spans(),
-        capture.dropped(),
-        capture.open_spans(),
+        capture.overwritten(),
+        capture.metrics(),
+        capture.metric_dropped(),
     )?;
 
     for index in 0..capture.spans() {
@@ -39,24 +40,15 @@ where
         write_span(writer, entry.span())?;
     }
 
-    if capture.metrics() != 0 || capture.metric_dropped() != 0 {
-        writeln!(
-            writer,
-            "trace/v2 metrics count={} dropped={}",
-            capture.metrics(),
-            capture.metric_dropped(),
-        )?;
+    for index in 0..capture.metrics() {
+        let metric = capture.metric(index).ok_or(TextEncodeError::StaleCapture)?;
 
-        for index in 0..capture.metrics() {
-            let metric = capture.metric(index).ok_or(TextEncodeError::StaleCapture)?;
+        write_metric_definition(writer, metric)?;
 
-            write_metric_definition(writer, metric)?;
-
-            write_metric(writer, metric)?;
-        }
+        write_metric(writer, metric)?;
     }
 
-    writeln!(writer, "trace/v2 end session={}", capture.session_id())?;
+    writeln!(writer, "trace/v3 end id={}", capture.id())?;
 
     Ok(())
 }
@@ -69,7 +61,7 @@ where
 
     write!(
         writer,
-        "trace/v2 define id={} target=",
+        "trace/v3 define id={} target=",
         definition.id().get(),
     )?;
 
@@ -98,7 +90,7 @@ where
 
     write!(
         writer,
-        "trace/v2 span id={} depth={} start={} cycles={} values={}",
+        "trace/v3 span id={} depth={} start={} cycles={} values={}",
         span.callsite_id().get(),
         span.depth(),
         span.start_cycles(),
@@ -139,7 +131,7 @@ where
 
     write!(
         writer,
-        "trace/v2 metric_define id={} target=",
+        "trace/v3 metric_define id={} target=",
         metric.id().get(),
     )?;
 
@@ -162,7 +154,7 @@ where
 {
     writeln!(
         writer,
-        "trace/v2 metric id={} count={} sum={} max={}",
+        "trace/v3 metric id={} count={} sum={} max={}",
         metric.id().get(),
         metric.count(),
         metric.sum(),

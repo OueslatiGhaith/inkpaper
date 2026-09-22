@@ -70,24 +70,18 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
         bail!("Perfetto export requires one stable trace clock frequency");
     }
 
-    let origins = unwrap_capture_origins(captures)?;
-
-    let timeline_base = origins[0];
+    let timeline_base = timeline_base(captures)?;
 
     let tracks = build_target_tracks(captures);
 
     let mut events = Vec::new();
 
-    for (capture, origin) in captures.iter().zip(origins.iter().copied()) {
-        let relative_origin = origin
-            .checked_sub(timeline_base)
-            .context("trace origin moved before timeline base")?;
-
+    for capture in captures {
         for span in &capture.spans {
             let callsite = capture.callsites.get(&span.callsite_id).with_context(|| {
                 format!(
-                    "session {} references missing callsite {}",
-                    capture.session_id, span.callsite_id,
+                    "capture {} references missing callsite {}",
+                    capture.capture_id, span.callsite_id,
                 )
             })?;
 
@@ -95,12 +89,13 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
                 format!("missing Perfetto track for target `{}`", callsite.target)
             })?;
 
-            let start_cycles = relative_origin
-                .checked_add(u64::from(span.start_cycles))
-                .context("trace start timestamp overflow")?;
+            let start_cycles = span
+                .start_cycles
+                .checked_sub(timeline_base)
+                .context("span starts before trace timeline base")?;
 
             let end_cycles = start_cycles
-                .checked_add(u64::from(span.duration_cycles))
+                .checked_add(span.duration_cycles)
                 .context("trace end timestamp overflow")?;
 
             let start_ns = cycles_to_ns(start_cycles, clock_hz);
@@ -115,7 +110,12 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
             push_slice(&mut events, track_uuid, callsite, span, start_ns, end_ns);
         }
 
-        let metric_timestamp_ns = cycles_to_ns(relative_origin, clock_hz);
+        let capture_cycles = capture
+            .captured_at_cycles
+            .checked_sub(timeline_base)
+            .context("capture timestamp before trace timeline base")?;
+
+        let capture_ns = cycles_to_ns(capture_cycles, clock_hz);
 
         for metric in capture.metrics.values() {
             let definition = capture
@@ -123,8 +123,8 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
                 .get(&metric.id)
                 .with_context(|| {
                     format!(
-                        "session {} references missing metric definition {}",
-                        capture.session_id, metric.id,
+                        "capture {} references missing metric definition {}",
+                        capture.capture_id, metric.id,
                     )
                 })?;
 
@@ -135,12 +135,24 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
                 )
             })?;
 
-            push_metric(
+            push_metric(&mut events, track_uuid, definition, metric, capture_ns);
+        }
+
+        if capture.overwritten != 0 {
+            push_loss_event(
                 &mut events,
-                track_uuid,
-                definition,
-                metric,
-                metric_timestamp_ns,
+                "trace.overwritten",
+                capture.overwritten,
+                capture_ns,
+            );
+        }
+
+        if capture.metric_dropped != 0 {
+            push_loss_event(
+                &mut events,
+                "trace.metric_dropped",
+                u64::from(capture.metric_dropped),
+                capture_ns,
             );
         }
     }
@@ -194,34 +206,15 @@ fn build_target_tracks(captures: &[Capture]) -> BTreeMap<String, u64> {
         .collect()
 }
 
-fn unwrap_capture_origins(captures: &[Capture]) -> Result<Vec<u64>> {
-    let first = captures
-        .first()
-        .context("cannot unwrap origins for an empty trace")?;
-
-    let mut origins = Vec::with_capacity(captures.len());
-
-    let mut previous_raw = first.origin_cycles;
-
-    let mut unwrapped = u64::from(first.origin_cycles);
-
-    origins.push(unwrapped);
-
-    for capture in &captures[1..] {
-        let raw = capture.origin_cycles;
-
-        let delta = raw.wrapping_sub(previous_raw);
-
-        unwrapped = unwrapped
-            .checked_add(u64::from(delta))
-            .context("trace timeline overflow while unwrapping cycle counter")?;
-
-        origins.push(unwrapped);
-
-        previous_raw = raw;
-    }
-
-    Ok(origins)
+fn timeline_base(captures: &[Capture]) -> Result<u64> {
+    captures
+        .iter()
+        .flat_map(|capture| {
+            core::iter::once(capture.captured_at_cycles)
+                .chain(capture.spans.iter().map(|span| span.start_cycles))
+        })
+        .min()
+        .context("cannot establish trace timeline base")
 }
 
 fn push_slice(
@@ -304,6 +297,24 @@ fn push_metric(
         name: Some(definition.name.clone()),
         category: Some(definition.target.clone()),
         annotations,
+        depth: 0,
+    });
+}
+
+fn push_loss_event(events: &mut Vec<TimedEvent>, name: &str, count: u64, timestamp_ns: u64) {
+    events.push(TimedEvent {
+        kind: EventKind::Instant,
+
+        timestamp_ns,
+
+        track_uuid: PERFETTO_ROOT_TRACK,
+
+        name: Some(name.to_owned()),
+
+        category: Some("trace".to_owned()),
+
+        annotations: vec![("count".to_owned(), AnnotationValue::Unsigned(count))],
+
         depth: 0,
     });
 }
@@ -489,26 +500,26 @@ fn proto_varint(output: &mut Vec<u8>, mut value: u64) {
 mod tests {
     use indoc::indoc;
 
-    use super::{build_perfetto, unwrap_capture_origins};
+    use super::build_perfetto;
 
-    use crate::trace::parse_captures;
+    use crate::trace::{parse_captures, perfetto::timeline_base};
 
     #[test]
     fn perfetto_export_is_generic_over_targets_and_fields() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=1000 spans=2 dropped=0 open=0
-            1.001 INFO trace/v2 define id=0 target=9:ui.render name=5:paint fields=1 5:frame
-            1.002 INFO trace/v2 span id=0 depth=1 start=120 cycles=480 values=1 u:4
-            1.003 INFO trace/v2 define id=1 target=9:ui.render name=6:render fields=1 5:frame
-            1.004 INFO trace/v2 span id=1 depth=0 start=0 cycles=720 values=1 u:4
-            1.005 INFO trace/v2 end session=1
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=1800 spans=2 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=0 target=9:ui.render name=5:paint fields=1 5:frame
+            1.002 INFO trace/v3 span id=0 depth=1 start=1120 cycles=480 values=1 u:4
+            1.003 INFO trace/v3 define id=1 target=9:ui.render name=6:render fields=1 5:frame
+            1.004 INFO trace/v3 span id=1 depth=0 start=1000 cycles=720 values=1 u:4
+            1.005 INFO trace/v3 end id=1
 
-            2.000 INFO trace/v2 capture session=2 hz=240000000 origin=4000 spans=2 dropped=0 open=0
-            2.001 INFO trace/v2 define id=0 target=15:display.present name=9:busy_wait fields=1 5:index
-            2.002 INFO trace/v2 span id=0 depth=1 start=240 cycles=480 values=1 u:0
-            2.003 INFO trace/v2 define id=1 target=15:display.present name=7:present fields=1 5:frame
-            2.004 INFO trace/v2 span id=1 depth=0 start=0 cycles=960 values=1 u:4
-            2.005 INFO trace/v2 end session=2
+            2.000 INFO trace/v3 capture id=2 hz=240000000 at=5000 spans=2 overwritten=0 metrics=0 metric_dropped=0
+            2.001 INFO trace/v3 define id=0 target=15:display.present name=9:busy_wait fields=1 5:index
+            2.002 INFO trace/v3 span id=0 depth=1 start=4240 cycles=480 values=1 u:0
+            2.003 INFO trace/v3 define id=1 target=15:display.present name=7:present fields=1 5:frame
+            2.004 INFO trace/v3 span id=1 depth=0 start=4000 cycles=960 values=1 u:4
+            2.005 INFO trace/v3 end id=2
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -527,45 +538,43 @@ mod tests {
 
         assert!(contains_bytes(&trace, b"busy_wait"));
 
-        // Annotation names should also be
-        // present in the protobuf.
         assert!(contains_bytes(&trace, b"frame"));
 
         assert!(contains_bytes(&trace, b"index"));
     }
 
     #[test]
-    fn perfetto_origin_unwraps_cycle_counter_wrap() {
+    fn capture_chunks_share_one_absolute_timeline() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=4294967000 spans=1 dropped=0 open=0
-            1.001 INFO trace/v2 define id=0 target=4:test name=5:first fields=0
-            1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=100 values=0
-            1.003 INFO trace/v2 end session=1
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=200 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=0 target=4:test name=5:first fields=0
+            1.002 INFO trace/v3 span id=0 depth=0 start=100 cycles=50 values=0
+            1.003 INFO trace/v3 end id=1
 
-            2.000 INFO trace/v2 capture session=2 hz=240000000 origin=1000 spans=1 dropped=0 open=0
-            2.001 INFO trace/v2 define id=0 target=4:test name=6:second fields=0
-            2.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=100 values=0
-            2.003 INFO trace/v2 end session=2
+            2.000 INFO trace/v3 capture id=2 hz=240000000 at=500 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            2.001 INFO trace/v3 define id=0 target=4:test name=6:second fields=0
+            2.002 INFO trace/v3 span id=0 depth=0 start=300 cycles=100 values=0
+            2.003 INFO trace/v3 end id=2
         "#};
 
         let captures = parse_captures(log).unwrap();
 
-        let origins = unwrap_capture_origins(&captures).unwrap();
+        assert_eq!(timeline_base(&captures).unwrap(), 100);
 
-        let expected_delta = 1000u32.wrapping_sub(4_294_967_000u32);
+        let trace = build_perfetto(&captures).unwrap();
 
-        assert_eq!(origins.len(), 2);
+        assert!(contains_bytes(&trace, b"first"));
 
-        assert_eq!(origins[1] - origins[0], u64::from(expected_delta));
+        assert!(contains_bytes(&trace, b"second"));
     }
 
     #[test]
     fn perfetto_preserves_signed_and_boolean_annotations() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=100 spans=1 dropped=0 open=0
-            1.001 INFO trace/v2 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
-            1.002 INFO trace/v2 span id=0 depth=0 start=0 cycles=10 values=2 i:-17 b:0
-            1.003 INFO trace/v2 end session=1
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=120 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
+            1.002 INFO trace/v3 span id=0 depth=0 start=100 cycles=10 values=2 i:-17 b:0
+            1.003 INFO trace/v3 end id=1
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -586,14 +595,13 @@ mod tests {
     #[test]
     fn perfetto_exports_metric_summaries_as_instants() {
         let log = indoc! {r#"
-            1.000 INFO trace/v2 capture session=1 hz=240000000 origin=100 spans=0 dropped=0 open=0
-            1.001 INFO trace/v2 metrics count=2 dropped=0
-            1.002 INFO trace/v2 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
-            1.003 INFO trace/v2 metric id=0 count=3 sum=5 max=3
-            1.004 INFO trace/v2 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
-            1.005 INFO trace/v2 metric id=1 count=4 sum=120 max=50
-            1.006 INFO trace/v2 end session=1
-        "#};
+        1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=2 metric_dropped=0
+        1.001 INFO trace/v3 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
+        1.002 INFO trace/v3 metric id=0 count=3 sum=5 max=3
+        1.003 INFO trace/v3 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
+        1.004 INFO trace/v3 metric id=1 count=4 sum=120 max=50
+        1.005 INFO trace/v3 end id=1
+    "#};
 
         let captures = parse_captures(log).unwrap();
 
@@ -618,5 +626,23 @@ mod tests {
         assert!(contains_bytes(&trace, b"distribution"));
 
         assert!(contains_bytes(&trace, b"cycles"));
+    }
+
+    #[test]
+    fn perfetto_exports_flight_recorder_loss_diagnostics() {
+        let log = indoc! {r#"
+        1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=12 metrics=0 metric_dropped=3
+        1.001 INFO trace/v3 end id=1
+    "#};
+
+        let captures = parse_captures(log).unwrap();
+
+        let trace = build_perfetto(&captures).unwrap();
+
+        assert!(contains_bytes(&trace, b"trace.overwritten"));
+
+        assert!(contains_bytes(&trace, b"trace.metric_dropped"));
+
+        assert!(contains_bytes(&trace, b"count"));
     }
 }

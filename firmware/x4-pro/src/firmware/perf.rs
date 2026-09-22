@@ -7,6 +7,8 @@ use defmt::info;
 use embedded_hal_async::delay::DelayNs;
 #[cfg(feature = "performance")]
 use epd_bus::{BusyPolarity, EpdInterface};
+#[cfg(feature = "trace")]
+use esp_hal::time::Instant;
 #[cfg(feature = "performance")]
 use esp_hal::xtensa_lx::timer::get_cycle_count;
 
@@ -17,6 +19,14 @@ use crate::firmware::{
 };
 
 pub(crate) const CLOCK_HZ: u32 = 240_000_000;
+
+#[cfg(feature = "trace")]
+pub(crate) const TRACE_MONOTONIC_HZ: u32 = 1_000_000;
+
+#[cfg(feature = "trace")]
+pub(crate) fn trace_monotonic_ticks() -> u64 {
+    Instant::now().duration_since_epoch().as_micros()
+}
 
 #[cfg(feature = "performance")]
 #[derive(Debug, Clone, Copy)]
@@ -863,15 +873,17 @@ impl<const N: usize> Write for DefmtTraceWriter<N> {
 pub(crate) fn log_trace(capture: inkpaper_trace::TraceCapture) {
     const TRACE_LINE_BYTES: usize = 512;
 
+    let capture_id = capture.id();
+
     let mut writer = DefmtTraceWriter::<TRACE_LINE_BYTES>::new();
 
-    let result = inkpaper_trace::write_text_capture(capture, &mut writer).and_then(|_| {
+    let result = inkpaper_trace::write_text_capture(&capture, &mut writer).and_then(|_| {
         writer
             .finish()
             .map_err(|_| inkpaper_trace::TextEncodeError::Write)
     });
 
     if result.is_err() {
-        info!("trace/v2 encode_error session={=u32}", capture.session_id(),);
+        info!("trace/v3 encode_error id={=u32}", capture_id);
     }
 }
