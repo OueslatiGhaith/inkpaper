@@ -21,8 +21,9 @@ pub use metadata::{
 
 #[cfg(feature = "recording")]
 pub use recording::{
-    CallsiteDefinition, CallsiteId, CaptureEntry, CapturedMetric, CapturedSpan, METRIC_CAPACITY,
-    MetricId, MetricTimer, RecordedField, Span, TRACE_CAPACITY, TraceCapture, capture, init,
+    AsyncSpan, CallsiteDefinition, CallsiteId, CaptureEntry, CapturedMetric, CapturedSpan,
+    METRIC_CAPACITY, MetricId, MetricTimer, RecordedField, Span, SpanKind, TRACE_CAPACITY,
+    TraceCapture, capture, init,
 };
 #[cfg(feature = "recording")]
 pub use text::{TextEncodeError, write_text_capture};
@@ -33,6 +34,17 @@ pub struct Span;
 
 #[cfg(not(feature = "recording"))]
 impl Span {
+    pub const fn disabled() -> Self {
+        Self
+    }
+}
+
+#[cfg(not(feature = "recording"))]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AsyncSpan;
+
+#[cfg(not(feature = "recording"))]
+impl AsyncSpan {
     pub const fn disabled() -> Self {
         Self
     }
@@ -69,6 +81,15 @@ pub mod __private {
     #[inline(always)]
     pub fn start(callsite: &'static crate::Callsite, values: [crate::Value; 2]) -> crate::Span {
         crate::Span::start(callsite, values)
+    }
+
+    #[cfg(feature = "recording")]
+    #[inline(always)]
+    pub fn start_async(
+        callsite: &'static crate::Callsite,
+        values: [crate::Value; 2],
+    ) -> crate::AsyncSpan {
+        crate::AsyncSpan::start(callsite, values)
     }
 
     #[inline(always)]
@@ -271,6 +292,192 @@ macro_rules! span {
         $(,)?
     ) => {
         $crate::span!(
+            target: module_path!(),
+            $name
+            $(, $field = $value)*
+        )
+    };
+}
+
+#[cfg(feature = "recording")]
+#[macro_export]
+macro_rules! async_span {
+    (
+        target: $target:expr,
+        $name:literal,
+        $field0:ident = $value0:expr,
+        $field1:ident = $value1:expr,
+        $field2:ident = $value2:expr
+        $(, $rest:tt)*
+    ) => {
+        compile_error!(
+            "inkpaper_trace::async_span! supports at most two fields"
+        )
+    };
+
+    (
+        target: $target:expr,
+        $name:literal,
+        $field0:ident = $value0:expr,
+        $field1:ident = $value1:expr
+        $(,)?
+    ) => {{
+        static __INKPAPER_TRACE_FIELDS: [$crate::Field; 2] = [
+            $crate::Field::new(stringify!($field0)),
+            $crate::Field::new(stringify!($field1)),
+        ];
+
+        static __INKPAPER_TRACE_CALLSITE: $crate::Callsite =
+            $crate::Callsite::new(
+                $name,
+                $target,
+                &__INKPAPER_TRACE_FIELDS,
+            );
+
+        if $crate::__private::enabled() {
+            $crate::__private::start_async(
+                &__INKPAPER_TRACE_CALLSITE,
+                [
+                    $crate::__private::into_value($value0),
+                    $crate::__private::into_value($value1),
+                ],
+            )
+        } else {
+            $crate::AsyncSpan::disabled()
+        }
+    }};
+
+    (
+        target: $target:expr,
+        $name:literal,
+        $field0:ident = $value0:expr
+        $(,)?
+    ) => {{
+        static __INKPAPER_TRACE_FIELDS: [$crate::Field; 1] = [
+            $crate::Field::new(stringify!($field0)),
+        ];
+
+        static __INKPAPER_TRACE_CALLSITE: $crate::Callsite =
+            $crate::Callsite::new(
+                $name,
+                $target,
+                &__INKPAPER_TRACE_FIELDS,
+            );
+
+        if $crate::__private::enabled() {
+            $crate::__private::start_async(
+                &__INKPAPER_TRACE_CALLSITE,
+                [
+                    $crate::__private::into_value($value0),
+                    $crate::Value::EMPTY,
+                ],
+            )
+        } else {
+            $crate::AsyncSpan::disabled()
+        }
+    }};
+
+    (
+        target: $target:expr,
+        $name:literal
+        $(,)?
+    ) => {{
+        static __INKPAPER_TRACE_FIELDS: [$crate::Field; 0] = [];
+
+        static __INKPAPER_TRACE_CALLSITE: $crate::Callsite =
+            $crate::Callsite::new(
+                $name,
+                $target,
+                &__INKPAPER_TRACE_FIELDS,
+            );
+
+        if $crate::__private::enabled() {
+            $crate::__private::start_async(
+                &__INKPAPER_TRACE_CALLSITE,
+                [$crate::Value::EMPTY; 2],
+            )
+        } else {
+            $crate::AsyncSpan::disabled()
+        }
+    }};
+
+    (
+        $name:literal,
+        $field0:ident = $value0:expr,
+        $field1:ident = $value1:expr
+        $(,)?
+    ) => {
+        $crate::async_span!(
+            target: module_path!(),
+            $name,
+            $field0 = $value0,
+            $field1 = $value1,
+        )
+    };
+
+    (
+        $name:literal,
+        $field0:ident = $value0:expr
+        $(,)?
+    ) => {
+        $crate::async_span!(
+            target: module_path!(),
+            $name,
+            $field0 = $value0,
+        )
+    };
+
+    (
+        $name:literal
+        $(,)?
+    ) => {
+        $crate::async_span!(
+            target: module_path!(),
+            $name,
+        )
+    };
+}
+
+#[cfg(not(feature = "recording"))]
+#[macro_export]
+macro_rules! async_span {
+    (
+        target: $target:expr,
+        $name:literal,
+        $field0:ident = $value0:expr,
+        $field1:ident = $value1:expr,
+        $field2:ident = $value2:expr
+        $(, $rest:tt)*
+    ) => {
+        compile_error!(
+            "inkpaper_trace::async_span! supports at most two fields"
+        )
+    };
+
+    (
+        target: $target:expr,
+        $name:literal
+        $(, $field:ident = $value:expr)*
+        $(,)?
+    ) => {{
+        if false {
+            let _: &'static str = $target;
+            let _: &'static str = $name;
+
+            $(
+                let _ = &$value;
+            )*
+        }
+
+        $crate::AsyncSpan::disabled()
+    }};
+
+    (
+        $name:literal
+        $(, $field:ident = $value:expr)*
+        $(,)?
+    ) => {
+        $crate::async_span!(
             target: module_path!(),
             $name
             $(, $field = $value)*

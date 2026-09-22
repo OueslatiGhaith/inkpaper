@@ -131,6 +131,22 @@ impl RecordedField {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SpanKind {
+    Sync,
+    Async,
+}
+
+impl SpanKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sync => "sync",
+            Self::Async => "async",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TraceRecord {
     start_cycles: u64,
@@ -143,6 +159,7 @@ pub struct TraceRecord {
 
     depth: u8,
     value_kinds: u8,
+    kind: SpanKind,
 }
 
 #[cfg(target_pointer_width = "32")]
@@ -165,9 +182,11 @@ impl TraceRecord {
 
         depth: 0,
         value_kinds: 0,
+        kind: SpanKind::Sync,
     };
 
     fn new(
+        kind: SpanKind,
         callsite: &'static Callsite,
         depth: u8,
         start_cycles: u64,
@@ -187,11 +206,16 @@ impl TraceRecord {
 
             depth,
             value_kinds,
+            kind,
         }
     }
 
     pub const fn metadata(self) -> &'static crate::Metadata {
         self.callsite.metadata()
+    }
+
+    pub const fn kind(self) -> SpanKind {
+        self.kind
     }
 
     pub const fn depth(self) -> u8 {
@@ -262,6 +286,10 @@ impl CapturedSpan {
 
     pub const fn metadata(self) -> &'static crate::Metadata {
         self.record.metadata()
+    }
+
+    pub const fn kind(self) -> SpanKind {
+        self.record.kind()
     }
 
     pub const fn depth(self) -> u8 {
@@ -912,8 +940,95 @@ impl Drop for Span {
             state.depth = self.depth;
 
             let record = TraceRecord::new(
+                SpanKind::Sync,
                 self.callsite,
                 self.depth,
+                self.start_cycles,
+                duration_cycles,
+                self.values,
+            );
+
+            let active = state.active_buffer;
+
+            state.buffers[active].push_span(record);
+        });
+    }
+}
+
+pub struct AsyncSpan {
+    generation: u32,
+
+    callsite: &'static Callsite,
+
+    clock: Option<Clock>,
+    start_cycles: u64,
+
+    values: [Value; 2],
+}
+
+impl AsyncSpan {
+    pub const fn disabled() -> Self {
+        Self {
+            generation: 0,
+
+            callsite: &EMPTY_CALLSITE,
+
+            clock: None,
+            start_cycles: 0,
+
+            values: [Value::EMPTY; 2],
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn start(callsite: &'static Callsite, values: [Value; 2]) -> Self {
+        if !is_recording() {
+            return Self::disabled();
+        }
+
+        critical_section::with(|cs| {
+            let state = TRACE.borrow(cs).borrow();
+
+            let Some(clock) = state.clock else {
+                return Self::disabled();
+            };
+
+            Self {
+                generation: state.generation,
+
+                callsite,
+
+                clock: Some(clock),
+                start_cycles: clock.now_cycles(),
+
+                values,
+            }
+        })
+    }
+}
+
+impl Drop for AsyncSpan {
+    #[inline(always)]
+    fn drop(&mut self) {
+        let Some(clock) = self.clock else {
+            return;
+        };
+
+        let ended_at = clock.now_cycles();
+
+        let duration_cycles = ended_at.saturating_sub(self.start_cycles);
+
+        critical_section::with(|cs| {
+            let mut state = TRACE.borrow(cs).borrow_mut();
+
+            if state.generation != self.generation {
+                return;
+            }
+
+            let record = TraceRecord::new(
+                SpanKind::Async,
+                self.callsite,
+                0,
                 self.start_cycles,
                 duration_cycles,
                 self.values,

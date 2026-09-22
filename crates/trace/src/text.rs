@@ -90,8 +90,9 @@ where
 
     write!(
         writer,
-        "trace/v3 span id={} depth={} start={} cycles={} values={}",
+        "trace/v3 span id={} kind={} depth={} start={} cycles={} values={}",
         span.callsite_id().get(),
+        span.kind().as_str(),
         span.depth(),
         span.start_cycles(),
         span.duration_cycles(),
@@ -106,17 +107,9 @@ where
         let value = field.value();
 
         match value.kind() {
-            ValueKind::Unsigned => {
-                write!(writer, " u:{}", value.raw())?;
-            }
-
-            ValueKind::Signed => {
-                write!(writer, " i:{}", value.raw() as i32)?;
-            }
-
-            ValueKind::Bool => {
-                write!(writer, " b:{}", u8::from(value.raw() != 0))?;
-            }
+            ValueKind::Unsigned => write!(writer, " u:{}", value.raw())?,
+            ValueKind::Signed => write!(writer, " i:{}", value.raw() as i32)?,
+            ValueKind::Bool => write!(writer, " b:{}", u8::from(value.raw() != 0))?,
         }
     }
 

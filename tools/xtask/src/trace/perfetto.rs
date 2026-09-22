@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
-use crate::trace::{Metric, MetricDefinition};
+use crate::trace::{Metric, MetricDefinition, SpanKind};
 
 use super::{Callsite, Capture, Span, Value, parse_captures};
 
@@ -41,6 +41,20 @@ struct TimedEvent {
     depth: u8,
 }
 
+#[derive(Debug)]
+struct AsyncTrackDescriptor {
+    uuid: u64,
+    parent_uuid: u64,
+    name: String,
+}
+
+#[derive(Debug)]
+struct TrackLayout {
+    target_tracks: BTreeMap<String, u64>,
+    async_span_tracks: BTreeMap<(u32, usize), u64>,
+    async_tracks: Vec<AsyncTrackDescriptor>,
+}
+
 pub fn convert_perfetto(input: &Path, output: Option<&Path>) -> Result<PathBuf> {
     let log = std::fs::read_to_string(input)
         .with_context(|| format!("failed to read {}", input.display()))?;
@@ -72,12 +86,12 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
 
     let timeline_base = timeline_base(captures)?;
 
-    let tracks = build_target_tracks(captures);
+    let tracks = build_tracks(captures)?;
 
     let mut events = Vec::new();
 
     for capture in captures {
-        for span in &capture.spans {
+        for (span_index, span) in capture.spans.iter().enumerate() {
             let callsite = capture.callsites.get(&span.callsite_id).with_context(|| {
                 format!(
                     "capture {} references missing callsite {}",
@@ -85,9 +99,26 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
                 )
             })?;
 
-            let track_uuid = *tracks.get(&callsite.target).with_context(|| {
-                format!("missing Perfetto track for target `{}`", callsite.target)
-            })?;
+            let track_uuid = match span.kind {
+                SpanKind::Sync => {
+                    *tracks
+                        .target_tracks
+                        .get(&callsite.target)
+                        .with_context(|| {
+                            format!("missing Perfetto track for target `{}`", callsite.target)
+                        })?
+                }
+
+                SpanKind::Async => *tracks
+                    .async_span_tracks
+                    .get(&(capture.capture_id, span_index))
+                    .with_context(|| {
+                        format!(
+                            "missing Perfetto async lane for capture {} span {}",
+                            capture.capture_id, span_index,
+                        )
+                    })?,
+            };
 
             let start_cycles = span
                 .start_cycles
@@ -128,12 +159,15 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
                     )
                 })?;
 
-            let track_uuid = *tracks.get(&definition.target).with_context(|| {
-                format!(
-                    "missing Perfetto track for metric target `{}`",
-                    definition.target,
-                )
-            })?;
+            let track_uuid = *tracks
+                .target_tracks
+                .get(&definition.target)
+                .with_context(|| {
+                    format!(
+                        "missing Perfetto track for metric target `{}`",
+                        definition.target,
+                    )
+                })?;
 
             push_metric(&mut events, track_uuid, definition, metric, capture_ns);
         }
@@ -163,8 +197,12 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
 
     push_track_descriptor(&mut trace, PERFETTO_ROOT_TRACK, None, "InkPaper");
 
-    for (target, uuid) in &tracks {
+    for (target, uuid) in &tracks.target_tracks {
         push_track_descriptor(&mut trace, *uuid, Some(PERFETTO_ROOT_TRACK), target);
+    }
+
+    for track in &tracks.async_tracks {
+        push_track_descriptor(&mut trace, track.uuid, Some(track.parent_uuid), &track.name);
     }
 
     for event in events {
@@ -182,7 +220,7 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
     Ok(trace)
 }
 
-fn build_target_tracks(captures: &[Capture]) -> BTreeMap<String, u64> {
+fn build_tracks(captures: &[Capture]) -> Result<TrackLayout> {
     let mut targets = BTreeSet::new();
 
     for capture in captures {
@@ -195,15 +233,99 @@ fn build_target_tracks(captures: &[Capture]) -> BTreeMap<String, u64> {
         }
     }
 
-    targets
-        .into_iter()
-        .enumerate()
-        .map(|(index, target)| {
-            let uuid = 2 + u64::try_from(index).unwrap_or(u64::MAX - 2);
+    let mut target_tracks = BTreeMap::new();
 
-            (target, uuid)
-        })
-        .collect()
+    let mut next_uuid = 2u64;
+
+    for target in targets {
+        let uuid = next_uuid;
+
+        next_uuid = next_uuid
+            .checked_add(1)
+            .context("Perfetto track UUID overflow")?;
+
+        target_tracks.insert(target, uuid);
+    }
+
+    let mut async_span_tracks = BTreeMap::new();
+    let mut async_tracks = Vec::new();
+
+    for (target, parent_uuid) in &target_tracks {
+        let mut intervals = Vec::new();
+
+        for capture in captures {
+            for (span_index, span) in capture.spans.iter().enumerate() {
+                if span.kind != SpanKind::Async {
+                    continue;
+                }
+
+                let callsite = capture.callsites.get(&span.callsite_id).with_context(|| {
+                    format!(
+                        "capture {} references missing callsite {}",
+                        capture.capture_id, span.callsite_id,
+                    )
+                })?;
+
+                if &callsite.target != target {
+                    continue;
+                }
+
+                let end = span
+                    .start_cycles
+                    .checked_add(span.duration_cycles)
+                    .context("async span end timestamp overflow")?;
+
+                intervals.push((span.start_cycles, end, capture.capture_id, span_index));
+            }
+        }
+
+        intervals.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.cmp(&right.2))
+                .then_with(|| left.3.cmp(&right.3))
+        });
+
+        let mut lane_ends: Vec<u64> = Vec::new();
+        let mut lane_uuids: Vec<u64> = Vec::new();
+
+        for (start, end, capture_id, span_index) in intervals {
+            let lane = if let Some(lane) = lane_ends.iter().position(|lane_end| *lane_end <= start)
+            {
+                lane
+            } else {
+                let lane = lane_ends.len();
+
+                let uuid = next_uuid;
+
+                next_uuid = next_uuid
+                    .checked_add(1)
+                    .context("Perfetto track UUID overflow")?;
+
+                lane_ends.push(0);
+                lane_uuids.push(uuid);
+
+                async_tracks.push(AsyncTrackDescriptor {
+                    uuid,
+                    parent_uuid: *parent_uuid,
+                    name: format!("async {lane}"),
+                });
+
+                lane
+            };
+
+            lane_ends[lane] = end;
+
+            async_span_tracks.insert((capture_id, span_index), lane_uuids[lane]);
+        }
+    }
+
+    Ok(TrackLayout {
+        target_tracks,
+        async_span_tracks,
+        async_tracks,
+    })
 }
 
 fn timeline_base(captures: &[Capture]) -> Result<u64> {
@@ -232,6 +354,11 @@ fn push_slice(
         .zip(span.values.iter().copied().map(annotation_from_value))
         .collect();
 
+    let depth = match span.kind {
+        SpanKind::Sync => span.depth,
+        SpanKind::Async => 0,
+    };
+
     events.push(TimedEvent {
         kind: EventKind::Open,
         timestamp_ns: start_ns,
@@ -239,7 +366,7 @@ fn push_slice(
         name: Some(callsite.name.clone()),
         category: Some(callsite.target.clone()),
         annotations,
-        depth: span.depth,
+        depth,
     });
 
     events.push(TimedEvent {
@@ -249,7 +376,7 @@ fn push_slice(
         name: None,
         category: None,
         annotations: Vec::new(),
-        depth: span.depth,
+        depth,
     });
 }
 
@@ -502,23 +629,26 @@ mod tests {
 
     use super::build_perfetto;
 
-    use crate::trace::{parse_captures, perfetto::timeline_base};
+    use crate::trace::{
+        parse_captures,
+        perfetto::{build_tracks, timeline_base},
+    };
 
     #[test]
     fn perfetto_export_is_generic_over_targets_and_fields() {
         let log = indoc! {r#"
             1.000 INFO trace/v3 capture id=1 hz=240000000 at=1800 spans=2 overwritten=0 metrics=0 metric_dropped=0
             1.001 INFO trace/v3 define id=0 target=9:ui.render name=5:paint fields=1 5:frame
-            1.002 INFO trace/v3 span id=0 depth=1 start=1120 cycles=480 values=1 u:4
+            1.002 INFO trace/v3 span id=0 kind=sync depth=1 start=1120 cycles=480 values=1 u:4
             1.003 INFO trace/v3 define id=1 target=9:ui.render name=6:render fields=1 5:frame
-            1.004 INFO trace/v3 span id=1 depth=0 start=1000 cycles=720 values=1 u:4
+            1.004 INFO trace/v3 span id=1 kind=sync depth=0 start=1000 cycles=720 values=1 u:4
             1.005 INFO trace/v3 end id=1
 
             2.000 INFO trace/v3 capture id=2 hz=240000000 at=5000 spans=2 overwritten=0 metrics=0 metric_dropped=0
             2.001 INFO trace/v3 define id=0 target=15:display.present name=9:busy_wait fields=1 5:index
-            2.002 INFO trace/v3 span id=0 depth=1 start=4240 cycles=480 values=1 u:0
+            2.002 INFO trace/v3 span id=0 kind=sync depth=1 start=4240 cycles=480 values=1 u:0
             2.003 INFO trace/v3 define id=1 target=15:display.present name=7:present fields=1 5:frame
-            2.004 INFO trace/v3 span id=1 depth=0 start=4000 cycles=960 values=1 u:4
+            2.004 INFO trace/v3 span id=1 kind=sync depth=0 start=4000 cycles=960 values=1 u:4
             2.005 INFO trace/v3 end id=2
         "#};
 
@@ -529,17 +659,11 @@ mod tests {
         assert!(!trace.is_empty());
 
         assert!(contains_bytes(&trace, b"InkPaper"));
-
         assert!(contains_bytes(&trace, b"ui.render"));
-
         assert!(contains_bytes(&trace, b"display.present"));
-
         assert!(contains_bytes(&trace, b"paint"));
-
         assert!(contains_bytes(&trace, b"busy_wait"));
-
         assert!(contains_bytes(&trace, b"frame"));
-
         assert!(contains_bytes(&trace, b"index"));
     }
 
@@ -548,12 +672,12 @@ mod tests {
         let log = indoc! {r#"
             1.000 INFO trace/v3 capture id=1 hz=240000000 at=200 spans=1 overwritten=0 metrics=0 metric_dropped=0
             1.001 INFO trace/v3 define id=0 target=4:test name=5:first fields=0
-            1.002 INFO trace/v3 span id=0 depth=0 start=100 cycles=50 values=0
+            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=100 cycles=50 values=0
             1.003 INFO trace/v3 end id=1
 
             2.000 INFO trace/v3 capture id=2 hz=240000000 at=500 spans=1 overwritten=0 metrics=0 metric_dropped=0
             2.001 INFO trace/v3 define id=0 target=4:test name=6:second fields=0
-            2.002 INFO trace/v3 span id=0 depth=0 start=300 cycles=100 values=0
+            2.002 INFO trace/v3 span id=0 kind=sync depth=0 start=300 cycles=100 values=0
             2.003 INFO trace/v3 end id=2
         "#};
 
@@ -564,7 +688,6 @@ mod tests {
         let trace = build_perfetto(&captures).unwrap();
 
         assert!(contains_bytes(&trace, b"first"));
-
         assert!(contains_bytes(&trace, b"second"));
     }
 
@@ -573,7 +696,7 @@ mod tests {
         let log = indoc! {r#"
             1.000 INFO trace/v3 capture id=1 hz=240000000 at=120 spans=1 overwritten=0 metrics=0 metric_dropped=0
             1.001 INFO trace/v3 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
-            1.002 INFO trace/v3 span id=0 depth=0 start=100 cycles=10 values=2 i:-17 b:0
+            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=100 cycles=10 values=2 i:-17 b:0
             1.003 INFO trace/v3 end id=1
         "#};
 
@@ -582,7 +705,6 @@ mod tests {
         let trace = build_perfetto(&captures).unwrap();
 
         assert!(contains_bytes(&trace, b"delta"));
-
         assert!(contains_bytes(&trace, b"ready"));
     }
 
@@ -644,5 +766,41 @@ mod tests {
         assert!(contains_bytes(&trace, b"trace.metric_dropped"));
 
         assert!(contains_bytes(&trace, b"count"));
+    }
+
+    #[test]
+    fn overlapping_async_spans_get_separate_lanes() {
+        let log = indoc! {r#"
+        1.000 INFO trace/v3 capture id=1 hz=240000000 at=400 spans=3 overwritten=0 metrics=0 metric_dropped=0
+        1.001 INFO trace/v3 define id=0 target=13:reader.loader name=5:first fields=0
+        1.002 INFO trace/v3 span id=0 kind=async depth=0 start=100 cycles=100 values=0
+        1.003 INFO trace/v3 define id=1 target=13:reader.loader name=6:second fields=0
+        1.004 INFO trace/v3 span id=1 kind=async depth=0 start=150 cycles=50 values=0
+        1.005 INFO trace/v3 define id=2 target=13:reader.loader name=5:third fields=0
+        1.006 INFO trace/v3 span id=2 kind=async depth=0 start=200 cycles=20 values=0
+        1.007 INFO trace/v3 end id=1
+    "#};
+
+        let captures = parse_captures(log).unwrap();
+
+        let tracks = build_tracks(&captures).unwrap();
+
+        assert_eq!(tracks.async_tracks.len(), 2);
+
+        let first = tracks.async_span_tracks[&(1, 0)];
+
+        let second = tracks.async_span_tracks[&(1, 1)];
+
+        let third = tracks.async_span_tracks[&(1, 2)];
+
+        assert_ne!(first, second);
+
+        assert_eq!(first, third);
+
+        let trace = build_perfetto(&captures).unwrap();
+
+        assert!(contains_bytes(&trace, b"async 0"));
+
+        assert!(contains_bytes(&trace, b"async 1"));
     }
 }

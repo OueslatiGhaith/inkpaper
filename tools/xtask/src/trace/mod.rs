@@ -27,9 +27,27 @@ struct Capture {
     metrics: BTreeMap<u16, Metric>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpanKind {
+    Sync,
+    Async,
+}
+
+impl SpanKind {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "sync" => Ok(Self::Sync),
+            "async" => Ok(Self::Async),
+
+            _ => bail!("unknown span kind `{value}`"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Span {
     callsite_id: u16,
+    kind: SpanKind,
     depth: u8,
     start_cycles: u64,
     duration_cycles: u64,
@@ -374,6 +392,10 @@ fn parse_span(payload: &str, capture: &mut Capture) -> Result<()> {
     let mut parser = LineParser::new(payload);
 
     let callsite_id = parser.number("id=")?;
+
+    let kind_text = parser.token("kind=")?;
+    let kind = SpanKind::parse(kind_text)?;
+
     let depth = parser.number("depth=")?;
     let start_cycles = parser.number("start=")?;
     let duration_cycles = parser.number("cycles=")?;
@@ -395,6 +417,10 @@ fn parse_span(payload: &str, capture: &mut Capture) -> Result<()> {
         );
     }
 
+    if kind == SpanKind::Async && depth != 0 {
+        bail!("async span {} has non-zero depth {}", callsite_id, depth);
+    }
+
     let mut values = Vec::with_capacity(value_count);
 
     for _ in 0..value_count {
@@ -412,6 +438,7 @@ fn parse_span(payload: &str, capture: &mut Capture) -> Result<()> {
 
     capture.spans.push(Span {
         callsite_id,
+        kind,
         depth,
         start_cycles,
         duration_cycles,
@@ -631,7 +658,7 @@ impl<'a> LineParser<'a> {
 mod tests {
     use indoc::indoc;
 
-    use crate::trace::{Metric, MetricKind};
+    use crate::trace::{Metric, MetricKind, SpanKind};
 
     use super::{Value, parse_captures};
 
@@ -649,8 +676,8 @@ mod tests {
         let log = indoc! {r#"
             1.000 INFO trace/v3 capture id=7 hz=240000000 at=180 spans=2 overwritten=0 metrics=0 metric_dropped=0
             1.001 INFO trace/v3 define id=0 target=17:reader.pagination name=7:measure fields=2 5:bytes 6:cached
-            1.002 INFO trace/v3 span id=0 depth=1 start=110 cycles=20 values=2 u:12 b:1
-            1.003 INFO trace/v3 span id=0 depth=1 start=140 cycles=30 values=2 u:17 b:0
+            1.002 INFO trace/v3 span id=0 kind=sync depth=1 start=110 cycles=20 values=2 u:12 b:1
+            1.003 INFO trace/v3 span id=0 kind=sync depth=1 start=140 cycles=30 values=2 u:17 b:0
             1.004 INFO trace/v3 end id=7
         "#};
 
@@ -661,45 +688,34 @@ mod tests {
         let capture = &captures[0];
 
         assert_eq!(capture.capture_id, 7);
-
         assert_eq!(capture.clock_hz, 240_000_000);
-
         assert_eq!(capture.captured_at_cycles, 180);
-
         assert_eq!(capture.spans.len(), 2);
-
         assert_eq!(capture.overwritten, 0);
-
         assert_eq!(capture.expected_metrics, 0);
-
         assert_eq!(capture.metric_dropped, 0);
 
         let callsite = capture.callsites.get(&0).unwrap();
 
         assert_eq!(callsite.id, 0);
-
         assert_eq!(callsite.target, "reader.pagination");
-
         assert_eq!(callsite.name, "measure");
-
         assert_eq!(callsite.fields, ["bytes", "cached"]);
 
+        assert_eq!(capture.spans[0].kind, SpanKind::Sync);
         assert_eq!(capture.spans[0].start_cycles, 110);
-
         assert_eq!(capture.spans[0].duration_cycles, 20);
-
         assert_eq!(
             capture.spans[0].values,
-            [Value::Unsigned(12), Value::Bool(true),],
+            [Value::Unsigned(12), Value::Bool(true)],
         );
 
+        assert_eq!(capture.spans[1].kind, SpanKind::Sync);
         assert_eq!(capture.spans[1].start_cycles, 140);
-
         assert_eq!(capture.spans[1].duration_cycles, 30);
-
         assert_eq!(
             capture.spans[1].values,
-            [Value::Unsigned(17), Value::Bool(false),],
+            [Value::Unsigned(17), Value::Bool(false)],
         );
     }
 
@@ -708,7 +724,7 @@ mod tests {
         let log = indoc! {r#"
             1.000 INFO trace/v3 capture id=1 hz=240000000 at=20 spans=1 overwritten=0 metrics=0 metric_dropped=0
             1.001 INFO trace/v3 define id=5 target=11:reader text name=11:shape piece fields=1 10:byte count
-            1.002 INFO trace/v3 span id=5 depth=0 start=11 cycles=2 values=1 u:12
+            1.002 INFO trace/v3 span id=5 kind=sync depth=0 start=11 cycles=2 values=1 u:12
             1.003 INFO trace/v3 end id=1
         "#};
 
@@ -717,9 +733,7 @@ mod tests {
         let callsite = captures[0].callsites.get(&5).unwrap();
 
         assert_eq!(callsite.target, "reader text");
-
         assert_eq!(callsite.name, "shape piece");
-
         assert_eq!(callsite.fields, ["byte count"]);
     }
 
@@ -728,15 +742,17 @@ mod tests {
         let log = indoc! {r#"
             1.000 INFO trace/v3 capture id=3 hz=240000000 at=120 spans=1 overwritten=0 metrics=0 metric_dropped=0
             1.001 INFO trace/v3 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
-            1.002 INFO trace/v3 span id=0 depth=0 start=105 cycles=10 values=2 i:-17 b:0
+            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=105 cycles=10 values=2 i:-17 b:0
             1.003 INFO trace/v3 end id=3
         "#};
 
         let captures = parse_captures(log).unwrap();
 
+        assert_eq!(captures[0].spans[0].kind, SpanKind::Sync);
+
         assert_eq!(
             captures[0].spans[0].values,
-            [Value::Signed(-17), Value::Bool(false),],
+            [Value::Signed(-17), Value::Bool(false)],
         );
     }
 
@@ -744,7 +760,7 @@ mod tests {
     fn rejects_undefined_callsites() {
         let log = indoc! {r#"
             1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 span id=4 depth=0 start=0 cycles=1 values=0
+            1.001 INFO trace/v3 span id=4 kind=sync depth=0 start=0 cycles=1 values=0
             1.002 INFO trace/v3 end id=1
         "#};
 
@@ -758,7 +774,7 @@ mod tests {
         let log = indoc! {r#"
             1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
             1.001 INFO trace/v3 define id=0 target=4:test name=4:span fields=1 5:value
-            1.002 INFO trace/v3 span id=0 depth=0 start=0 cycles=1 values=0
+            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=0 cycles=1 values=0
             1.003 INFO trace/v3 end id=1
         "#};
 
@@ -772,7 +788,7 @@ mod tests {
         let log = indoc! {r#"
             1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
             1.001 INFO trace/v3 define id=0 target=4:test name=4:span fields=0
-            1.002 INFO trace/v3 span id=0 depth=0 start=0 cycles=1 values=0
+            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=0 cycles=1 values=0
         "#};
 
         let error = parse_captures(log).unwrap_err();
@@ -871,5 +887,25 @@ mod tests {
         let captures = parse_captures(log).unwrap();
 
         assert_eq!(captures[0].metric_dropped, 3);
+    }
+
+    #[test]
+    fn parses_async_span_kind() {
+        let log = indoc! {r#"
+            1.000 INFO trace/v3 capture id=1 hz=240000000 at=500 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v3 define id=0 target=13:reader.loader name=12:load_chapter fields=1 7:chapter
+            1.002 INFO trace/v3 span id=0 kind=async depth=0 start=100 cycles=300 values=1 u:4
+            1.003 INFO trace/v3 end id=1
+        "#};
+
+        let captures = parse_captures(log).unwrap();
+
+        let span = &captures[0].spans[0];
+
+        assert_eq!(span.kind, SpanKind::Async);
+
+        assert_eq!(span.start_cycles, 100);
+
+        assert_eq!(span.duration_cycles, 300);
     }
 }

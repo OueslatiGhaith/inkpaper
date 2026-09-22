@@ -36,16 +36,6 @@ pub(crate) fn expand_instrument(args: TokenStream, input: TokenStream) -> syn::R
 }
 
 fn validate_signature(signature: &Signature) -> syn::Result<()> {
-    if let Some(asyncness) = signature.asyncness {
-        return Err(syn::Error::new(
-            asyncness.span(),
-            concat!(
-                "`#[instrument]` currently supports synchronous functions only; ",
-                "async functions require async trace spans",
-            ),
-        ));
-    }
-
     if let Some(constness) = signature.constness {
         return Err(syn::Error::new(
             constness.span(),
@@ -67,17 +57,22 @@ fn instrument_block(signature: &Signature, args: &InstrumentArgs, original: Bloc
         None => quote! { module_path!() },
     };
 
+    let span_macro = if signature.asyncness.is_some() {
+        quote! { ::inkpaper_trace::async_span }
+    } else {
+        quote! { ::inkpaper_trace::span }
+    };
+
     let fields = args.fields.as_deref().unwrap_or(&[]);
 
     let span = match fields {
-        [] => quote! { ::inkpaper_trace::span!(target: #target, #name) },
+        [] => quote! { #span_macro!(target: #target, #name) },
         [field] => {
             let field_name = &field.name;
-
             let value = &field.value;
 
             quote! {
-                ::inkpaper_trace::span!(
+                #span_macro!(
                     target: #target,
                     #name,
                     #field_name = #value,
@@ -93,7 +88,7 @@ fn instrument_block(signature: &Signature, args: &InstrumentArgs, original: Bloc
             let second_value = &second.value;
 
             quote! {
-                ::inkpaper_trace::span!(
+                #span_macro!(
                     target: #target,
                     #name,
                     #first_name = #first_value,
@@ -293,22 +288,31 @@ mod tests {
     }
 
     #[test]
-    fn rejects_async_function() {
-        let error = expand_instrument(
-            quote! {},
+    fn instruments_async_function_with_async_span() {
+        let expanded = expand_instrument(
             quote! {
-                async fn present() {}
+                target = "reader.loader",
+                fields(chapter = chapter_index)
+            },
+            quote! {
+                async fn load(
+                    chapter_index: u32,
+                ) -> u32 {
+                    chapter_index
+                }
             },
         )
-        .unwrap_err();
+        .unwrap()
+        .to_string();
 
-        assert_eq!(
-            error.to_string(),
-            concat!(
-                "`#[instrument]` currently supports synchronous functions only; ",
-                "async functions require async trace spans",
-            ),
+        assert!(
+            expanded.contains("async_span"),
+            "expanded tokens did not contain async_span: {expanded}",
         );
+
+        assert!(expanded.contains("\"reader.loader\""));
+
+        assert!(expanded.contains("chapter = chapter_index"));
     }
 
     #[test]
