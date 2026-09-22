@@ -119,8 +119,12 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
 
     let mut capture_ids = BTreeSet::new();
 
+    let mut callsites: BTreeMap<u16, Callsite> = BTreeMap::new();
+
+    let mut metric_definitions: BTreeMap<u16, MetricDefinition> = BTreeMap::new();
+
     for (line_index, line) in log.lines().enumerate() {
-        let Some((_, record)) = line.split_once("trace/v3 ") else {
+        let Some((_, record)) = line.split_once("trace/v4 ") else {
             continue;
         };
 
@@ -152,11 +156,7 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
         }
 
         if let Some(payload) = record.strip_prefix("define ") {
-            let capture = current.as_mut().with_context(|| {
-                format!("trace definition outside a capture on log line {line_number}")
-            })?;
-
-            parse_definition(payload, capture)
+            parse_definition(payload, &mut callsites)
                 .with_context(|| format!("invalid trace definition on log line {line_number}"))?;
 
             continue;
@@ -167,18 +167,14 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
                 format!("trace span outside a capture on log line {line_number}")
             })?;
 
-            parse_span(payload, capture)
+            parse_span(payload, capture, &callsites)
                 .with_context(|| format!("invalid trace span on log line {line_number}"))?;
 
             continue;
         }
 
         if let Some(payload) = record.strip_prefix("metric_define ") {
-            let capture = current.as_mut().with_context(|| {
-                format!("trace metric definition outside a capture on log line {line_number}")
-            })?;
-
-            parse_metric_definition(payload, capture).with_context(|| {
+            parse_metric_definition(payload, &mut metric_definitions).with_context(|| {
                 format!("invalid trace metric definition on log line {line_number}")
             })?;
 
@@ -190,7 +186,7 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
                 format!("trace metric outside a capture on log line {line_number}")
             })?;
 
-            parse_metric(payload, capture)
+            parse_metric(payload, capture, &metric_definitions)
                 .with_context(|| format!("invalid trace metric on log line {line_number}"))?;
 
             continue;
@@ -224,18 +220,18 @@ fn parse_captures(log: &str) -> Result<Vec<Capture>> {
             bail!("firmware reported trace encoding failure on log line {line_number}: {payload}");
         }
 
-        bail!("unknown trace/v3 record on log line {line_number}: {record}");
+        bail!("unknown trace/v4 record on log line {line_number}: {record}");
     }
 
     if let Some(capture) = current {
         bail!(
-            "trace capture {} is incomplete: missing matching trace/v3 end",
+            "trace capture {} is incomplete: missing matching trace/v4 end",
             capture.capture_id,
         );
     }
 
     if captures.is_empty() {
-        bail!("no trace/v3 captures found in log");
+        bail!("no trace/v4 captures found in log");
     }
 
     Ok(captures)
@@ -273,7 +269,10 @@ fn parse_capture_header(payload: &str) -> Result<Capture> {
     })
 }
 
-fn parse_metric_definition(payload: &str, capture: &mut Capture) -> Result<()> {
+fn parse_metric_definition(
+    payload: &str,
+    definitions: &mut BTreeMap<u16, MetricDefinition>,
+) -> Result<()> {
     let mut parser = LineParser::new(payload);
 
     let id = parser.number("id=")?;
@@ -285,15 +284,11 @@ fn parse_metric_definition(payload: &str, capture: &mut Capture) -> Result<()> {
 
     parser.finish()?;
 
-    if capture.metric_definitions.contains_key(&id) {
-        bail!(
-            "trace capture {} defines metric {} more than once",
-            capture.capture_id,
-            id,
-        );
+    if definitions.contains_key(&id) {
+        bail!("trace defines metric {} more than once", id);
     }
 
-    capture.metric_definitions.insert(
+    definitions.insert(
         id,
         MetricDefinition {
             id,
@@ -307,17 +302,16 @@ fn parse_metric_definition(payload: &str, capture: &mut Capture) -> Result<()> {
     Ok(())
 }
 
-fn parse_metric(payload: &str, capture: &mut Capture) -> Result<()> {
+fn parse_metric(
+    payload: &str,
+    capture: &mut Capture,
+    definitions: &BTreeMap<u16, MetricDefinition>,
+) -> Result<()> {
     let mut parser = LineParser::new(payload);
 
     let id = parser.number("id=")?;
-    let count = parser.number("count=")?;
-    let sum = parser.number("sum=")?;
-    let max = parser.number("max=")?;
 
-    parser.finish()?;
-
-    let definition = capture.metric_definitions.get(&id).with_context(|| {
+    let definition = definitions.get(&id).with_context(|| {
         format!(
             "trace capture {} uses undefined metric {}",
             capture.capture_id, id,
@@ -332,42 +326,50 @@ fn parse_metric(payload: &str, capture: &mut Capture) -> Result<()> {
         );
     }
 
-    if count == 0 {
-        bail!("metric {} has zero observations", id);
-    }
+    let metric = match definition.kind {
+        MetricKind::Gauge => {
+            let value = parser.number("value=")?;
 
-    match definition.kind {
+            Metric {
+                id,
+                count: 1,
+                sum: value,
+                max: value,
+            }
+        }
+
         MetricKind::Counter | MetricKind::Distribution => {
+            let count = parser.number("count=")?;
+            let sum = parser.number("sum=")?;
+            let max = parser.number("max=")?;
+
+            if count == 0 {
+                bail!("metric {} has zero observations", id);
+            }
+
             if max > sum {
                 bail!("metric {id} has max {max} greater than sum {sum}");
             }
-        }
 
-        MetricKind::Gauge => {
-            if count != 1 {
-                bail!("gauge metric {id} must contain exactly one effective observation");
-            }
-
-            if max != sum {
-                bail!("gauge metric {id} has inconsistent value: sum={sum} max={max}");
+            Metric {
+                id,
+                count,
+                sum,
+                max,
             }
         }
-    }
+    };
 
-    capture.metrics.insert(
-        id,
-        Metric {
-            id,
-            count,
-            sum,
-            max,
-        },
-    );
+    parser.finish()?;
+
+    capture.metric_definitions.insert(id, definition.clone());
+
+    capture.metrics.insert(id, metric);
 
     Ok(())
 }
 
-fn parse_definition(payload: &str, capture: &mut Capture) -> Result<()> {
+fn parse_definition(payload: &str, definitions: &mut BTreeMap<u16, Callsite>) -> Result<()> {
     let mut parser = LineParser::new(payload);
 
     let id = parser.number("id=")?;
@@ -383,15 +385,11 @@ fn parse_definition(payload: &str, capture: &mut Capture) -> Result<()> {
 
     parser.finish()?;
 
-    if capture.callsites.contains_key(&id) {
-        bail!(
-            "trace capture {} defines callsite {} more than once",
-            capture.capture_id,
-            id,
-        );
+    if definitions.contains_key(&id) {
+        bail!("trace defines callsite {} more than once", id);
     }
 
-    capture.callsites.insert(
+    definitions.insert(
         id,
         Callsite {
             id,
@@ -404,7 +402,11 @@ fn parse_definition(payload: &str, capture: &mut Capture) -> Result<()> {
     Ok(())
 }
 
-fn parse_span(payload: &str, capture: &mut Capture) -> Result<()> {
+fn parse_span(
+    payload: &str,
+    capture: &mut Capture,
+    definitions: &BTreeMap<u16, Callsite>,
+) -> Result<()> {
     let mut parser = LineParser::new(payload);
 
     let callsite_id = parser.number("id=")?;
@@ -417,7 +419,7 @@ fn parse_span(payload: &str, capture: &mut Capture) -> Result<()> {
     let duration_cycles = parser.number("cycles=")?;
     let value_count: usize = parser.number("values=")?;
 
-    let callsite = capture.callsites.get(&callsite_id).with_context(|| {
+    let callsite = definitions.get(&callsite_id).with_context(|| {
         format!(
             "trace capture {} uses undefined callsite {}",
             capture.capture_id, callsite_id,
@@ -451,6 +453,11 @@ fn parse_span(payload: &str, capture: &mut Capture) -> Result<()> {
             capture.capture_id,
         );
     }
+
+    capture
+        .callsites
+        .entry(callsite_id)
+        .or_insert_with(|| callsite.clone());
 
     capture.spans.push(Span {
         callsite_id,
@@ -690,11 +697,11 @@ mod tests {
     #[test]
     fn parses_self_describing_capture() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=7 hz=240000000 at=180 spans=2 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=0 target=17:reader.pagination name=7:measure fields=2 5:bytes 6:cached
-            1.002 INFO trace/v3 span id=0 kind=sync depth=1 start=110 cycles=20 values=2 u:12 b:1
-            1.003 INFO trace/v3 span id=0 kind=sync depth=1 start=140 cycles=30 values=2 u:17 b:0
-            1.004 INFO trace/v3 end id=7
+            1.000 INFO trace/v4 capture id=7 hz=240000000 at=180 spans=2 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=17:reader.pagination name=7:measure fields=2 5:bytes 6:cached
+            1.002 INFO trace/v4 span id=0 kind=sync depth=1 start=110 cycles=20 values=2 u:12 b:1
+            1.003 INFO trace/v4 span id=0 kind=sync depth=1 start=140 cycles=30 values=2 u:17 b:0
+            1.004 INFO trace/v4 end id=7
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -738,10 +745,10 @@ mod tests {
     #[test]
     fn parses_length_prefixed_components_with_spaces() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=20 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=5 target=11:reader text name=11:shape piece fields=1 10:byte count
-            1.002 INFO trace/v3 span id=5 kind=sync depth=0 start=11 cycles=2 values=1 u:12
-            1.003 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=20 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=5 target=11:reader text name=11:shape piece fields=1 10:byte count
+            1.002 INFO trace/v4 span id=5 kind=sync depth=0 start=11 cycles=2 values=1 u:12
+            1.003 INFO trace/v4 end id=1
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -756,10 +763,10 @@ mod tests {
     #[test]
     fn parses_signed_and_boolean_values() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=3 hz=240000000 at=120 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
-            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=105 cycles=10 values=2 i:-17 b:0
-            1.003 INFO trace/v3 end id=3
+            1.000 INFO trace/v4 capture id=3 hz=240000000 at=120 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
+            1.002 INFO trace/v4 span id=0 kind=sync depth=0 start=105 cycles=10 values=2 i:-17 b:0
+            1.003 INFO trace/v4 end id=3
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -775,9 +782,9 @@ mod tests {
     #[test]
     fn rejects_undefined_callsites() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 span id=4 kind=sync depth=0 start=0 cycles=1 values=0
-            1.002 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 span id=4 kind=sync depth=0 start=0 cycles=1 values=0
+            1.002 INFO trace/v4 end id=1
         "#};
 
         let error = parse_captures(log).unwrap_err();
@@ -788,10 +795,10 @@ mod tests {
     #[test]
     fn rejects_field_value_count_mismatch() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=0 target=4:test name=4:span fields=1 5:value
-            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=0 cycles=1 values=0
-            1.003 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=4:test name=4:span fields=1 5:value
+            1.002 INFO trace/v4 span id=0 kind=sync depth=0 start=0 cycles=1 values=0
+            1.003 INFO trace/v4 end id=1
         "#};
 
         let error = parse_captures(log).unwrap_err();
@@ -802,21 +809,21 @@ mod tests {
     #[test]
     fn rejects_incomplete_capture() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=0 target=4:test name=4:span fields=0
-            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=0 cycles=1 values=0
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=4:test name=4:span fields=0
+            1.002 INFO trace/v4 span id=0 kind=sync depth=0 start=0 cycles=1 values=0
         "#};
 
         let error = parse_captures(log).unwrap_err();
 
-        assert_error_contains(&error, "missing matching trace/v3 end");
+        assert_error_contains(&error, "missing matching trace/v4 end");
     }
 
     #[test]
     fn rejects_bad_component_length() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=0 target=99:test name=4:span fields=0
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=10 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=99:test name=4:span fields=0
         "#};
 
         assert!(parse_captures(log).is_err());
@@ -825,8 +832,8 @@ mod tests {
     #[test]
     fn accepts_overwritten_span_history() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=17 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=100 spans=0 overwritten=17 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 end id=1
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -837,12 +844,12 @@ mod tests {
     #[test]
     fn parses_metric_summaries() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=7 hz=240000000 at=100 spans=0 overwritten=0 metrics=2 metric_dropped=0
-            1.001 INFO trace/v3 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
-            1.002 INFO trace/v3 metric id=0 count=3 sum=5 max=3
-            1.003 INFO trace/v3 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
-            1.004 INFO trace/v3 metric id=1 count=4 sum=120 max=50
-            1.005 INFO trace/v3 end id=7
+            1.000 INFO trace/v4 capture id=7 hz=240000000 at=100 spans=0 overwritten=0 metrics=2 metric_dropped=0
+            1.001 INFO trace/v4 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
+            1.002 INFO trace/v4 metric id=0 count=3 sum=5 max=3
+            1.003 INFO trace/v4 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
+            1.004 INFO trace/v4 metric id=1 count=4 sum=120 max=50
+            1.005 INFO trace/v4 end id=7
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -883,9 +890,9 @@ mod tests {
     #[test]
     fn rejects_metric_without_definition() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=1 metric_dropped=0
-            1.001 INFO trace/v3 metric id=0 count=1 sum=4 max=4
-            1.002 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=1 metric_dropped=0
+            1.001 INFO trace/v4 metric id=0 count=1 sum=4 max=4
+            1.002 INFO trace/v4 end id=1
         "#};
 
         let error = parse_captures(log).unwrap_err();
@@ -896,8 +903,8 @@ mod tests {
     #[test]
     fn accepts_dropped_metric_observations() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=0 metric_dropped=3
-            1.001 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=0 metric_dropped=3
+            1.001 INFO trace/v4 end id=1
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -908,10 +915,10 @@ mod tests {
     #[test]
     fn parses_async_span_kind() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=500 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=0 target=13:reader.loader name=12:load_chapter fields=1 7:chapter
-            1.002 INFO trace/v3 span id=0 kind=async depth=0 start=100 cycles=300 values=1 u:4
-            1.003 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=500 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=13:reader.loader name=12:load_chapter fields=1 7:chapter
+            1.002 INFO trace/v4 span id=0 kind=async depth=0 start=100 cycles=300 values=1 u:4
+            1.003 INFO trace/v4 end id=1
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -928,11 +935,11 @@ mod tests {
     #[test]
     fn parses_u64_gauge_metric() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=1 metric_dropped=0
-            1.001 INFO trace/v3 metric_define id=0 target=11:ui.coverage name=6:pixels kind=gauge unit=6:pixels
-            1.002 INFO trace/v3 metric id=0 count=1 sum=4294967418 max=4294967418
-            1.003 INFO trace/v3 end id=1
-        "#};
+        1.000 INFO trace/v4 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=1 metric_dropped=0
+        1.001 INFO trace/v4 metric_define id=0 target=11:ui.coverage name=6:pixels kind=gauge unit=6:pixels
+        1.002 INFO trace/v4 metric id=0 value=4294967418
+        1.003 INFO trace/v4 end id=1
+    "#};
 
         let captures = parse_captures(log).unwrap();
 
@@ -951,5 +958,34 @@ mod tests {
         assert_eq!(metric.sum, 4_294_967_418);
 
         assert_eq!(metric.max, 4_294_967_418);
+    }
+
+    #[test]
+    fn reuses_run_scoped_definitions_across_captures() {
+        let log = indoc! {r#"
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=200 spans=1 overwritten=0 metrics=1 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=9:ui.render name=6:render fields=1 5:frame
+            1.002 INFO trace/v4 span id=0 kind=sync depth=0 start=100 cycles=50 values=1 u:1
+            1.003 INFO trace/v4 metric_define id=0 target=9:ui.render name=12:paint_cycles kind=gauge unit=6:cycles
+            1.004 INFO trace/v4 metric id=0 value=1000
+            1.005 INFO trace/v4 end id=1
+
+            2.000 INFO trace/v4 capture id=2 hz=240000000 at=400 spans=1 overwritten=0 metrics=1 metric_dropped=0
+            2.001 INFO trace/v4 span id=0 kind=sync depth=0 start=300 cycles=50 values=1 u:2
+            2.002 INFO trace/v4 metric id=0 value=2000
+            2.003 INFO trace/v4 end id=2
+        "#};
+
+        let captures = parse_captures(log).unwrap();
+
+        assert_eq!(captures.len(), 2);
+
+        assert_eq!(captures[0].callsites.get(&0).unwrap().name, "render");
+
+        assert_eq!(captures[1].callsites.get(&0).unwrap().name, "render");
+
+        assert_eq!(captures[0].metrics.get(&0).unwrap().sum, 1000);
+
+        assert_eq!(captures[1].metrics.get(&0).unwrap().sum, 2000);
     }
 }

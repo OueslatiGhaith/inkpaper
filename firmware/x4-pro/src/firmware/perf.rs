@@ -1,40 +1,28 @@
-#[cfg(feature = "trace")]
 use core::fmt::Write;
 
-#[cfg(any(feature = "performance", feature = "trace"))]
 use defmt::info;
-#[cfg(feature = "performance")]
 use embedded_hal_async::delay::DelayNs;
-#[cfg(feature = "performance")]
 use epd_bus::{BusyPolarity, EpdInterface};
-#[cfg(feature = "trace")]
 use esp_hal::time::Instant;
-#[cfg(feature = "performance")]
 use esp_hal::xtensa_lx::timer::get_cycle_count;
 
-#[cfg(feature = "performance")]
 use crate::firmware::{
     presenter::{FrameUpdate, PresentationMode},
     refresh_policy::RefreshRequest,
 };
 
 pub(crate) const CLOCK_HZ: u32 = 240_000_000;
-
-#[cfg(feature = "trace")]
 pub(crate) const TRACE_MONOTONIC_HZ: u32 = 1_000_000;
 
-#[cfg(feature = "trace")]
 pub(crate) fn trace_monotonic_ticks() -> u64 {
     Instant::now().duration_since_epoch().as_micros()
 }
 
-#[cfg(feature = "performance")]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CycleTimer {
     started_at: u32,
 }
 
-#[cfg(feature = "performance")]
 impl CycleTimer {
     #[inline(always)]
     pub(crate) fn start() -> Self {
@@ -49,10 +37,8 @@ impl CycleTimer {
     }
 }
 
-#[cfg(feature = "performance")]
 const PRESENT_BUSY_WAIT_CAPACITY: usize = 8;
 
-#[cfg(feature = "performance")]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PresentTimings {
     total_cycles: u32,
@@ -72,7 +58,6 @@ pub(crate) struct PresentTimings {
     dropped_busy_waits: u32,
 }
 
-#[cfg(feature = "performance")]
 impl PresentTimings {
     pub(crate) const fn total_cycles(self) -> u32 {
         self.total_cycles
@@ -178,7 +163,6 @@ impl PresentTimings {
     }
 }
 
-#[cfg(feature = "performance")]
 pub(crate) struct ProfiledEpdBus<'a, B> {
     inner: &'a mut B,
     timings: PresentTimings,
@@ -187,7 +171,6 @@ pub(crate) struct ProfiledEpdBus<'a, B> {
     pending_phase: Option<DisplayPhase>,
 }
 
-#[cfg(feature = "performance")]
 impl<'a, B> ProfiledEpdBus<'a, B> {
     pub(crate) fn new(
         inner: &'a mut B,
@@ -267,7 +250,6 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
     }
 }
 
-#[cfg(feature = "performance")]
 impl<B> EpdInterface for ProfiledEpdBus<'_, B>
 where
     B: EpdInterface,
@@ -406,16 +388,12 @@ where
     }
 }
 
-#[cfg(feature = "performance")]
 const EPD_COMMAND_POWER_OFF: u8 = 0x02;
 
-#[cfg(feature = "performance")]
 const EPD_COMMAND_POWER_ON: u8 = 0x04;
 
-#[cfg(feature = "performance")]
 const EPD_COMMAND_DISPLAY_REFRESH: u8 = 0x12;
 
-#[cfg(feature = "performance")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DisplayController {
     Ssd1677,
@@ -423,7 +401,6 @@ pub(crate) enum DisplayController {
     Uc8279,
 }
 
-#[cfg(feature = "performance")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DisplayPhase {
     Unknown,
@@ -437,7 +414,6 @@ enum DisplayPhase {
     PowerOff,
 }
 
-#[cfg(feature = "performance")]
 impl DisplayPhase {
     #[inline(always)]
     fn trace_async_span(self) -> inkpaper_trace::AsyncSpan {
@@ -481,7 +457,6 @@ impl DisplayPhase {
     }
 }
 
-#[cfg(feature = "performance")]
 #[derive(Debug, Clone, Copy)]
 struct DisplayTracePlan {
     controller: DisplayController,
@@ -490,7 +465,6 @@ struct DisplayTracePlan {
     refresh_index: u8,
 }
 
-#[cfg(feature = "performance")]
 impl DisplayTracePlan {
     const fn new(controller: DisplayController, update: FrameUpdate) -> Self {
         Self {
@@ -548,12 +522,10 @@ impl DisplayTracePlan {
     }
 }
 
-#[cfg(feature = "performance")]
 fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
-#[cfg(feature = "performance")]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RenderTimings {
     pub(crate) rebuild_cycles: u32,
@@ -563,56 +535,6 @@ pub(crate) struct RenderTimings {
     pub(crate) damage_cycles: u32,
 }
 
-#[cfg(feature = "performance")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct FramePerfReport {
-    render: RenderTimings,
-    framebuffer_pixels: u64,
-    framebuffer_pixels_valid: bool,
-}
-
-#[cfg(feature = "performance")]
-impl FramePerfReport {
-    pub(crate) const EMPTY: Self = Self {
-        render: RenderTimings {
-            rebuild_cycles: 0,
-            layout_cycles: 0,
-            clear_cycles: 0,
-            paint_cycles: 0,
-            damage_cycles: 0,
-        },
-        framebuffer_pixels: 0,
-        framebuffer_pixels_valid: false,
-    };
-
-    pub(crate) const fn new(render: RenderTimings) -> Self {
-        Self {
-            render,
-            framebuffer_pixels: 0,
-            framebuffer_pixels_valid: false,
-        }
-    }
-
-    pub(crate) const fn with_framebuffer_pixels(mut self, framebuffer_pixels: u64) -> Self {
-        self.framebuffer_pixels = framebuffer_pixels;
-        self.framebuffer_pixels_valid = true;
-        self
-    }
-
-    pub(crate) const fn render(self) -> RenderTimings {
-        self.render
-    }
-
-    pub(crate) const fn framebuffer_pixels(self) -> u64 {
-        self.framebuffer_pixels
-    }
-
-    pub(crate) const fn has_framebuffer_pixels(self) -> bool {
-        self.framebuffer_pixels_valid
-    }
-}
-
-#[cfg(feature = "trace")]
 pub(crate) fn record_render_metrics(timings: RenderTimings) {
     inkpaper_trace::gauge!(
         target: "ui.render",
@@ -650,7 +572,6 @@ pub(crate) fn record_render_metrics(timings: RenderTimings) {
     );
 }
 
-#[cfg(feature = "trace")]
 pub(crate) fn record_present_metrics(timings: PresentTimings) {
     inkpaper_trace::gauge!(
         target: "display.present",
@@ -733,7 +654,6 @@ pub(crate) fn record_present_metrics(timings: PresentTimings) {
     );
 }
 
-#[cfg(feature = "trace")]
 pub(crate) fn record_ui_metrics(metrics: inkpaper_ui::PerformanceMetrics) {
     inkpaper_trace::gauge!(
         target: "ui.render",
@@ -964,7 +884,6 @@ pub(crate) fn record_ui_metrics(metrics: inkpaper_ui::PerformanceMetrics) {
     );
 }
 
-#[cfg(feature = "trace")]
 pub(crate) fn record_text_metrics(
     paint: inkpaper_ui::backend::EInkPaintReport,
     cache: inkpaper_ui::GlyphCacheMetrics,
@@ -1065,7 +984,6 @@ pub(crate) fn record_text_metrics(
     );
 }
 
-#[cfg(feature = "trace")]
 pub(crate) fn record_coverage_metrics(
     paint: inkpaper_ui::backend::EInkPaintReport,
     framebuffer_draw_iter_pixels: u64,
@@ -1098,7 +1016,6 @@ pub(crate) fn record_coverage_metrics(
     );
 }
 
-#[cfg(feature = "trace")]
 pub(crate) fn record_ordered_coverage_metrics(calls: u64, pixels: u64, cycles: u64) {
     inkpaper_trace::gauge!(
         target: "ui.coverage_fast",
@@ -1121,204 +1038,11 @@ pub(crate) fn record_ordered_coverage_metrics(calls: u64, pixels: u64, cycles: u
     );
 }
 
-#[cfg(feature = "performance")]
-pub(crate) fn log_config() {
-    info!("perf/config hz={=u32}", CLOCK_HZ);
-}
-
-#[cfg(feature = "performance")]
-pub(crate) fn log_render(frame_id: u32, timings: RenderTimings) {
-    info!(
-        "perf/render frame={=u32} rebuild={=u32} layout={=u32} clear={=u32} paint={=u32} damage={=u32}",
-        frame_id,
-        timings.rebuild_cycles,
-        timings.layout_cycles,
-        timings.clear_cycles,
-        timings.paint_cycles,
-        timings.damage_cycles,
-    );
-}
-
-#[cfg(feature = "performance")]
-pub(crate) fn log_present(frame_id: u32, timings: PresentTimings) {
-    info!(
-        "perf/present frame={=u32} cycles={=u32} io={=u64} busy={=u64} other={=u64} bytes={=u64} io_calls={=u32} busy_waits={=u32} longest_busy={=u32} busy_dropped={=u32}",
-        frame_id,
-        timings.total_cycles(),
-        timings.io_cycles(),
-        timings.busy_cycles(),
-        timings.other_cycles(),
-        timings.io_bytes(),
-        timings.io_calls(),
-        timings.busy_waits(),
-        timings.longest_busy_cycles(),
-        timings.dropped_busy_waits(),
-    );
-
-    info!(
-        "perf/present_stream frame={=u32} cycles={=u64} bytes={=u64} calls={=u32}",
-        frame_id,
-        timings.stream_cycles(),
-        timings.stream_bytes(),
-        timings.stream_calls(),
-    );
-
-    for index in 0..timings.recorded_busy_waits() {
-        let Some(cycles) = timings.busy_wait_cycles(index) else {
-            continue;
-        };
-
-        info!(
-            "perf/present_busy frame={=u32} index={=u8} cycles={=u32}",
-            frame_id, index, cycles,
-        );
-    }
-}
-
-#[cfg(feature = "performance")]
-pub(crate) fn log_frame(update: FrameUpdate, present: PresentTimings) {
-    let report = update.perf_report();
-    let timings = report.render();
-    let damage = update.physical_damage();
-    let eink = update.eink_report();
-
-    info!(
-        "perf/frame id={=u32} refresh={:?} presentation={:?} x={=u16} y={=u16} width={=u16} height={=u16} rebuild={=u32} layout={=u32} clear={=u32} paint={=u32} damage={=u32} present={=u32} present_io={=u64} present_busy={=u64} present_other={=u64} present_bytes={=u64} present_io_calls={=u32} present_busy_waits={=u32} present_longest_busy={=u32} present_busy_dropped={=u32} framebuffer_pixels={=u64} framebuffer_valid={=u8} text_draws={=u64} glyphs={=u64}",
-        update.frame_id(),
-        update.refresh(),
-        update.presentation(),
-        damage.x,
-        damage.y,
-        damage.width,
-        damage.height,
-        timings.rebuild_cycles,
-        timings.layout_cycles,
-        timings.clear_cycles,
-        timings.paint_cycles,
-        timings.damage_cycles,
-        present.total_cycles(),
-        present.io_cycles(),
-        present.busy_cycles(),
-        present.other_cycles(),
-        present.io_bytes(),
-        present.io_calls(),
-        present.busy_waits(),
-        present.longest_busy_cycles(),
-        present.dropped_busy_waits(),
-        report.framebuffer_pixels(),
-        u8::from(report.has_framebuffer_pixels()),
-        eink.text_draw_calls(),
-        eink.shaped_glyphs(),
-    );
-}
-
-#[cfg(feature = "ui-metrics")]
-pub(crate) fn log_ui_metrics(frame_id: u32, metrics: inkpaper_ui::PerformanceMetrics) {
-    defmt::info!(
-        "perf/ui frame={=u32} render_calls={=u64} mounted={=u64} measure={=u64} cache_hits={=u64} cache_misses={=u64} text_measurements={=u64} laid_out={=u64} painted={=u64}",
-        frame_id,
-        metrics.entity_render_calls,
-        metrics.nodes_mounted,
-        metrics.measure_node_calls,
-        metrics.measurement_cache_hits,
-        metrics.measurement_cache_misses,
-        metrics.text_measurements,
-        metrics.nodes_laid_out,
-        metrics.nodes_painted,
-    );
-
-    defmt::info!(
-        "perf/damage frame={=u32} invalidations={=u64} full={=u64} partial={=u64} rects={=u64} culled={=u64} pruned={=u64} extent_pruned={=u64}",
-        frame_id,
-        metrics.render_invalidations_consumed,
-        metrics.full_damage_invalidations,
-        metrics.partial_damage_invalidations,
-        metrics.damage_rectangles,
-        metrics.damage_culled_nodes,
-        metrics.damage_pruned_subtrees,
-        metrics.damage_extent_pruned_subtrees,
-    );
-}
-
-#[cfg(feature = "ui-metrics")]
-pub(crate) fn log_text_metrics(
-    frame_id: u32,
-    paint: inkpaper_ui::backend::EInkPaintReport,
-    cache: inkpaper_ui::GlyphCacheMetrics,
-    bytes_used: usize,
-    bytes_capacity: usize,
-) {
-    let bytes_used = u64::try_from(bytes_used).unwrap_or(u64::MAX);
-
-    let bytes_peak = u64::try_from(cache.bytes_peak).unwrap_or(u64::MAX);
-
-    let bytes_capacity = u64::try_from(bytes_capacity).unwrap_or(u64::MAX);
-
-    defmt::info!(
-        "perf/text frame={=u32} draws={=u64} glyphs={=u64} lookups={=u64} hits={=u64} misses={=u64} collisions={=u64} rasterized={=u64} clears={=u64} bytes_used={=u64} bytes_peak={=u64} bytes_capacity={=u64}",
-        frame_id,
-        paint.text_draw_calls(),
-        paint.shaped_glyphs(),
-        cache.lookups,
-        cache.hits,
-        cache.misses,
-        cache.collisions,
-        cache.rasterizations,
-        cache.clears,
-        bytes_used,
-        bytes_peak,
-        bytes_capacity,
-    );
-
-    defmt::info!(
-        "perf/pair_cache frame={=u32} lookups={=u64} hits={=u64} misses={=u64} collisions={=u64}",
-        frame_id,
-        paint.pair_positioning_cache_lookups(),
-        paint.pair_positioning_cache_hits(),
-        paint.pair_positioning_cache_misses(),
-        paint.pair_positioning_cache_collisions(),
-    );
-}
-
-#[cfg(feature = "ui-metrics")]
-pub(crate) fn log_coverage_metrics(
-    frame_id: u32,
-    paint: inkpaper_ui::backend::EInkPaintReport,
-    framebuffer_draw_iter_pixels: u64,
-) {
-    defmt::info!(
-        "perf/coverage frame={=u32} bitmaps={=u64} samples={=u64} accepted={=u64} framebuffer_pixels={=u64}",
-        frame_id,
-        paint.coverage_bitmaps(),
-        paint.coverage_samples(),
-        paint.coverage_accepted(),
-        framebuffer_draw_iter_pixels,
-    );
-}
-
-#[cfg(feature = "performance")]
-pub(crate) fn log_ordered_coverage(frame_id: u32, calls: u64, pixels: u64, cycles: u64) {
-    info!(
-        "perf/coverage_fast frame={=u32} calls={=u64} pixels={=u64} cycles={=u64}",
-        frame_id, calls, pixels, cycles,
-    );
-}
-
-#[cfg(feature = "performance")]
-pub(crate) fn log_render_invalidation(frame_id: u32, invalidation: inkpaper_ui::Invalidation) {
-    info!(
-        "perf/invalidation frame={=u32} kind={:?}",
-        frame_id, invalidation,
-    );
-}
-
-#[cfg(feature = "trace")]
 struct DefmtTraceWriter<const N: usize> {
     bytes: [u8; N],
     len: usize,
 }
 
-#[cfg(feature = "trace")]
 impl<const N: usize> DefmtTraceWriter<N> {
     const fn new() -> Self {
         Self {
@@ -1360,7 +1084,6 @@ impl<const N: usize> DefmtTraceWriter<N> {
     }
 }
 
-#[cfg(feature = "trace")]
 impl<const N: usize> Write for DefmtTraceWriter<N> {
     fn write_str(&mut self, value: &str) -> core::fmt::Result {
         let mut remaining = value;
@@ -1378,7 +1101,6 @@ impl<const N: usize> Write for DefmtTraceWriter<N> {
     }
 }
 
-#[cfg(feature = "trace")]
 pub(crate) fn log_trace(capture: inkpaper_trace::TraceCapture) {
     const TRACE_LINE_BYTES: usize = 512;
 
@@ -1393,6 +1115,6 @@ pub(crate) fn log_trace(capture: inkpaper_trace::TraceCapture) {
     });
 
     if result.is_err() {
-        info!("trace/v3 encode_error id={=u32}", capture_id);
+        info!("trace/v4 encode_error id={=u32}", capture_id,);
     }
 }

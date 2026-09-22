@@ -44,7 +44,7 @@ mod framebuffer;
 mod frontlight;
 mod i2c_bus;
 mod input;
-#[cfg(any(feature = "performance", feature = "ui-metrics", feature = "trace"))]
+#[cfg(feature = "trace")]
 mod perf;
 mod platform;
 mod power;
@@ -72,9 +72,6 @@ enum InputAction {
 async fn main(spawner: Spawner) -> ! {
     rtt_target::rtt_init_defmt!();
     info!("InkPaper X4 Pro boot");
-
-    #[cfg(feature = "performance")]
-    perf::log_config();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);

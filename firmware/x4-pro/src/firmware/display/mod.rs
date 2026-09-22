@@ -9,7 +9,7 @@ use uc8179::{
 use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC8279_X4_PRO};
 use xteink_display_probe::Controller;
 
-#[cfg(feature = "performance")]
+#[cfg(feature = "trace")]
 use crate::firmware::perf::{CycleTimer, DisplayController, ProfiledEpdBus};
 use crate::firmware::{
     framebuffer::FramebufferStorage,
@@ -88,7 +88,7 @@ impl X4Panel {
             return Ok(());
         };
 
-        #[cfg(feature = "performance")]
+        #[cfg(feature = "trace")]
         {
             let mut profiled_bus = ProfiledEpdBus::new_preparation(bus);
 
@@ -98,7 +98,7 @@ impl X4Panel {
                 .map_err(Error::Uc8179)
         }
 
-        #[cfg(not(feature = "performance"))]
+        #[cfg(not(feature = "trace"))]
         {
             panel
                 .begin_power_off(bus, delay)
@@ -120,7 +120,7 @@ impl X4Panel {
             return Ok(());
         };
 
-        #[cfg(feature = "performance")]
+        #[cfg(feature = "trace")]
         {
             let power_off_pending = panel.power_off_pending();
 
@@ -136,7 +136,7 @@ impl X4Panel {
                 .map_err(Error::Uc8179)
         }
 
-        #[cfg(not(feature = "performance"))]
+        #[cfg(not(feature = "trace"))]
         {
             panel
                 .prepare_power_on(bus, delay)
@@ -163,7 +163,7 @@ impl X4Panel {
             frame = update.frame_id(),
         );
 
-        #[cfg(feature = "performance")]
+        #[cfg(feature = "trace")]
         let (result, present_timings) = {
             let timer = CycleTimer::start();
 
@@ -199,7 +199,7 @@ impl X4Panel {
             (result, timings)
         };
 
-        #[cfg(not(feature = "performance"))]
+        #[cfg(not(feature = "trace"))]
         let result = self.present_inner(bus, delay, frame, update, power).await;
 
         // finish the presentation interval before swapping the flight-recorder buffer
@@ -211,12 +211,6 @@ impl X4Panel {
 
         #[cfg(feature = "trace")]
         let trace_capture = inkpaper_trace::capture();
-
-        #[cfg(feature = "performance")]
-        {
-            crate::firmware::perf::log_present(update.frame_id(), present_timings);
-            crate::firmware::perf::log_frame(update, present_timings);
-        }
 
         #[cfg(feature = "trace")]
         if let Some(trace_capture) = trace_capture {

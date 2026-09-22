@@ -10,6 +10,7 @@ use crate::trace::{Metric, MetricDefinition, MetricKind, SpanKind};
 use super::{Callsite, Capture, Span, Value, parse_captures};
 
 const PERFETTO_ROOT_TRACK: u64 = 1;
+const PERFETTO_METRICS_TRACK: u64 = 2;
 const PERFETTO_PACKET_SEQUENCE_ID: u64 = 1;
 
 const PROTO_WIRE_VARINT: u8 = 0;
@@ -50,7 +51,8 @@ struct AsyncTrackDescriptor {
 
 #[derive(Debug)]
 struct TrackLayout {
-    target_tracks: BTreeMap<String, u64>,
+    span_target_tracks: BTreeMap<String, u64>,
+    metric_target_tracks: BTreeMap<String, u64>,
     async_span_tracks: BTreeMap<(u32, usize), u64>,
     async_tracks: Vec<AsyncTrackDescriptor>,
 }
@@ -100,14 +102,15 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
             })?;
 
             let track_uuid = match span.kind {
-                SpanKind::Sync => {
-                    *tracks
-                        .target_tracks
-                        .get(&callsite.target)
-                        .with_context(|| {
-                            format!("missing Perfetto track for target `{}`", callsite.target)
-                        })?
-                }
+                SpanKind::Sync => *tracks
+                    .span_target_tracks
+                    .get(&callsite.target)
+                    .with_context(|| {
+                        format!(
+                            "missing Perfetto span track for target `{}`",
+                            callsite.target,
+                        )
+                    })?,
 
                 SpanKind::Async => *tracks
                     .async_span_tracks
@@ -160,11 +163,11 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
                 })?;
 
             let track_uuid = *tracks
-                .target_tracks
+                .metric_target_tracks
                 .get(&definition.target)
                 .with_context(|| {
                     format!(
-                        "missing Perfetto track for metric target `{}`",
+                        "missing Perfetto metric track for target `{}`",
                         definition.target,
                     )
                 })?;
@@ -197,12 +200,25 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
 
     push_track_descriptor(&mut trace, PERFETTO_ROOT_TRACK, None, "InkPaper");
 
-    for (target, uuid) in &tracks.target_tracks {
+    for (target, uuid) in &tracks.span_target_tracks {
         push_track_descriptor(&mut trace, *uuid, Some(PERFETTO_ROOT_TRACK), target);
     }
 
     for track in &tracks.async_tracks {
         push_track_descriptor(&mut trace, track.uuid, Some(track.parent_uuid), &track.name);
+    }
+
+    if !tracks.metric_target_tracks.is_empty() {
+        push_track_descriptor(
+            &mut trace,
+            PERFETTO_METRICS_TRACK,
+            Some(PERFETTO_ROOT_TRACK),
+            "Metrics",
+        );
+
+        for (target, uuid) in &tracks.metric_target_tracks {
+            push_track_descriptor(&mut trace, *uuid, Some(PERFETTO_METRICS_TRACK), target);
+        }
     }
 
     for event in events {
@@ -221,36 +237,48 @@ fn build_perfetto(captures: &[Capture]) -> Result<Vec<u8>> {
 }
 
 fn build_tracks(captures: &[Capture]) -> Result<TrackLayout> {
-    let mut targets = BTreeSet::new();
+    let mut span_targets = BTreeSet::new();
+
+    let mut metric_targets = BTreeSet::new();
 
     for capture in captures {
         for callsite in capture.callsites.values() {
-            targets.insert(callsite.target.clone());
+            span_targets.insert(callsite.target.clone());
         }
 
         for metric in capture.metric_definitions.values() {
-            targets.insert(metric.target.clone());
+            metric_targets.insert(metric.target.clone());
         }
     }
 
-    let mut target_tracks = BTreeMap::new();
+    let mut span_target_tracks = BTreeMap::new();
+    let mut metric_target_tracks = BTreeMap::new();
+    let mut next_uuid = 3u64;
 
-    let mut next_uuid = 2u64;
-
-    for target in targets {
+    for target in span_targets {
         let uuid = next_uuid;
 
         next_uuid = next_uuid
             .checked_add(1)
             .context("Perfetto track UUID overflow")?;
 
-        target_tracks.insert(target, uuid);
+        span_target_tracks.insert(target, uuid);
+    }
+
+    for target in metric_targets {
+        let uuid = next_uuid;
+
+        next_uuid = next_uuid
+            .checked_add(1)
+            .context("Perfetto track UUID overflow")?;
+
+        metric_target_tracks.insert(target, uuid);
     }
 
     let mut async_span_tracks = BTreeMap::new();
     let mut async_tracks = Vec::new();
 
-    for (target, parent_uuid) in &target_tracks {
+    for (target, parent_uuid) in &span_target_tracks {
         let mut intervals = Vec::new();
 
         for capture in captures {
@@ -322,7 +350,8 @@ fn build_tracks(captures: &[Capture]) -> Result<TrackLayout> {
     }
 
     Ok(TrackLayout {
-        target_tracks,
+        span_target_tracks,
+        metric_target_tracks,
         async_span_tracks,
         async_tracks,
     })
@@ -647,19 +676,19 @@ mod tests {
     #[test]
     fn perfetto_export_is_generic_over_targets_and_fields() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=1800 spans=2 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=0 target=9:ui.render name=5:paint fields=1 5:frame
-            1.002 INFO trace/v3 span id=0 kind=sync depth=1 start=1120 cycles=480 values=1 u:4
-            1.003 INFO trace/v3 define id=1 target=9:ui.render name=6:render fields=1 5:frame
-            1.004 INFO trace/v3 span id=1 kind=sync depth=0 start=1000 cycles=720 values=1 u:4
-            1.005 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=1800 spans=2 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=9:ui.render name=5:paint fields=1 5:frame
+            1.002 INFO trace/v4 span id=0 kind=sync depth=1 start=1120 cycles=480 values=1 u:4
+            1.003 INFO trace/v4 define id=1 target=9:ui.render name=6:render fields=1 5:frame
+            1.004 INFO trace/v4 span id=1 kind=sync depth=0 start=1000 cycles=720 values=1 u:4
+            1.005 INFO trace/v4 end id=1
 
-            2.000 INFO trace/v3 capture id=2 hz=240000000 at=5000 spans=2 overwritten=0 metrics=0 metric_dropped=0
-            2.001 INFO trace/v3 define id=0 target=15:display.present name=9:busy_wait fields=1 5:index
-            2.002 INFO trace/v3 span id=0 kind=sync depth=1 start=4240 cycles=480 values=1 u:0
-            2.003 INFO trace/v3 define id=1 target=15:display.present name=7:present fields=1 5:frame
-            2.004 INFO trace/v3 span id=1 kind=sync depth=0 start=4000 cycles=960 values=1 u:4
-            2.005 INFO trace/v3 end id=2
+            2.000 INFO trace/v4 capture id=2 hz=240000000 at=5000 spans=2 overwritten=0 metrics=0 metric_dropped=0
+            2.001 INFO trace/v4 define id=2 target=15:display.present name=9:busy_wait fields=1 5:index
+            2.002 INFO trace/v4 span id=2 kind=sync depth=1 start=4240 cycles=480 values=1 u:0
+            2.003 INFO trace/v4 define id=3 target=15:display.present name=7:present fields=1 5:frame
+            2.004 INFO trace/v4 span id=3 kind=sync depth=0 start=4000 cycles=960 values=1 u:4
+            2.005 INFO trace/v4 end id=2
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -680,20 +709,20 @@ mod tests {
     #[test]
     fn capture_chunks_share_one_absolute_timeline() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=200 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=0 target=4:test name=5:first fields=0
-            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=100 cycles=50 values=0
-            1.003 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=200 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=4:test name=5:first fields=0
+            1.002 INFO trace/v4 span id=0 kind=sync depth=0 start=100 cycles=50 values=0
+            1.003 INFO trace/v4 end id=1
 
-            2.000 INFO trace/v3 capture id=2 hz=240000000 at=500 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            2.001 INFO trace/v3 define id=0 target=4:test name=6:second fields=0
-            2.002 INFO trace/v3 span id=0 kind=sync depth=0 start=300 cycles=100 values=0
-            2.003 INFO trace/v3 end id=2
+            2.000 INFO trace/v4 capture id=2 hz=240000000 at=500 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            2.001 INFO trace/v4 define id=1 target=4:test name=6:second fields=0
+            2.002 INFO trace/v4 span id=1 kind=sync depth=0 start=300 cycles=100 values=0
+            2.003 INFO trace/v4 end id=2
         "#};
 
         let captures = parse_captures(log).unwrap();
 
-        assert_eq!(timeline_base(&captures).unwrap(), 100);
+        assert_eq!(timeline_base(&captures).unwrap(), 100,);
 
         let trace = build_perfetto(&captures).unwrap();
 
@@ -704,10 +733,10 @@ mod tests {
     #[test]
     fn perfetto_preserves_signed_and_boolean_annotations() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=120 spans=1 overwritten=0 metrics=0 metric_dropped=0
-            1.001 INFO trace/v3 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
-            1.002 INFO trace/v3 span id=0 kind=sync depth=0 start=100 cycles=10 values=2 i:-17 b:0
-            1.003 INFO trace/v3 end id=1
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=120 spans=1 overwritten=0 metrics=0 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=4:test name=6:values fields=2 5:delta 5:ready
+            1.002 INFO trace/v4 span id=0 kind=sync depth=0 start=100 cycles=10 values=2 i:-17 b:0
+            1.003 INFO trace/v4 end id=1
         "#};
 
         let captures = parse_captures(log).unwrap();
@@ -727,12 +756,12 @@ mod tests {
     #[test]
     fn perfetto_exports_metric_summaries_as_instants() {
         let log = indoc! {r#"
-        1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=2 metric_dropped=0
-        1.001 INFO trace/v3 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
-        1.002 INFO trace/v3 metric id=0 count=3 sum=5 max=3
-        1.003 INFO trace/v3 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
-        1.004 INFO trace/v3 metric id=1 count=4 sum=120 max=50
-        1.005 INFO trace/v3 end id=1
+        1.000 INFO trace/v4 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=2 metric_dropped=0
+        1.001 INFO trace/v4 metric_define id=0 target=17:reader.pagination name=10:cache_hits kind=counter unit=0:
+        1.002 INFO trace/v4 metric id=0 count=3 sum=5 max=3
+        1.003 INFO trace/v4 metric_define id=1 target=17:reader.pagination name=12:measure_text kind=distribution unit=6:cycles
+        1.004 INFO trace/v4 metric id=1 count=4 sum=120 max=50
+        1.005 INFO trace/v4 end id=1
     "#};
 
         let captures = parse_captures(log).unwrap();
@@ -763,8 +792,8 @@ mod tests {
     #[test]
     fn perfetto_exports_flight_recorder_loss_diagnostics() {
         let log = indoc! {r#"
-        1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=12 metrics=0 metric_dropped=3
-        1.001 INFO trace/v3 end id=1
+        1.000 INFO trace/v4 capture id=1 hz=240000000 at=100 spans=0 overwritten=12 metrics=0 metric_dropped=3
+        1.001 INFO trace/v4 end id=1
     "#};
 
         let captures = parse_captures(log).unwrap();
@@ -781,14 +810,14 @@ mod tests {
     #[test]
     fn overlapping_async_spans_get_separate_lanes() {
         let log = indoc! {r#"
-        1.000 INFO trace/v3 capture id=1 hz=240000000 at=400 spans=3 overwritten=0 metrics=0 metric_dropped=0
-        1.001 INFO trace/v3 define id=0 target=13:reader.loader name=5:first fields=0
-        1.002 INFO trace/v3 span id=0 kind=async depth=0 start=100 cycles=100 values=0
-        1.003 INFO trace/v3 define id=1 target=13:reader.loader name=6:second fields=0
-        1.004 INFO trace/v3 span id=1 kind=async depth=0 start=150 cycles=50 values=0
-        1.005 INFO trace/v3 define id=2 target=13:reader.loader name=5:third fields=0
-        1.006 INFO trace/v3 span id=2 kind=async depth=0 start=200 cycles=20 values=0
-        1.007 INFO trace/v3 end id=1
+        1.000 INFO trace/v4 capture id=1 hz=240000000 at=400 spans=3 overwritten=0 metrics=0 metric_dropped=0
+        1.001 INFO trace/v4 define id=0 target=13:reader.loader name=5:first fields=0
+        1.002 INFO trace/v4 span id=0 kind=async depth=0 start=100 cycles=100 values=0
+        1.003 INFO trace/v4 define id=1 target=13:reader.loader name=6:second fields=0
+        1.004 INFO trace/v4 span id=1 kind=async depth=0 start=150 cycles=50 values=0
+        1.005 INFO trace/v4 define id=2 target=13:reader.loader name=5:third fields=0
+        1.006 INFO trace/v4 span id=2 kind=async depth=0 start=200 cycles=20 values=0
+        1.007 INFO trace/v4 end id=1
     "#};
 
         let captures = parse_captures(log).unwrap();
@@ -817,24 +846,54 @@ mod tests {
     #[test]
     fn perfetto_exports_gauge_value() {
         let log = indoc! {r#"
-            1.000 INFO trace/v3 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=1 metric_dropped=0
-            1.001 INFO trace/v3 metric_define id=0 target=9:ui.render name=12:paint_cycles kind=gauge unit=6:cycles
-            1.002 INFO trace/v3 metric id=0 count=1 sum=154790196 max=154790196
-            1.003 INFO trace/v3 end id=1
-        "#};
+        1.000 INFO trace/v4 capture id=1 hz=240000000 at=100 spans=0 overwritten=0 metrics=1 metric_dropped=0
+        1.001 INFO trace/v4 metric_define id=0 target=9:ui.render name=12:paint_cycles kind=gauge unit=6:cycles
+        1.002 INFO trace/v4 metric id=0 value=154790196
+        1.003 INFO trace/v4 end id=1
+    "#};
 
         let captures = parse_captures(log).unwrap();
 
         let trace = build_perfetto(&captures).unwrap();
 
         assert!(contains_bytes(&trace, b"ui.render"));
+        assert!(contains_bytes(&trace, b"paint_cycles"));
+        assert!(contains_bytes(&trace, b"value"));
+        assert!(contains_bytes(&trace, b"gauge"));
+        assert!(contains_bytes(&trace, b"cycles"));
+    }
+
+    #[test]
+    fn perfetto_separates_metrics_from_span_tracks() {
+        let log = indoc! {r#"
+            1.000 INFO trace/v4 capture id=1 hz=240000000 at=200 spans=1 overwritten=0 metrics=1 metric_dropped=0
+            1.001 INFO trace/v4 define id=0 target=9:ui.render name=6:render fields=0
+            1.002 INFO trace/v4 span id=0 kind=sync depth=0 start=100 cycles=50 values=0
+            1.003 INFO trace/v4 metric_define id=0 target=9:ui.render name=12:paint_cycles kind=gauge unit=6:cycles
+            1.004 INFO trace/v4 metric id=0 value=1000
+            1.005 INFO trace/v4 end id=1
+        "#};
+
+        let captures = parse_captures(log).unwrap();
+
+        let tracks = build_tracks(&captures).unwrap();
+
+        let span_track = tracks.span_target_tracks.get("ui.render").copied().unwrap();
+
+        let metric_track = tracks
+            .metric_target_tracks
+            .get("ui.render")
+            .copied()
+            .unwrap();
+
+        assert_ne!(span_track, metric_track);
+
+        let trace = build_perfetto(&captures).unwrap();
+
+        assert!(contains_bytes(&trace, b"Metrics"));
+
+        assert!(contains_bytes(&trace, b"ui.render"));
 
         assert!(contains_bytes(&trace, b"paint_cycles"));
-
-        assert!(contains_bytes(&trace, b"value"));
-
-        assert!(contains_bytes(&trace, b"gauge"));
-
-        assert!(contains_bytes(&trace, b"cycles"));
     }
 }

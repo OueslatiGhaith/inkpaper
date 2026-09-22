@@ -10,7 +10,7 @@ use embedded_graphics::{
 };
 use inkpaper_ui::backend::{EInkOrderedCoverageBitmap, Gray2};
 
-#[cfg(all(feature = "performance", target_arch = "xtensa"))]
+#[cfg(all(feature = "trace", target_arch = "xtensa"))]
 use crate::firmware::perf::CycleTimer;
 
 pub const PHYSICAL_WIDTH: usize = 800;
@@ -228,13 +228,13 @@ pub struct Framebuffer<'a> {
     storage: &'a mut FramebufferStorage,
     orientation: Orientation,
 
-    #[cfg(feature = "ui-metrics")]
+    #[cfg(feature = "trace")]
     draw_iter_pixels: u64,
-    #[cfg(feature = "performance")]
+    #[cfg(feature = "trace")]
     ordered_coverage_calls: u64,
-    #[cfg(feature = "performance")]
+    #[cfg(feature = "trace")]
     ordered_coverage_pixels: u64,
-    #[cfg(feature = "performance")]
+    #[cfg(feature = "trace")]
     ordered_coverage_cycles: u64,
 }
 
@@ -244,13 +244,13 @@ impl<'a> Framebuffer<'a> {
             storage,
             orientation,
 
-            #[cfg(feature = "ui-metrics")]
+            #[cfg(feature = "trace")]
             draw_iter_pixels: 0,
-            #[cfg(feature = "performance")]
+            #[cfg(feature = "trace")]
             ordered_coverage_calls: 0,
-            #[cfg(feature = "performance")]
+            #[cfg(feature = "trace")]
             ordered_coverage_pixels: 0,
-            #[cfg(feature = "performance")]
+            #[cfg(feature = "trace")]
             ordered_coverage_cycles: 0,
         }
     }
@@ -263,17 +263,17 @@ impl<'a> Framebuffer<'a> {
         self.orientation = orientation;
     }
 
-    #[cfg(feature = "performance")]
+    #[cfg(feature = "trace")]
     pub const fn ordered_coverage_calls(&self) -> u64 {
         self.ordered_coverage_calls
     }
 
-    #[cfg(feature = "performance")]
+    #[cfg(feature = "trace")]
     pub const fn ordered_coverage_pixels(&self) -> u64 {
         self.ordered_coverage_pixels
     }
 
-    #[cfg(feature = "performance")]
+    #[cfg(feature = "trace")]
     pub const fn ordered_coverage_cycles(&self) -> u64 {
         self.ordered_coverage_cycles
     }
@@ -341,7 +341,7 @@ impl<'a> Framebuffer<'a> {
         fill_plane_region(&mut self.storage.msb, region, level & 0b10 != 0);
     }
 
-    #[cfg(feature = "ui-metrics")]
+    #[cfg(feature = "trace")]
     pub const fn draw_iter_pixels(&self) -> u64 {
         self.draw_iter_pixels
     }
@@ -360,7 +360,7 @@ impl<'a> Framebuffer<'a> {
             return None;
         }
 
-        #[cfg(all(feature = "performance", target_arch = "xtensa"))]
+        #[cfg(all(feature = "trace", target_arch = "xtensa"))]
         let timer = CycleTimer::start();
 
         let result = match foreground {
@@ -369,7 +369,7 @@ impl<'a> Framebuffer<'a> {
             _ => unreachable!(),
         };
 
-        #[cfg(feature = "performance")]
+        #[cfg(feature = "trace")]
         if let Some(accepted) = result {
             self.ordered_coverage_calls = self.ordered_coverage_calls.saturating_add(1);
 
@@ -503,7 +503,7 @@ impl DrawTarget for Framebuffer<'_> {
                 continue;
             }
 
-            #[cfg(feature = "ui-metrics")]
+            #[cfg(feature = "trace")]
             {
                 self.draw_iter_pixels = self.draw_iter_pixels.saturating_add(1);
             }

@@ -603,9 +603,10 @@ pub fn init(
         state.next_capture_id = 0;
 
         state.buffers[0].reset();
-
         state.buffers[1].reset();
     });
+
+    crate::text::reset_definitions();
 
     set_recording_enabled(true);
 }
@@ -1125,7 +1126,7 @@ fn reset_for_test() {
 mod tests {
     use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-    use std::sync::Mutex as StdMutex;
+    use std::{string::String, sync::Mutex as StdMutex};
 
     use crate::{MetricKind, capture, init};
 
@@ -1551,5 +1552,61 @@ mod tests {
         assert_eq!(metric.sum(), large);
 
         assert_eq!(metric.max(), large);
+    }
+
+    #[test]
+    fn text_transport_reuses_run_scoped_definitions() {
+        let _test = test_lock();
+
+        reset();
+        init_trace();
+
+        fn record() {
+            let span = crate::span!(
+                target: "test.transport",
+                "work",
+                value = 7u32,
+            );
+
+            drop(span);
+
+            crate::gauge!(
+                target: "test.transport",
+                "items",
+                12u64,
+            );
+        }
+
+        record();
+
+        let first = capture().unwrap();
+
+        let mut first_text = String::new();
+
+        crate::write_text_capture(&first, &mut first_text).unwrap();
+
+        assert!(first_text.contains("trace/v4 define id=0"));
+
+        assert!(first_text.contains("trace/v4 metric_define id=0"));
+
+        assert!(first_text.contains("trace/v4 metric id=0 value=12"));
+
+        drop(first);
+
+        record();
+
+        let second = capture().unwrap();
+
+        let mut second_text = String::new();
+
+        crate::write_text_capture(&second, &mut second_text).unwrap();
+
+        assert!(!second_text.contains("trace/v4 define"));
+
+        assert!(!second_text.contains("trace/v4 metric_define"));
+
+        assert!(second_text.contains("trace/v4 span id=0"));
+
+        assert!(second_text.contains("trace/v4 metric id=0 value=12"));
     }
 }
