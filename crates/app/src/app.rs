@@ -3,9 +3,9 @@ use inkpaper_epub::SpineIndex;
 use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
-    BatteryStatus, BrowseListing, BrowseRequest, ClockStatus, ReaderChapter,
-    ReaderChapterDirection, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
-    ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
+    BatteryStatus, BrowseListing, BrowseRequest, ClockStatus, FrontlightSetting, FrontlightState,
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
+    ReaderPreferencesRequest, ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
     browser::BrowserState,
     reader::ReaderState,
     reader_page::paint_reader_page,
@@ -37,6 +37,7 @@ pub struct InkPaperApp {
     reader: ReaderState,
     reading_history: ReadingHistoryState,
     system_status: SystemStatus,
+    frontlight: FrontlightState,
     reader_return: Screen,
 }
 
@@ -48,6 +49,7 @@ impl Default for InkPaperApp {
             reader: ReaderState::default(),
             reading_history: ReadingHistoryState::default(),
             system_status: SystemStatus::default(),
+            frontlight: FrontlightState::default(),
             reader_return: Screen::BrowseFiles,
         }
     }
@@ -413,6 +415,14 @@ impl InkPaperApp {
         if changed && self.screen == Screen::Settings {
             cx.notify();
         }
+    }
+
+    pub fn request_frontlight_apply(&mut self) {
+        self.frontlight.request_apply();
+    }
+
+    pub(crate) fn take_frontlight_request(&mut self) -> Option<FrontlightSetting> {
+        self.frontlight.take_request()
     }
 }
 

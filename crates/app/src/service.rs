@@ -4,7 +4,7 @@ use inkpaper_epub::EpubSource;
 use inkpaper_ui::{Entity, EntityAccessError, ResourceRuntimeApi, RuntimeApi};
 
 use crate::{
-    BrowseEntry, BrowseListing, BrowseRequest, InkPaperApp, ReaderPreferences,
+    BrowseEntry, BrowseListing, BrowseRequest, FrontlightSetting, InkPaperApp, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest, ReaderSession, ReadingHistory, ReadingHistoryRequest,
 };
 
@@ -60,6 +60,8 @@ pub trait AppPlatform {
         &mut self,
         path: &str,
     ) -> Result<Self::RandomAccessSource, Self::Error>;
+
+    async fn set_frontlight(&mut self, setting: FrontlightSetting) -> Result<(), Self::Error>;
 
     async fn load_state(
         &mut self,
@@ -125,8 +127,17 @@ where
         self.ensure_initialized(runtime, app).await?;
 
         loop {
-            let preferences_request =
-                runtime.update(app, |app, _| app.take_reader_preferences_request())?;
+            let (frontlight_request, preferences_request) = runtime.update(app, |app, _| {
+                (
+                    app.take_frontlight_request(),
+                    app.take_reader_preferences_request(),
+                )
+            })?;
+
+            if let Some(setting) = frontlight_request {
+                let _ = self.platform.set_frontlight(setting).await;
+                continue;
+            }
 
             if let Some(request) = preferences_request {
                 self.service_reader_preferences_request(runtime, app, request)
@@ -152,8 +163,8 @@ where
                 self.service_browse_request(runtime, app, request).await?;
             }
 
-            // reader requests intentionally precede history snapshots.
-            // a page turn may queue a progress update which should be reflected before
+            // Reader requests intentionally precede history snapshots.
+            // A page turn may queue a progress update which should be reflected before
             // Home/Recent Books receives its snapshot.
             if let Some(request) = reader_request {
                 self.service_reader_request(runtime, app, request).await?;

@@ -235,11 +235,16 @@ async fn main(spawner: Spawner) -> ! {
         .unwrap();
     info!("initial display complete");
 
-    frontlight::set(::frontlight::Setting::new(
-        ::frontlight::Percent::new(25).unwrap(),
-        ::frontlight::Percent::new(50).unwrap(),
-    ))
-    .await;
+    if runtime
+        .update(app, |app, _| app.request_frontlight_apply())
+        .is_err()
+    {
+        warn!("failed to request initial frontlight state");
+    }
+
+    if app_service.service_pending(runtime, app).await.is_err() {
+        warn!("failed to apply initial frontlight state");
+    }
 
     let i2c = I2c::new(
         peripherals.I2C0,
@@ -586,8 +591,6 @@ fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: Rtc
     {
         warn!("failed to apply RTC status to app");
     }
-
-    // TODO: update app once app state is introduced
 }
 
 fn ui_point(position: TouchPosition) -> Point {

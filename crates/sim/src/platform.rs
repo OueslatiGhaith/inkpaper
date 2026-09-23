@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use inkpaper_app::{AppPlatform, PlatformEntry};
+use inkpaper_app::{AppPlatform, FrontlightSetting, PlatformEntry};
 
 use crate::{fake_fs::simulator_listing, host_epub::HostFileSource};
 
@@ -47,6 +47,10 @@ impl AppPlatform for SimulatorPlatform {
         })?;
 
         HostFileSource::open(&host_path)
+    }
+
+    async fn set_frontlight(&mut self, _: FrontlightSetting) -> Result<(), Self::Error> {
+        Ok(())
     }
 
     async fn load_state(

@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use inkpaper_app::{AppPlatform, PlatformEntry};
+use inkpaper_app::{AppPlatform, FrontlightSetting, PlatformEntry};
 use inkpaper_epub::EpubSource;
 
 use crate::firmware::storage::{
@@ -104,6 +104,23 @@ impl AppPlatform for X4Platform {
         let handle = storage::open_random_access_and_wait(path).await?;
 
         Ok(X4RandomAccessSource::from_handle(handle))
+    }
+
+    async fn set_frontlight(&mut self, setting: FrontlightSetting) -> Result<(), Self::Error> {
+        let brightness = if setting.is_on() {
+            setting.brightness()
+        } else {
+            0
+        };
+
+        let brightness = ::frontlight::Percent::new(brightness)
+            .expect("app frontlight brightness must be valid");
+        let warmth = ::frontlight::Percent::new(setting.warmth())
+            .expect("app frontlight warmth must be valid");
+
+        crate::firmware::frontlight::set(::frontlight::Setting::new(brightness, warmth)).await;
+
+        Ok(())
     }
 
     async fn load_state(
