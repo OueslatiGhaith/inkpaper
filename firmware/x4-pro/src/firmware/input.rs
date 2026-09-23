@@ -64,6 +64,7 @@ pub enum TouchEvent {
     Up(TouchPosition),
     Drag {
         origin: TouchPosition,
+        previous: TouchPosition,
         position: TouchPosition,
     },
     /// short press of the capacitive Home pad.

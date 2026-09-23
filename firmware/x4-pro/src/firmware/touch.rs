@@ -31,14 +31,37 @@ impl ActiveTouch {
         }
     }
 
-    fn update(&mut self, position: TouchPosition) {
-        self.position = position;
-        if self.dragged {
-            return;
+    fn update(&mut self, position: TouchPosition) -> Option<TouchEvent> {
+        let previous = self.position;
+        if previous == position {
+            return None;
         }
 
-        self.dragged = self.origin.x().abs_diff(position.x()) >= DRAG_THRESHOLD_PX
+        self.position = position;
+        if self.dragged {
+            return Some(TouchEvent::Drag {
+                origin: self.origin,
+                previous,
+                position,
+            });
+        }
+
+        let threshold_reached = self.origin.x().abs_diff(position.x()) >= DRAG_THRESHOLD_PX
             || self.origin.y().abs_diff(position.y()) >= DRAG_THRESHOLD_PX;
+
+        if !threshold_reached {
+            return None;
+        }
+
+        self.dragged = true;
+
+        // Include the movement accumulated before crossing the threshold in the first
+        // drag update
+        Some(TouchEvent::Drag {
+            origin: self.origin,
+            previous: self.origin,
+            position,
+        })
     }
 }
 
@@ -158,7 +181,9 @@ pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
                 match next_touch {
                     Some(position) => {
                         if let Some(active) = active_touch.as_mut() {
-                            active.update(position);
+                            if let Some(event) = active.update(position) {
+                                INPUT_EVENTS.send(InputEvent::Touch(event)).await;
+                            }
                         } else {
                             active_touch = Some(ActiveTouch::new(position));
 
@@ -172,16 +197,9 @@ pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
                             continue;
                         };
 
-                        let event = if active.dragged {
-                            TouchEvent::Drag {
-                                origin: active.origin,
-                                position: active.position,
-                            }
-                        } else {
-                            TouchEvent::Up(active.position)
-                        };
-
-                        INPUT_EVENTS.send(InputEvent::Touch(event)).await;
+                        INPUT_EVENTS
+                            .send(InputEvent::Touch(TouchEvent::Up(active.position)))
+                            .await;
                     }
                 }
             }

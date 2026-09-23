@@ -505,15 +505,20 @@ fn handle_input_event(
             InputAction::Continue
         }
 
-        InputEvent::Touch(TouchEvent::Drag { origin, position }) => {
+        InputEvent::Touch(TouchEvent::Drag {
+            origin,
+            previous,
+            position,
+        }) => {
             runtime.cancel_activation();
 
             let origin = ui_point(origin);
+            let previous = ui_point(previous);
             let position = ui_point(position);
 
-            // finger moving upward means scrolling farther down the content, hence
-            // `origin - position` rather than `position - origin`
-            runtime.scroll_at(origin, origin - position);
+            // Keep the initial touch point for hit-testing the scroll container, but
+            // apply the movement since the previous touch sample
+            runtime.scroll_at(origin, previous - position);
 
             InputAction::Continue
         }
