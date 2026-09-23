@@ -5,7 +5,9 @@ extern crate alloc;
 mod app;
 mod browser;
 mod components;
+mod control_center;
 mod frontlight;
+mod input;
 mod reader;
 mod reader_page;
 mod reading_history;
@@ -25,6 +27,7 @@ pub use system::{BatteryStatus, ClockStatus};
 // artificial public APIs, while preventing platform wrappers from depending on them.
 pub(crate) use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
 pub(crate) use frontlight::FrontlightState;
+pub use input::{AppInputError, AppInputEvent, dispatch_input};
 pub(crate) use reader::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderLoadError, ReaderPreferences,
     ReaderPreferencesError, ReaderPreferencesRequest, ReaderRequest, ReaderSession,

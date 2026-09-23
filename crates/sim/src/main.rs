@@ -4,7 +4,7 @@ use embedded_graphics_simulator::{
     sdl2::{Keycode, MouseButton},
 };
 use futures_lite::future;
-use inkpaper_app::{AppService, BatteryStatus, ClockStatus, InkPaperApp};
+use inkpaper_app::{AppInputEvent, AppService, BatteryStatus, ClockStatus, InkPaperApp};
 use inkpaper_ui::prelude::*;
 
 use crate::{
@@ -67,18 +67,26 @@ fn main() {
                     mouse_position = ui_point(point);
 
                     pointer.begin(mouse_position);
-                    runtime.begin_activation_at(mouse_position);
+                    send_input(
+                        &mut runtime,
+                        app,
+                        AppInputEvent::PointerDown(mouse_position),
+                    );
                 }
 
                 SimulatorEvent::MouseMove { point } => {
                     mouse_position = ui_point(point);
 
                     if let Some(update) = pointer.move_to(mouse_position) {
-                        if update.started {
-                            runtime.cancel_activation();
-                        }
-
-                        runtime.scroll_at(update.origin, update.delta);
+                        send_input(
+                            &mut runtime,
+                            app,
+                            AppInputEvent::PointerDrag {
+                                origin: update.origin,
+                                previous: update.previous,
+                                position: update.position,
+                            },
+                        );
                     }
                 }
 
@@ -90,18 +98,31 @@ fn main() {
 
                     match pointer.finish(mouse_position) {
                         PointerRelease::None => {
-                            runtime.cancel_activation();
+                            send_input(&mut runtime, app, AppInputEvent::PointerCancel);
                         }
 
                         PointerRelease::Tap(position) => {
-                            runtime
-                                .complete_activation_at(position)
-                                .expect("UI activation callback failed");
+                            send_input(&mut runtime, app, AppInputEvent::PointerUp(position));
                         }
 
-                        PointerRelease::Drag { origin, delta } => {
-                            runtime.cancel_activation();
-                            runtime.scroll_at(origin, delta);
+                        PointerRelease::Drag {
+                            origin,
+                            previous,
+                            position,
+                        } => {
+                            if previous != position {
+                                send_input(
+                                    &mut runtime,
+                                    app,
+                                    AppInputEvent::PointerDrag {
+                                        origin,
+                                        previous,
+                                        position,
+                                    },
+                                );
+                            }
+
+                            send_input(&mut runtime, app, AppInputEvent::PointerUp(position));
                         }
                     }
                 }
@@ -110,23 +131,46 @@ fn main() {
                     scroll_delta,
                     direction,
                 } => {
-                    runtime.scroll_at(mouse_position, wheel_scroll_offset(scroll_delta, direction));
+                    send_input(
+                        &mut runtime,
+                        app,
+                        AppInputEvent::ScrollWheel {
+                            position: mouse_position,
+                            delta: wheel_scroll_offset(scroll_delta, direction),
+                        },
+                    );
                 }
 
                 SimulatorEvent::KeyDown {
-                    keycode: Keycode::Up | Keycode::Left,
+                    keycode: Keycode::Up,
                     repeat: false,
                     ..
                 } => {
-                    runtime.focus_previous();
+                    send_input(&mut runtime, app, AppInputEvent::FocusPrevious);
                 }
 
                 SimulatorEvent::KeyDown {
-                    keycode: Keycode::Down | Keycode::Right | Keycode::Tab,
+                    keycode: Keycode::Down | Keycode::Tab,
                     repeat: false,
                     ..
                 } => {
-                    runtime.focus_next();
+                    send_input(&mut runtime, app, AppInputEvent::FocusNext);
+                }
+
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Left,
+                    repeat: false,
+                    ..
+                } => {
+                    send_input(&mut runtime, app, AppInputEvent::Previous);
+                }
+
+                SimulatorEvent::KeyDown {
+                    keycode: Keycode::Right,
+                    repeat: false,
+                    ..
+                } => {
+                    send_input(&mut runtime, app, AppInputEvent::Next);
                 }
 
                 SimulatorEvent::KeyDown {
@@ -134,26 +178,22 @@ fn main() {
                     repeat: false,
                     ..
                 } => {
-                    runtime.begin_focused_activation();
+                    send_input(&mut runtime, app, AppInputEvent::ConfirmDown);
                 }
 
                 SimulatorEvent::KeyUp {
                     keycode: Keycode::Return | Keycode::Space,
                     ..
                 } => {
-                    runtime
-                        .complete_focused_activation()
-                        .expect("UI activation callback failed");
+                    send_input(&mut runtime, app, AppInputEvent::ConfirmUp);
                 }
 
                 SimulatorEvent::KeyDown {
-                    keycode: Keycode::Home,
+                    keycode: Keycode::H,
                     repeat: false,
                     ..
                 } => {
-                    runtime
-                        .update(app, |app, cx| app.navigate_home(cx))
-                        .expect("application root must remain available");
+                    send_input(&mut runtime, app, AppInputEvent::Home);
                 }
 
                 _ => {}
@@ -181,4 +221,9 @@ fn seed_system_status(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>) {
             app.apply_clock_status(Some(clock), cx);
         })
         .expect("application root must remain available");
+}
+
+fn send_input(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>, event: AppInputEvent) {
+    inkpaper_app::dispatch_input(runtime, app, event)
+        .expect("application input dispatch must remain available");
 }

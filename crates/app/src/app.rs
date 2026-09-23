@@ -7,6 +7,11 @@ use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
     browser::BrowserState,
+    components::control_center::{ControlCenter, ControlCenterProps},
+    control_center::{
+        ControlCenterAction, ControlCenterPointerResult, ControlCenterSlider, ControlCenterState,
+    },
+    input::PointerAction,
     reader::ReaderState,
     reader_page::paint_reader_page,
     reading_history::ReadingHistoryState,
@@ -38,6 +43,7 @@ pub struct InkPaperApp {
     reading_history: ReadingHistoryState,
     system_status: SystemStatus,
     frontlight: FrontlightState,
+    control_center: ControlCenterState,
     reader_return: Screen,
 }
 
@@ -50,6 +56,7 @@ impl Default for InkPaperApp {
             reading_history: ReadingHistoryState::default(),
             system_status: SystemStatus::default(),
             frontlight: FrontlightState::default(),
+            control_center: ControlCenterState::default(),
             reader_return: Screen::BrowseFiles,
         }
     }
@@ -400,7 +407,7 @@ impl InkPaperApp {
     pub fn apply_battery_status(&mut self, battery: BatteryStatus, cx: &mut Context<'_, Self>) {
         let visible_changed = self.system_status.set_battery(battery);
 
-        if visible_changed && self.screen != Screen::Reader {
+        if visible_changed && (self.screen != Screen::Reader || self.control_center.is_open()) {
             cx.notify();
         }
     }
@@ -412,7 +419,7 @@ impl InkPaperApp {
         //
         // Keeping RTC updates out of the Reader avoids waking the e-ink display
         // once per minute while somebody is reading.
-        if changed && self.screen == Screen::Settings {
+        if changed && (self.screen == Screen::Settings || self.control_center.is_open()) {
             cx.notify();
         }
     }
@@ -423,6 +430,150 @@ impl InkPaperApp {
 
     pub(crate) fn take_frontlight_request(&mut self) -> Option<FrontlightSetting> {
         self.frontlight.take_request()
+    }
+
+    pub(crate) fn handle_previous_input(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if self.control_center.is_open() {
+            // CrossInk uses +/- 5 for the physical side buttons.
+            if self.frontlight.adjust_brightness(-5) {
+                cx.notify();
+            }
+
+            return true;
+        }
+
+        self.reader_previous_page(cx)
+    }
+
+    pub(crate) fn handle_next_input(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if self.control_center.is_open() {
+            if self.frontlight.adjust_brightness(5) {
+                cx.notify();
+            }
+
+            return true;
+        }
+
+        self.reader_next_page(cx)
+    }
+
+    pub(crate) fn handle_home_input(&mut self, cx: &mut Context<'_, Self>) {
+        if self.control_center.close() {
+            cx.notify();
+            return;
+        }
+
+        self.navigate_home(cx);
+    }
+
+    pub(crate) const fn allows_focus_navigation(&self) -> bool {
+        !self.control_center.is_open()
+    }
+
+    pub(crate) const fn allows_wheel_scroll(&self) -> bool {
+        !self.control_center.is_open()
+    }
+
+    pub(crate) const fn handle_confirm_down(&self) -> bool {
+        self.control_center.is_open()
+    }
+
+    pub(crate) fn handle_confirm_up(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if !self.control_center.is_open() {
+            return false;
+        }
+
+        if self.frontlight.toggle() {
+            cx.notify();
+        }
+
+        true
+    }
+
+    pub(crate) fn handle_pointer_down(
+        &mut self,
+        position: Point,
+        cx: &mut Context<'_, Self>,
+    ) -> PointerAction {
+        let result = self.control_center.pointer_down(position);
+
+        self.apply_control_center_pointer_result(result, PointerAction::Activate, cx)
+    }
+
+    pub(crate) fn handle_pointer_drag(
+        &mut self,
+        origin: Point,
+        position: Point,
+        cx: &mut Context<'_, Self>,
+    ) -> PointerAction {
+        let result = self.control_center.pointer_drag(origin, position);
+
+        self.apply_control_center_pointer_result(result, PointerAction::Scroll, cx)
+    }
+
+    pub(crate) fn handle_pointer_up(
+        &mut self,
+        position: Point,
+        cx: &mut Context<'_, Self>,
+    ) -> PointerAction {
+        let result = self.control_center.pointer_up(position);
+
+        self.apply_control_center_pointer_result(result, PointerAction::Activate, cx)
+    }
+
+    pub(crate) fn cancel_pointer_input(&mut self) {
+        self.control_center.cancel_pointer();
+    }
+
+    fn apply_control_center_pointer_result(
+        &mut self,
+        result: ControlCenterPointerResult,
+        pass: PointerAction,
+        cx: &mut Context<'_, Self>,
+    ) -> PointerAction {
+        match result {
+            ControlCenterPointerResult::Pass => pass,
+
+            ControlCenterPointerResult::Capture => PointerAction::Capture,
+
+            ControlCenterPointerResult::Opened | ControlCenterPointerResult::Closed => {
+                cx.notify();
+                PointerAction::Capture
+            }
+
+            ControlCenterPointerResult::Slider { slider, value } => {
+                let changed = match slider {
+                    ControlCenterSlider::Brightness => self.frontlight.set_brightness(value),
+                    ControlCenterSlider::Warmth => self.frontlight.set_warmth(value),
+                };
+
+                if changed {
+                    cx.notify();
+                }
+
+                PointerAction::Capture
+            }
+
+            ControlCenterPointerResult::Action(action) => {
+                let changed = match action {
+                    ControlCenterAction::AdjustBrightness(delta) => {
+                        self.frontlight.adjust_brightness(delta)
+                    }
+
+                    ControlCenterAction::AdjustWarmth(delta) => {
+                        self.frontlight.adjust_warmth(delta)
+                    }
+
+                    ControlCenterAction::ToggleFrontlight => self.frontlight.toggle(),
+                };
+
+                if changed {
+                    cx.notify();
+                }
+
+                PointerAction::Capture
+            }
+        }
     }
 }
 
@@ -482,69 +633,88 @@ impl Render for InkPaperApp {
 
         let battery = self.system_status.battery();
         let clock = self.system_status.clock();
+        let control_center_open = self.control_center.is_open();
+        let frontlight = self.frontlight.setting();
+
+        let reader_title = if self.screen == Screen::Reader {
+            Some(self.reader.title())
+        } else {
+            None
+        };
 
         rsx! {
-            {#if self.screen == Screen::Home}
-                <HomeScreen
-                    current_book={self.reading_history.current()}
-                    battery={battery}
-                    on_current_book={current_book}
-                    on_browse_files={browse_files}
-                    on_recent_books={recent_books}
-                    on_file_transfer={file_transfer}
-                    on_settings={settings}
-                />
-            {:else if self.screen == Screen::BrowseFiles}
-                <BrowseFilesScreen
-                    title={self.browser.title()}
-                    path={self.browser.path()}
-                    entries={self.browser.entries()}
-                    entry_listeners={browse_entry_listeners}
-                    revision={self.browser.revision()}
-                    error={self.browser.error()}
-                    battery={battery}
-                    on_back={browse_back}
-                />
-            {:else if self.screen == Screen::Reader}
-                <ReaderScreen
-                    title={self.reader.title()}
-                    creator={self.reader.creator()}
-                    status={self.reader.status()}
-                    detail={self.reader.detail()}
-                    path={self.reader.path()}
-                    page_canvas={reader_page_canvas}
-                    page_label={self.reader.page_label()}
-                    section_label={self.reader.section_label()}
-                    controls_visible={self.reader.controls_visible()}
-                    font_size={self.reader.font_size()}
-                    on_decrease_font_size={reader_decrease_font_size}
-                    on_increase_font_size={reader_increase_font_size}
-                    on_previous_page={reader_previous_page}
-                    on_toggle_controls={reader_toggle_controls}
-                    on_next_page={reader_next_page}
-                    on_back={reader_back}
-                />
-            {:else if self.screen == Screen::RecentBooks}
-                <RecentBooksScreen
-                    entries={self.reading_history.entries()}
-                    entry_listeners={recent_book_listeners}
-                    revision={self.reading_history.revision()}
-                    error={self.reading_history.error()}
-                    battery={battery}
-                    on_back={home}
-                />
-            {:else if self.screen == Screen::FileTransfer}
-                <FileTransferScreen
-                    battery={battery}
-                    on_back={home}
-                />
-            {:else}
-                <SettingsScreen
-                    battery={battery}
-                    clock={clock}
-                    on_back={home}
-                />
-            {/if}
+            <div class="relative w-[480px] h-[800px] bg-white">
+                {#if self.screen == Screen::Home}
+                    <HomeScreen
+                        current_book={self.reading_history.current()}
+                        battery={battery}
+                        on_current_book={current_book}
+                        on_browse_files={browse_files}
+                        on_recent_books={recent_books}
+                        on_file_transfer={file_transfer}
+                        on_settings={settings}
+                    />
+                {:else if self.screen == Screen::BrowseFiles}
+                    <BrowseFilesScreen
+                        title={self.browser.title()}
+                        path={self.browser.path()}
+                        entries={self.browser.entries()}
+                        entry_listeners={browse_entry_listeners}
+                        revision={self.browser.revision()}
+                        error={self.browser.error()}
+                        battery={battery}
+                        on_back={browse_back}
+                    />
+                {:else if self.screen == Screen::Reader}
+                    <ReaderScreen
+                        title={self.reader.title()}
+                        creator={self.reader.creator()}
+                        status={self.reader.status()}
+                        detail={self.reader.detail()}
+                        path={self.reader.path()}
+                        page_canvas={reader_page_canvas}
+                        page_label={self.reader.page_label()}
+                        section_label={self.reader.section_label()}
+                        controls_visible={self.reader.controls_visible()}
+                        font_size={self.reader.font_size()}
+                        on_decrease_font_size={reader_decrease_font_size}
+                        on_increase_font_size={reader_increase_font_size}
+                        on_previous_page={reader_previous_page}
+                        on_toggle_controls={reader_toggle_controls}
+                        on_next_page={reader_next_page}
+                        on_back={reader_back}
+                    />
+                {:else if self.screen == Screen::RecentBooks}
+                    <RecentBooksScreen
+                        entries={self.reading_history.entries()}
+                        entry_listeners={recent_book_listeners}
+                        revision={self.reading_history.revision()}
+                        error={self.reading_history.error()}
+                        battery={battery}
+                        on_back={home}
+                    />
+                {:else if self.screen == Screen::FileTransfer}
+                    <FileTransferScreen
+                        battery={battery}
+                        on_back={home}
+                    />
+                {:else}
+                    <SettingsScreen
+                        battery={battery}
+                        clock={clock}
+                        on_back={home}
+                    />
+                {/if}
+
+                {#if control_center_open}
+                    <ControlCenter
+                        battery={battery}
+                        clock={clock}
+                        reader_title={reader_title}
+                        setting={frontlight}
+                    />
+                {/if}
+            </div>
         }
     }
 }

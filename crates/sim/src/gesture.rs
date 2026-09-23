@@ -1,67 +1,77 @@
-use embedded_graphics::geometry::Point as EgPoint;
 use embedded_graphics_simulator::sdl2::MouseWheelDirection;
 use inkpaper_ui::prelude::*;
 
-const POINTER_DRAG_THRESHOLD_PX: u32 = 12;
-const WHEEL_SCROLL_STEP_PX: i32 = 64;
+const DRAG_THRESHOLD_PX: i32 = 12;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DragUpdate {
+    pub(crate) origin: Point,
+    pub(crate) previous: Point,
+    pub(crate) position: Point,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PointerRelease {
+    None,
+    Tap(Point),
+    Drag {
+        origin: Point,
+        previous: Point,
+        position: Point,
+    },
+}
 
 #[derive(Debug, Default)]
-pub struct PointerGesture {
+pub(crate) struct PointerGesture {
     origin: Option<Point>,
     previous: Option<Point>,
     dragging: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct DragUpdate {
-    pub origin: Point,
-    pub delta: Offset,
-    pub started: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum PointerRelease {
-    None,
-    Tap(Point),
-    Drag { origin: Point, delta: Offset },
-}
-
 impl PointerGesture {
-    pub fn begin(&mut self, position: Point) {
+    pub(crate) fn begin(&mut self, position: Point) {
         self.origin = Some(position);
         self.previous = Some(position);
         self.dragging = false;
     }
 
-    pub fn move_to(&mut self, position: Point) -> Option<DragUpdate> {
+    pub(crate) fn move_to(&mut self, position: Point) -> Option<DragUpdate> {
         let origin = self.origin?;
-        let previous = self.previous.replace(position).unwrap_or(origin);
 
         if self.dragging {
+            let previous = self.previous.unwrap_or(origin);
+            self.previous = Some(position);
+
+            if previous == position {
+                return None;
+            }
+
             return Some(DragUpdate {
                 origin,
-                delta: previous - position,
-                started: false,
+                previous,
+                position,
             });
         }
 
-        if !pointer_drag_threshold_reached(origin, position) {
+        self.previous = Some(position);
+
+        if !drag_threshold_reached(origin, position) {
             return None;
         }
 
         self.dragging = true;
 
+        // Match the firmware: the first emitted update includes all movement
+        // accumulated before the threshold was crossed.
         Some(DragUpdate {
             origin,
-            delta: origin - position,
-            started: true,
+            previous: origin,
+            position,
         })
     }
 
-    pub fn finish(&mut self, position: Point) -> PointerRelease {
+    pub(crate) fn finish(&mut self, position: Point) -> PointerRelease {
         let Some(origin) = self.origin.take() else {
-            self.previous = None;
-            self.dragging = false;
             return PointerRelease::None;
         };
 
@@ -70,17 +80,11 @@ impl PointerGesture {
 
         self.dragging = false;
 
-        if was_dragging {
+        if was_dragging || drag_threshold_reached(origin, position) {
             return PointerRelease::Drag {
                 origin,
-                delta: previous - position,
-            };
-        }
-
-        if pointer_drag_threshold_reached(origin, position) {
-            return PointerRelease::Drag {
-                origin,
-                delta: origin - position,
+                previous: if was_dragging { previous } else { origin },
+                position,
             };
         }
 
@@ -88,21 +92,20 @@ impl PointerGesture {
     }
 }
 
-fn pointer_drag_threshold_reached(origin: Point, position: Point) -> bool {
-    origin.x.get().abs_diff(position.x.get()) >= POINTER_DRAG_THRESHOLD_PX
-        || origin.y.get().abs_diff(position.y.get()) >= POINTER_DRAG_THRESHOLD_PX
+fn drag_threshold_reached(origin: Point, position: Point) -> bool {
+    (origin.x.get() - position.x.get()).abs() >= DRAG_THRESHOLD_PX
+        || (origin.y.get() - position.y.get()).abs() >= DRAG_THRESHOLD_PX
 }
 
-pub fn wheel_scroll_offset(scroll_delta: EgPoint, direction: MouseWheelDirection) -> Offset {
-    let vertical_steps = match direction {
-        MouseWheelDirection::Flipped => scroll_delta.y,
-        MouseWheelDirection::Normal | MouseWheelDirection::Unknown(_) => {
-            scroll_delta.y.saturating_mul(-1)
-        }
+pub(crate) fn wheel_scroll_offset(
+    delta: embedded_graphics::geometry::Point,
+    direction: MouseWheelDirection,
+) -> Offset {
+    let multiplier = match direction {
+        MouseWheelDirection::Normal => 1,
+        MouseWheelDirection::Flipped => -1,
+        MouseWheelDirection::Unknown(_) => 1,
     };
 
-    Offset::new(
-        px(0),
-        px(vertical_steps.saturating_mul(WHEEL_SCROLL_STEP_PX)),
-    )
+    Offset::new(px(delta.x * multiplier * 24), px(delta.y * multiplier * 24))
 }

@@ -1,3 +1,4 @@
+pub(crate) mod control_center;
 pub(crate) mod current_book_card;
 pub(crate) mod file_row;
 pub(crate) mod header;

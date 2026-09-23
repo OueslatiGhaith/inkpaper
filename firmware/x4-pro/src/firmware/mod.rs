@@ -16,7 +16,8 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use inkpaper_app::{
-    AppService, BatteryStatus as AppBatteryStatus, ClockStatus as AppClockStatus, InkPaperApp,
+    AppInputEvent, AppService, BatteryStatus as AppBatteryStatus, ClockStatus as AppClockStatus,
+    InkPaperApp,
 };
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
@@ -432,31 +433,9 @@ async fn stay_alive() -> ! {
     }
 }
 
-fn handle_previous_button(runtime: &mut UiRuntime, app: Entity<InkPaperApp>) {
-    let handled = match runtime.update(app, |app, cx| app.reader_previous_page(cx)) {
-        Ok(handled) => handled,
-        Err(_) => {
-            warn!("failed to dispatch previous reader page");
-            false
-        }
-    };
-
-    if !handled {
-        runtime.focus_previous();
-    }
-}
-
-fn handle_next_button(runtime: &mut UiRuntime, app: Entity<InkPaperApp>) {
-    let handled = match runtime.update(app, |app, cx| app.reader_next_page(cx)) {
-        Ok(handled) => handled,
-        Err(_) => {
-            warn!("failed to dispatch next reader page");
-            false
-        }
-    };
-
-    if !handled {
-        runtime.focus_next();
+fn dispatch_app_input(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: AppInputEvent) {
+    if inkpaper_app::dispatch_input(runtime, app, event).is_err() {
+        warn!("failed to dispatch application input");
     }
 }
 
@@ -475,37 +454,33 @@ fn handle_input_event(
         InputEvent::Button(event)
             if event.button() == Button::Left && event.edge() == ButtonEdge::Pressed =>
         {
-            handle_previous_button(runtime, app);
+            dispatch_app_input(runtime, app, AppInputEvent::Previous);
+
             InputAction::Continue
         }
 
         InputEvent::Button(event)
             if event.button() == Button::Right && event.edge() == ButtonEdge::Pressed =>
         {
-            handle_next_button(runtime, app);
+            dispatch_app_input(runtime, app, AppInputEvent::Next);
+
             InputAction::Continue
         }
 
         InputEvent::Touch(TouchEvent::Down(position)) => {
-            runtime.begin_activation_at(ui_point(position));
+            dispatch_app_input(runtime, app, AppInputEvent::PointerDown(ui_point(position)));
+
             InputAction::Continue
         }
 
         InputEvent::Touch(TouchEvent::Up(position)) => {
-            if runtime.complete_activation_at(ui_point(position)).is_err() {
-                warn!("touch activation callback failed");
-            }
+            dispatch_app_input(runtime, app, AppInputEvent::PointerUp(ui_point(position)));
 
             InputAction::Continue
         }
 
         InputEvent::Touch(TouchEvent::HomeTap) => {
-            if runtime
-                .update(app, |app, cx| app.navigate_home(cx))
-                .is_err()
-            {
-                warn!("failed to navigate home");
-            }
+            dispatch_app_input(runtime, app, AppInputEvent::Home);
 
             InputAction::Continue
         }
@@ -515,15 +490,15 @@ fn handle_input_event(
             previous,
             position,
         }) => {
-            runtime.cancel_activation();
-
-            let origin = ui_point(origin);
-            let previous = ui_point(previous);
-            let position = ui_point(position);
-
-            // Keep the initial touch point for hit-testing the scroll container, but
-            // apply the movement since the previous touch sample
-            runtime.scroll_at(origin, previous - position);
+            dispatch_app_input(
+                runtime,
+                app,
+                AppInputEvent::PointerDrag {
+                    origin: ui_point(origin),
+                    previous: ui_point(previous),
+                    position: ui_point(position),
+                },
+            );
 
             InputAction::Continue
         }
