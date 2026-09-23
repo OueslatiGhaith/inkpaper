@@ -26,7 +26,10 @@ pub use system::{BatteryStatus, ClockStatus};
 // keep these available through `crate::...` so the existing internal modules don't need
 // artificial public APIs, while preventing platform wrappers from depending on them.
 pub(crate) use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
-pub(crate) use frontlight::FrontlightState;
+pub(crate) use frontlight::{
+    FrontlightPreferences, FrontlightPreferencesError, FrontlightPreferencesRequest,
+    FrontlightState,
+};
 pub use input::{AppInputError, AppInputEvent, dispatch_input};
 pub(crate) use reader::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderLoadError, ReaderPreferences,

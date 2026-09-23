@@ -3,9 +3,10 @@ use inkpaper_epub::SpineIndex;
 use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
-    BatteryStatus, BrowseListing, BrowseRequest, ClockStatus, FrontlightSetting, FrontlightState,
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
-    ReaderPreferencesRequest, ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
+    BatteryStatus, BrowseListing, BrowseRequest, ClockStatus, FrontlightPreferences,
+    FrontlightPreferencesRequest, FrontlightSetting, FrontlightState, ReaderChapter,
+    ReaderChapterDirection, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
+    ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
     browser::BrowserState,
     components::control_center::{ControlCenter, ControlCenterProps},
     control_center::{
@@ -424,12 +425,28 @@ impl InkPaperApp {
         }
     }
 
+    pub(crate) fn apply_frontlight_preferences(
+        &mut self,
+        preferences: FrontlightPreferences,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.frontlight.apply_preferences(preferences) {
+            cx.notify();
+        }
+    }
+
     pub fn request_frontlight_apply(&mut self) {
         self.frontlight.request_apply();
     }
 
     pub(crate) fn take_frontlight_request(&mut self) -> Option<FrontlightSetting> {
         self.frontlight.take_request()
+    }
+
+    pub(crate) fn take_frontlight_preferences_request(
+        &mut self,
+    ) -> Option<FrontlightPreferencesRequest> {
+        self.frontlight.take_preferences_request()
     }
 
     pub(crate) fn handle_previous_input(&mut self, cx: &mut Context<'_, Self>) -> bool {
@@ -459,6 +476,7 @@ impl InkPaperApp {
 
     pub(crate) fn handle_home_input(&mut self, cx: &mut Context<'_, Self>) {
         if self.control_center.close() {
+            self.frontlight.request_persist();
             cx.notify();
             return;
         }
@@ -536,7 +554,13 @@ impl InkPaperApp {
 
             ControlCenterPointerResult::Capture => PointerAction::Capture,
 
-            ControlCenterPointerResult::Opened | ControlCenterPointerResult::Closed => {
+            ControlCenterPointerResult::Opened => {
+                cx.notify();
+                PointerAction::Capture
+            }
+
+            ControlCenterPointerResult::Closed => {
+                self.frontlight.request_persist();
                 cx.notify();
                 PointerAction::Capture
             }

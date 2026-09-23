@@ -4,12 +4,15 @@ use inkpaper_epub::EpubSource;
 use inkpaper_ui::{Entity, EntityAccessError, ResourceRuntimeApi, RuntimeApi};
 
 use crate::{
-    BrowseEntry, BrowseListing, BrowseRequest, FrontlightSetting, InkPaperApp, ReaderPreferences,
-    ReaderPreferencesRequest, ReaderRequest, ReaderSession, ReadingHistory, ReadingHistoryRequest,
+    BrowseEntry, BrowseListing, BrowseRequest, FrontlightPreferences, FrontlightPreferencesRequest,
+    FrontlightSetting, InkPaperApp, ReaderPreferences, ReaderPreferencesRequest, ReaderRequest,
+    ReaderSession, ReadingHistory, ReadingHistoryRequest,
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
 const READER_PREFERENCES_STATE: &str = "reader-preferences.dat";
+const FRONTLIGHT_PREFERENCES_STATE: &str = "frontlight-preferences.dat";
+const MAX_FRONTLIGHT_PREFERENCES_BYTES: usize = 64;
 
 const MAX_READING_HISTORY_BYTES: usize = 64 * 1024;
 const MAX_READER_PREFERENCES_BYTES: usize = 256;
@@ -93,9 +96,11 @@ where
 
     history: ReadingHistory,
     preferences: ReaderPreferences,
+    frontlight_preferences: FrontlightPreferences,
 
     history_dirty: bool,
     preferences_dirty: bool,
+    frontlight_preferences_dirty: bool,
 
     initialized: bool,
 }
@@ -108,10 +113,15 @@ where
         Self {
             platform,
             reader_session: None,
+
             history: ReadingHistory::default(),
             preferences: ReaderPreferences::default(),
+            frontlight_preferences: FrontlightPreferences::default(),
+
             history_dirty: false,
             preferences_dirty: false,
+            frontlight_preferences_dirty: false,
+
             initialized: false,
         }
     }
@@ -127,17 +137,23 @@ where
         self.ensure_initialized(runtime, app).await?;
 
         loop {
-            let (frontlight_request, preferences_request) = runtime.update(app, |app, _| {
-                (
-                    app.take_frontlight_request(),
-                    app.take_reader_preferences_request(),
-                )
-            })?;
+            let frontlight_request = runtime.update(app, |app, _| app.take_frontlight_request())?;
 
             if let Some(setting) = frontlight_request {
                 let _ = self.platform.set_frontlight(setting).await;
                 continue;
             }
+
+            let frontlight_preferences_request =
+                runtime.update(app, |app, _| app.take_frontlight_preferences_request())?;
+
+            if let Some(request) = frontlight_preferences_request {
+                self.service_frontlight_preferences_request(request).await;
+                continue;
+            }
+
+            let preferences_request =
+                runtime.update(app, |app, _| app.take_reader_preferences_request())?;
 
             if let Some(request) = preferences_request {
                 self.service_reader_preferences_request(runtime, app, request)
@@ -179,8 +195,9 @@ where
     pub async fn flush(&mut self) -> bool {
         let history_saved = self.persist_history().await;
         let preferences_saved = self.persist_preferences().await;
+        let frontlight_preferences_saved = self.persist_frontlight_preferences().await;
 
-        history_saved && preferences_saved
+        history_saved && preferences_saved && frontlight_preferences_saved
     }
 
     async fn ensure_initialized<'resource, R>(
@@ -197,11 +214,14 @@ where
 
         self.history = self.load_history().await;
         self.preferences = self.load_preferences().await;
+        self.frontlight_preferences = self.load_frontlight_preferences().await;
 
         let entries = self.history.entries().to_vec();
         let preferences = self.preferences;
+        let frontlight_preferences = self.frontlight_preferences;
 
         runtime.update(app, move |app, cx| {
+            app.apply_frontlight_preferences(frontlight_preferences, cx);
             app.apply_reader_preferences(preferences, cx);
             app.apply_reading_history(entries, cx);
         })?;
@@ -239,6 +259,24 @@ where
         };
 
         ReaderPreferences::decode(&bytes).unwrap_or_default()
+    }
+
+    async fn load_frontlight_preferences(&mut self) -> FrontlightPreferences {
+        let bytes = match self
+            .platform
+            .load_state(
+                FRONTLIGHT_PREFERENCES_STATE,
+                MAX_FRONTLIGHT_PREFERENCES_BYTES,
+            )
+            .await
+        {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) | Err(_) => {
+                return FrontlightPreferences::default();
+            }
+        };
+
+        FrontlightPreferences::decode(&bytes).unwrap_or_default()
     }
 
     async fn service_browse_request<R>(
@@ -492,6 +530,26 @@ where
         Ok(())
     }
 
+    async fn service_frontlight_preferences_request(
+        &mut self,
+        request: FrontlightPreferencesRequest,
+    ) {
+        match request {
+            FrontlightPreferencesRequest::Update(preferences) => {
+                if self.frontlight_preferences == preferences {
+                    return;
+                }
+
+                self.frontlight_preferences = preferences;
+                self.frontlight_preferences_dirty = true;
+            }
+
+            FrontlightPreferencesRequest::Persist => {
+                self.persist_frontlight_preferences().await;
+            }
+        }
+    }
+
     async fn persist_history(&mut self) -> bool {
         if !self.history_dirty {
             return true;
@@ -534,6 +592,29 @@ where
         }
 
         self.preferences_dirty = false;
+
+        true
+    }
+
+    async fn persist_frontlight_preferences(&mut self) -> bool {
+        if !self.frontlight_preferences_dirty {
+            return true;
+        }
+
+        let Ok(bytes) = self.frontlight_preferences.encode() else {
+            return false;
+        };
+
+        if self
+            .platform
+            .save_state(FRONTLIGHT_PREFERENCES_STATE, &bytes)
+            .await
+            .is_err()
+        {
+            return false;
+        }
+
+        self.frontlight_preferences_dirty = false;
 
         true
     }

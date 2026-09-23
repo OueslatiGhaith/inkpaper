@@ -1,3 +1,9 @@
+use alloc::vec::Vec;
+
+use serde::{Deserialize, Serialize};
+
+const STORAGE_VERSION: u8 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrontlightSetting {
     brightness: u8,
@@ -41,15 +47,121 @@ impl Default for FrontlightSetting {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrontlightPreferences {
+    setting: FrontlightSetting,
+    restore_on_wake: bool,
+}
+
+impl FrontlightPreferences {
+    const fn startup_setting(self) -> FrontlightSetting {
+        FrontlightSetting {
+            brightness: self.setting.brightness,
+            warmth: self.setting.warmth,
+            on: self.setting.on && self.restore_on_wake,
+        }
+    }
+
+    pub(crate) fn encode(self) -> Result<Vec<u8>, FrontlightPreferencesError> {
+        let stored = StoredFrontlightPreferences {
+            version: STORAGE_VERSION,
+            brightness: self.setting.brightness,
+            warmth: self.setting.warmth,
+            on: self.setting.on,
+            restore_on_wake: self.restore_on_wake,
+        };
+
+        postcard::to_allocvec(&stored).map_err(|_| FrontlightPreferencesError::Encode)
+    }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, FrontlightPreferencesError> {
+        let (stored, remainder) = postcard::take_from_bytes::<StoredFrontlightPreferences>(bytes)
+            .map_err(|_| FrontlightPreferencesError::Decode)?;
+
+        if !remainder.is_empty() {
+            return Err(FrontlightPreferencesError::TrailingData);
+        }
+
+        if stored.version != STORAGE_VERSION {
+            return Err(FrontlightPreferencesError::UnsupportedVersion(
+                stored.version,
+            ));
+        }
+
+        let setting = FrontlightSetting::new(stored.brightness, stored.warmth, stored.on).ok_or(
+            FrontlightPreferencesError::InvalidSetting {
+                brightness: stored.brightness,
+                warmth: stored.warmth,
+            },
+        )?;
+
+        Ok(Self {
+            setting,
+            restore_on_wake: stored.restore_on_wake,
+        })
+    }
+}
+
+impl Default for FrontlightPreferences {
+    fn default() -> Self {
+        Self {
+            setting: FrontlightSetting::default(),
+            // restore a light that was on before sleep.
+            restore_on_wake: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrontlightPreferencesRequest {
+    Update(FrontlightPreferences),
+    Persist,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrontlightPreferencesError {
+    Encode,
+    Decode,
+    UnsupportedVersion(u8),
+    InvalidSetting { brightness: u8, warmth: u8 },
+    TrailingData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredFrontlightPreferences {
+    version: u8,
+    brightness: u8,
+    warmth: u8,
+    on: bool,
+    restore_on_wake: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct FrontlightState {
     setting: FrontlightSetting,
+    preferences: FrontlightPreferences,
     pending: Option<FrontlightSetting>,
+    pending_preferences: Option<FrontlightPreferences>,
+    persist_requested: bool,
 }
 
 impl FrontlightState {
     pub(crate) const fn setting(&self) -> FrontlightSetting {
         self.setting
+    }
+
+    pub(crate) fn apply_preferences(&mut self, preferences: FrontlightPreferences) -> bool {
+        let setting = preferences.startup_setting();
+
+        let changed = self.setting != setting || self.preferences != preferences;
+
+        self.setting = setting;
+        self.preferences = preferences;
+        self.pending = None;
+        self.pending_preferences = None;
+        self.persist_requested = false;
+
+        changed
     }
 
     pub(crate) fn request_apply(&mut self) {
@@ -58,6 +170,23 @@ impl FrontlightState {
 
     pub(crate) fn take_request(&mut self) -> Option<FrontlightSetting> {
         self.pending.take()
+    }
+
+    pub(crate) fn take_preferences_request(&mut self) -> Option<FrontlightPreferencesRequest> {
+        if let Some(preferences) = self.pending_preferences.take() {
+            return Some(FrontlightPreferencesRequest::Update(preferences));
+        }
+
+        if self.persist_requested {
+            self.persist_requested = false;
+            return Some(FrontlightPreferencesRequest::Persist);
+        }
+
+        None
+    }
+
+    pub(crate) fn request_persist(&mut self) {
+        self.persist_requested = true;
     }
 
     pub(crate) fn set_brightness(&mut self, brightness: u8) -> bool {
@@ -104,7 +233,26 @@ impl FrontlightState {
         }
 
         self.setting = setting;
+
+        self.preferences.setting = setting;
+
         self.pending = Some(setting);
+        self.pending_preferences = Some(self.preferences);
+
         true
+    }
+}
+
+impl Default for FrontlightState {
+    fn default() -> Self {
+        let preferences = FrontlightPreferences::default();
+
+        Self {
+            setting: preferences.startup_setting(),
+            preferences,
+            pending: None,
+            pending_preferences: None,
+            persist_requested: false,
+        }
     }
 }
