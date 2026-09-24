@@ -4,3 +4,4 @@ pub(crate) mod home;
 pub(crate) mod reader;
 pub(crate) mod recent_books;
 pub(crate) mod settings;
+pub(crate) mod sleep;

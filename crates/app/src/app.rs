@@ -24,6 +24,7 @@ use crate::{
         reader::{ReaderScreen, ReaderScreenProps},
         recent_books::{RecentBooksScreen, RecentBooksScreenProps},
         settings::{SettingsScreen, SettingsScreenProps},
+        sleep::{SleepScreen, SleepScreenProps},
     },
     system::SystemStatus,
 };
@@ -36,6 +37,7 @@ enum Screen {
     RecentBooks,
     FileTransfer,
     Settings,
+    Sleep,
 }
 
 pub struct InkPaperApp {
@@ -678,6 +680,19 @@ impl InkPaperApp {
     fn file_transfer_blocks_input(&self) -> bool {
         self.screen == Screen::FileTransfer && self.file_transfer.blocks_input()
     }
+
+    pub fn prepare_for_sleep(&mut self, cx: &mut Context<'_, Self>) {
+        if self.control_center.close() {
+            self.frontlight.request_persist();
+        }
+
+        if self.screen == Screen::Sleep {
+            return;
+        }
+
+        self.screen = Screen::Sleep;
+        cx.notify();
+    }
 }
 
 impl Render for InkPaperApp {
@@ -806,12 +821,14 @@ impl Render for InkPaperApp {
                         on_back={file_transfer_back}
                         on_usb_drive={usb_drive}
                     />
-                {:else}
+                {:else if self.screen == Screen::Settings}
                     <SettingsScreen
                         battery={battery}
                         clock={clock}
                         on_back={home}
                     />
+                {:else}
+                    <SleepScreen />
                 {/if}
 
                 {#if control_center_open}

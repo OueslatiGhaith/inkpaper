@@ -131,4 +131,23 @@ impl DisplayPowerManager {
     fn arm_idle_at(&mut self, now: Instant) {
         self.idle_deadline = Some(now.saturating_add(UC8179_IDLE_GRACE));
     }
+
+    pub(crate) async fn present_sleep<B, D>(
+        &mut self,
+        panel: &mut X4Panel,
+        bus: &mut B,
+        delay: &mut D,
+        frame: &FramebufferStorage,
+        update: FrameUpdate,
+    ) -> Result<(), DisplayError<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.idle_deadline = None;
+
+        panel
+            .present(bus, delay, frame, update, PresentPower::TurnOff)
+            .await
+    }
 }

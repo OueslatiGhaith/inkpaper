@@ -1,6 +1,6 @@
 use defmt::{debug, error, info, warn};
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either4, Either5, select4, select5};
+use embassy_futures::select::{Either5, select5};
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
@@ -28,17 +28,18 @@ use crate::firmware::{
     buttons::{Buttons, button_task},
     display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
-    frontlight::{frontlight_off_and_wait, frontlight_task},
+    frontlight::frontlight_task,
     input::{
         Button, ButtonEdge, INPUT_EVENTS, InputEvent, PowerButtonEvent, TouchEvent, TouchPosition,
     },
     platform::X4Platform,
     power::PowerRails,
-    power_button::{ENTER_DEEP_SLEEP, power_button_task},
+    power_button::power_button_task,
     presenter::{Presenter, UiRuntime},
     probe::ProbePins,
     rtc::{RTC_UPDATES, RtcState, rtc_task},
-    sleep_pins::{hold_for_deep_sleep, release_display_reset_hold},
+    sleep_pins::release_display_reset_hold,
+    suspend::SuspendContext,
     touch::{TouchController, touch_task},
     usb_mass_storage::{USB_HOST_UPDATES, UsbHostState},
 };
@@ -61,6 +62,7 @@ mod refresh_policy;
 mod rtc;
 mod sleep_pins;
 mod storage;
+mod suspend;
 mod touch;
 mod usb_mass_storage;
 
@@ -345,52 +347,19 @@ async fn main(spawner: Spawner) -> ! {
         }
 
         if action == InputAction::Sleep {
-            info!("suspend: turning frontlight off");
-            frontlight_off_and_wait().await;
-
-            info!("suspend: flushing application state");
-
-            if !app_service.flush().await {
-                warn!("application state was not fully persisted");
-            }
-
-            info!("suspend: shutting down storage");
-            storage::shutdown_and_wait().await;
-            info!("suspend: storage shutdown complete");
-
-            info!("suspend: putting display controller to sleep");
-
-            // ORDER MATTERS:
-            // step 1:
-            // tell the actual display controller to enter its own low-power state
-            // while SPI, RESET, and the board rails are all still operational
-            panel.deep_sleep(&mut bus, &mut delay).await.unwrap();
-            info!("suspend: display controller asleep");
-
-            // step 2:
-            // the X4 PRO keeps the panel rail powered in deep sleep. Force RESET high
-            // before latching the pin so a sleeping UC controller can't drift back into
-            // an active state
-            bus.reset_high().unwrap();
-
-            // step 3:
-            // latch GPIO1, GPIO2, GPIO5, and GPIO14 while they are actively driven
-            // to those known states.
-            // the RTC pad-hold bits survive the ESP32-S3 deep-sleep interval and remain
-            // set until the next boot deliberately releases them
-            rails.prepare_for_deep_sleep();
-            hold_for_deep_sleep();
-            info!("suspend: board pins latched for deep sleep");
-
-            // step 5:
-            // the power task owns GPIO3 and LPWR. It waits for the current button press
-            // to be released, arms EXT0 LOW, then performs the final SoC deep-sleep
-            // transition
-            ENTER_DEEP_SLEEP.signal(());
-
-            // `power_button_task()` will take the MCU into deep sleep.
-            // nothing in this task should touch the hardware again
-            stay_alive().await;
+            suspend::enter(SuspendContext {
+                runtime,
+                app,
+                app_service: &mut app_service,
+                presenter: &mut presenter,
+                display_power: &mut display_power,
+                panel: &mut panel,
+                bus: &mut bus,
+                delay: &mut delay,
+                frame,
+                rails: &mut rails,
+            })
+            .await;
         }
 
         if action == InputAction::ForceRefresh {

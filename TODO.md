@@ -54,7 +54,7 @@
 - [x] flush app state before sleep
 - [x] change to long press
 - [ ] faster wakeup
-- [ ] sleep screen
+- [x] sleep screen
 
 ## Display
 

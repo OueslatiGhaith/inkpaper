@@ -40,6 +40,8 @@ pub trait EpdInterface {
     where
         D: DelayNs;
 
+    fn reset_high(&mut self) -> Result<(), Self::Error>;
+
     fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error>;
 
     async fn wait_busy<D>(
@@ -211,6 +213,10 @@ where
         delay.delay_ms(10).await;
 
         Ok(())
+    }
+
+    fn reset_high(&mut self) -> Result<(), Self::Error> {
+        SpiEpdBus::reset_high(self)
     }
 
     fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error> {

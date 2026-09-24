@@ -230,6 +230,10 @@ where
         result
     }
 
+    fn reset_high(&mut self) -> Result<(), Self::Error> {
+        self.inner.reset_high()
+    }
+
     fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error> {
         let result = self.inner.is_busy(polarity);
 
