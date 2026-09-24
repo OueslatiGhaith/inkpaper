@@ -29,7 +29,9 @@ use crate::firmware::{
     display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
     frontlight::{frontlight_off_and_wait, frontlight_task},
-    input::{Button, ButtonEdge, INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
+    input::{
+        Button, ButtonEdge, INPUT_EVENTS, InputEvent, PowerButtonEvent, TouchEvent, TouchPosition,
+    },
     platform::X4Platform,
     power::PowerRails,
     power_button::{ENTER_DEEP_SLEEP, power_button_task},
@@ -68,6 +70,7 @@ static UI_RUNTIME: StaticCell<UiRuntime> = StaticCell::new();
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputAction {
     Continue,
+    ForceRefresh,
     Sleep,
 }
 
@@ -383,6 +386,15 @@ async fn main(spawner: Spawner) -> ! {
             stay_alive().await;
         }
 
+        if action == InputAction::ForceRefresh {
+            info!("display: manual full refresh requested");
+
+            match runtime.update(app, |_, cx| cx.notify()) {
+                Ok(()) => presenter.request_full_refresh(),
+                Err(_) => warn!("failed to invalidate UI for manual full refresh"),
+            }
+        }
+
         if !runtime.render_invalidation().is_none() {
             display_power
                 .prepare(&mut panel, &mut bus, &mut delay)
@@ -445,11 +457,8 @@ fn handle_input_event(
     event: InputEvent,
 ) -> InputAction {
     match event {
-        InputEvent::Button(event)
-            if event.button() == Button::Power && event.edge() == ButtonEdge::Pressed =>
-        {
-            InputAction::Sleep
-        }
+        InputEvent::Power(PowerButtonEvent::LongPress) => InputAction::Sleep,
+        InputEvent::Power(PowerButtonEvent::ShortPress) => InputAction::ForceRefresh,
 
         InputEvent::Button(event)
             if event.button() == Button::Left && event.edge() == ButtonEdge::Pressed =>

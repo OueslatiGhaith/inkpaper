@@ -162,6 +162,7 @@ pub struct Presenter {
     refresh_policy: RefreshPolicy,
     panel_tone: EInkTone,
     next_frame_id: u32,
+    full_refresh_requested: bool,
 }
 
 impl Default for Presenter {
@@ -170,11 +171,16 @@ impl Default for Presenter {
             refresh_policy: RefreshPolicy::default(),
             panel_tone: EInkTone::Binary,
             next_frame_id: 1,
+            full_refresh_requested: false,
         }
     }
 }
 
 impl Presenter {
+    pub fn request_full_refresh(&mut self) {
+        self.full_refresh_requested = true;
+    }
+
     fn allocate_frame_id(&mut self) -> u32 {
         let frame_id = self.next_frame_id;
         self.next_frame_id = self.next_frame_id.wrapping_add(1);
@@ -238,12 +244,19 @@ impl Presenter {
 
         let presentation = self.presentation_mode(rendered, capabilities);
 
-        let refresh = self.refresh_policy.select(refresh_context(
-            rendered,
-            presentation,
-            capabilities,
-            self.panel_tone,
-        ));
+        let refresh = if self.full_refresh_requested {
+            self.full_refresh_requested = false;
+            self.refresh_policy.record_full_refresh();
+
+            RefreshRequest::Full
+        } else {
+            self.refresh_policy.select(refresh_context(
+                rendered,
+                presentation,
+                capabilities,
+                self.panel_tone,
+            ))
+        };
 
         self.record_presented_frame(rendered);
 

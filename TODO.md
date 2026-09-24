@@ -58,7 +58,7 @@
 
 ## Display
 
-- [ ] short press on power button to force refresh
+- [x] short press on power button to force refresh
 
 ## Settings
 

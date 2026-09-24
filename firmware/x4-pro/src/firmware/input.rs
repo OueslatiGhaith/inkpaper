@@ -9,7 +9,6 @@ pub static INPUT_EVENTS: Channel<CriticalSectionRawMutex, InputEvent, INPUT_QUEU
 pub enum Button {
     Left,
     Right,
-    Power,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +35,12 @@ impl ButtonEvent {
     pub const fn edge(self) -> ButtonEdge {
         self.edge
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerButtonEvent {
+    ShortPress,
+    LongPress,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,5 +79,6 @@ pub enum TouchEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputEvent {
     Button(ButtonEvent),
+    Power(PowerButtonEvent),
     Touch(TouchEvent),
 }
