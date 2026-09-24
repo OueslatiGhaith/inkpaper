@@ -1,39 +1,65 @@
 # TODO List
 
-- **reader**
-  - [ ] better typography, antialiasing, ligatures
-  - [ ] more CSS support
-  - [ ] epub 2/3 compatibility
-  - [ ] links and navigation
-  - [ ] footnotes
-  - [ ] bookmarks
-  - [ ] customization
-- **library**
-  - [ ] metadata and covers
-  - [ ] indexing?
-  - [ ] cache?
-  - [ ] search?
-  - [ ] fs ops: delete, move, rename, copy?
-- **settings**
-  - [ ] remove fake settings
-  - [ ] configurable controls
-- **power management**
-  - [ ] faster wakeup
-  - [ ] sleep screen
-  - [ ] power usage testing!
-- **fonts**
-  - [ ] load fonts from SD
-  - [ ] CJK and RTL
-- **book transfer**
-  - [ ] USB mass storage mode
-  - [ ] wifi web ui
-- **software update**
-  - [ ] OTA updates
-- **more formats**
-  - [ ] TXT
-  - [ ] images
-  - [ ] mangas?
-- **extra features/long term**
-  - [ ] reader dictionary
-  - [ ] dark mode
-  - [ ] localization
+## reader
+
+- [x] open EPUB files from local storage
+- [x] render EPUB xHTML/text
+- [x] basic EPUB CSS support
+- [x] render embedded EPUB images
+- [x] paginate reader content
+- [x] previous/next page navigation
+- [x] cross chapter boundaries while paging
+- [x] font size adjustment
+- [x] repaginate after font size change
+- [x] persist reader preferences
+- [x] reader status bar with title/page/section info
+- [x] resume a book from saved progress
+- [x] recent books can reopen saved books
+- [x] basic reader load/error state
+- [ ] harden EPUB compatibility for EPUB 2/3
+- [ ] more fixtures for EPUB 2/3
+
+## Home and Library
+
+- [x] Home screen
+- [x] current/continue reading book on home
+- [x] browse local filesystem
+- [x] open EPUB from file browser
+- [x] recent books screen
+- [x] persisted reading history
+- [x] basic browse error state
+- [ ] remove or hide library actions that are not functional
+
+## Frontlight
+
+- [x] on/off
+- [x] brigtness control
+- [x] warmth control
+- [x] live hardware update
+- [x] control center
+- [x] persistance
+- [x] restore persisted state at startup
+
+## Battery and Clock
+
+- [x] battery integration
+- [x] battery status in app
+- [x] RTC integration
+- [x] clock/date in app
+- [ ] set RTC state
+
+## Power management
+
+- [x] deep sleep on power button
+- [x] flush app state before sleep
+- [ ] change to long press
+- [ ] faster wakeup
+- [ ] sleep screen
+
+## Settings
+
+- [ ] remove fake settings
+
+## Book transfer
+
+- [ ] USB mass storage mode
