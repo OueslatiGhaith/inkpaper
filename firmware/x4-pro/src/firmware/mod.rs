@@ -61,6 +61,7 @@ mod rtc;
 mod sleep_pins;
 mod storage;
 mod touch;
+mod usb_mass_storage;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -126,6 +127,9 @@ async fn main(spawner: Spawner) -> ! {
             peripherals.GPIO42,
             peripherals.GPIO40,
             sd_power,
+            peripherals.USB_FS,
+            peripherals.GPIO20,
+            peripherals.GPIO19,
         )
         .unwrap(),
     );

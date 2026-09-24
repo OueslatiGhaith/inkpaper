@@ -1,9 +1,9 @@
 use aligned::{A4, Aligned};
 use block_device_driver::BlockDevice as RawBlockDevice;
-use defmt::{debug, error, info, warn};
+use defmt::{Debug2Format, debug, error, info, warn};
 use embassy_time::{Delay, Duration, Timer};
 use esp_hal::{
-    peripherals::{GPIO40, GPIO41, GPIO42, SDHOST},
+    peripherals::{GPIO19, GPIO20, GPIO40, GPIO41, GPIO42, SDHOST, USB_FS},
     sdmmc::{Config, SdHostController, SlotConfig},
 };
 use hadris_fat::r#async::FatVolume;
@@ -14,10 +14,11 @@ use crate::firmware::{
     storage::{
         partition::{SECTOR_SIZE, SdPartition, find_fat_partition},
         service::{
-            FilesystemExit, serve_filesystem, serve_unavailable_requests, signal_ready,
-            signal_shutdown_done, signal_usb_drive_ready,
+            FilesystemExit, serve_filesystem, serve_unavailable_requests, serve_usb_drive_requests,
+            signal_ready, signal_shutdown_done, signal_usb_drive_ready,
         },
     },
+    usb_mass_storage::{self, UsbMassStorageExit},
 };
 
 const TARGET_FREQUENCY_HZ: u32 = 40_000_000;
@@ -34,6 +35,9 @@ pub async fn storage_task(
     cmd: GPIO42<'static>,
     data0: GPIO40<'static>,
     mut sd_power: SdPower<'static>,
+    usb_fs: USB_FS<'static>,
+    usb_dp: GPIO20<'static>,
+    usb_dm: GPIO19<'static>,
 ) {
     info!("storage service starting",);
 
@@ -67,11 +71,16 @@ pub async fn storage_task(
         }
     };
 
-    run_storage(&mut slot, &mut sd_power).await;
+    run_storage(&mut slot, &mut sd_power, usb_fs, usb_dp, usb_dm).await;
 }
 
-async fn run_storage<B>(bus: &mut B, sd_power: &mut SdPower<'_>)
-where
+async fn run_storage<B>(
+    bus: &mut B,
+    sd_power: &mut SdPower<'_>,
+    usb_fs: USB_FS<'static>,
+    usb_dp: GPIO20<'static>,
+    usb_dm: GPIO19<'static>,
+) where
     B: MmcBus,
 {
     for attempt in 1..=MOUNT_ATTEMPTS {
@@ -167,22 +176,66 @@ where
             }
 
             FilesystemExit::UsbDrive => {
-                // The FAT filesystem and every FAT file handle are now gone, but
-                // the initialized raw SD block device remains alive.
-                //
-                // TODO: replaces this parked state with the USB MSC transport,
-                // using this same `card` directly.
-                let _raw_card = card;
+                signal_ready(false);
 
-                info!("FAT filesystem detached; raw SD card reserved for USB Drive");
+                let sector_count = match usb_sector_count(&mut card).await {
+                    Some(sector_count) => sector_count,
+                    None => {
+                        error!("USB drive cannot determine raw SD capacity");
 
+                        signal_usb_drive_ready(false);
+                        drop(card);
+                        serve_unavailable(sd_power).await;
+
+                        return;
+                    }
+                };
+
+                info!(
+                    "FAT filesystem detached, starting USB drive sectors={}",
+                    sector_count
+                );
+
+                // From this point until USB MSC exits, filesystem calls are unavailable.
+                // The raw card stays exclusively owned by this task
                 signal_usb_drive_ready(true);
 
-                // Do not power down the SD card and do not remount it.
-                // USB MSC will take over here in the next milestone.
-                hold_forever().await;
+                let exit = usb_mass_storage::run(
+                    &mut card,
+                    sector_count,
+                    usb_fs,
+                    usb_dp,
+                    usb_dm,
+                    serve_usb_drive_requests(),
+                )
+                .await;
 
-                return;
+                match exit {
+                    UsbMassStorageExit::Shutdown => {
+                        drop(card);
+                        sd_power.disable();
+
+                        info!("USB drive stopped for system shutdown");
+
+                        signal_shutdown_done();
+                        hold_forever().await;
+
+                        return;
+                    }
+                    UsbMassStorageExit::Ejected => {
+                        // The host has completed START STOP UNIT with LOEJ.
+                        // USB has already been disabled by `usb_mass_storage`.
+                        //
+                        // Rebooting is simpler and safer than trying to rebuild every
+                        // app-side storage/reader handle in place
+                        drop(card);
+                        sd_power.disable();
+
+                        info!("USB drive ejected, restarting");
+
+                        esp_hal::system::software_reset();
+                    }
+                }
             }
         }
     }
@@ -215,5 +268,38 @@ async fn power_cycle_sd(sd_power: &mut SdPower<'_>) {
 async fn hold_forever() {
     loop {
         Timer::after(Duration::from_secs(60)).await;
+    }
+}
+
+async fn usb_sector_count<D>(card: &mut D) -> Option<u32>
+where
+    D: RawBlockDevice<SECTOR_SIZE>,
+{
+    let size = match card.size().await {
+        Ok(size) => size,
+
+        Err(error) => {
+            warn!(
+                "USB Drive SD capacity read failed: {}",
+                Debug2Format(&error),
+            );
+
+            return None;
+        }
+    };
+
+    if size == 0 || size % SECTOR_SIZE as u64 != 0 {
+        warn!("USB Drive invalid SD size={}", size);
+        return None;
+    }
+
+    let sectors = size / SECTOR_SIZE as u64;
+
+    match u32::try_from(sectors) {
+        Ok(sectors) if sectors != 0 => Some(sectors),
+        _ => {
+            warn!("USB Drive SD sector count out of range={}", sectors);
+            None
+        }
     }
 }

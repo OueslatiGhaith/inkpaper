@@ -310,3 +310,41 @@ fn next_handle(last: &mut u32) -> u32 {
 
     *last
 }
+
+pub(super) async fn serve_usb_drive_requests() {
+    loop {
+        match COMMANDS.receive().await {
+            Command::ListRoot => {
+                ROOT_LIST_DONE.signal(false);
+            }
+
+            Command::ListDirectory(_) => {
+                DIRECTORY_LIST_DONE.signal(Err(StorageError::Unavailable));
+            }
+
+            Command::OpenRandomAccess(_) => {
+                RANDOM_ACCESS_OPEN_DONE.signal(Err(StorageError::Unavailable));
+            }
+
+            Command::ReadRandomAccess { .. } => {
+                RANDOM_ACCESS_READ_DONE.signal(Err(StorageError::Unavailable));
+            }
+
+            Command::LoadState { .. } => {
+                STATE_LOAD_DONE.signal(Err(StorageError::Unavailable));
+            }
+
+            Command::SaveState { .. } => {
+                STATE_SAVE_DONE.signal(Err(StorageError::Unavailable));
+            }
+
+            Command::EnterUsbDrive => {
+                USB_DRIVE_READY.signal(true);
+            }
+
+            Command::Shutdown => {
+                return;
+            }
+        }
+    }
+}
