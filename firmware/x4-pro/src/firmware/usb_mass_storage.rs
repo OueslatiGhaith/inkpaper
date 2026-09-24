@@ -23,7 +23,10 @@ use esp_hal::{
 };
 
 const SECTOR_SIZE: usize = 512;
+
 const BULK_PACKET_SIZE: usize = 64;
+const CONTROL_PACKET_SIZE: usize = 64;
+const ENDPOINT_OUT_BUFFER_SIZE: usize = CONTROL_PACKET_SIZE + BULK_PACKET_SIZE;
 
 const USB_CLASS_MASS_STORAGE: u8 = 0x08;
 const USB_SUBCLASS_SCSI_TRANSPARENT: u8 = 0x06;
@@ -103,14 +106,17 @@ where
 
     let usb = Usb::new_fs(usb_fs, usb_dp, usb_dm);
 
-    // There is one non-control OUT endpoint with a 64-byte full-speed
-    // maximum packet size.
-    let mut endpoint_out_buffer = [0u8; BULK_PACKET_SIZE];
+    // The Synopsys driver needs receive storage for every OUT endpoint.
+    //
+    // EP0 control OUT: 64 bytes
+    // MSC bulk OUT:    64 bytes
+    let mut endpoint_out_buffer = [0u8; ENDPOINT_OUT_BUFFER_SIZE];
 
     let driver = UsbDriver::new(usb, &mut endpoint_out_buffer, DriverConfig::default());
 
     let mut config = embassy_usb::Config::new(USB_VENDOR_ID, USB_PRODUCT_ID);
 
+    config.max_packet_size_0 = CONTROL_PACKET_SIZE as u8;
     config.bcd_usb = UsbVersion::Two;
     config.device_class = 0;
     config.device_sub_class = 0;

@@ -3,10 +3,10 @@ use inkpaper_epub::SpineIndex;
 use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
-    BatteryStatus, BrowseListing, BrowseRequest, ClockStatus, FrontlightPreferences,
-    FrontlightPreferencesRequest, FrontlightSetting, FrontlightState, ReaderChapter,
-    ReaderChapterDirection, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
-    ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
+    BatteryStatus, BrowseListing, BrowseRequest, ClockStatus, FileTransferRequest,
+    FileTransferState, FrontlightPreferences, FrontlightPreferencesRequest, FrontlightSetting,
+    FrontlightState, ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
+    ReaderPreferencesRequest, ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
     browser::BrowserState,
     components::control_center::{ControlCenter, ControlCenterProps},
     control_center::{
@@ -46,6 +46,7 @@ pub struct InkPaperApp {
     frontlight: FrontlightState,
     control_center: ControlCenterState,
     reader_return: Screen,
+    file_transfer: FileTransferState,
 }
 
 impl Default for InkPaperApp {
@@ -59,6 +60,7 @@ impl Default for InkPaperApp {
             frontlight: FrontlightState::default(),
             control_center: ControlCenterState::default(),
             reader_return: Screen::BrowseFiles,
+            file_transfer: FileTransferState::default(),
         }
     }
 }
@@ -113,6 +115,7 @@ impl InkPaperApp {
     }
 
     fn show_file_transfer(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.file_transfer.reset();
         self.navigate(Screen::FileTransfer, cx);
     }
 
@@ -450,6 +453,10 @@ impl InkPaperApp {
     }
 
     pub(crate) fn handle_previous_input(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if self.file_transfer_blocks_input() {
+            return true;
+        }
+
         if self.control_center.is_open() {
             // CrossInk uses +/- 5 for the physical side buttons.
             if self.frontlight.adjust_brightness(-5) {
@@ -463,6 +470,10 @@ impl InkPaperApp {
     }
 
     pub(crate) fn handle_next_input(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if self.file_transfer_blocks_input() {
+            return true;
+        }
+
         if self.control_center.is_open() {
             if self.frontlight.adjust_brightness(5) {
                 cx.notify();
@@ -475,28 +486,40 @@ impl InkPaperApp {
     }
 
     pub(crate) fn handle_home_input(&mut self, cx: &mut Context<'_, Self>) {
+        if self.file_transfer_blocks_input() {
+            return;
+        }
+
         if self.control_center.close() {
             self.frontlight.request_persist();
             cx.notify();
+
             return;
         }
 
         self.navigate_home(cx);
     }
 
-    pub(crate) const fn allows_focus_navigation(&self) -> bool {
+    pub(crate) fn allows_focus_navigation(&self) -> bool {
         !self.control_center.is_open()
+            && !(self.screen == Screen::FileTransfer && self.file_transfer.blocks_input())
     }
 
-    pub(crate) const fn allows_wheel_scroll(&self) -> bool {
+    pub(crate) fn allows_wheel_scroll(&self) -> bool {
         !self.control_center.is_open()
+            && !(self.screen == Screen::FileTransfer && self.file_transfer.blocks_input())
     }
 
-    pub(crate) const fn handle_confirm_down(&self) -> bool {
+    pub(crate) fn handle_confirm_down(&self) -> bool {
         self.control_center.is_open()
+            || (self.screen == Screen::FileTransfer && self.file_transfer.blocks_input())
     }
 
     pub(crate) fn handle_confirm_up(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if self.file_transfer_blocks_input() {
+            return true;
+        }
+
         if !self.control_center.is_open() {
             return false;
         }
@@ -513,6 +536,10 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
+        if self.file_transfer_blocks_input() {
+            return PointerAction::Capture;
+        }
+
         let result = self.control_center.pointer_down(position);
 
         self.apply_control_center_pointer_result(result, PointerAction::Activate, cx)
@@ -524,6 +551,10 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
+        if self.file_transfer_blocks_input() {
+            return PointerAction::Capture;
+        }
+
         let result = self.control_center.pointer_drag(origin, position);
 
         self.apply_control_center_pointer_result(result, PointerAction::Scroll, cx)
@@ -534,6 +565,10 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
+        if self.file_transfer_blocks_input() {
+            return PointerAction::Capture;
+        }
+
         let result = self.control_center.pointer_up(position);
 
         self.apply_control_center_pointer_result(result, PointerAction::Activate, cx)
@@ -599,6 +634,39 @@ impl InkPaperApp {
             }
         }
     }
+
+    fn activate_usb_drive(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        if self.screen != Screen::FileTransfer {
+            return;
+        }
+
+        if self.file_transfer.request_usb_drive() {
+            cx.notify();
+        }
+    }
+
+    fn file_transfer_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        if self.file_transfer.blocks_input() {
+            return;
+        }
+
+        self.file_transfer.reset();
+        self.navigate_home(cx);
+    }
+
+    pub(crate) fn take_file_transfer_request(&mut self) -> Option<FileTransferRequest> {
+        self.file_transfer.take_request()
+    }
+
+    pub(crate) fn apply_usb_drive_result(&mut self, ready: bool, cx: &mut Context<'_, Self>) {
+        if self.file_transfer.finish_usb_drive_request(ready) {
+            cx.notify();
+        }
+    }
+
+    fn file_transfer_blocks_input(&self) -> bool {
+        self.screen == Screen::FileTransfer && self.file_transfer.blocks_input()
+    }
 }
 
 impl Render for InkPaperApp {
@@ -620,6 +688,9 @@ impl Render for InkPaperApp {
         let reader_decrease_font_size = cx.listener(Self::activate_decrease_reader_font_size);
 
         let reader_increase_font_size = cx.listener(Self::activate_increase_reader_font_size);
+
+        let file_transfer_back = cx.listener(Self::file_transfer_back);
+        let usb_drive = cx.listener(Self::activate_usb_drive);
 
         let reader_page_canvas = if self.screen == Screen::Reader && self.reader.page().is_some() {
             Some(cx.canvas(|app, paint| app.paint_reader_page(paint)))
@@ -719,8 +790,10 @@ impl Render for InkPaperApp {
                     />
                 {:else if self.screen == Screen::FileTransfer}
                     <FileTransferScreen
+                        status={self.file_transfer.status()}
                         battery={battery}
-                        on_back={home}
+                        on_back={file_transfer_back}
+                        on_usb_drive={usb_drive}
                     />
                 {:else}
                     <SettingsScreen

@@ -23,6 +23,28 @@ impl RenderOnce for HomeHeader {
 }
 
 #[component]
+pub(crate) struct TitleHeader<'a> {
+    title: &'a str,
+    battery: Option<BatteryStatus>,
+}
+
+impl RenderOnce for TitleHeader<'_> {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        rsx! {
+            <div class="w-full h-full relative">
+                <BatteryIndicator battery={self.battery} />
+
+                <div class="absolute left-5 top-3 h-[52px] flex items-center">
+                    <text class="font-bold text-2xl no-wrap max-lines-1 text-ellipsis">
+                        {self.title}
+                    </text>
+                </div>
+            </div>
+        }
+    }
+}
+
+#[component]
 pub(crate) struct BackHeader<'a> {
     title: &'a str,
     battery: Option<BatteryStatus>,

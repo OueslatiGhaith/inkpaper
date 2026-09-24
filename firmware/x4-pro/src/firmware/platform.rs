@@ -134,4 +134,12 @@ impl AppPlatform for X4Platform {
     async fn save_state(&mut self, name: &str, bytes: &[u8]) -> Result<(), Self::Error> {
         storage::save_state_and_wait(name, bytes).await
     }
+
+    async fn enter_usb_drive(&mut self) -> Result<(), Self::Error> {
+        if storage::enter_usb_drive_and_wait().await {
+            Ok(())
+        } else {
+            Err(StorageError::Unavailable)
+        }
+    }
 }

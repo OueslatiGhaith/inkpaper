@@ -4,9 +4,9 @@ use inkpaper_epub::EpubSource;
 use inkpaper_ui::{Entity, EntityAccessError, ResourceRuntimeApi, RuntimeApi};
 
 use crate::{
-    BrowseEntry, BrowseListing, BrowseRequest, FrontlightPreferences, FrontlightPreferencesRequest,
-    FrontlightSetting, InkPaperApp, ReaderPreferences, ReaderPreferencesRequest, ReaderRequest,
-    ReaderSession, ReadingHistory, ReadingHistoryRequest,
+    BrowseEntry, BrowseListing, BrowseRequest, FileTransferRequest, FrontlightPreferences,
+    FrontlightPreferencesRequest, FrontlightSetting, InkPaperApp, ReaderPreferences,
+    ReaderPreferencesRequest, ReaderRequest, ReaderSession, ReadingHistory, ReadingHistoryRequest,
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
@@ -73,6 +73,8 @@ pub trait AppPlatform {
     ) -> Result<Option<Vec<u8>>, Self::Error>;
 
     async fn save_state(&mut self, name: &str, bytes: &[u8]) -> Result<(), Self::Error>;
+
+    async fn enter_usb_drive(&mut self) -> Result<(), Self::Error>;
 }
 
 #[derive(Debug)]
@@ -162,16 +164,21 @@ where
                 continue;
             }
 
-            let (browse_request, reader_request, history_request) =
-                runtime.update(app, |app, _| {
+            let (browse_request, reader_request, history_request, file_transfer_request) = runtime
+                .update(app, |app, _| {
                     (
                         app.take_browse_request(),
                         app.take_reader_request(),
                         app.take_reading_history_request(),
+                        app.take_file_transfer_request(),
                     )
                 })?;
 
-            if browse_request.is_none() && reader_request.is_none() && history_request.is_none() {
+            if browse_request.is_none()
+                && reader_request.is_none()
+                && history_request.is_none()
+                && file_transfer_request.is_none()
+            {
                 return Ok(());
             }
 
@@ -188,6 +195,15 @@ where
 
             if let Some(request) = history_request {
                 self.service_reading_history_request(runtime, app, request)?;
+            }
+
+            if let Some(request) = file_transfer_request {
+                self.service_file_transfer_request(runtime, app, request)
+                    .await?;
+
+                // A successful USB Drive transition makes the filesystem unavailable.
+                // Do not loop around and try to service another storage-backed request.
+                return Ok(());
             }
         }
     }
@@ -617,5 +633,45 @@ where
         self.frontlight_preferences_dirty = false;
 
         true
+    }
+
+    async fn service_file_transfer_request<R>(
+        &mut self,
+        runtime: &mut R,
+        app: Entity<InkPaperApp>,
+        request: FileTransferRequest,
+    ) -> Result<(), AppServiceError>
+    where
+        R: RuntimeApi,
+    {
+        match request {
+            FileTransferRequest::EnterUsbDrive => {
+                // Persist everything while FAT is still mounted.
+                //
+                // Refuse the handoff if this fails. Giving the host raw access after
+                // failing to save application state would make it impossible to
+                // recover that state until the next boot.
+                if !self.flush().await {
+                    runtime.update(app, |app, cx| {
+                        app.apply_usb_drive_result(false, cx);
+                    })?;
+
+                    return Ok(());
+                }
+
+                // No app-side reader object may survive the storage ownership
+                // transition. The storage service independently drops its FAT
+                // OpenRandomAccessFile when it receives EnterUsbDrive.
+                self.reader_session = None;
+
+                let ready = self.platform.enter_usb_drive().await.is_ok();
+
+                runtime.update(app, move |app, cx| {
+                    app.apply_usb_drive_result(ready, cx);
+                })?;
+            }
+        }
+
+        Ok(())
     }
 }

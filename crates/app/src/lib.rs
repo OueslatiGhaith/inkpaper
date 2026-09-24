@@ -6,6 +6,7 @@ mod app;
 mod browser;
 mod components;
 mod control_center;
+mod file_transfer;
 mod frontlight;
 mod input;
 mod reader;
@@ -26,6 +27,7 @@ pub use system::{BatteryStatus, ClockStatus};
 // keep these available through `crate::...` so the existing internal modules don't need
 // artificial public APIs, while preventing platform wrappers from depending on them.
 pub(crate) use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
+pub(crate) use file_transfer::{FileTransferRequest, FileTransferState, FileTransferStatus};
 pub(crate) use frontlight::{
     FrontlightPreferences, FrontlightPreferencesError, FrontlightPreferencesRequest,
     FrontlightState,

@@ -87,6 +87,12 @@ impl AppPlatform for SimulatorPlatform {
 
         Ok(())
     }
+
+    async fn enter_usb_drive(&mut self) -> Result<(), Self::Error> {
+        // The simulator only exercise the app-side USB drive state. It does not expose
+        // a host block device
+        Ok(())
+    }
 }
 
 fn simulator_state_directory() -> PathBuf {
