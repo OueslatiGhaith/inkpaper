@@ -1,9 +1,16 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsbDriveConnection {
+    WaitingForHost,
+    Connected,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum FileTransferStatus {
     #[default]
     Selecting,
     Preparing,
-    Ready,
+    WaitingForHost,
+    Connected,
     Error,
 }
 
@@ -49,7 +56,7 @@ impl FileTransferState {
         }
 
         self.status = if ready {
-            FileTransferStatus::Ready
+            FileTransferStatus::WaitingForHost
         } else {
             FileTransferStatus::Error
         };
@@ -57,10 +64,34 @@ impl FileTransferState {
         true
     }
 
+    pub(crate) fn apply_usb_drive_connection(&mut self, connection: UsbDriveConnection) -> bool {
+        if !matches!(
+            self.status,
+            FileTransferStatus::WaitingForHost | FileTransferStatus::Connected
+        ) {
+            return false;
+        }
+
+        let status = match connection {
+            UsbDriveConnection::WaitingForHost => FileTransferStatus::WaitingForHost,
+            UsbDriveConnection::Connected => FileTransferStatus::Connected,
+        };
+
+        if self.status == status {
+            return false;
+        }
+
+        self.status = status;
+
+        true
+    }
+
     pub(crate) const fn blocks_input(&self) -> bool {
         matches!(
             self.status,
-            FileTransferStatus::Preparing | FileTransferStatus::Ready
+            FileTransferStatus::Preparing
+                | FileTransferStatus::WaitingForHost
+                | FileTransferStatus::Connected
         )
     }
 }

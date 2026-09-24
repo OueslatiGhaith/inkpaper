@@ -28,6 +28,8 @@ const MOUNT_ATTEMPTS: usize = 4;
 const POWER_OFF_MS: u64 = 80;
 const POWER_SETTLE_MS: u64 = 120;
 
+const USB_RESTART_SETTLE_MS: u64 = 20;
+
 #[embassy_executor::task]
 pub async fn storage_task(
     sdhost: SDHOST<'static>,
@@ -222,7 +224,18 @@ async fn run_storage<B>(
 
                         return;
                     }
-                    UsbMassStorageExit::Ejected => {
+                    UsbMassStorageExit::Ejected
+                    | UsbMassStorageExit::Disconnected
+                    | UsbMassStorageExit::HostTimeout
+                    | UsbMassStorageExit::IoError => {
+                        let reason = match exit {
+                            UsbMassStorageExit::Ejected => "ejected",
+                            UsbMassStorageExit::Disconnected => "disconnected",
+                            UsbMassStorageExit::HostTimeout => "host-timeout",
+                            UsbMassStorageExit::IoError => "io-error",
+                            UsbMassStorageExit::Shutdown => unreachable!(),
+                        };
+
                         // The host has completed START STOP UNIT with LOEJ.
                         // USB has already been disabled by `usb_mass_storage`.
                         //
@@ -231,7 +244,11 @@ async fn run_storage<B>(
                         drop(card);
                         sd_power.disable();
 
-                        info!("USB drive ejected, restarting");
+                        info!("USB drive ended, reason={}, restarting", reason);
+
+                        // Give the USB soft-disconnect and SD power-down a moment to
+                        // propagate before resetting the MCU
+                        Timer::after(Duration::from_millis(USB_RESTART_SETTLE_MS)).await;
 
                         esp_hal::system::software_reset();
                     }

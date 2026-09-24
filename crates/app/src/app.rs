@@ -7,6 +7,7 @@ use crate::{
     FileTransferState, FrontlightPreferences, FrontlightPreferencesRequest, FrontlightSetting,
     FrontlightState, ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest, ReadingHistoryEntry, ReadingHistoryRequest,
+    UsbDriveConnection,
     browser::BrowserState,
     components::control_center::{ControlCenter, ControlCenterProps},
     control_center::{
@@ -660,6 +661,16 @@ impl InkPaperApp {
 
     pub(crate) fn apply_usb_drive_result(&mut self, ready: bool, cx: &mut Context<'_, Self>) {
         if self.file_transfer.finish_usb_drive_request(ready) {
+            cx.notify();
+        }
+    }
+
+    pub fn apply_usb_drive_connection(
+        &mut self,
+        connection: UsbDriveConnection,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.file_transfer.apply_usb_drive_connection(connection) {
             cx.notify();
         }
     }

@@ -6,12 +6,14 @@ use core::{
 
 use aligned::Aligned;
 use block_device_driver::BlockDevice as RawBlockDevice;
-use defmt::{Debug2Format, debug, info, warn};
-use embassy_futures::select::{Either3, select3};
+use defmt::{Debug2Format, debug, error, info, warn};
+use embassy_futures::select::{Either4, select4};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_time::{Duration, Instant, Timer};
 use embassy_usb::{
     Builder, Handler, UsbVersion,
     control::{InResponse, OutResponse, Recipient, Request, RequestType},
-    driver::{Endpoint, EndpointError, EndpointIn, EndpointOut},
+    driver::{EndpointError, EndpointIn, EndpointOut},
     types::InterfaceNumber,
 };
 use esp_hal::{
@@ -27,6 +29,10 @@ const SECTOR_SIZE: usize = 512;
 const BULK_PACKET_SIZE: usize = 64;
 const CONTROL_PACKET_SIZE: usize = 64;
 const ENDPOINT_OUT_BUFFER_SIZE: usize = CONTROL_PACKET_SIZE + BULK_PACKET_SIZE;
+
+const HOST_WAIT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const HOST_SUSPEND_TIMEOUT: Duration = Duration::from_secs(2);
+const LIFECYCLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 const USB_CLASS_MASS_STORAGE: u8 = 0x08;
 const USB_SUBCLASS_SCSI_TRANSPARENT: u8 = 0x06;
@@ -87,8 +93,19 @@ const ASC_WRITE_ERROR: u8 = 0x0c;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UsbMassStorageExit {
     Ejected,
+    Disconnected,
+    HostTimeout,
+    IoError,
     Shutdown,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsbHostState {
+    WaitingForHost,
+    Connected,
+}
+
+pub static USB_HOST_UPDATES: Signal<CriticalSectionRawMutex, UsbHostState> = Signal::new();
 
 pub async fn run<D, S>(
     card: &mut D,
@@ -103,6 +120,8 @@ where
     S: Future<Output = ()>,
 {
     let reset_requested = AtomicBool::new(false);
+    let configured = AtomicBool::new(false);
+    let suspended = AtomicBool::new(false);
 
     let usb = Usb::new_fs(usb_fs, usb_dp, usb_dm);
 
@@ -137,6 +156,8 @@ where
     let mut control = MassStorageControl {
         interface_number: None,
         reset_requested: &reset_requested,
+        configured: &configured,
+        suspended: &suspended,
     };
 
     let mut builder = Builder::new(
@@ -179,32 +200,29 @@ where
 
     let transport = BotTransport::new(endpoint_out, endpoint_in, &reset_requested);
 
+    USB_HOST_UPDATES.signal(UsbHostState::WaitingForHost);
+
     info!(
         "USB MSC starting sectors={} bytes={}",
         sector_count,
         u64::from(sector_count) * SECTOR_SIZE as u64,
     );
 
-    // Keep the USB device runner, BOT/SCSI transport, and storage shutdown
-    // service alive together.
-    //
-    // If shutdown wins, this function still gets a chance to disable the USB
-    // peripheral before returning to storage/mount.rs.
-    let exit = match select3(
+    let exit = match select4(
         usb_device.run(),
         transport.run(card, sector_count),
         shutdown,
+        monitor_host_lifecycle(&configured, &suspended),
     )
     .await
     {
-        Either3::First(never) => match never {},
-
-        Either3::Second(exit) => exit,
-
-        Either3::Third(()) => {
+        Either4::First(never) => match never {},
+        Either4::Second(exit) => exit,
+        Either4::Third(()) => {
             info!("USB MSC shutdown requested");
             UsbMassStorageExit::Shutdown
         }
+        Either4::Fourth(exit) => exit,
     };
 
     usb_device.disable().await;
@@ -217,6 +235,8 @@ where
 struct MassStorageControl<'a> {
     interface_number: Option<InterfaceNumber>,
     reset_requested: &'a AtomicBool,
+    configured: &'a AtomicBool,
+    suspended: &'a AtomicBool,
 }
 
 impl MassStorageControl<'_> {
@@ -232,14 +252,37 @@ impl MassStorageControl<'_> {
 }
 
 impl Handler for MassStorageControl<'_> {
+    fn enabled(&mut self, enabled: bool) {
+        if !enabled {
+            self.configured.store(false, Ordering::Release);
+            self.suspended.store(false, Ordering::Release);
+        }
+    }
+
     fn reset(&mut self) {
         self.reset_requested.store(true, Ordering::Release);
+        self.configured.store(false, Ordering::Release);
+        self.suspended.store(false, Ordering::Release);
+
+        USB_HOST_UPDATES.signal(UsbHostState::WaitingForHost);
     }
 
     fn configured(&mut self, configured: bool) {
-        if !configured {
+        self.configured.store(configured, Ordering::Release);
+
+        if configured {
+            self.suspended.store(false, Ordering::Release);
+
+            USB_HOST_UPDATES.signal(UsbHostState::Connected);
+        } else {
             self.reset_requested.store(true, Ordering::Release);
+
+            USB_HOST_UPDATES.signal(UsbHostState::WaitingForHost);
         }
+    }
+
+    fn suspended(&mut self, suspended: bool) {
+        self.suspended.store(suspended, Ordering::Release);
     }
 
     fn control_out(&mut self, request: Request, data: &[u8]) -> Option<OutResponse> {
@@ -286,6 +329,60 @@ impl Handler for MassStorageControl<'_> {
     }
 }
 
+async fn monitor_host_lifecycle(
+    configured: &AtomicBool,
+    suspended: &AtomicBool,
+) -> UsbMassStorageExit {
+    let started_at = Instant::now();
+
+    let mut ever_configured = false;
+    let mut suspended_at: Option<Instant> = None;
+
+    loop {
+        let is_configured = configured.load(Ordering::Acquire);
+        let is_suspended = suspended.load(Ordering::Acquire);
+
+        if is_configured && !ever_configured {
+            ever_configured = true;
+            info!("USB MSC host configured");
+        }
+
+        if !ever_configured {
+            if started_at.elapsed() >= HOST_WAIT_TIMEOUT {
+                info!("USB MSC host wait timed out");
+
+                return UsbMassStorageExit::HostTimeout;
+            }
+        } else if is_suspended {
+            match suspended_at {
+                Some(started_at) if started_at.elapsed() >= HOST_SUSPEND_TIMEOUT => {
+                    info!("USB MSC host suspend timed out");
+
+                    return UsbMassStorageExit::Disconnected;
+                }
+
+                Some(_) => {}
+
+                None => {
+                    debug!("USB MSC host suspended");
+                    suspended_at = Some(Instant::now());
+                }
+            }
+        } else if suspended_at.take().is_some() {
+            debug!("USB MSC host resumed");
+        }
+
+        Timer::after(LIFECYCLE_POLL_INTERVAL).await;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BotOutcome {
+    Continue,
+    Ejected,
+    IoError,
+}
+
 struct BotTransport<'a, O, I> {
     endpoint_out: O,
     endpoint_in: I,
@@ -316,13 +413,19 @@ where
             self.endpoint_in.wait_enabled().await;
 
             match self.process_next(card, sector_count).await {
-                Ok(true) => {
+                Ok(BotOutcome::Continue) => {}
+
+                Ok(BotOutcome::Ejected) => {
                     info!("USB MSC host ejected media");
 
                     return UsbMassStorageExit::Ejected;
                 }
 
-                Ok(false) => {}
+                Ok(BotOutcome::IoError) => {
+                    error!("USB MSC terminating after SD I/O failure");
+
+                    return UsbMassStorageExit::IoError;
+                }
 
                 Err(EndpointError::Disabled) => {
                     debug!("USB MSC endpoints disabled");
@@ -339,7 +442,7 @@ where
         &mut self,
         card: &mut D,
         sector_count: u32,
-    ) -> Result<bool, EndpointError>
+    ) -> Result<BotOutcome, EndpointError>
     where
         D: RawBlockDevice<SECTOR_SIZE>,
     {
@@ -354,13 +457,13 @@ where
         if received != CBW_LENGTH {
             warn!("USB MSC invalid CBW length={}", received);
 
-            return Ok(false);
+            return Ok(BotOutcome::Continue);
         }
 
         let Some(cbw) = CommandBlockWrapper::parse(&bytes) else {
             warn!("USB MSC invalid CBW");
 
-            return Ok(false);
+            return Ok(BotOutcome::Continue);
         };
 
         let execution = self.execute(card, sector_count, &cbw).await?;
@@ -387,7 +490,15 @@ where
 
         self.endpoint_in.write_transfer(&csw, false).await?;
 
-        Ok(execution.ejected)
+        if execution.ejected {
+            return Ok(BotOutcome::Ejected);
+        }
+
+        if execution.io_error {
+            return Ok(BotOutcome::IoError);
+        }
+
+        Ok(BotOutcome::Continue)
     }
 
     async fn execute<D>(
@@ -811,6 +922,8 @@ where
                     );
 
                     execution.status = CswStatus::Failed;
+                    execution.io_error = true;
+
                     self.sense = Sense::new(SENSE_KEY_MEDIUM_ERROR, ASC_WRITE_ERROR, 0);
 
                     break;
@@ -826,6 +939,8 @@ where
                     );
 
                     execution.status = CswStatus::Failed;
+                    execution.io_error = true;
+
                     self.sense = Sense::new(SENSE_KEY_MEDIUM_ERROR, ASC_UNRECOVERED_READ_ERROR, 0);
 
                     break;
@@ -998,6 +1113,7 @@ struct Execution {
     out_consumed: u32,
     status: CswStatus,
     ejected: bool,
+    io_error: bool,
 }
 
 impl Execution {
@@ -1007,6 +1123,7 @@ impl Execution {
             out_consumed: 0,
             status: CswStatus::Passed,
             ejected: false,
+            io_error: false,
         }
     }
 
@@ -1016,6 +1133,7 @@ impl Execution {
             out_consumed: 0,
             status: CswStatus::Failed,
             ejected: false,
+            io_error: false,
         }
     }
 
@@ -1025,6 +1143,7 @@ impl Execution {
             out_consumed: 0,
             status: CswStatus::PhaseError,
             ejected: false,
+            io_error: false,
         }
     }
 }

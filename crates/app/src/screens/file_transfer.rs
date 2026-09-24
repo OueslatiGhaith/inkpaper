@@ -22,22 +22,30 @@ impl RenderOnce for FileTransferScreen {
         let selecting = self.status == FileTransferStatus::Selecting;
         let error = self.status == FileTransferStatus::Error;
 
-        let (message, detail) = match self.status {
-            FileTransferStatus::Selecting => ("", ""),
+        let (message, detail, secondary_detail) = match self.status {
+            FileTransferStatus::Selecting => ("", None, None),
 
             FileTransferStatus::Preparing => (
                 "Preparing USB Drive...",
-                "Eject the drive on your computer to return Home.",
+                Some("Eject the drive on your computer, or disconnect the cable to return Home."),
+                None,
             ),
 
-            FileTransferStatus::Ready => (
-                "Connect this reader to your computer",
-                "Eject the drive on your computer to return Home.",
-            ),
-
-            FileTransferStatus::Error => {
-                ("Unable to start USB Drive.", "Press Back to return Home.")
+            FileTransferStatus::WaitingForHost => {
+                ("Connect this reader to your computer", None, None)
             }
+
+            FileTransferStatus::Connected => (
+                "USB Drive Connected",
+                Some("This may take up to 30 seconds to connect"),
+                Some("Eject the drive on your computer, or disconnect the cable to return Home."),
+            ),
+
+            FileTransferStatus::Error => (
+                "Unable to start USB Drive.",
+                Some("Press Back to return Home."),
+                None,
+            ),
         };
 
         rsx! {
@@ -81,9 +89,17 @@ impl RenderOnce for FileTransferScreen {
                             {message}
                         </text>
 
-                        <text class="text-base text-center wrap max-lines-3">
-                            {detail}
-                        </text>
+                        {#if let Some(detail) = detail}
+                            <text class="text-base text-center wrap max-lines-3">
+                                {detail}
+                            </text>
+                        {/if}
+
+                        {#if let Some(detail) = secondary_detail}
+                            <text class="text-base text-center wrap max-lines-3">
+                                {detail}
+                            </text>
+                        {/if}
                     </div>
                 {/if}
             </div>

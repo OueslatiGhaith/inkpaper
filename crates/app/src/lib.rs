@@ -18,6 +18,7 @@ mod system;
 mod typography;
 
 pub use app::InkPaperApp;
+pub use file_transfer::UsbDriveConnection;
 pub use frontlight::FrontlightSetting;
 pub use service::{AppPlatform, AppService, AppServiceError, PlatformEntry};
 pub use system::{BatteryStatus, ClockStatus};

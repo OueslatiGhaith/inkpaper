@@ -1,6 +1,6 @@
 use defmt::{debug, error, info, warn};
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either4, select4};
+use embassy_futures::select::{Either4, Either5, select4, select5};
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
@@ -17,7 +17,7 @@ use esp_hal::{
 };
 use inkpaper_app::{
     AppInputEvent, AppService, BatteryStatus as AppBatteryStatus, ClockStatus as AppClockStatus,
-    InkPaperApp,
+    InkPaperApp, UsbDriveConnection as AppUsbDriveConnection,
 };
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
@@ -40,6 +40,7 @@ use crate::firmware::{
     rtc::{RTC_UPDATES, RtcState, rtc_task},
     sleep_pins::{hold_for_deep_sleep, release_display_reset_hold},
     touch::{TouchController, touch_task},
+    usb_mass_storage::{USB_HOST_UPDATES, UsbHostState},
 };
 
 mod battery;
@@ -309,15 +310,16 @@ async fn main(spawner: Spawner) -> ! {
         // - the battery service has a new reading
         // `BATTERY_UPDATES` is a signal, so dropping its pending wait when input
         // wins this select is safe and doesn't lose a stored reading
-        match select4(
+        match select5(
             INPUT_EVENTS.receive(),
             BATTERY_UPDATES.wait(),
             RTC_UPDATES.wait(),
             display_power.wait_idle_timeout(),
+            USB_HOST_UPDATES.wait(),
         )
         .await
         {
-            Either4::First(event) => {
+            Either5::First(event) => {
                 action = handle_input_event(runtime, app, event);
                 // combine events accumulated while the e-ink panel was busy.
                 while action == InputAction::Continue
@@ -329,9 +331,9 @@ async fn main(spawner: Spawner) -> ! {
                     action = handle_input_event(runtime, app, event);
                 }
             }
-            Either4::Second(reading) => apply_battery_reading(runtime, app, reading),
-            Either4::Third(state) => apply_rtc_state(runtime, app, state),
-            Either4::Fourth(()) => {
+            Either5::Second(reading) => apply_battery_reading(runtime, app, reading),
+            Either5::Third(state) => apply_rtc_state(runtime, app, state),
+            Either5::Fourth(()) => {
                 display_power
                     .handle_idle_timeout(&mut panel, &mut bus, &mut delay)
                     .await
@@ -339,6 +341,7 @@ async fn main(spawner: Spawner) -> ! {
 
                 continue;
             }
+            Either5::Fifth(state) => apply_usb_host_state(runtime, app, state),
         }
 
         if action == InputAction::Sleep {
@@ -578,6 +581,22 @@ fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: Rtc
         .is_err()
     {
         warn!("failed to apply RTC status to app");
+    }
+}
+
+fn apply_usb_host_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: UsbHostState) {
+    let connection = match state {
+        UsbHostState::WaitingForHost => AppUsbDriveConnection::WaitingForHost,
+        UsbHostState::Connected => AppUsbDriveConnection::Connected,
+    };
+
+    if runtime
+        .update(app, move |app, cx| {
+            app.apply_usb_drive_connection(connection, cx);
+        })
+        .is_err()
+    {
+        warn!("failed to apply USB host state to app");
     }
 }
 
