@@ -1,4 +1,5 @@
 use defmt::{debug, info};
+use embassy_futures::select::{Either, select};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
 use esp_hal::{
@@ -10,6 +11,8 @@ use esp_hal::{
 use crate::firmware::input::{Button, ButtonEdge, ButtonEvent, INPUT_EVENTS, InputEvent};
 
 const DEBOUNCE_MS: u64 = 30;
+const LONG_PRESS_MS: u64 = 1_000;
+const LONG_PRESS_AFTER_DEBOUNCE_MS: u64 = LONG_PRESS_MS - DEBOUNCE_MS;
 
 pub static ENTER_DEEP_SLEEP: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
@@ -29,17 +32,42 @@ pub async fn power_button_task(mut pin: GPIO3<'static>, lpwr: LPWR<'static>) {
             continue;
         }
 
-        INPUT_EVENTS
-            .send(InputEvent::Button(ButtonEvent::new(
-                Button::Power,
-                ButtonEdge::Pressed,
-            )))
-            .await;
+        // a normal click must not put the device to sleep, After the debounce period, race
+        // the rest of the long press interval againt release.
+        match select(
+            Timer::after(Duration::from_millis(LONG_PRESS_AFTER_DEBOUNCE_MS)),
+            input.wait_for_high(),
+        )
+        .await
+        {
+            Either::First(()) => {
+                // check the level one more time at threshold. This also protects against
+                // a release landing at almost exactly the same timer as the timer
+                if !input.is_low() {
+                    continue;
+                }
 
-        break;
+                info!("power long press detected");
+
+                INPUT_EVENTS
+                    .send(InputEvent::Button(ButtonEvent::new(
+                        Button::Power,
+                        ButtonEdge::Pressed,
+                    )))
+                    .await;
+
+                break;
+            }
+            Either::Second(()) => {
+                debug!("power short press ignored");
+            }
+        }
     }
 
     // main performs the expensive/ordered shutdown first:
+    // - frontlight off
+    // - flush app state
+    // - storage shutdown
     // - EPD deep sleep
     // - peripheral rails off
     // it signals us only when we're allowed to ender SoC deep sleep

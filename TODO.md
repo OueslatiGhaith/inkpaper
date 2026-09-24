@@ -52,9 +52,13 @@
 
 - [x] deep sleep on power button
 - [x] flush app state before sleep
-- [ ] change to long press
+- [x] change to long press
 - [ ] faster wakeup
 - [ ] sleep screen
+
+## Display
+
+- [ ] short press on power button to force refresh
 
 ## Settings
 
