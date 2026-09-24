@@ -14,7 +14,8 @@ use crate::firmware::{
     storage::{
         partition::{SECTOR_SIZE, SdPartition, find_fat_partition},
         service::{
-            serve_filesystem, serve_unavailable_requests, signal_ready, signal_shutdown_done,
+            FilesystemExit, serve_filesystem, serve_unavailable_requests, signal_ready,
+            signal_shutdown_done, signal_usb_drive_ready,
         },
     },
 };
@@ -74,7 +75,7 @@ where
     B: MmcBus,
 {
     for attempt in 1..=MOUNT_ATTEMPTS {
-        info!("SD mount attempt {}/{}", attempt, MOUNT_ATTEMPTS,);
+        info!("SD mount attempt {}/{}", attempt, MOUNT_ATTEMPTS);
 
         power_cycle_sd(sd_power).await;
 
@@ -84,11 +85,11 @@ where
         let mut card: BlockDevice<Card, _, _, SECTOR_SIZE> =
             match BlockDevice::new(&mut *bus, Delay, TARGET_FREQUENCY_HZ).await {
                 Ok(card) => {
-                    info!("SD card initialized at {} Hz", card.freq(),);
+                    info!("SD card initialized at {} Hz", card.freq());
                     card
                 }
                 Err(error) => {
-                    warn!("SD card initialization failed: {:?}", error,);
+                    warn!("SD card initialization failed: {:?}", error);
                     continue;
                 }
             };
@@ -96,19 +97,19 @@ where
         let mut sector_zero = [Aligned::<A4, _>([0u8; SECTOR_SIZE])];
 
         if let Err(error) = card.read(0, &mut sector_zero).await {
-            warn!("SD sector 0 read failed: {:?}", error,);
+            warn!("SD sector 0 read failed: {:?}", error);
             continue;
         }
 
-        debug!("SD sector 0 read succeeded",);
+        debug!("SD sector 0 read succeeded");
 
         match card.size().await {
             Ok(size) => info!("SD capacity: {} bytes / {} MiB", size, size / 1024 / 1024),
-            Err(error) => warn!("could not read SD capacity: {:?}", error,),
+            Err(error) => warn!("could not read SD capacity: {:?}", error),
         }
 
         let Some(partition) = find_fat_partition(&sector_zero[0]) else {
-            warn!("no supported FAT partition found",);
+            warn!("no supported FAT partition found");
             continue;
         };
 
@@ -122,7 +123,7 @@ where
         let filesystem = match FatVolume::open(partition_device).await {
             Ok(filesystem) => filesystem,
             Err(error) => {
-                warn!("FAT mount failed: {:?}", error,);
+                warn!("FAT mount failed: {:?}", error);
                 continue;
             }
         };
@@ -136,28 +137,54 @@ where
             volume.fs_type_str(),
         );
 
-        // from here until shutdown GPIO5 stays LOW and this task owns the entire
+        // From here until a transition, GPIO5 stays LOW and this task owns the entire
         // SD -> block device -> partition -> FAT stack.
         signal_ready(true);
 
-        serve_filesystem(&filesystem).await;
+        let exit = serve_filesystem(&filesystem).await;
 
-        // shutdown was requested. Drop in ownership order, then remove SD power before
-        // acknowledging it.
+        // This is the ownership boundary shared by both shutdown and USB Drive. Dropping
+        // FatVolume also drops SdPartition, releasing its mutable borrow of `card`.
         drop(filesystem);
-        drop(card);
 
-        sd_power.disable();
+        match exit {
+            FilesystemExit::Shutdown => {
+                // Deep sleep does not need the raw card. Tear the SD stack down
+                // and remove card power before acknowledging shutdown.
+                drop(card);
 
-        info!("storage shut down; SD power off",);
+                sd_power.disable();
 
-        signal_shutdown_done();
+                info!("storage shut down; SD power off");
 
-        // preserve ownership of the GPIO output while the main task prepares the RTC
-        // holds and enters deep sleep.
-        hold_forever().await;
+                signal_shutdown_done();
 
-        return;
+                // Preserve ownership of the GPIO output while main prepares the RTC holds
+                // and enters deep sleep.
+                hold_forever().await;
+
+                return;
+            }
+
+            FilesystemExit::UsbDrive => {
+                // The FAT filesystem and every FAT file handle are now gone, but
+                // the initialized raw SD block device remains alive.
+                //
+                // TODO: replaces this parked state with the USB MSC transport,
+                // using this same `card` directly.
+                let _raw_card = card;
+
+                info!("FAT filesystem detached; raw SD card reserved for USB Drive");
+
+                signal_usb_drive_ready(true);
+
+                // Do not power down the SD card and do not remount it.
+                // USB MSC will take over here in the next milestone.
+                hold_forever().await;
+
+                return;
+            }
+        }
     }
 
     serve_unavailable(sd_power).await;

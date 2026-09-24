@@ -20,22 +20,38 @@ use super::{
 const COMMAND_CAPACITY: usize = 4;
 
 static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = Channel::new();
+
 static READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
 static ROOT_LIST_DONE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
 static SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+static USB_DRIVE_READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
 static DIRECTORY_LIST_DONE: Signal<
     CriticalSectionRawMutex,
     Result<Vec<StorageEntry>, StorageError>,
 > = Signal::new();
+
 static RANDOM_ACCESS_OPEN_DONE: Signal<
     CriticalSectionRawMutex,
     Result<RandomAccessHandle, StorageError>,
 > = Signal::new();
+
 static RANDOM_ACCESS_READ_DONE: Signal<CriticalSectionRawMutex, Result<Vec<u8>, StorageError>> =
     Signal::new();
+
 static STATE_LOAD_DONE: Signal<CriticalSectionRawMutex, Result<Option<Vec<u8>>, StorageError>> =
     Signal::new();
+
 static STATE_SAVE_DONE: Signal<CriticalSectionRawMutex, Result<(), StorageError>> = Signal::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FilesystemExit {
+    Shutdown,
+    UsbDrive,
+}
 
 #[derive(Debug)]
 enum Command {
@@ -60,6 +76,8 @@ enum Command {
         name: String,
         bytes: Vec<u8>,
     },
+
+    EnterUsbDrive,
 
     Shutdown,
 }
@@ -149,6 +167,12 @@ pub async fn shutdown_and_wait() {
     SHUTDOWN_DONE.wait().await;
 }
 
+pub async fn enter_usb_drive_and_wait() -> bool {
+    USB_DRIVE_READY.reset();
+    COMMANDS.send(Command::EnterUsbDrive).await;
+    USB_DRIVE_READY.wait().await
+}
+
 pub(super) fn signal_ready(ready: bool) {
     READY.signal(ready);
 }
@@ -157,7 +181,11 @@ pub(super) fn signal_shutdown_done() {
     SHUTDOWN_DONE.signal(());
 }
 
-pub(super) async fn serve_filesystem<'a, D>(filesystem: &'a FatVolume<D>)
+pub(super) fn signal_usb_drive_ready(ready: bool) {
+    USB_DRIVE_READY.signal(ready);
+}
+
+pub(super) async fn serve_filesystem<'a, D>(filesystem: &'a FatVolume<D>) -> FilesystemExit
 where
     D: HadrisRead
         + HadrisWrite<Error = <D as HadrisRead>::Error>
@@ -225,6 +253,17 @@ where
                 STATE_SAVE_DONE.signal(result);
             }
 
+            Command::EnterUsbDrive => {
+                debug!("USB Drive storage handoff requested");
+
+                // No FAT-backed object may survive the transition to raw block access.
+                // This drops the currently-open EPUB reader before mount.rs drops
+                // the FatVolume itself.
+                drop(open_random_access);
+
+                return FilesystemExit::UsbDrive;
+            }
+
             Command::Shutdown => {
                 debug!("storage shutdown requested");
 
@@ -232,7 +271,7 @@ where
                 // the FatVolume and block device.
                 drop(open_random_access);
 
-                return;
+                return FilesystemExit::Shutdown;
             }
         }
     }
@@ -253,6 +292,7 @@ pub(super) async fn serve_unavailable_requests() {
             }
             Command::LoadState { .. } => STATE_LOAD_DONE.signal(Err(StorageError::Unavailable)),
             Command::SaveState { .. } => STATE_SAVE_DONE.signal(Err(StorageError::Unavailable)),
+            Command::EnterUsbDrive => USB_DRIVE_READY.signal(false),
             Command::Shutdown => {
                 SHUTDOWN_DONE.signal(());
                 return;
