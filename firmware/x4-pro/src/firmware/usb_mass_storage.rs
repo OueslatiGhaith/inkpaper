@@ -277,6 +277,11 @@ impl Handler for MassStorageControl<'_> {
         } else {
             self.reset_requested.store(true, Ordering::Release);
 
+            // Suspend is meaningful only while the host still has the device
+            // configured. A USB reset/deconfiguration can otherwise leave a stale
+            // suspended=true value behind and look like a cable disconnect.
+            self.suspended.store(false, Ordering::Release);
+
             USB_HOST_UPDATES.signal(UsbHostState::WaitingForHost);
         }
     }
@@ -353,7 +358,7 @@ async fn monitor_host_lifecycle(
 
                 return UsbMassStorageExit::HostTimeout;
             }
-        } else if is_suspended {
+        } else if is_configured && is_suspended {
             match suspended_at {
                 Some(started_at) if started_at.elapsed() >= HOST_SUSPEND_TIMEOUT => {
                     info!("USB MSC host suspend timed out");
@@ -369,7 +374,7 @@ async fn monitor_host_lifecycle(
                 }
             }
         } else if suspended_at.take().is_some() {
-            debug!("USB MSC host resumed");
+            debug!("USB MSC host suspend cancelled");
         }
 
         Timer::after(LIFECYCLE_POLL_INTERVAL).await;
@@ -770,6 +775,29 @@ where
         self.send_in_response(cbw, &response[..length]).await
     }
 
+    async fn read_fixed_out(&mut self, buffer: &mut [u8]) -> Result<usize, EndpointError> {
+        let mut offset = 0;
+
+        while offset < buffer.len() {
+            let end = min(offset.saturating_add(BULK_PACKET_SIZE), buffer.len());
+
+            let expected = end - offset;
+
+            let received = self.endpoint_out.read(&mut buffer[offset..end]).await?;
+
+            offset += received;
+
+            // BOT told us exactly how many bytes belong to this data stage.
+            // A short packet before that point terminates the host transfer
+            // prematurely.
+            if received != expected {
+                break;
+            }
+        }
+
+        Ok(offset)
+    }
+
     async fn service_action_in_16(
         &mut self,
         cbw: &CommandBlockWrapper,
@@ -894,7 +922,7 @@ where
                 u32::try_from(lba + u64::from(block)).expect("validated USB MSC LBA must fit u32");
 
             if write {
-                let received = self.endpoint_out.read_transfer(&mut sector[..]).await?;
+                let received = self.read_fixed_out(&mut sector[..]).await?;
 
                 execution.out_consumed = execution.out_consumed.saturating_add(received as u32);
 
@@ -904,11 +932,11 @@ where
                         address, received,
                     );
 
-                    // A short OUT packet terminates the host data stage, so
-                    // there is nothing further to drain even though the CSW
-                    // reports the remaining residue.
+                    // A short OUT packet terminates the host's data stage. There
+                    // will not be any more payload for this CBW to drain.
                     execution.out_consumed = cbw.transfer_length;
                     execution.status = CswStatus::PhaseError;
+
                     self.sense = Sense::new(SENSE_KEY_ILLEGAL_REQUEST, ASC_INVALID_FIELD, 0);
 
                     break;

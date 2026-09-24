@@ -66,4 +66,4 @@
 
 ## Book transfer
 
-- [ ] USB mass storage mode
+- [x] USB mass storage mode

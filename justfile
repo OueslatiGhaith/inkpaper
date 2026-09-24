@@ -18,6 +18,10 @@ sim:
 x4-run:
     cargo +inkpaper-esp run -p {{firmware_package}} --target {{x4_pro_target}} --profile firmware
 
+x4-flash:
+    cargo +inkpaper-esp build -p {{firmware_package}} --target {{x4_pro_target}} --profile firmware
+    probe-rs download --chip esp32s3 {{firmware_elf}}
+
 x4-trace:
     cargo +inkpaper-esp run -p {{firmware_package}} \
         --target {{x4_pro_target}} \
