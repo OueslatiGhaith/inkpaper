@@ -1,0 +1,39 @@
+# TODO List
+
+- **reader**
+  - [ ] better typography, antialiasing, ligatures
+  - [ ] more CSS support
+  - [ ] epub 2/3 compatibility
+  - [ ] links and navigation
+  - [ ] footnotes
+  - [ ] bookmarks
+  - [ ] customization
+- **library**
+  - [ ] metadata and covers
+  - [ ] indexing?
+  - [ ] cache?
+  - [ ] search?
+  - [ ] fs ops: delete, move, rename, copy?
+- **settings**
+  - [ ] remove fake settings
+  - [ ] configurable controls
+- **power management**
+  - [ ] faster wakeup
+  - [ ] sleep screen
+  - [ ] power usage testing!
+- **fonts**
+  - [ ] load fonts from SD
+  - [ ] CJK and RTL
+- **book transfer**
+  - [ ] USB mass storage mode
+  - [ ] wifi web ui
+- **software update**
+  - [ ] OTA updates
+- **more formats**
+  - [ ] TXT
+  - [ ] images
+  - [ ] mangas?
+- **extra features/long term**
+  - [ ] reader dictionary
+  - [ ] dark mode
+  - [ ] localization
