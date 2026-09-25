@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
-use crate::{ArchivePath, PathError};
+use crate::{ArchivePath, PathError, path::decode_url_component};
 
 mod nav;
 mod ncx;
@@ -66,7 +66,7 @@ impl NavigationTarget {
                 if fragment.is_empty() {
                     None
                 } else {
-                    Some(String::from(fragment))
+                    Some(decode_url_component(fragment))
                 },
             ),
 
@@ -167,4 +167,68 @@ fn normalize_label(input: &str) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn epub3_navigation_decodes_percent_encoded_targets() {
+        const NAV: &str = r#"
+<html
+    xmlns="http://www.w3.org/1999/xhtml"
+    xmlns:epub="http://www.idpf.org/2007/ops"
+>
+    <body>
+        <nav epub:type="toc">
+            <ol>
+                <li>
+                    <a href="../Text/Caf%C3%A9%20Chapter.xhtml#section%201">
+                        Chapter One
+                    </a>
+                </li>
+            </ol>
+        </nav>
+    </body>
+</html>
+"#;
+
+        let navigation =
+            parse_nav(NAV, ArchivePath::new("OPS/Navigation/toc.xhtml").unwrap()).unwrap();
+
+        assert_eq!(navigation.entries().len(), 1);
+
+        let target = navigation.entries()[0].target().unwrap();
+
+        assert_eq!(target.path().as_str(), "OPS/Text/Café Chapter.xhtml");
+        assert_eq!(target.fragment(), Some("section 1"));
+    }
+
+    #[test]
+    fn epub2_ncx_decodes_percent_encoded_targets() {
+        const NCX: &str = r#"
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+    <navMap>
+        <navPoint id="chapter-1">
+            <navLabel>
+                <text>Chapter One</text>
+            </navLabel>
+
+            <content src="../Text/Caf%C3%A9%20Chapter.xhtml#section%201"/>
+        </navPoint>
+    </navMap>
+</ncx>
+"#;
+
+        let navigation =
+            parse_ncx(NCX, ArchivePath::new("OPS/Navigation/toc.ncx").unwrap()).unwrap();
+
+        assert_eq!(navigation.entries().len(), 1);
+
+        let target = navigation.entries()[0].target().unwrap();
+
+        assert_eq!(target.path().as_str(), "OPS/Text/Café Chapter.xhtml");
+        assert_eq!(target.fragment(), Some("section 1"));
+    }
 }

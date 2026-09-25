@@ -460,3 +460,52 @@ fn xhtml_content_offsets_survive_markup_images_and_breaks() {
     assert!(chapter.contains_offset(ContentOffset::new(4)));
     assert!(!chapter.contains_offset(ContentOffset::new(5)));
 }
+
+#[test]
+fn xhtml_decodes_percent_encoded_internal_resource_references() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <body>
+        <p>
+            <a href="../Notes/My%20Notes.xhtml#note%201">note</a>
+            <img
+                src="../Images/Caf%C3%A9%20cover.jpg"
+                alt="cover"
+            />
+        </p>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+
+    let block = &chapter.blocks()[0];
+
+    let note = block
+        .inlines()
+        .iter()
+        .find_map(|inline| {
+            let Inline::Text(text) = inline else {
+                return None;
+            };
+
+            (text.text() == "note").then_some(text)
+        })
+        .unwrap();
+
+    let target = note.link().unwrap();
+
+    assert_eq!(target.path().unwrap().as_str(), "OPS/Notes/My Notes.xhtml");
+    assert_eq!(target.fragment(), Some("note 1"));
+
+    let image = block
+        .inlines()
+        .iter()
+        .find_map(|inline| match inline {
+            Inline::Image(image) => Some(image),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_eq!(image.path().as_str(), "OPS/Images/Café cover.jpg");
+}

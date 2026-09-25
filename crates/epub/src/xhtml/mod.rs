@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
-use crate::{ArchivePath, PathError, location::ContentOffset};
+use crate::{ArchivePath, PathError, location::ContentOffset, path::decode_url_component};
 
 mod parser;
 mod style_context;
@@ -225,7 +225,7 @@ impl LinkTarget {
                 if fragment.is_empty() {
                     None
                 } else {
-                    Some(String::from(fragment))
+                    Some(decode_url_component(fragment))
                 },
             ),
 

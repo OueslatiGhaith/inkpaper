@@ -544,3 +544,90 @@ fn reports_uncompressed_spine_resource_sizes() {
         ],
     );
 }
+
+#[test]
+fn loads_percent_encoded_manifest_resource_path() {
+    let bytes = build_percent_encoded_path_epub();
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let item = epub.package().manifest_item("chapter").unwrap();
+
+    assert_eq!(item.href(), "Text/Caf%C3%A9%20Chapter.xhtml");
+    assert_eq!(item.path().as_str(), "OPS/Text/Café Chapter.xhtml");
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(chapter.path().as_str(), "OPS/Text/Café Chapter.xhtml");
+
+    let Inline::Text(text) = &chapter.blocks()[0].inlines()[0] else {
+        panic!("expected chapter text");
+    };
+
+    assert_eq!(text.text(), "Encoded path works");
+}
+
+fn build_percent_encoded_path_epub() -> std::vec::Vec<u8> {
+    const CONTAINER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<container
+    xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+>
+    <rootfiles>
+        <rootfile
+            full-path="OPS/package.opf"
+            media-type="application/oebps-package+xml"
+        />
+    </rootfiles>
+</container>
+"#;
+
+    const PACKAGE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package
+    xmlns="http://www.idpf.org/2007/opf"
+    version="3.0"
+>
+    <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <dc:title>Encoded Paths</dc:title>
+    </metadata>
+
+    <manifest>
+        <item
+            id="chapter"
+            href="Text/Caf%C3%A9%20Chapter.xhtml"
+            media-type="application/xhtml+xml"
+        />
+    </manifest>
+
+    <spine>
+        <itemref idref="chapter" />
+    </spine>
+</package>
+"#;
+
+    const CHAPTER: &str = "<html><body><p>Encoded path works</p></body></html>";
+
+    build_zip(&[
+        TestEntry {
+            name: "mimetype",
+            data: b"application/epub+zip",
+            compression: STORED,
+        },
+        TestEntry {
+            name: "META-INF/container.xml",
+            data: CONTAINER.as_bytes(),
+            compression: DEFLATED,
+        },
+        TestEntry {
+            name: "OPS/package.opf",
+            data: PACKAGE.as_bytes(),
+            compression: DEFLATED,
+        },
+        TestEntry {
+            name: "OPS/Text/Café Chapter.xhtml",
+            data: CHAPTER.as_bytes(),
+            compression: DEFLATED,
+        },
+    ])
+}
