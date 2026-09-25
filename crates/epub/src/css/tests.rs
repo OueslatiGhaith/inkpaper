@@ -220,3 +220,104 @@ fn css_resolves_block_spacing_indentation_and_line_height() {
     assert_eq!(text.margin_top(), None);
     assert_eq!(text.margin_bottom(), None);
 }
+
+#[test]
+fn css_matches_descendant_and_child_combinators() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <style>
+            .book p { font-style: italic; }
+            div > p { text-align: center; }
+            .book  >  .note  em { font-weight: bold; }
+        </style>
+    </head>
+    <body class="book">
+        <p>direct</p>
+        <div><p>child of div</p></div>
+        <div><blockquote><p>grandchild of div</p></blockquote></div>
+        <div class="note"><span><em>deep</em></span></div>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let styles = resolve_embedded(&chapter);
+
+    // descendant: every p under body.book
+    assert_eq!(
+        text_style(&chapter, &styles, "direct").font_style(),
+        FontStyle::Italic
+    );
+    assert_eq!(
+        text_style(&chapter, &styles, "grandchild of div").font_style(),
+        FontStyle::Italic
+    );
+
+    // child: only the p directly inside div
+    assert_eq!(
+        text_style(&chapter, &styles, "child of div").text_align(),
+        TextAlign::Center
+    );
+    assert_ne!(
+        text_style(&chapter, &styles, "grandchild of div").text_align(),
+        TextAlign::Center
+    );
+
+    // mixed chain with extra whitespace around the combinator
+    assert_eq!(
+        text_style(&chapter, &styles, "deep").font_weight(),
+        FontWeight::Bold
+    );
+}
+
+#[test]
+fn css_combinator_specificity_adds_across_compounds() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <style>
+            .book p { text-align: center; }
+            p { text-align: right; }
+        </style>
+    </head>
+    <body class="book"><p>text</p></body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let styles = resolve_embedded(&chapter);
+
+    // (0,1,1) beats (0,0,1) even though `p` comes later
+    assert_eq!(
+        text_style(&chapter, &styles, "text").text_align(),
+        TextAlign::Center
+    );
+}
+
+#[test]
+fn css_ignores_unsupported_selectors_without_dropping_the_rest_of_the_list() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <style>
+            h1 + p, p:first-child, h1 ~ p, p[lang], .book p { font-style: italic; }
+            h1 + p { font-weight: bold; }
+        </style>
+    </head>
+    <body class="book"><h1>title</h1><p>text</p></body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let styles = resolve_embedded(&chapter);
+
+    assert_eq!(
+        text_style(&chapter, &styles, "text").font_style(),
+        FontStyle::Italic
+    );
+    assert_ne!(
+        text_style(&chapter, &styles, "text").font_weight(),
+        FontWeight::Bold
+    );
+}

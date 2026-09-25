@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
-use crate::{CssLength, LineHeight, StyleNode};
+use crate::{CssLength, LineHeight, StyleNode, StyleNodeId};
 
 use super::{FontStyle, FontWeight, TextAlign};
 
@@ -43,17 +43,33 @@ impl Specificity {
         classes: u16::MAX,
         elements: u16::MAX,
     };
+
+    const fn add(self, other: Self) -> Self {
+        Self {
+            ids: self.ids.saturating_add(other.ids),
+            classes: self.classes.saturating_add(other.classes),
+            elements: self.elements.saturating_add(other.elements),
+        }
+    }
+}
+
+// bounds matching work for descendant combinators, which may backtrack
+const MAX_SELECTOR_COMPOUNDS: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Combinator {
+    Descendant,
+    Child,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Selector {
+struct CompoundSelector {
     element: Option<String>,
     id: Option<String>,
     classes: Vec<String>,
-    specificity: Specificity,
 }
 
-impl Selector {
+impl CompoundSelector {
     fn matches(&self, node: &StyleNode) -> bool {
         if let Some(element) = &self.element
             && !element.eq_ignore_ascii_case(node.element())
@@ -71,6 +87,46 @@ impl Selector {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Selector {
+    subject: CompoundSelector,
+    // nearest ancestor first
+    ancestors: Vec<(Combinator, CompoundSelector)>,
+    specificity: Specificity,
+}
+
+impl Selector {
+    fn matches(&self, node: &StyleNode, nodes: &[StyleNode]) -> bool {
+        self.subject.matches(node) && matches_ancestors(&self.ancestors, node.parent(), nodes)
+    }
+}
+
+fn matches_ancestors(
+    ancestors: &[(Combinator, CompoundSelector)],
+    parent: Option<StyleNodeId>,
+    nodes: &[StyleNode],
+) -> bool {
+    let Some(((combinator, compound), rest)) = ancestors.split_first() else {
+        return true;
+    };
+
+    let mut candidate = parent;
+
+    while let Some(node) = candidate.and_then(|id| nodes.get(id.index())) {
+        if compound.matches(node) && matches_ancestors(rest, node.parent(), nodes) {
+            return true;
+        }
+
+        if *combinator == Combinator::Child {
+            return false;
+        }
+
+        candidate = node.parent();
+    }
+
+    false
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct Rule {
     selector: Selector,
@@ -79,8 +135,8 @@ pub(super) struct Rule {
 }
 
 impl Rule {
-    pub(super) fn matches(&self, node: &StyleNode) -> bool {
-        self.selector.matches(node)
+    pub(super) fn matches(&self, node: &StyleNode, nodes: &[StyleNode]) -> bool {
+        self.selector.matches(node, nodes)
     }
 
     pub(super) const fn specificity(&self) -> Specificity {
@@ -143,13 +199,74 @@ pub(super) fn parse_inline_declarations(css: &str) -> Vec<Declaration> {
 fn parse_selector(selector: &str) -> Option<Selector> {
     let selector = selector.trim();
 
-    if selector.is_empty() || selector.bytes().any(|byte| byte.is_ascii_whitespace()) {
+    if selector.is_empty() {
         return None;
     }
 
     let bytes = selector.as_bytes();
 
-    let mut index = 0;
+    // leftmost compound first, then (combinator, compound) pairs to the right
+    let (first, first_specificity, mut index) = parse_compound(selector, 0)?;
+    let mut specificity = first_specificity;
+    let mut chain = Vec::new();
+    let mut previous = first;
+
+    while index < bytes.len() {
+        let whitespace_start = index;
+
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+
+        let combinator = if index < bytes.len() && bytes[index] == b'>' {
+            index += 1;
+
+            while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+                index += 1;
+            }
+
+            Combinator::Child
+        } else if index > whitespace_start {
+            Combinator::Descendant
+        } else {
+            // '+', '~', ':', '[' and other unsupported syntax
+            return None;
+        };
+
+        let (compound, compound_specificity, end) = parse_compound(selector, index)?;
+
+        chain.push((combinator, previous));
+        previous = compound;
+        specificity = specificity.add(compound_specificity);
+        index = end;
+
+        if chain.len() >= MAX_SELECTOR_COMPOUNDS {
+            return None;
+        }
+    }
+
+    // chain holds each compound with the combinator that follows it; reverse so the
+    // nearest ancestor comes first
+    chain.reverse();
+
+    Some(Selector {
+        subject: previous,
+        ancestors: chain,
+        specificity,
+    })
+}
+
+/// Parses one compound selector such as `p.note#intro` starting at `start`.
+///
+/// Stops before whitespace or `>`, which the caller treats as combinators.
+fn parse_compound(selector: &str, start: usize) -> Option<(CompoundSelector, Specificity, usize)> {
+    let bytes = selector.as_bytes();
+
+    if start >= bytes.len() {
+        return None;
+    }
+
+    let mut index = start;
     let mut element = None;
     let mut id = None;
     let mut classes = Vec::new();
@@ -198,24 +315,29 @@ fn parse_selector(selector: &str) -> Option<Selector> {
                 index = end;
             }
 
+            byte if byte.is_ascii_whitespace() || byte == b'>' => break,
+
             _ => {
-                // combinators, pseudo classes/elements, attribute selectors, namespaces
-                // and escaped selectors are not supported yet
+                // pseudo classes/elements, attribute selectors, sibling combinators,
+                // namespaces and escaped selectors are not supported yet
                 return None;
             }
         }
     }
 
-    Some(Selector {
-        element,
-        id,
-        classes,
-        specificity: Specificity {
+    Some((
+        CompoundSelector {
+            element,
+            id,
+            classes,
+        },
+        Specificity {
             ids,
             classes: class_count,
             elements,
         },
-    })
+        index,
+    ))
 }
 
 fn parse_identifier(input: &str, start: usize) -> Option<(String, usize)> {

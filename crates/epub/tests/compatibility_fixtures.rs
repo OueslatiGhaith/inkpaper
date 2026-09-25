@@ -69,7 +69,6 @@ fn follows_manifest_fallback_for_unsupported_spine_resource() {
 }
 
 #[test]
-#[ignore = "known gap: CSS descendant selectors are unsupported"]
 fn applies_css_descendant_selector() {
     let mut epub = future::block_on(Epub::open(SliceSource::new(CSS_DESCENDANT_SELECTOR))).unwrap();
 

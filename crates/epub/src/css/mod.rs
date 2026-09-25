@@ -275,7 +275,8 @@ struct CascadedStyle {
 }
 
 pub(crate) fn resolve_chapter_styles(chapter: &Chapter, stylesheet: &Stylesheet) -> ChapterStyles {
-    let mut styles = Vec::with_capacity(chapter.style_nodes().len());
+    let nodes = chapter.style_nodes();
+    let mut styles = Vec::with_capacity(nodes.len());
 
     for index in 0..chapter.style_nodes().len() {
         let node_id = StyleNodeId::new(index);
@@ -304,7 +305,7 @@ pub(crate) fn resolve_chapter_styles(chapter: &Chapter, stylesheet: &Stylesheet)
         let mut cascade = CascadedStyle::default();
 
         for rule in &stylesheet.rules {
-            if !rule.matches(node) {
+            if !rule.matches(node, nodes) {
                 continue;
             }
 
