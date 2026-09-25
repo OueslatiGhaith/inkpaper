@@ -51,7 +51,7 @@ fn decodes_epub2_xhtml_named_entities() {
 
     assert_eq!(
         chapter_text(&chapter),
-        "EPUB 2 EntitiesFish Chips © 2026 — EPUB 2",
+        "EPUB 2 EntitiesFish\u{00A0}Chips © 2026 — EPUB 2",
     );
 }
 

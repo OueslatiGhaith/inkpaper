@@ -2,7 +2,11 @@ use alloc::{string::String, vec::Vec};
 
 use xmlparser::{ElementEnd, Token, Tokenizer};
 
-use crate::{ArchivePath, XhtmlError, xhtml::ChapterImage, xml::decode_xml_value};
+use crate::{
+    ArchivePath, XhtmlError,
+    xhtml::{ChapterImage, is_collapsible_whitespace},
+    xml::decode_xml_value,
+};
 
 use super::{
     BlockKind, Chapter, ChapterBlock, ChapterBlockBuilder, InlineStyle, LinkTarget, StyleNode,
@@ -476,7 +480,7 @@ impl XhtmlParser {
             decode_xml_value(text)
         };
 
-        if text.chars().all(char::is_whitespace) && self.current.is_none() {
+        if text.chars().all(is_collapsible_whitespace) && self.current.is_none() {
             return;
         }
 

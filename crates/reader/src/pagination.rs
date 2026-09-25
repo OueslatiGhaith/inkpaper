@@ -314,14 +314,14 @@ where
                 break;
             };
 
-            let whitespace = first.is_whitespace();
+            let whitespace = is_break_whitespace(first);
 
             let mut end = text.len();
 
             let first_end = start.saturating_add(first.len_utf8());
 
             for (relative, character) in text[first_end..].char_indices() {
-                if character.is_whitespace() != whitespace {
+                if is_break_whitespace(character) != whitespace {
                     end = first_end.saturating_add(relative);
                     break;
                 }
@@ -772,4 +772,9 @@ fn scalar_boundary(text: &str, from: usize) -> Option<usize> {
     let character = text[from..].chars().next()?;
 
     Some(from.saturating_add(character.len_utf8()))
+}
+
+// non-breaking spaces are laid out as part of the surrounding word
+fn is_break_whitespace(character: char) -> bool {
+    character.is_whitespace() && !matches!(character, '\u{00A0}' | '\u{202F}')
 }

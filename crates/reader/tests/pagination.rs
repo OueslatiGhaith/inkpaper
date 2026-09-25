@@ -948,3 +948,21 @@ fn pagination_coalesces_contiguous_text_on_the_same_line() {
     assert_eq!(text.bounds(), Rect::new(0, 0, 13, 1));
     assert!(text.link().is_none());
 }
+
+#[test]
+fn pagination_does_not_break_lines_at_non_breaking_spaces() {
+    // "aa bb cc" is 8 wide in a 7 wide viewport. A normal space would break
+    // after "bb"; the non-breaking space keeps "bb cc" together.
+    let pagination = paginate_positions("<p>aa bb\u{00A0}cc</p>", 7, 4);
+
+    let lines: Vec<(u32, &str)> = pagination.pages()[0]
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            PageItem::Text(text) => Some((text.bounds().y(), text.text().trim_end())),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(lines, [(0, "aa"), (1, "bb\u{00A0}cc")]);
+}

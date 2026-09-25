@@ -509,3 +509,28 @@ fn xhtml_decodes_percent_encoded_internal_resource_references() {
 
     assert_eq!(image.path().as_str(), "OPS/Images/Café cover.jpg");
 }
+
+#[test]
+fn xhtml_keeps_non_breaking_spaces_and_drops_byte_order_marks() {
+    const XHTML: &str = "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>\
+        <p>\u{FEFF}200\u{00A0}km and 10\u{202F}%   done</p>\
+        </body></html>";
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+
+    assert_eq!(
+        visible_text(&chapter.blocks()[0]),
+        "200\u{00A0}km and 10\u{202F}% done",
+    );
+}
+
+#[test]
+fn xhtml_does_not_collapse_non_breaking_space_into_adjacent_whitespace() {
+    const XHTML: &str = "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>\
+        <p>a \u{00A0} b</p>\
+        </body></html>";
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+
+    assert_eq!(visible_text(&chapter.blocks()[0]), "a \u{00A0} b");
+}

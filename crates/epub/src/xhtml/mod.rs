@@ -330,7 +330,14 @@ impl ChapterBlockBuilder {
         let mut output = String::new();
 
         for character in text.chars() {
-            if character.is_whitespace() {
+            // U+FEFF is a byte order mark / zero width no-break space with no visible form
+            if character == '\u{FEFF}' {
+                continue;
+            }
+
+            // only XML whitespace collapses. Other spaces, in particular U+00A0 and
+            // U+202F, are kept as text so layout can treat them as non-breaking.
+            if is_collapsible_whitespace(character) {
                 // flush text before recording the collapsed space.
                 // this is important for: Chapter <em>One</em>
                 // without flushing "Chapter" here, the block still appears empty when
@@ -427,6 +434,10 @@ impl ChapterBlockBuilder {
             inlines: self.inlines,
         })
     }
+}
+
+pub(crate) fn is_collapsible_whitespace(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\n' | '\r')
 }
 
 fn suppresses_preceding_space(character: char) -> bool {
