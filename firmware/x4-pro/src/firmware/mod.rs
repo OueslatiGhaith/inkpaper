@@ -1,6 +1,6 @@
 use defmt::{debug, error, info, warn};
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either5, select5};
+use embassy_futures::select::{Either6, select6};
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
@@ -24,6 +24,7 @@ use static_cell::StaticCell;
 use xteink_display_probe::{Verdict, detect_x4_controller};
 
 use crate::firmware::{
+    auto_sleep::AutoSleep,
     battery::{BATTERY_UPDATES, BatteryReading, battery_task},
     buttons::{Buttons, button_task},
     display::{X4Panel, power::DisplayPowerManager},
@@ -44,6 +45,7 @@ use crate::firmware::{
     usb_mass_storage::{USB_HOST_UPDATES, UsbHostState},
 };
 
+mod auto_sleep;
 mod battery;
 mod buttons;
 mod display;
@@ -302,24 +304,30 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
     info!("shared I2C services started");
 
+    let mut auto_sleep = AutoSleep::new();
+
     loop {
         let mut action = InputAction::Continue;
 
         // main sleeps until either:
         // - physical user input arrives
         // - the battery service has a new reading
+        // - the inactivity countdown expires
         // `BATTERY_UPDATES` is a signal, so dropping its pending wait when input
         // wins this select is safe and doesn't lose a stored reading
-        match select5(
+        match select6(
             INPUT_EVENTS.receive(),
             BATTERY_UPDATES.wait(),
             RTC_UPDATES.wait(),
             display_power.wait_idle_timeout(),
             USB_HOST_UPDATES.wait(),
+            auto_sleep.wait(),
         )
         .await
         {
-            Either5::First(event) => {
+            Either6::First(event) => {
+                auto_sleep.reset();
+
                 action = handle_input_event(runtime, app, event);
                 // combine events accumulated while the e-ink panel was busy.
                 while action == InputAction::Continue
@@ -331,9 +339,9 @@ async fn main(spawner: Spawner) -> ! {
                     action = handle_input_event(runtime, app, event);
                 }
             }
-            Either5::Second(reading) => apply_battery_reading(runtime, app, reading),
-            Either5::Third(state) => apply_rtc_state(runtime, app, state),
-            Either5::Fourth(()) => {
+            Either6::Second(reading) => apply_battery_reading(runtime, app, reading),
+            Either6::Third(state) => apply_rtc_state(runtime, app, state),
+            Either6::Fourth(()) => {
                 display_power
                     .handle_idle_timeout(&mut panel, &mut bus, &mut delay)
                     .await
@@ -341,7 +349,25 @@ async fn main(spawner: Spawner) -> ! {
 
                 continue;
             }
-            Either5::Fifth(state) => apply_usb_host_state(runtime, app, state),
+            Either6::Fifth(state) => apply_usb_host_state(runtime, app, state),
+            Either6::Sixth(()) => {
+                // re-arm first, so a blocked auto-sleep waits another full timeout
+                auto_sleep.reset();
+
+                match runtime.update(app, |app, _| app.allows_auto_sleep()) {
+                    Ok(true) => {
+                        info!("auto-sleep after inactivity");
+
+                        action = InputAction::Sleep;
+                    }
+                    Ok(false) => continue,
+                    Err(_) => {
+                        warn!("failed to query auto-sleep state");
+
+                        continue;
+                    }
+                }
+            }
         }
 
         if action == InputAction::Sleep {

@@ -681,6 +681,14 @@ impl InkPaperApp {
         self.screen == Screen::FileTransfer && self.file_transfer.blocks_input()
     }
 
+    /// Whether the device may enter deep sleep on its own after inactivity.
+    ///
+    /// A USB Drive session hands the SD card to the host, so sleeping would cut
+    /// off a transfer in progress.
+    pub fn allows_auto_sleep(&self) -> bool {
+        !self.file_transfer.blocks_input()
+    }
+
     pub fn prepare_for_sleep(&mut self, cx: &mut Context<'_, Self>) {
         if self.control_center.close() {
             self.frontlight.request_persist();

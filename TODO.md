@@ -16,8 +16,8 @@
 - [x] resume a book from saved progress
 - [x] recent books can reopen saved books
 - [x] basic reader load/error state
-- [ ] harden EPUB compatibility for EPUB 2/3
-- [ ] more fixtures for EPUB 2/3
+- [x] harden EPUB compatibility for EPUB 2/3
+- [x] more fixtures for EPUB 2/3
 
 ## Home and Library
 
@@ -55,6 +55,7 @@
 - [x] change to long press
 - [ ] faster wakeup
 - [x] sleep screen
+- [x] auto sleep
 
 ## Display
 
