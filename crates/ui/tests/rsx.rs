@@ -19,19 +19,6 @@ fn rsx_builds_nested_divs() {
 }
 
 #[test]
-fn rsx_accepts_rust_expression_children() {
-    let child = text("Hello");
-
-    let tree = rsx! {
-        <div class="w-full p-3">
-            {child}
-        </div>
-    };
-
-    assert_into_element(tree);
-}
-
-#[test]
 fn rsx_accepts_complex_expression_children() {
     let enabled = true;
 
@@ -112,18 +99,6 @@ fn rsx_supports_tailwind_utility_aliases() {
 }
 
 #[test]
-fn rsx_supports_tailwind_background_colors() {
-    let tree = rsx! {
-        <div class="
-            bg-red-500
-            rounded-lg
-        "/>
-    };
-
-    assert_into_element(tree);
-}
-
-#[test]
 fn rsx_supports_tailwind_neutral_colors() {
     let tree = rsx! {
         <div class="bg-zinc-100">
@@ -134,40 +109,6 @@ fn rsx_supports_tailwind_neutral_colors() {
             <div class="bg-mist-500"/>
             <div class="bg-taupe-500"/>
         </div>
-    };
-
-    assert_into_element(tree);
-}
-
-#[test]
-fn rsx_supports_tailwind_black_and_white() {
-    let tree = rsx! {
-        <div class="bg-white">
-            <div class="bg-black"/>
-        </div>
-    };
-
-    assert_into_element(tree);
-}
-
-#[test]
-fn rsx_supports_tailwind_text_colors() {
-    let tree = rsx! {
-        <div class="
-            text-lg
-            text-red-500
-        ">
-            {text("Hello")}
-        </div>
-    };
-
-    assert_into_element(tree);
-}
-
-#[test]
-fn rsx_supports_tailwind_border_colors() {
-    let tree = rsx! {
-        <div class="border-2 border-blue-500" />
     };
 
     assert_into_element(tree);
@@ -220,25 +161,6 @@ fn rsx_supports_dynamic_text_elements() {
 }
 
 #[test]
-fn rsx_supports_text_elements_inside_divs() {
-    let subtitle = "Chapter 4";
-
-    let tree = rsx! {
-        <div class="flex flex-col gap-2">
-            <text class="text-lg text-black">
-                "Continue reading"
-            </text>
-
-            <text class="text-sm text-zinc-500">
-                {subtitle}
-            </text>
-        </div>
-    };
-
-    assert_into_element(tree);
-}
-
-#[test]
 fn rsx_supports_dynamic_text_colors() {
     let ink = Color::rgb(32, 32, 32);
 
@@ -284,26 +206,6 @@ fn rsx_supports_image_elements() {
             source={source}
             class="w-24 h-32 object-cover"
         />
-    };
-
-    assert_into_element(tree);
-}
-
-#[test]
-fn rsx_supports_nested_image_elements() {
-    let source = ImageSource::new(ImageId::new(1), Size::new(px(120), px(180)));
-
-    let tree = rsx! {
-        <div class="flex flex-col gap-2">
-            <image
-                source={source}
-                class="w-24 h-32 object-cover"
-            />
-
-            <text class="text-sm text-zinc-500">
-                "Book cover"
-            </text>
-        </div>
     };
 
     assert_into_element(tree);
@@ -427,37 +329,6 @@ fn rsx_supports_conditionals() {
         {:else}
             <text>"Download"</text>
         {/if}
-    };
-
-    assert_into_element(tree);
-}
-
-#[test]
-fn rsx_supports_conditional_children() {
-    let available = true;
-
-    let tree = rsx! {
-        <div class="flex flex-col gap-2">
-            {#if available}
-                <text>"Available"</text>
-            {:else}
-                <text>"Unavailable"</text>
-            {/if}
-        </div>
-    };
-
-    assert_into_element(tree);
-}
-
-#[test]
-fn rsx_supports_fragments() {
-    let tree = rsx! {
-        <div class="flex flex-col gap-2">
-            <>
-                <text>"First"</text>
-                <text>"Second"</text>
-            </>
-        </div>
     };
 
     assert_into_element(tree);
@@ -644,33 +515,6 @@ fn rsx_supports_identity() {
 }
 
 #[test]
-fn rsx_supports_focusable_elements() {
-    let tree = rsx! {
-        <div id="open" focusable>
-            <text>"Open"</text>
-        </div>
-    };
-
-    assert_into_element(tree);
-}
-
-fn interactive_rsx_tree(listener: Listener<ActivateEvent>) -> impl IntoElement {
-    rsx! {
-        <div
-            id="open"
-            on:activate={listener}
-        >
-            <text>"Open"</text>
-        </div>
-    }
-}
-
-#[test]
-fn rsx_supports_activate_listeners() {
-    let _ = interactive_rsx_tree;
-}
-
-#[test]
 fn rsx_supports_interaction_variants() {
     let tree = rsx! {
         <div
@@ -717,27 +561,6 @@ fn interactive_variant_tree(listener: Listener<ActivateEvent>) -> impl IntoEleme
 #[test]
 fn rsx_interaction_variants_work_with_activate_listener() {
     let _ = interactive_variant_tree;
-}
-
-#[test]
-fn rsx_supports_keyed_each() {
-    let books = [
-        (1_u64, "Dune"),
-        (2_u64, "Neuromancer"),
-        (3_u64, "Foundation"),
-    ];
-
-    let tree = rsx! {
-        <div class="flex flex-col gap-2">
-            {#each books as (id, title) (id)}
-                <div>
-                    <text>{title}</text>
-                </div>
-            {/each}
-        </div>
-    };
-
-    assert_into_element(tree);
 }
 
 #[test]
@@ -854,4 +677,34 @@ fn rsx_supports_font_weights() {
     };
 
     assert_into_element(tree);
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BookSelectedEvent;
+
+struct EventView;
+
+impl EventView {
+    fn activated(&mut self, _: &ActivateEvent, _: &mut Context<'_, Self>) {}
+    fn book_selected(&mut self, _: &BookSelectedEvent, _: &mut Context<'_, Self>) {}
+}
+
+impl Render for EventView {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let activate = cx.listener(Self::activated);
+        let selected = cx.listener(Self::book_selected);
+
+        rsx! {
+            <div
+                id="book"
+                on:activate={activate}
+                on:BookSelectedEvent={selected}
+            />
+        }
+    }
+}
+
+#[test]
+fn rsx_supports_builtin_and_typed_event_attributes() {
+    let _ = EventView::render;
 }

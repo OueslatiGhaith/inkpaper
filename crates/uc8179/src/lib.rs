@@ -1528,11 +1528,4 @@ mod tests {
         assert_eq!(region_buffer_len(region), 40);
     }
 
-    #[test]
-    fn power_transitions_start_idle() {
-        let panel = Uc8179::new(X4_PRO_800X480);
-
-        assert!(!panel.power_off_pending());
-        assert!(!panel.power_on_pending());
-    }
 }

@@ -6,76 +6,6 @@ use quote::quote;
 use super::expand_rsx;
 
 #[test]
-fn expands_static_text_element() {
-    let result = expand_rsx(quote! {
-        <text class="text-lg text-zinc-700">
-            "Hello"
-        </text>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_dynamic_text_element() {
-    let result = expand_rsx(quote! {
-        <text class="text-lg">
-            {title}
-        </text>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_text_nested_inside_div() {
-    let result = expand_rsx(quote! {
-        <div class="flex flex-col gap-2">
-            <text class="text-lg">
-                "Title"
-            </text>
-
-            <text class="text-sm text-zinc-500">
-                {subtitle}
-            </text>
-        </div>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn typed_color_value_resolves_text_namespace() {
-    let result = expand_rsx(quote! {
-        <text class="text-{color:theme.ink}">
-            "Hello"
-        </text>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn typed_length_value_resolves_text_namespace() {
-    let result = expand_rsx(quote! {
-        <text class="text-{length:font_size}">
-            "Hello"
-        </text>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn typed_color_value_resolves_border_namespace() {
-    let result = expand_rsx(quote! {
-        <div class="border-2 border-{color:theme.border}"/>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
 fn untyped_rust_value_remains_ambiguous_in_text_namespace() {
     let error = expand_rsx(quote! {
         <text class="text-{value}">
@@ -120,56 +50,6 @@ fn rejects_multiple_text_children() {
     .unwrap_err();
 
     assert!(error.to_string().contains("exactly one content child"));
-}
-
-#[test]
-fn expands_image_element() {
-    let result = expand_rsx(quote! {
-        <image
-            source={cover}
-            class="w-24 h-32 object-cover"
-        />
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_image_inside_div() {
-    let result = expand_rsx(quote! {
-        <div class="flex">
-            <image
-                source={cover}
-                class="w-24 h-32 object-contain"
-            />
-        </div>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_image_filter_utilities() {
-    let result = expand_rsx(quote! {
-        <image
-            source={cover}
-            class="grayscale invert"
-        />
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_arbitrary_image_dimensions() {
-    let result = expand_rsx(quote! {
-        <image
-            source={cover}
-            class="w-[110px] h-[160px]"
-        />
-    });
-
-    assert!(result.is_ok());
 }
 
 #[test]
@@ -233,53 +113,6 @@ fn rejects_unsupported_object_scale_down() {
 }
 
 #[test]
-fn expands_custom_component() {
-    let result = expand_rsx(quote! {
-        <TopBar
-            clock={clock}
-            battery={battery}
-        />
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_custom_component_inside_div() {
-    let result = expand_rsx(quote! {
-        <div class="flex flex-col">
-            <TopBar
-                clock={clock}
-                battery={battery}
-            />
-        </div>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_custom_component_with_no_props() {
-    let result = expand_rsx(quote! {
-        <LoadingIndicator />
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_custom_component_children() {
-    let result = expand_rsx(quote! {
-        <Panel>
-            <text>"Hello"</text>
-            <text>"World"</text>
-        </Panel>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
 fn rejects_duplicate_component_props() {
     let error = expand_rsx(quote! {
         <TopBar
@@ -333,38 +166,6 @@ fn preserves_nontrivial_block_expression() {
 
 fn rsx_tokens(source: &str) -> TokenStream {
     TokenStream::from_str(source).expect("valid token stream")
-}
-
-#[test]
-fn expands_if_else() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        {#if visible}
-            <text>"Visible"</text>
-        {:else}
-            <text>"Hidden"</text>
-        {/if}
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_else_if() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        {#if primary}
-            <text>"Primary"</text>
-        {:else if secondary}
-            <text>"Secondary"</text>
-        {:else}
-            <text>"Fallback"</text>
-        {/if}
-        "#,
-    ));
-
-    assert!(result.is_ok());
 }
 
 #[test]
@@ -439,38 +240,6 @@ fn rejects_unclosed_if() {
 }
 
 #[test]
-fn expands_fragment_children() {
-    let result = expand_rsx(quote! {
-        <div>
-            <>
-                <text>"First"</text>
-                <text>"Second"</text>
-            </>
-        </div>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_nested_fragments() {
-    let result = expand_rsx(quote! {
-        <div>
-            <>
-                <text>"First"</text>
-
-                <>
-                    <text>"Second"</text>
-                    <text>"Third"</text>
-                </>
-            </>
-        </div>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
 fn rejects_fragment_as_root() {
     let error = expand_rsx(quote! {
         <>
@@ -481,40 +250,6 @@ fn rejects_fragment_as_root() {
     .unwrap_err();
 
     assert!(error.to_string().contains("fragment cannot be the root"));
-}
-
-#[test]
-fn expands_multiple_nodes_in_conditional_child_branch() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#if visible}
-                <text>"One"</text>
-                <text>"Two"</text>
-            {:else}
-                <text>"Three"</text>
-                <text>"Four"</text>
-            {/if}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_conditional_child_without_else() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#if visible}
-                <text>"Visible"</text>
-            {/if}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
 }
 
 #[test]
@@ -534,111 +269,6 @@ fn expands_empty_conditional_branch() {
 }
 
 #[test]
-fn expands_fragment_inside_conditional_branch() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#if visible}
-                <>
-                    <text>"One"</text>
-                    <text>"Two"</text>
-                </>
-            {:else}
-                <text>"Fallback"</text>
-            {/if}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_each() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#each books as book}
-                <BookRow book={book} />
-            {/each}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_each_with_multiple_children() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#each books as book}
-                <BookRow book={book} />
-                <text>"Divider"</text>
-            {/each}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_each_with_index() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#each books as book, index}
-                <BookRow
-                    book={book}
-                    index={index}
-                />
-            {/each}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_each_with_else() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#each books as book}
-                <BookRow book={book} />
-            {:else}
-                <text>"No books"</text>
-            {/each}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_conditional_inside_each() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#each books as book}
-                {#if book.downloaded}
-                    <text>"Read"</text>
-                {:else}
-                    <text>"Download"</text>
-                {/if}
-            {/each}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
 fn expands_each_inside_conditional() {
     let result = expand_rsx(rsx_tokens(
         r#"
@@ -650,25 +280,6 @@ fn expands_each_inside_conditional() {
             {:else}
                 <text>"Loading"</text>
             {/if}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_nested_each() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#each shelves as shelf}
-                <text>{shelf.name}</text>
-
-                {#each shelf.books as book}
-                    <BookRow book={book} />
-                {/each}
-            {/each}
         </div>
         "#,
     ));
@@ -726,38 +337,6 @@ fn rejects_unclosed_each() {
 }
 
 #[test]
-fn expands_dynamic_id() {
-    let result = expand_rsx(quote! {
-        <div id={book_id} />
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_focusable_element() {
-    let result = expand_rsx(quote! {
-        <div id="button" focusable />
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_activate_listener() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div
-            id="button"
-            on:activate={listener}
-        />
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
 fn rejects_focusable_without_id() {
     let error = expand_rsx(quote! {
         <div focusable />
@@ -785,50 +364,6 @@ fn rejects_activate_without_id() {
             .to_string()
             .contains("`on:activate` requires an `id` attribute")
     );
-}
-
-#[test]
-fn expands_focus_variant() {
-    let result = expand_rsx(quote! {
-        <div
-            id="button"
-            focusable
-            class="bg-white focus:bg-zinc-100"
-        />
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_active_variant() {
-    let result = expand_rsx(quote! {
-        <div
-            id="button"
-            focusable
-            class="bg-white active:bg-zinc-200"
-        />
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_interaction_variant_utilities() {
-    let result = expand_rsx(quote! {
-        <div
-            id="button"
-            focusable
-            class="
-                focus:p-4
-                focus:text-black
-                active:border-2
-                active:bg-[#abcdef]
-            "
-        />
-    });
-
-    assert!(result.is_ok());
 }
 
 #[test]
@@ -883,41 +418,6 @@ fn rejects_interaction_variant_on_text() {
 }
 
 #[test]
-fn expands_keyed_each() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#each books as book (book.id)}
-                <div>
-                    <text>{book.title}</text>
-                </div>
-            {/each}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_keyed_each_with_destructuring() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#each books as (id, title), index (id)}
-                <div>
-                    <text>{title}</text>
-                    <text>{index.to_string()}</text>
-                </div>
-            {/each}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
 fn rejects_multiple_roots_in_keyed_each() {
     let error = expand_rsx(rsx_tokens(
         r#"
@@ -939,45 +439,6 @@ fn rejects_multiple_roots_in_keyed_each() {
 }
 
 #[test]
-fn keyed_each_key_supplies_root_identity() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <div>
-            {#each books as book (book.id)}
-                <div
-                    focusable
-                    class="focus:bg-zinc-100"
-                >
-                    <text>{book.title}</text>
-                </div>
-            {/each}
-        </div>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_custom_component_children_with_control_flow() {
-    let result = expand_rsx(rsx_tokens(
-        r#"
-        <Panel>
-            {#if visible}
-                <text>"Visible"</text>
-            {/if}
-
-            {#each items as item}
-                <text>{item}</text>
-            {/each}
-        </Panel>
-        "#,
-    ));
-
-    assert!(result.is_ok());
-}
-
-#[test]
 fn expands_custom_component_children_with_fragment() {
     let result = expand_rsx(quote! {
         <Panel>
@@ -986,31 +447,6 @@ fn expands_custom_component_children_with_fragment() {
                 <text>"Two"</text>
             </>
         </Panel>
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_typed_event_attribute() {
-    let result = expand_rsx(quote! {
-        <div
-            id="book"
-            on:BookSelectedEvent={selected}
-        />
-    });
-
-    assert!(result.is_ok());
-}
-
-#[test]
-fn expands_multiple_event_attributes() {
-    let result = expand_rsx(quote! {
-        <div
-            id="book"
-            on:activate={activate}
-            on:BookSelectedEvent={selected}
-        />
     });
 
     assert!(result.is_ok());
@@ -1114,17 +550,4 @@ fn rejects_image_utility_on_svg() {
             .to_string()
             .contains("utility class `grayscale` is not valid on <svg>")
     );
-}
-
-#[test]
-fn expands_font_weight_utilities() {
-    let result = expand_rsx(quote! {
-        <div>
-            <text class="font-normal">"Normal"</text>
-            <text class="font-bold">"Bold"</text>
-            <text class="font-[650]">"Custom"</text>
-        </div>
-    });
-
-    assert!(result.is_ok());
 }

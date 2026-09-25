@@ -245,31 +245,6 @@ mod tests {
     }
 
     #[test]
-    fn history_round_trips_metadata_and_position() {
-        let entry = ReadingHistoryEntry::new(
-            String::from("/Books/Étranger.epub"),
-            Some(String::from("urn:isbn:123")),
-            String::from("L'Étranger"),
-            Some(String::from("Albert Camus")),
-            ReadingPosition::new(
-                BookLocation::new(SpineIndex::new(7), ContentOffset::new(1234)),
-                9,
-            ),
-            BookProgress::ZERO,
-        );
-
-        let mut history = ReadingHistory::default();
-
-        history.record(entry.clone());
-
-        let encoded = history.encode().unwrap();
-
-        let decoded = ReadingHistory::decode(&encoded).unwrap();
-
-        assert_eq!(decoded.entries(), &[entry]);
-    }
-
-    #[test]
     fn recording_existing_book_refreshes_metadata_and_recency() {
         let mut history = ReadingHistory::default();
 

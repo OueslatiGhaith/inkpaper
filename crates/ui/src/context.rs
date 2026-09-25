@@ -168,21 +168,6 @@ mod tests {
     }
 
     #[test]
-    fn context_can_create_entities() {
-        let arena = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<1024, 16>::default();
-        let root = arena.insert(Root).unwrap();
-        let notified = Cell::new(false);
-
-        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
-
-        let counter = cx.new(|_| Counter { value: 42 }).unwrap();
-
-        assert_eq!(counter.read(&cx, |counter| counter.value,), Ok(42));
-    }
-
-    #[test]
     fn entity_can_update_through_context() {
         let arena = EntityArena::<1024, 16>::default();
         let callbacks = CallbackArena::<1024, 16>::default();

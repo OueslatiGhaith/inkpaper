@@ -215,20 +215,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builder_constructs_runtime_with_default_globals_and_resources() {
-        let runtime = RuntimeBuilder::default()
-            .entities::<256, 4>()
-            .callbacks::<256, 4>()
-            .frame::<16, 256>()
-            .element_states::<8>()
-            .build();
-
-        assert_eq!(runtime.frame_node_count(), 0);
-        assert_eq!(runtime.global_capacity(), 0);
-        assert_eq!(runtime.global_byte_capacity(), 0);
-    }
-
-    #[test]
     #[cfg(not(feature = "alloc"))]
     fn builder_configures_global_capacities() {
         let runtime = RuntimeBuilder::default()

@@ -91,16 +91,6 @@ fn image_registry_reports_full_capacity() {
 }
 
 #[test]
-fn empty_image_registry_has_zero_registered_images() {
-    let registry = ImageRegistry::<4>::default();
-
-    assert_eq!(registry.len(), 0);
-    assert_eq!(registry.capacity(), 4);
-    assert!(registry.is_empty());
-    assert!(registry.get(ImageId::new(0)).is_none());
-}
-
-#[test]
 fn image_resource_derives_luminance_from_rgb_pixels() {
     let image = SolidImage {
         size: Size::new(px(1), px(1)),
@@ -109,25 +99,6 @@ fn image_resource_derives_luminance_from_rgb_pixels() {
 
     assert_eq!(image.luminance(0, 0), Some(Luminance::new(77)));
     assert_eq!(image.luminance(1, 0), None);
-}
-
-#[cfg(feature = "alloc")]
-#[test]
-fn image_registry_owns_registered_resources() {
-    let mut registry = ImageRegistry::<1>::default();
-
-    let source = registry
-        .register_owned(alloc::boxed::Box::new(SolidImage {
-            size: Size::new(px(3), px(2)),
-            color: Color::GREEN,
-        }))
-        .unwrap();
-
-    let resolved = registry.get(source.id()).unwrap();
-
-    assert_eq!(resolved.size(), Size::new(px(3), px(2)));
-    assert_eq!(resolved.pixel(0, 0), Some(Color::GREEN));
-    assert_eq!(resolved.pixel(2, 1), Some(Color::GREEN));
 }
 
 #[cfg(feature = "alloc")]

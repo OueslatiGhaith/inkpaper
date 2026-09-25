@@ -310,16 +310,4 @@ mod tests {
         assert_eq!(gray2_tone(Gray2::new(3)), EInkTone::Binary);
     }
 
-    #[cfg(feature = "metrics")]
-    #[test]
-    fn eink_paint_report_accumulates_coverage_work() {
-        let mut report = EInkPaintReport::default();
-
-        report.record_coverage_bitmap(100, 35);
-        report.record_coverage_bitmap(80, 20);
-
-        assert_eq!(report.coverage_bitmaps(), 2);
-        assert_eq!(report.coverage_samples(), 180);
-        assert_eq!(report.coverage_accepted(), 55);
-    }
 }

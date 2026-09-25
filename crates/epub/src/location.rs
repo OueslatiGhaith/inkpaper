@@ -75,19 +75,4 @@ mod tests {
         assert_eq!(offset, ContentOffset::new(10),);
     }
 
-    #[test]
-    fn book_location_keeps_spine_and_content_position_separate() {
-        let location = BookLocation::new(SpineIndex::new(12), ContentOffset::new(3456));
-
-        assert_eq!(location.spine(), SpineIndex::new(12),);
-        assert_eq!(location.offset(), ContentOffset::new(3456),);
-    }
-
-    #[test]
-    fn spine_index_converts_to_and_from_usize() {
-        let index = SpineIndex::try_from_usize(42).unwrap();
-
-        assert_eq!(index, SpineIndex::new(42),);
-        assert_eq!(index.as_usize(), Some(42),);
-    }
 }

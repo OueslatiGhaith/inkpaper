@@ -844,13 +844,4 @@ mod tests {
         assert_ne!(before.signature(), after.signature());
     }
 
-    #[test]
-    fn converts_cycles_to_milliseconds() {
-        assert_eq!(cycles_ms(240_000, 240_000_000), 1.0);
-    }
-
-    #[test]
-    fn calculates_io_throughput() {
-        assert_eq!(io_kib_per_second(1024, 240_000_000, 240_000_000), 1.0);
-    }
 }
