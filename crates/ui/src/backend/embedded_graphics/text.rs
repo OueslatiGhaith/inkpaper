@@ -1,7 +1,7 @@
 use embedded_graphics::{pixelcolor::Rgb888 as EgRgb888, prelude::DrawTarget as EgDrawTarget};
 
 use crate::{
-    FontId, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
+    FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
     ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
     px,
     resources::RuntimeResources,
@@ -61,7 +61,7 @@ where
             shaper.next_cluster_boundary(registry, font_instance.font(), size_px, line, from)
         },
         |line| measure_shaped_line(registry, font_instance, size_px, line),
-        |line| measure_shaped_line_with_ellipsis(registry, font_instance.font(), size_px, line),
+        |line| measure_shaped_line_with_ellipsis(registry, font_instance, size_px, line),
         |line| {
             if error.is_some() {
                 return;
@@ -270,11 +270,12 @@ fn measure_shaped_line<const FONTS: usize>(
 
 fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
     registry: &FontRegistry<'_, FONTS>,
-    font: FontId,
+    font: FontInstance,
     size_px: u16,
     text: &str,
 ) -> Pixels {
-    let shaper = SimpleShaper::new();
+    let shaper = SimpleShaper::with_properties(font.properties());
+    let font = font.font();
     let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
     let mut state = ShapeState::new();
 
