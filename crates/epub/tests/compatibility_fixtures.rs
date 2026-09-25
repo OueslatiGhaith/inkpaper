@@ -42,7 +42,6 @@ fn opens_percent_encoded_container_rootfile() {
 }
 
 #[test]
-#[ignore = "known gap: EPUB 2 XHTML named entities are preserved literally"]
 fn decodes_epub2_xhtml_named_entities() {
     let mut epub = future::block_on(Epub::open(SliceSource::new(EPUB2_ENTITIES))).unwrap();
 

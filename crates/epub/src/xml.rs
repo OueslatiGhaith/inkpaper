@@ -1,5 +1,7 @@
 use alloc::string::String;
 
+mod entities;
+
 pub(crate) fn decode_xml_value(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
 
@@ -27,7 +29,7 @@ pub(crate) fn push_decoded_xml_text(output: &mut String, input: &str) {
             output.push(character);
         } else {
             // keep unknown/custom entities verbatim.
-            // we can add DTD entity resolution if a real EPUB proves that we need it.
+            // entities declared in an internal DTD subset are not resolved.
             output.push('&');
             output.push_str(entity);
             output.push(';');
@@ -46,6 +48,7 @@ fn decode_entity(entity: &str) -> Option<char> {
         "gt" => Some('>'),
         "quot" => Some('"'),
         "apos" => Some('\''),
+        _ if !entity.starts_with('#') => entities::lookup(entity),
         _ => {
             let value = if let Some(hex) = entity
                 .strip_prefix("#x")
@@ -80,5 +83,18 @@ mod tests {
             decode_xml_value("hello &publisher; world",),
             "hello &publisher; world",
         );
+    }
+
+    #[test]
+    fn xml_text_decodes_xhtml_named_entities() {
+        assert_eq!(
+            decode_xml_value("&copy; &mdash; &eacute;&Eacute; &hellip; &euro;"),
+            "© — éÉ … €",
+        );
+    }
+
+    #[test]
+    fn xml_text_named_entities_are_case_sensitive() {
+        assert_eq!(decode_xml_value("&COPY;"), "&COPY;");
     }
 }
