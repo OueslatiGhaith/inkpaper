@@ -137,13 +137,6 @@ async fn main(spawner: Spawner) -> ! {
         .unwrap(),
     );
 
-    let storage_ready = storage::wait_ready().await;
-    info!("storage ready: {}", storage_ready);
-    if storage_ready {
-        let listed = storage::list_root_and_wait().await;
-        debug!("storage root listing: {}", listed);
-    }
-
     info!("probing display controller...");
 
     let mut probe_io = ProbePins::new(
@@ -210,6 +203,11 @@ async fn main(spawner: Spawner) -> ! {
 
     InkPaperApp::register_resources(runtime).unwrap();
     let app = runtime.create_root(|_| InkPaperApp::default()).unwrap();
+
+    // Storage initialization has been running concurrently with display startup.
+    // Wait only when AppService is about to load persisted app state
+    let storage_ready = storage::wait_ready().await;
+    info!("storage ready: {}", storage_ready);
 
     let mut app_service = AppService::new(X4Platform::new());
     if app_service.service_pending(runtime, app).await.is_err() {

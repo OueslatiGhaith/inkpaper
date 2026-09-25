@@ -20,7 +20,7 @@ x4-run:
 
 x4-flash:
     cargo +inkpaper-esp build -p {{firmware_package}} --target {{x4_pro_target}} --profile firmware
-    probe-rs download --chip esp32s3 {{firmware_elf}}
+    probe-rs download --chip esp32s3 {{firmware_elf}} --preverify --start
 
 x4-trace:
     cargo +inkpaper-esp run -p {{firmware_package}} \
