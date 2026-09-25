@@ -26,7 +26,6 @@ fn chapter_text(chapter: &Chapter) -> String {
 }
 
 #[test]
-#[ignore = "known gap: container rootfile URLs are not percent-decoded"]
 fn opens_percent_encoded_container_rootfile() {
     let mut epub = future::block_on(Epub::open(SliceSource::new(ENCODED_CONTAINER_PATH))).unwrap();
 

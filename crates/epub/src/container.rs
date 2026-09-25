@@ -1,6 +1,10 @@
 use xmlparser::{Token, Tokenizer};
 
-use crate::{error::ContainerError, path::ArchivePath, xml::decode_xml_value};
+use crate::{
+    error::ContainerError,
+    path::{ArchivePath, decode_url_path},
+    xml::decode_xml_value,
+};
 
 pub(crate) struct Container {
     package_path: ArchivePath,
@@ -34,7 +38,10 @@ pub(crate) fn parse_container(xml: &str) -> Result<Container, ContainerError> {
 
             Token::ElementEnd { .. } if in_rootfile => {
                 if let Some(path) = full_path.take() {
-                    let package_path = ArchivePath::new(&path).map_err(ContainerError::Path)?;
+                    // full-path is specified as a plain path, but some producers
+                    // percent-encode it like a URL
+                    let package_path =
+                        ArchivePath::new(&decode_url_path(&path)).map_err(ContainerError::Path)?;
 
                     return Ok(Container { package_path });
                 }
@@ -47,4 +54,49 @@ pub(crate) fn parse_container(xml: &str) -> Result<Container, ContainerError> {
     }
 
     Err(ContainerError::MissingRootfile)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{format, string::String};
+
+    use super::*;
+    use crate::path::PathError;
+
+    fn container_xml(full_path: &str) -> String {
+        format!(
+            r#"<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+                <rootfiles>
+                    <rootfile full-path="{full_path}" media-type="application/oebps-package+xml"/>
+                </rootfiles>
+            </container>"#
+        )
+    }
+
+    #[test]
+    fn container_decodes_percent_encoded_rootfile_path() {
+        let container = parse_container(&container_xml("OEBPS/My%20Book/content.opf")).unwrap();
+
+        assert_eq!(
+            container.package_path().as_str(),
+            "OEBPS/My Book/content.opf"
+        );
+    }
+
+    #[test]
+    fn container_keeps_encoded_separators_in_rootfile_path() {
+        let container = parse_container(&container_xml("OEBPS/a%2Fb/content.opf")).unwrap();
+
+        assert_eq!(container.package_path().as_str(), "OEBPS/a%2Fb/content.opf");
+    }
+
+    #[test]
+    fn container_rejects_percent_encoded_escape_above_root() {
+        let result = parse_container(&container_xml("%2E%2E/content.opf"));
+
+        assert!(matches!(
+            result,
+            Err(ContainerError::Path(PathError::EscapesRoot))
+        ));
+    }
 }

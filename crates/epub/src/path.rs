@@ -102,7 +102,7 @@ pub(crate) fn decode_url_component(value: &str) -> String {
     decode_percent_encoded(value, false)
 }
 
-fn decode_url_path(value: &str) -> String {
+pub(crate) fn decode_url_path(value: &str) -> String {
     decode_percent_encoded(value, true)
 }
 
