@@ -56,7 +56,6 @@ fn decodes_epub2_xhtml_named_entities() {
 }
 
 #[test]
-#[ignore = "known gap: manifest fallback chains are not resolved"]
 fn follows_manifest_fallback_for_unsupported_spine_resource() {
     let mut epub = future::block_on(Epub::open(SliceSource::new(MANIFEST_FALLBACK))).unwrap();
 

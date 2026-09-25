@@ -36,7 +36,7 @@ use archive::Archive;
 use container::parse_container;
 use css::{Stylesheet, resolve_chapter_styles};
 use navigation::{parse_nav, parse_ncx};
-use package::parse_package;
+use package::{XHTML_MEDIA_TYPE, parse_package};
 use xhtml::parse_xhtml;
 
 #[derive(Debug, Clone, Copy)]
@@ -140,7 +140,7 @@ where
     ) -> Result<Option<Vec<u8>>, Error<S::Error>> {
         let Some(path) = self
             .package
-            .spine_manifest_item(index)
+            .spine_content_item(index)
             .map(|item| item.path().clone())
         else {
             return Ok(None);
@@ -158,7 +158,7 @@ where
         let mut path_indices = Vec::with_capacity(spine_len);
 
         for index in 0..spine_len {
-            match self.package.spine_manifest_item(index) {
+            match self.package.spine_content_item(index) {
                 Some(item) => {
                     path_indices.push(Some(paths.len()));
 
@@ -193,7 +193,7 @@ where
             return Ok(None);
         };
 
-        if media_type != "application/xhtml+xml" {
+        if media_type != XHTML_MEDIA_TYPE {
             return Err(Error::Xhtml(XhtmlError::UnsupportedMediaType));
         }
 
@@ -210,7 +210,7 @@ where
     ) -> Result<Option<Chapter>, Error<S::Error>> {
         let Some(path) = self
             .package
-            .spine_manifest_item(index)
+            .spine_content_item(index)
             .map(|item| item.path().clone())
         else {
             return Ok(None);

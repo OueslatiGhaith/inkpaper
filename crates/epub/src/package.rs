@@ -39,6 +39,7 @@ pub struct ManifestItem {
     href: String,
     path: ArchivePath,
     media_type: String,
+    fallback: Option<String>,
     properties: Vec<String>,
 }
 
@@ -57,6 +58,10 @@ impl ManifestItem {
 
     pub fn media_type(&self) -> &str {
         &self.media_type
+    }
+
+    pub fn fallback(&self) -> Option<&str> {
+        self.fallback.as_deref()
     }
 
     pub fn properties(&self) -> &[String] {
@@ -150,7 +155,35 @@ impl Package {
 
         self.manifest_item(spine.idref())
     }
+
+    /// Returns the item a reading system should render for a spine entry.
+    ///
+    /// Follows the manifest `fallback` chain until it reaches an XHTML content
+    /// document. If the chain ends, is broken, or cycles without finding one,
+    /// the spine's own item is returned.
+    pub fn spine_content_item(&self, index: usize) -> Option<&ManifestItem> {
+        let item = self.spine_manifest_item(index)?;
+
+        let mut current = item;
+
+        // a chain can visit each manifest item at most once, which bounds cycles
+        for _ in 0..self.manifest.len() {
+            if current.media_type == XHTML_MEDIA_TYPE {
+                return Some(current);
+            }
+
+            let Some(next) = current.fallback().and_then(|id| self.manifest_item(id)) else {
+                break;
+            };
+
+            current = next;
+        }
+
+        Some(item)
+    }
 }
+
+pub(crate) const XHTML_MEDIA_TYPE: &str = "application/xhtml+xml";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
@@ -199,6 +232,7 @@ struct PendingManifestItem {
     id: Option<String>,
     href: Option<String>,
     media_type: Option<String>,
+    fallback: Option<String>,
     properties: Option<String>,
 }
 
@@ -231,6 +265,7 @@ impl PendingManifestItem {
             href,
             path,
             media_type,
+            fallback: self.fallback,
             properties,
         })
     }
@@ -350,6 +385,7 @@ impl PackageParser {
                 "id" => item.id = Some(decode_xml_value(value)),
                 "href" => item.href = Some(decode_xml_value(value)),
                 "media-type" => item.media_type = Some(decode_xml_value(value)),
+                "fallback" => item.fallback = Some(decode_xml_value(value)),
                 "properties" => item.properties = Some(decode_xml_value(value)),
                 _ => {}
             },
@@ -498,4 +534,60 @@ pub(crate) fn parse_package(xml: &str, path: ArchivePath) -> Result<Package, Pac
     }
 
     Ok(parser.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn package(manifest: &str) -> Package {
+        let xml = alloc::format!(
+            r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                <manifest>{manifest}</manifest>
+                <spine><itemref idref="start"/></spine>
+            </package>"#
+        );
+
+        parse_package(&xml, ArchivePath::new("OEBPS/content.opf").unwrap()).unwrap()
+    }
+
+    fn content_id(package: &Package) -> &str {
+        package.spine_content_item(0).unwrap().id()
+    }
+
+    #[test]
+    fn spine_content_item_follows_multi_step_fallback_chain() {
+        let package = package(
+            r#"<item id="start" href="a.txt" media-type="text/plain" fallback="middle"/>
+               <item id="middle" href="b.svg" media-type="image/svg+xml" fallback="end"/>
+               <item id="end" href="c.xhtml" media-type="application/xhtml+xml"/>"#,
+        );
+
+        assert_eq!(content_id(&package), "end");
+        assert_eq!(package.spine_manifest_item(0).unwrap().id(), "start");
+    }
+
+    #[test]
+    fn spine_content_item_keeps_xhtml_items_without_following_fallback() {
+        let package = package(
+            r#"<item id="start" href="a.xhtml" media-type="application/xhtml+xml" fallback="other"/>
+               <item id="other" href="b.xhtml" media-type="application/xhtml+xml"/>"#,
+        );
+
+        assert_eq!(content_id(&package), "start");
+    }
+
+    #[test]
+    fn spine_content_item_returns_spine_item_for_broken_or_cyclic_chains() {
+        let broken = package(
+            r#"<item id="start" href="a.txt" media-type="text/plain" fallback="missing"/>"#,
+        );
+        let cyclic = package(
+            r#"<item id="start" href="a.txt" media-type="text/plain" fallback="loop"/>
+               <item id="loop" href="b.txt" media-type="text/plain" fallback="start"/>"#,
+        );
+
+        assert_eq!(content_id(&broken), "start");
+        assert_eq!(content_id(&cyclic), "start");
+    }
 }

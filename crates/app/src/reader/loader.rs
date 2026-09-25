@@ -295,7 +295,7 @@ where
 
         let xhtml = epub
             .package()
-            .spine_manifest_item(index)
+            .spine_content_item(index)
             .is_some_and(|item| item.media_type() == "application/xhtml+xml");
 
         if linear && xhtml {
@@ -333,7 +333,7 @@ where
 
     let is_xhtml = epub
         .package()
-        .spine_manifest_item(index)
+        .spine_content_item(index)
         .is_some_and(|item| item.media_type() == "application/xhtml+xml");
 
     if !is_xhtml {
