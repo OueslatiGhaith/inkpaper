@@ -57,7 +57,7 @@ impl RenderOnce for HomeMenuRow {
             <div
                 id={self.id}
                 on:activate={self.on_activate}
-                class="w-full h-14 flex items-center pl-4 gap-2.5 focus:bg-[#aaaaaa]"
+                class="w-full h-14 flex items-center pl-4 gap-2.5"
             >
                 <Icon kind={self.icon} size={px(32)} />
                 <text class="text-2xl">{self.label}</text>

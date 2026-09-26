@@ -60,7 +60,7 @@ impl RenderOnce for BackHeader<'_> {
                 <div
                     id="back"
                     on:activate={self.on_back}
-                    class="absolute left-0 top-3 w-[52px] h-[52px] flex items-center justify-center focus:bg-[#aaaaaa]"
+                    class="absolute left-0 top-3 w-[52px] h-[52px] flex items-center justify-center"
                 >
                     <Icon kind={IconKind::ChevronLeft} size={px(32)} />
                 </div>

@@ -28,10 +28,7 @@ impl RenderOnce for FileRow<'_> {
             <div
                 id={("file-row", self.id)}
                 on:activate={self.on_activate}
-                class="
-                    ml-5 w-[440px] h-16 relative rounded-md
-                    focus:bg-[#aaaaaa]
-                "
+                class="ml-5 w-[440px] h-16 relative rounded-md"
             >
                 <div class="absolute left-2 top-0 h-16 flex items-center">
                     <Icon kind={icon} size={px(24)} />

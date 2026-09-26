@@ -39,7 +39,7 @@ impl RenderOnce for ListRow<'_> {
                     <div
                         id={self.id}
                         on:activate={listener}
-                        class="absolute left-5 top-0 w-[440px] h-16 rounded-md focus:bg-[#aaaaaa]"
+                        class="absolute left-5 top-0 w-[440px] h-16 rounded-md"
                     />
                 {/if}
 

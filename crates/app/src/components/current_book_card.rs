@@ -27,7 +27,7 @@ impl RenderOnce for CurrentBookCard<'_> {
             <div
                 id="home-current-book"
                 on:activate={self.on_activate}
-                class="w-full h-full relative rounded-md focus:bg-[#aaaaaa]"
+                class="w-full h-full relative rounded-md"
             >
                 <div class="absolute left-2 top-2 w-[150px] h-[226px] bg-white border-px border-black">
                     <div class="absolute left-0 top-[75px] w-[150px] h-[150px] bg-black" />

@@ -84,7 +84,7 @@ impl RenderOnce for SliderButton {
                     <div
                         id={self.id}
                         on:activate={listener}
-                        class="w-full h-full flex items-center justify-center focus:bg-[#aaaaaa]"
+                        class="w-full h-full flex items-center justify-center"
                     >
                         <text class="text-xl text-center">
                             {self.label}

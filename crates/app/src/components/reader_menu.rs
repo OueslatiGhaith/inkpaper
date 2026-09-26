@@ -153,7 +153,7 @@ impl RenderOnce for MenuTab {
             <div
                 id={self.id}
                 on:activate={self.on_activate}
-                class="absolute left-{self.left} top-2 w-[232px] h-[46px] rounded-sm bg-{background} flex items-center justify-center focus:bg-[#aaaaaa]"
+                class="absolute left-{self.left} top-2 w-[232px] h-[46px] rounded-sm bg-{background} flex items-center justify-center"
             >
                 {
                     svg(self.icon)

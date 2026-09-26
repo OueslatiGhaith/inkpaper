@@ -18,7 +18,7 @@ impl RenderOnce for TransferModeRow<'_> {
                 <div
                     id={self.id}
                     on:activate={self.on_activate}
-                    class="absolute left-5 top-0 w-[440px] h-15 rounded-md focus:bg-[#aaaaaa]"
+                    class="absolute left-5 top-0 w-[440px] h-15 rounded-md"
                 >
                     <div class="absolute left-2 top-0 h-15 flex items-center">
                         <Icon kind={self.icon} size={px(32)} />
