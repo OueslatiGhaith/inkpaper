@@ -2,23 +2,13 @@ use alloc::string::String;
 use inkpaper_epub::SpineIndex;
 use inkpaper_ui::prelude::*;
 
-use super::{InkPaperApp, Screen};
+use super::{InkPaperApp, Screen, navigation::ScreenLifecycle};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest, reader_page::paint_reader_page,
 };
 
 impl InkPaperApp {
-    pub(super) fn reader_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        let target = self.reader_return;
-
-        if matches!(target, Screen::Home | Screen::RecentBooks) {
-            self.reading_history.request_load();
-        }
-
-        self.navigate(target, cx);
-    }
-
     pub(crate) fn take_reader_request(&mut self) -> Option<ReaderRequest> {
         self.reader.take_request()
     }
@@ -90,7 +80,7 @@ impl InkPaperApp {
     }
 
     pub fn reader_previous_page(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        if self.screen != Screen::Reader {
+        if self.screen() != Screen::Reader {
             return false;
         }
 
@@ -102,7 +92,7 @@ impl InkPaperApp {
     }
 
     pub fn reader_next_page(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        if self.screen != Screen::Reader {
+        if self.screen() != Screen::Reader {
             return false;
         }
 
@@ -122,7 +112,7 @@ impl InkPaperApp {
     }
 
     fn reader_toggle_controls(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        if self.screen != Screen::Reader {
+        if self.screen() != Screen::Reader {
             return false;
         }
 
@@ -150,7 +140,7 @@ impl InkPaperApp {
     }
 
     pub fn reader_decrease_font_size(&mut self, _: &mut Context<'_, Self>) -> bool {
-        if self.screen != Screen::Reader {
+        if self.screen() != Screen::Reader {
             return false;
         }
 
@@ -160,7 +150,7 @@ impl InkPaperApp {
     }
 
     pub fn reader_increase_font_size(&mut self, _: &mut Context<'_, Self>) -> bool {
-        if self.screen != Screen::Reader {
+        if self.screen() != Screen::Reader {
             return false;
         }
 
@@ -228,3 +218,7 @@ impl InkPaperApp {
         paint_reader_page(page, document, paint);
     }
 }
+
+pub(super) struct ReaderRoute;
+
+impl ScreenLifecycle for ReaderRoute {}

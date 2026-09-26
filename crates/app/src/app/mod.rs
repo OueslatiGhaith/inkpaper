@@ -24,8 +24,16 @@ mod browse;
 mod file_transfer;
 mod history;
 mod input;
+mod navigation;
 mod reader;
 mod system;
+
+use browse::BrowseFilesRoute;
+use file_transfer::FileTransferRoute;
+use history::{HomeRoute, RecentBooksRoute};
+use navigation::{NavigationStack, ScreenLifecycle};
+use reader::ReaderRoute;
+use system::SettingsRoute;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -35,35 +43,32 @@ enum Screen {
     RecentBooks,
     FileTransfer,
     Settings,
-    Sleep,
 }
 
+impl Screen {
+    fn lifecycle(self) -> &'static dyn ScreenLifecycle {
+        match self {
+            Self::Home => &HomeRoute,
+            Self::BrowseFiles => &BrowseFilesRoute,
+            Self::Reader => &ReaderRoute,
+            Self::RecentBooks => &RecentBooksRoute,
+            Self::FileTransfer => &FileTransferRoute,
+            Self::Settings => &SettingsRoute,
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct InkPaperApp {
-    screen: Screen,
+    navigation: NavigationStack,
+    sleeping: bool,
     browser: BrowserState,
     reader: ReaderState,
     reading_history: ReadingHistoryState,
     system_status: SystemStatus,
     frontlight: FrontlightState,
     control_center: ControlCenterState,
-    reader_return: Screen,
     file_transfer: FileTransferState,
-}
-
-impl Default for InkPaperApp {
-    fn default() -> Self {
-        Self {
-            screen: Screen::Home,
-            browser: BrowserState::default(),
-            reader: ReaderState::default(),
-            reading_history: ReadingHistoryState::default(),
-            system_status: SystemStatus::default(),
-            frontlight: FrontlightState::default(),
-            control_center: ControlCenterState::default(),
-            reader_return: Screen::BrowseFiles,
-            file_transfer: FileTransferState::default(),
-        }
-    }
 }
 
 impl InkPaperApp {
@@ -71,38 +76,6 @@ impl InkPaperApp {
         runtime: &mut impl ResourceRuntimeApi<'resource>,
     ) -> Result<(), FontRegistryError> {
         crate::typography::register(runtime)
-    }
-
-    fn navigate(&mut self, screen: Screen, cx: &mut Context<'_, Self>) {
-        if self.screen == screen {
-            return;
-        }
-
-        self.screen = screen;
-        cx.notify();
-    }
-
-    pub fn navigate_home(&mut self, cx: &mut Context<'_, Self>) {
-        self.reading_history.request_load();
-        self.navigate(Screen::Home, cx);
-    }
-
-    fn show_recent_books(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.reading_history.request_load();
-        self.navigate(Screen::RecentBooks, cx);
-    }
-
-    fn show_file_transfer(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.file_transfer.reset();
-        self.navigate(Screen::FileTransfer, cx);
-    }
-
-    fn show_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.navigate(Screen::Settings, cx);
-    }
-
-    fn show_home(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.navigate_home(cx);
     }
 }
 
@@ -113,10 +86,7 @@ impl Render for InkPaperApp {
         let recent_books = cx.listener(Self::show_recent_books);
         let file_transfer = cx.listener(Self::show_file_transfer);
         let settings = cx.listener(Self::show_settings);
-        let home = cx.listener(Self::show_home);
-
-        let browse_back = cx.listener(Self::browse_back);
-        let reader_back = cx.listener(Self::reader_back);
+        let back = cx.listener(Self::activate_back);
 
         let reader_previous_page = cx.listener(Self::activate_previous_reader_page);
         let reader_next_page = cx.listener(Self::activate_next_reader_page);
@@ -126,16 +96,16 @@ impl Render for InkPaperApp {
 
         let reader_increase_font_size = cx.listener(Self::activate_increase_reader_font_size);
 
-        let file_transfer_back = cx.listener(Self::file_transfer_back);
         let usb_drive = cx.listener(Self::activate_usb_drive);
 
-        let reader_page_canvas = if self.screen == Screen::Reader && self.reader.page().is_some() {
+        let reader_page_canvas = if self.screen() == Screen::Reader && self.reader.page().is_some()
+        {
             Some(cx.canvas(|app, paint| app.paint_reader_page(paint)))
         } else {
             None
         };
 
-        let browse_entry_listeners = if self.screen == Screen::BrowseFiles {
+        let browse_entry_listeners = if self.screen() == Screen::BrowseFiles {
             (0..self.browser.entries().len())
                 .map(|index| {
                     cx.listener(
@@ -149,7 +119,7 @@ impl Render for InkPaperApp {
             Vec::new()
         };
 
-        let recent_book_listeners = if self.screen == Screen::RecentBooks {
+        let recent_book_listeners = if self.screen() == Screen::RecentBooks {
             (0..self.reading_history.entries().len())
                 .map(|index| {
                     cx.listener(
@@ -168,7 +138,7 @@ impl Render for InkPaperApp {
         let control_center_open = self.control_center.is_open();
         let frontlight = self.frontlight.setting();
 
-        let reader_title = if self.screen == Screen::Reader {
+        let reader_title = if self.screen() == Screen::Reader {
             Some(self.reader.title())
         } else {
             None
@@ -176,7 +146,9 @@ impl Render for InkPaperApp {
 
         rsx! {
             <div class="relative w-[480px] h-[800px] bg-white">
-                {#if self.screen == Screen::Home}
+                {#if self.sleeping}
+                    <SleepScreen />
+                {:else if self.screen() == Screen::Home}
                     <HomeScreen
                         current_book={self.reading_history.current()}
                         battery={battery}
@@ -186,7 +158,7 @@ impl Render for InkPaperApp {
                         on_file_transfer={file_transfer}
                         on_settings={settings}
                     />
-                {:else if self.screen == Screen::BrowseFiles}
+                {:else if self.screen() == Screen::BrowseFiles}
                     <BrowseFilesScreen
                         title={self.browser.title()}
                         path={self.browser.path()}
@@ -195,9 +167,9 @@ impl Render for InkPaperApp {
                         revision={self.browser.revision()}
                         error={self.browser.error()}
                         battery={battery}
-                        on_back={browse_back}
+                        on_back={back}
                     />
-                {:else if self.screen == Screen::Reader}
+                {:else if self.screen() == Screen::Reader}
                     <ReaderScreen
                         title={self.reader.title()}
                         creator={self.reader.creator()}
@@ -214,32 +186,30 @@ impl Render for InkPaperApp {
                         on_previous_page={reader_previous_page}
                         on_toggle_controls={reader_toggle_controls}
                         on_next_page={reader_next_page}
-                        on_back={reader_back}
+                        on_back={back}
                     />
-                {:else if self.screen == Screen::RecentBooks}
+                {:else if self.screen() == Screen::RecentBooks}
                     <RecentBooksScreen
                         entries={self.reading_history.entries()}
                         entry_listeners={recent_book_listeners}
                         revision={self.reading_history.revision()}
                         error={self.reading_history.error()}
                         battery={battery}
-                        on_back={home}
+                        on_back={back}
                     />
-                {:else if self.screen == Screen::FileTransfer}
+                {:else if self.screen() == Screen::FileTransfer}
                     <FileTransferScreen
                         status={self.file_transfer.status()}
                         battery={battery}
-                        on_back={file_transfer_back}
+                        on_back={back}
                         on_usb_drive={usb_drive}
                     />
-                {:else if self.screen == Screen::Settings}
+                {:else if self.screen() == Screen::Settings}
                     <SettingsScreen
                         battery={battery}
                         clock={clock}
-                        on_back={home}
+                        on_back={back}
                     />
-                {:else}
-                    <SleepScreen />
                 {/if}
 
                 {#if control_center_open}

@@ -1,19 +1,22 @@
 use alloc::{string::String, vec::Vec};
 use inkpaper_ui::prelude::*;
 
-use super::{InkPaperApp, Screen};
+use super::{
+    InkPaperApp, Screen,
+    navigation::{Entry, ScreenLifecycle},
+};
 use crate::{ReadingHistoryEntry, ReadingHistoryRequest};
 
 impl InkPaperApp {
     pub(super) fn activate_current_book(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.open_history_entry(0, Screen::Home, cx);
+        self.open_history_entry(0, cx);
     }
 
     pub(super) fn activate_recent_book(&mut self, index: usize, cx: &mut Context<'_, Self>) {
-        self.open_history_entry(index, Screen::RecentBooks, cx);
+        self.open_history_entry(index, cx);
     }
 
-    fn open_history_entry(&mut self, index: usize, return_to: Screen, cx: &mut Context<'_, Self>) {
+    fn open_history_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
         let Some(entry) = self.reading_history.entry(index) else {
             return;
         };
@@ -21,9 +24,8 @@ impl InkPaperApp {
         let path = String::from(entry.path());
         let title = String::from(entry.display_title());
 
-        self.reader_return = return_to;
         self.reader.open(path, title);
-        self.navigate(Screen::Reader, cx);
+        self.open_screen(Screen::Reader, cx);
     }
 
     pub(crate) fn take_reading_history_request(&mut self) -> Option<ReadingHistoryRequest> {
@@ -44,5 +46,21 @@ impl InkPaperApp {
         self.reading_history.apply_error();
 
         cx.notify();
+    }
+}
+
+pub(super) struct HomeRoute;
+
+impl ScreenLifecycle for HomeRoute {
+    fn enter(&self, app: &mut InkPaperApp, _: Entry) {
+        app.reading_history.request_load();
+    }
+}
+
+pub(super) struct RecentBooksRoute;
+
+impl ScreenLifecycle for RecentBooksRoute {
+    fn enter(&self, app: &mut InkPaperApp, _: Entry) {
+        app.reading_history.request_load();
     }
 }

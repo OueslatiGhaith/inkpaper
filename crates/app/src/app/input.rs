@@ -57,17 +57,17 @@ impl InkPaperApp {
 
     pub(crate) fn allows_focus_navigation(&self) -> bool {
         !self.control_center.is_open()
-            && !(self.screen == Screen::FileTransfer && self.file_transfer.blocks_input())
+            && !(self.screen() == Screen::FileTransfer && self.file_transfer.blocks_input())
     }
 
     pub(crate) fn allows_wheel_scroll(&self) -> bool {
         !self.control_center.is_open()
-            && !(self.screen == Screen::FileTransfer && self.file_transfer.blocks_input())
+            && !(self.screen() == Screen::FileTransfer && self.file_transfer.blocks_input())
     }
 
     pub(crate) fn handle_confirm_down(&self) -> bool {
         self.control_center.is_open()
-            || (self.screen == Screen::FileTransfer && self.file_transfer.blocks_input())
+            || (self.screen() == Screen::FileTransfer && self.file_transfer.blocks_input())
     }
 
     pub(crate) fn handle_confirm_up(&mut self, cx: &mut Context<'_, Self>) -> bool {

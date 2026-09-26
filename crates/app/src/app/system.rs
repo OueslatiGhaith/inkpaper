@@ -1,6 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-use super::{InkPaperApp, Screen};
+use super::{InkPaperApp, Screen, navigation::ScreenLifecycle};
 use crate::{
     BatteryStatus, ClockStatus, FrontlightPreferences, FrontlightPreferencesRequest,
     FrontlightSetting,
@@ -10,7 +10,7 @@ impl InkPaperApp {
     pub fn apply_battery_status(&mut self, battery: BatteryStatus, cx: &mut Context<'_, Self>) {
         let visible_changed = self.system_status.set_battery(battery);
 
-        if visible_changed && (self.screen != Screen::Reader || self.control_center.is_open()) {
+        if visible_changed && (self.screen() != Screen::Reader || self.control_center.is_open()) {
             cx.notify();
         }
     }
@@ -22,7 +22,7 @@ impl InkPaperApp {
         //
         // Keeping RTC updates out of the Reader avoids waking the e-ink display
         // once per minute while somebody is reading.
-        if changed && (self.screen == Screen::Settings || self.control_center.is_open()) {
+        if changed && (self.screen() == Screen::Settings || self.control_center.is_open()) {
             cx.notify();
         }
     }
@@ -64,11 +64,15 @@ impl InkPaperApp {
             self.frontlight.request_persist();
         }
 
-        if self.screen == Screen::Sleep {
+        if self.sleeping {
             return;
         }
 
-        self.screen = Screen::Sleep;
+        self.sleeping = true;
         cx.notify();
     }
 }
+
+pub(super) struct SettingsRoute;
+
+impl ScreenLifecycle for SettingsRoute {}

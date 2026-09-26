@@ -1,6 +1,9 @@
 use inkpaper_ui::prelude::*;
 
-use super::{InkPaperApp, Screen};
+use super::{
+    InkPaperApp, Screen,
+    navigation::{Back, Entry, ScreenLifecycle},
+};
 use crate::{BrowseListing, BrowseRequest};
 
 impl InkPaperApp {
@@ -22,19 +25,6 @@ impl InkPaperApp {
         cx.notify();
     }
 
-    pub(super) fn show_browse_files(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.browser.request_current_directory();
-        self.navigate(Screen::BrowseFiles, cx);
-    }
-
-    pub(super) fn browse_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        if self.browser.request_parent() {
-            cx.notify();
-        } else {
-            self.navigate_home(cx);
-        }
-    }
-
     pub(super) fn activate_browse_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
         if self.browser.request_entry(index) {
             cx.notify();
@@ -53,10 +43,28 @@ impl InkPaperApp {
 
         let (path, title) = file.into_reader_parts();
 
-        self.reader_return = Screen::BrowseFiles;
-
         self.reader.open(path, title);
 
-        self.navigate(Screen::Reader, cx);
+        self.open_screen(Screen::Reader, cx);
+    }
+}
+
+pub(super) struct BrowseFilesRoute;
+
+impl ScreenLifecycle for BrowseFilesRoute {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+        // returning from the reader keeps the listing already shown
+        if entry == Entry::Opened {
+            app.browser.request_current_directory();
+        }
+    }
+
+    fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
+        if app.browser.request_parent() {
+            cx.notify();
+            return Back::Handled;
+        }
+
+        Back::Leave
     }
 }
