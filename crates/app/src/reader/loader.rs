@@ -1,4 +1,4 @@
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 
 use inkpaper_epub::{
     BookLocation, ContentOffset, Epub, EpubSource, Error as EpubError, SpineIndex,
@@ -8,7 +8,10 @@ use inkpaper_trace::{async_span, span};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
 use crate::reader::{
-    default_reader_settings, images::load_chapter_images, progress::BookProgressMap,
+    default_reader_settings,
+    images::load_chapter_images,
+    progress::BookProgressMap,
+    toc::{TocEntry, toc_entries},
 };
 
 use super::{
@@ -104,6 +107,22 @@ where
         direction: ReaderChapterDirection,
     ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>> {
         load_adjacent_reader_chapter_from_epub(&mut self.epub, from, direction, self.settings).await
+    }
+
+    #[inkpaper_trace::instrument(target = "reader.document", name = "toc")]
+    pub async fn load_table_of_contents(
+        &mut self,
+    ) -> Result<Vec<TocEntry>, ReaderLoadError<S::Error>> {
+        let Some(navigation) = self
+            .epub
+            .load_navigation()
+            .await
+            .map_err(ReaderLoadError::Epub)?
+        else {
+            return Ok(Vec::new());
+        };
+
+        Ok(toc_entries(&navigation, self.epub.package()))
     }
 
     /// Loads the chapter at `spine` and finds the page holding `anchor`, or the

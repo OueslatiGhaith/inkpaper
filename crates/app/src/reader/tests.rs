@@ -1,4 +1,4 @@
-use alloc::{format, string::String};
+use alloc::{format, string::String, vec::Vec};
 use futures_lite::future;
 use inkpaper_epub::{Epub, SliceSource, SpineIndex};
 use inkpaper_reader::PageItem;
@@ -6,7 +6,7 @@ use inkpaper_reader::PageItem;
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
     ReaderRequest, ReaderSession, load_reader_document,
-    reader::{ReaderState, font_size_from_slider, font_size_slider_value},
+    reader::{ReaderState, TableOfContents, font_size_from_slider, font_size_slider_value},
 };
 
 #[test]
@@ -562,4 +562,69 @@ fn font_slider_preview_applies_on_commit_and_stays_shown_while_repaginating() {
     ));
     assert_eq!(state.menu_font_size(), 26);
     assert!(!state.commit_font_preview());
+}
+
+#[test]
+fn table_of_contents_loads_once_flattened_with_targets_and_marks_the_current_chapter() {
+    const BYTES: &[u8] = include_bytes!("../../../../fixtures/navigation-anchors.epub");
+    let path = String::from("/Fixtures/navigation-anchors.epub");
+
+    let mut session =
+        future::block_on(ReaderSession::open(path.clone(), SliceSource::new(BYTES))).unwrap();
+    let document = future::block_on(session.load_document()).unwrap();
+
+    let mut state = ReaderState::default();
+    assert!(!state.request_table_of_contents());
+
+    state.open(path.clone(), String::from("navigation-anchors"));
+    assert!(state.apply_document(document));
+    let _ = state.take_request();
+
+    assert!(state.request_table_of_contents());
+    assert_eq!(
+        state.take_request(),
+        Some(ReaderRequest::LoadTableOfContents { path: path.clone() }),
+    );
+    assert!(!state.request_table_of_contents());
+
+    let entries = future::block_on(session.load_table_of_contents()).unwrap();
+    let rows: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let target = entry.target().unwrap();
+            (
+                entry.label(),
+                entry.depth(),
+                target.spine.get(),
+                target.anchor.as_deref(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        rows,
+        [
+            ("Chapter 1", 0, 0, None),
+            ("Chapter 2", 0, 1, None),
+            ("Later Section", 1, 1, Some("later-section")),
+        ],
+    );
+
+    assert!(state.apply_table_of_contents(&path, entries));
+    assert!(matches!(
+        state.table_of_contents(),
+        TableOfContents::Loaded(_)
+    ));
+
+    // the book opens on chapter 1
+    assert_eq!(state.current_toc_index(), Some(0));
+
+    // in chapter 2 the chapter's own entry is current, not its nested section
+    let spine = SpineIndex::new(1);
+    assert!(state.jump_to(spine, None));
+    let (chapter, page_index) = future::block_on(session.load_chapter_at(spine, None))
+        .unwrap()
+        .unwrap();
+    assert!(state.apply_jump(&path, spine, None, chapter, page_index));
+    assert_eq!(state.current_toc_index(), Some(1));
 }

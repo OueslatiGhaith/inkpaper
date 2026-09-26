@@ -8,7 +8,7 @@ use crate::{
         icon::{Icon, IconProps},
         reader_menu::{self, ReaderMenu, ReaderMenuProps},
     },
-    reader::{font_size_from_slider, reader_viewport},
+    reader::{ReaderMenuTab, font_size_from_slider, reader_viewport},
 };
 
 #[component]
@@ -26,14 +26,18 @@ pub(crate) struct ReaderScreen<'a> {
     battery: Option<BatteryStatus>,
 
     menu_open: bool,
+    menu_tab: ReaderMenuTab,
     font_size: u16,
 
     on_previous_page: Listener<ActivateEvent>,
     on_open_menu: Listener<ActivateEvent>,
     on_next_page: Listener<ActivateEvent>,
     on_close_menu: Listener<ActivateEvent>,
+    on_font_tab: Listener<ActivateEvent>,
+    on_more_tab: Listener<ActivateEvent>,
     on_decrease_font_size: Listener<ActivateEvent>,
     on_increase_font_size: Listener<ActivateEvent>,
+    on_select_chapter: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for ReaderScreen<'_> {
@@ -86,10 +90,14 @@ impl RenderOnce for ReaderScreen<'_> {
 
                     {#if self.menu_open}
                         <ReaderMenu
+                            tab={self.menu_tab}
                             font_size={self.font_size}
                             on_close={self.on_close_menu}
+                            on_font_tab={self.on_font_tab}
+                            on_more_tab={self.on_more_tab}
                             on_decrease_font_size={self.on_decrease_font_size}
                             on_increase_font_size={self.on_increase_font_size}
+                            on_select_chapter={self.on_select_chapter}
                         />
                     {/if}
                 {:else}
@@ -200,7 +208,7 @@ impl ScreenInput for ReaderRoute {
         cx: &mut Context<'_, InkPaperApp>,
     ) -> bool {
         // dragging along the font slider previews a size; it applies on release
-        if app.reader.menu_open() && reader_menu::font_slider_contains(origin) {
+        if app.reader.font_slider_shown() && reader_menu::font_slider_contains(origin) {
             let value = reader_menu::font_slider_value_at(position.x.get());
 
             if app.reader.preview_font_size(font_size_from_slider(value)) {
@@ -250,7 +258,7 @@ impl ScreenInput for ReaderRoute {
         }
 
         // a tap on the track jumps to that size
-        if reader_menu::font_slider_contains(position) {
+        if app.reader.font_slider_shown() && reader_menu::font_slider_contains(position) {
             let value = reader_menu::font_slider_value_at(position.x.get());
 
             if app.reader.set_font_size(font_size_from_slider(value)) {
@@ -287,11 +295,15 @@ impl ScreenView for ReaderRoute {
             progress_label: app.reader.progress_label(),
             battery: app.system_status.battery(),
             menu_open: app.reader.menu_open(),
+            menu_tab: app.reader.menu_tab(),
             font_size: app.reader.menu_font_size(),
             on_previous_page: cx.listener(InkPaperApp::activate_previous_reader_page),
             on_open_menu: cx.listener(InkPaperApp::activate_open_reader_menu),
             on_next_page: cx.listener(InkPaperApp::activate_next_reader_page),
             on_close_menu: cx.listener(InkPaperApp::activate_close_reader_menu),
+            on_font_tab: cx.listener(InkPaperApp::activate_reader_font_tab),
+            on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),
+            on_select_chapter: cx.listener(InkPaperApp::show_table_of_contents),
             on_decrease_font_size: cx.listener(InkPaperApp::activate_decrease_reader_font_size),
             on_increase_font_size: cx.listener(InkPaperApp::activate_increase_reader_font_size),
         })

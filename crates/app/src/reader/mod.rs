@@ -8,6 +8,7 @@ mod measurer;
 mod preferences;
 mod progress;
 mod state;
+mod toc;
 
 #[cfg(test)]
 mod tests;
@@ -17,7 +18,8 @@ pub(crate) use loader::{
     ReaderLoadError, ReaderSession, load_adjacent_reader_chapter, load_reader_document,
 };
 pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesError, ReaderPreferencesRequest};
-pub(crate) use state::{ReaderChapterDirection, ReaderRequest, ReaderState};
+pub(crate) use state::{ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState};
+pub(crate) use toc::{TableOfContents, TocEntry};
 
 const READER_VIEWPORT_WIDTH: u32 = 440;
 const READER_VIEWPORT_HEIGHT: u32 = 685;

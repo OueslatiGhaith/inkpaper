@@ -1,11 +1,13 @@
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 use inkpaper_epub::SpineIndex;
 use inkpaper_ui::prelude::*;
 
-use super::InkPaperApp;
+use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
-    ReaderPreferencesRequest, ReaderRequest, reader_page::paint_reader_page,
+    ReaderPreferencesRequest, ReaderRequest,
+    reader::{ReaderMenuTab, TableOfContents, TocEntry},
+    reader_page::paint_reader_page,
 };
 
 impl InkPaperApp {
@@ -99,6 +101,71 @@ impl InkPaperApp {
 
     pub(crate) fn close_reader_menu(&mut self, cx: &mut Context<'_, Self>) {
         if self.reader.close_menu() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn activate_reader_font_tab(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.reader.select_menu_tab(ReaderMenuTab::Font) {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn activate_reader_more_tab(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.reader.select_menu_tab(ReaderMenuTab::More) {
+            cx.notify();
+        }
+    }
+
+    /// Opens the chapter list; like crosspoint, the drawer does not come back.
+    pub(crate) fn show_table_of_contents(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.reader.close_menu();
+        self.open_screen(Screen::TableOfContents, cx);
+    }
+
+    /// Jumps to a chapter list entry and returns to the reader. Entries that
+    /// lead nowhere just close the list.
+    pub(crate) fn activate_toc_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+        let target = match self.reader.table_of_contents() {
+            TableOfContents::Loaded(entries) => {
+                entries.get(index).and_then(TocEntry::target).cloned()
+            }
+
+            _ => None,
+        };
+
+        if let Some(target) = target {
+            self.reader.jump_to(target.spine, target.anchor);
+        }
+
+        self.navigate_back(cx);
+    }
+
+    pub(crate) fn apply_reader_table_of_contents(
+        &mut self,
+        path: String,
+        entries: Vec<TocEntry>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.reader.apply_table_of_contents(&path, entries) {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn apply_reader_table_of_contents_error(
+        &mut self,
+        path: String,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.reader.apply_table_of_contents_error(&path) {
             cx.notify();
         }
     }

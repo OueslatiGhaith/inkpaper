@@ -1,4 +1,4 @@
-use alloc::{format, string::String};
+use alloc::{format, string::String, vec::Vec};
 use inkpaper_epub::SpineIndex;
 use inkpaper_reader::{Page, ReadingPosition};
 
@@ -6,7 +6,8 @@ use crate::{
     ReaderChapter, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
     ReadingHistoryEntry,
     reader::{
-        READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN, READER_FONT_SIZE_STEP,
+        READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN,
+        READER_FONT_SIZE_STEP, TableOfContents, TocEntry, toc::current_toc_index,
     },
 };
 
@@ -41,6 +42,10 @@ pub(crate) enum ReaderRequest {
         anchor: Option<String>,
     },
 
+    LoadTableOfContents {
+        path: String,
+    },
+
     UpdateProgress(ReadingHistoryEntry),
 }
 
@@ -63,9 +68,17 @@ struct PendingChapterRequest {
     direction: ReaderChapterDirection,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ReaderMenuTab {
+    #[default]
+    Font,
+    More,
+}
+
 #[derive(Debug, Default)]
 struct ReaderChromeState {
     menu_open: bool,
+    menu_tab: ReaderMenuTab,
     font_preview: Option<u16>,
     page_label: String,
     progress_label: String,
@@ -88,6 +101,7 @@ pub(crate) struct ReaderState {
 
     failed: bool,
     chrome: ReaderChromeState,
+    toc: TableOfContents,
 }
 
 impl Default for ReaderState {
@@ -105,6 +119,7 @@ impl Default for ReaderState {
             font_size: READER_FONT_SIZE_DEFAULT,
             failed: false,
             chrome: ReaderChromeState::default(),
+            toc: TableOfContents::NotLoaded,
         }
     }
 }
@@ -126,6 +141,7 @@ impl ReaderState {
         self.page_index = 0;
         self.failed = false;
         self.chrome = ReaderChromeState::default();
+        self.toc = TableOfContents::NotLoaded;
     }
 
     pub(crate) fn take_request(&mut self) -> Option<ReaderRequest> {
@@ -350,8 +366,6 @@ impl ReaderState {
     }
 
     /// Requests the chapter at `spine`, opened on the page holding `anchor`.
-    // called by the table of contents screen
-    #[allow(dead_code)]
     pub(crate) fn jump_to(&mut self, spine: SpineIndex, anchor: Option<String>) -> bool {
         if self.document.is_none()
             || self.pending_chapter.is_some()
@@ -431,6 +445,7 @@ impl ReaderState {
         }
 
         self.chrome.menu_open = true;
+        self.chrome.menu_tab = ReaderMenuTab::Font;
         self.chrome.font_preview = None;
 
         true
@@ -449,6 +464,78 @@ impl ReaderState {
 
     pub(crate) fn menu_open(&self) -> bool {
         self.chrome.menu_open
+    }
+
+    pub(crate) const fn menu_tab(&self) -> ReaderMenuTab {
+        self.chrome.menu_tab
+    }
+
+    pub(crate) fn select_menu_tab(&mut self, tab: ReaderMenuTab) -> bool {
+        if !self.chrome.menu_open || self.chrome.menu_tab == tab {
+            return false;
+        }
+
+        self.chrome.menu_tab = tab;
+        self.chrome.font_preview = None;
+
+        true
+    }
+
+    /// Whether the drawer currently shows the font size slider.
+    pub(crate) fn font_slider_shown(&self) -> bool {
+        self.chrome.menu_open && self.chrome.menu_tab == ReaderMenuTab::Font
+    }
+
+    pub(crate) fn table_of_contents(&self) -> &TableOfContents {
+        &self.toc
+    }
+
+    /// The table of contents entry for the chapter being read.
+    pub(crate) fn current_toc_index(&self) -> Option<usize> {
+        let TableOfContents::Loaded(entries) = &self.toc else {
+            return None;
+        };
+
+        current_toc_index(entries, self.document.as_ref()?.spine())
+    }
+
+    /// Requests the table of contents once per book; failures retry.
+    pub(crate) fn request_table_of_contents(&mut self) -> bool {
+        if self.document.is_none()
+            || !matches!(
+                self.toc,
+                TableOfContents::NotLoaded | TableOfContents::Failed
+            )
+        {
+            return false;
+        }
+
+        self.toc = TableOfContents::Loading;
+        self.pending = Some(ReaderRequest::LoadTableOfContents {
+            path: self.path.clone(),
+        });
+
+        true
+    }
+
+    pub(crate) fn apply_table_of_contents(&mut self, path: &str, entries: Vec<TocEntry>) -> bool {
+        if path != self.path || self.toc != TableOfContents::Loading {
+            return false;
+        }
+
+        self.toc = TableOfContents::Loaded(entries);
+
+        true
+    }
+
+    pub(crate) fn apply_table_of_contents_error(&mut self, path: &str) -> bool {
+        if path != self.path || self.toc != TableOfContents::Loading {
+            return false;
+        }
+
+        self.toc = TableOfContents::Failed;
+
+        true
     }
 
     /// The font size the menu shows: a slider preview while dragging, then the

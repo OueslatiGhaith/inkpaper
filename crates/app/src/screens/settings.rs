@@ -7,8 +7,8 @@ use crate::{
     components::{
         header::{BackHeader, BackHeaderProps},
         settings_row::{
-            SettingsSubmenuRow, SettingsSubmenuRowProps, SettingsToggleRow, SettingsToggleRowProps,
-            SettingsValueRow, SettingsValueRowProps,
+            ListRow, ListRowProps, SettingsToggleRow, SettingsToggleRowProps, SettingsValueRow,
+            SettingsValueRowProps,
         },
     },
 };
@@ -55,9 +55,13 @@ impl RenderOnce for SettingsScreen {
                 </div>
 
                 <div class="absolute left-0 top-[147px] w-[480px] flex flex-col">
-                    <SettingsSubmenuRow
+                    <ListRow
+                        id={("settings-sleep-screen", 0)}
                         label="Sleep Screen"
+                        depth={0}
                         selected={false}
+                        chevron={true}
+                        on_activate={None}
                     />
 
                     <SettingsToggleRow

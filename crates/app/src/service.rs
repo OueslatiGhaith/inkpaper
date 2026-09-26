@@ -440,6 +440,21 @@ where
                 }
             }
 
+            ReaderRequest::LoadTableOfContents { path } => {
+                let entries = match self.reader_session.as_mut() {
+                    Some(session) if session.path() == path => {
+                        session.load_table_of_contents().await.ok()
+                    }
+
+                    _ => None,
+                };
+
+                runtime.update(app, move |app, cx| match entries {
+                    Some(entries) => app.apply_reader_table_of_contents(path, entries, cx),
+                    None => app.apply_reader_table_of_contents_error(path, cx),
+                })?;
+            }
+
             ReaderRequest::UpdateProgress(progress) => {
                 self.history.record(progress);
                 self.history_dirty = true;

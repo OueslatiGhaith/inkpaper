@@ -5,12 +5,14 @@ use inkpaper_ui::prelude::*;
 use crate::{
     components::{
         drawer_handle::{DrawerHandle, DrawerHandleProps},
+        settings_row::{ListRow, ListRowProps},
         slider::{self, Slider, SliderProps},
     },
-    reader::font_size_slider_value,
+    reader::{ReaderMenuTab, font_size_slider_value},
 };
 
 const CASE_SENSITIVE: SvgSource = include_svg!("assets/icons/lucide/case-sensitive.svg");
+const ELLIPSIS: SvgSource = include_svg!("assets/icons/lucide/ellipsis.svg");
 
 // screen geometry: the sheet starts 429 px above the bottom, the content 32 px
 // below it, and the font slider after a 24 px label and a 4 px gap
@@ -31,10 +33,14 @@ pub(crate) fn font_slider_value_at(x: i32) -> u8 {
 /// an icon tab bar. Tabs are added as their features exist.
 #[component]
 pub(crate) struct ReaderMenu {
+    tab: ReaderMenuTab,
     font_size: u16,
     on_close: Listener<ActivateEvent>,
+    on_font_tab: Listener<ActivateEvent>,
+    on_more_tab: Listener<ActivateEvent>,
     on_decrease_font_size: Listener<ActivateEvent>,
     on_increase_font_size: Listener<ActivateEvent>,
+    on_select_chapter: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for ReaderMenu {
@@ -66,37 +72,94 @@ impl RenderOnce for ReaderMenu {
                         </div>
                     </div>
 
-                    // content pane, inset like the control center's sliders
-                    <div class="absolute left-8 top-8 w-[416px] flex flex-col">
-                        <div class="w-full h-6 flex items-center">
-                            <text class="text-base no-wrap">
-                                {font_size_label}
-                            </text>
+                    {#if self.tab == ReaderMenuTab::Font}
+                        // content pane, inset like the control center's sliders
+                        <div class="absolute left-8 top-8 w-[416px] flex flex-col">
+                            <div class="w-full h-6 flex items-center">
+                                <text class="text-base no-wrap">
+                                    {font_size_label}
+                                </text>
+                            </div>
+
+                            <div class="h-1" />
+
+                            <Slider
+                                id="reader-font-size"
+                                value={font_size_value}
+                                on_decrease={Some(self.on_decrease_font_size)}
+                                on_increase={Some(self.on_increase_font_size)}
+                            />
                         </div>
-
-                        <div class="h-1" />
-
-                        <Slider
-                            id="reader-font-size"
-                            value={font_size_value}
-                            on_decrease={Some(self.on_decrease_font_size)}
-                            on_increase={Some(self.on_increase_font_size)}
-                        />
-                    </div>
+                    {:else}
+                        <div class="absolute left-0 top-8 w-[480px] flex flex-col">
+                            <ListRow
+                                id={("reader-menu-select-chapter", 0)}
+                                label="Select Chapter"
+                                depth={0}
+                                selected={false}
+                                chevron={true}
+                                on_activate={Some(self.on_select_chapter)}
+                            />
+                        </div>
+                    {/if}
 
                     // 66 px tab bar under a 1 px rule; the active tab is inverted
                     <div class="absolute left-0 bottom-0 w-full h-[66px]">
                         <div class="absolute left-0 top-0 w-full h-px bg-black" />
 
-                        <div class="absolute left-1 top-2 w-[472px] h-[46px] rounded-sm bg-black flex items-center justify-center">
-                            {
-                                svg(CASE_SENSITIVE)
-                                    .size(Size::new(px(32), px(32)))
-                                    .text_color(Color::WHITE)
-                            }
-                        </div>
+                        <MenuTab
+                            id="reader-menu-font-tab"
+                            icon={CASE_SENSITIVE}
+                            icon_size={px(32)}
+                            left={px(4)}
+                            active={self.tab == ReaderMenuTab::Font}
+                            on_activate={self.on_font_tab}
+                        />
+
+                        <MenuTab
+                            id="reader-menu-more-tab"
+                            icon={ELLIPSIS}
+                            icon_size={px(24)}
+                            left={px(244)}
+                            active={self.tab == ReaderMenuTab::More}
+                            on_activate={self.on_more_tab}
+                        />
                     </div>
                 </div>
+            </div>
+        }
+    }
+}
+
+#[component]
+struct MenuTab {
+    id: &'static str,
+    icon: SvgSource,
+    icon_size: Pixels,
+    left: Pixels,
+    active: bool,
+    on_activate: Listener<ActivateEvent>,
+}
+
+impl RenderOnce for MenuTab {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let (background, foreground) = if self.active {
+            (Color::BLACK, Color::WHITE)
+        } else {
+            (Color::WHITE, Color::BLACK)
+        };
+
+        rsx! {
+            <div
+                id={self.id}
+                on:activate={self.on_activate}
+                class="absolute left-{self.left} top-2 w-[232px] h-[46px] rounded-sm bg-{background} flex items-center justify-center focus:bg-[#aaaaaa]"
+            >
+                {
+                    svg(self.icon)
+                        .size(Size::new(self.icon_size, self.icon_size))
+                        .text_color(foreground)
+                }
             </div>
         }
     }

@@ -26,6 +26,7 @@ pub(crate) use navigation::{Back, Entry, Exit, ScreenLifecycle};
 use crate::screens::{
     browse_files::BrowseFilesRoute, file_transfer::FileTransferRoute, home::HomeRoute,
     reader::ReaderRoute, recent_books::RecentBooksRoute, settings::SettingsRoute,
+    table_of_contents::TableOfContentsRoute,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +37,7 @@ enum Screen {
     RecentBooks,
     FileTransfer,
     Settings,
+    TableOfContents,
 }
 
 /// How a screen draws itself.
@@ -58,6 +60,7 @@ impl Screen {
             Self::RecentBooks => &RecentBooksRoute,
             Self::FileTransfer => &FileTransferRoute,
             Self::Settings => &SettingsRoute,
+            Self::TableOfContents => &TableOfContentsRoute,
         }
     }
 }
