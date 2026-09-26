@@ -1,89 +1,126 @@
 use inkpaper_ui::prelude::*;
 
-use super::{InkPaperApp, Screen};
+use super::InkPaperApp;
 use crate::{
     control_center::{ControlCenterAction, ControlCenterPointerResult, ControlCenterSlider},
     input::PointerAction,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SideButton {
+    Previous,
+    Next,
+}
+
+/// Input behavior a screen defines for itself.
+///
+/// Overlays such as the control center take input before the screen sees it.
+pub(crate) trait ScreenInput {
+    /// Whether the screen currently swallows all input, including Home.
+    fn blocks_input(&self, _app: &InkPaperApp) -> bool {
+        false
+    }
+
+    /// Handles a side button press. Unhandled presses move focus instead.
+    fn side_button(
+        &self,
+        _app: &mut InkPaperApp,
+        _button: SideButton,
+        _cx: &mut Context<'_, InkPaperApp>,
+    ) -> bool {
+        false
+    }
+}
+
+/// Which layer receives input right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputTarget {
+    Blocked,
+    ControlCenter,
+    Screen,
+}
+
 impl InkPaperApp {
+    fn input_target(&self) -> InputTarget {
+        if self.screen().route().blocks_input(self) {
+            InputTarget::Blocked
+        } else if self.control_center.is_open() {
+            InputTarget::ControlCenter
+        } else {
+            InputTarget::Screen
+        }
+    }
+
     pub(crate) fn handle_previous_input(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        if self.file_transfer_blocks_input() {
-            return true;
-        }
-
-        if self.control_center.is_open() {
-            // CrossInk uses +/- 5 for the physical side buttons.
-            if self.frontlight.adjust_brightness(-5) {
-                cx.notify();
-            }
-
-            return true;
-        }
-
-        self.reader_previous_page(cx)
+        self.handle_side_button(SideButton::Previous, cx)
     }
 
     pub(crate) fn handle_next_input(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        if self.file_transfer_blocks_input() {
-            return true;
-        }
+        self.handle_side_button(SideButton::Next, cx)
+    }
 
-        if self.control_center.is_open() {
-            if self.frontlight.adjust_brightness(5) {
-                cx.notify();
+    fn handle_side_button(&mut self, button: SideButton, cx: &mut Context<'_, Self>) -> bool {
+        match self.input_target() {
+            InputTarget::Blocked => true,
+
+            InputTarget::ControlCenter => {
+                // CrossInk uses +/- 5 for the physical side buttons.
+                let delta = match button {
+                    SideButton::Previous => -5,
+                    SideButton::Next => 5,
+                };
+
+                if self.frontlight.adjust_brightness(delta) {
+                    cx.notify();
+                }
+
+                true
             }
 
-            return true;
+            InputTarget::Screen => self.screen().route().side_button(self, button, cx),
         }
-
-        self.reader_next_page(cx)
     }
 
     pub(crate) fn handle_home_input(&mut self, cx: &mut Context<'_, Self>) {
-        if self.file_transfer_blocks_input() {
-            return;
+        match self.input_target() {
+            InputTarget::Blocked => {}
+
+            InputTarget::ControlCenter => {
+                self.control_center.close();
+                self.frontlight.request_persist();
+                cx.notify();
+            }
+
+            InputTarget::Screen => self.navigate_home(cx),
         }
-
-        if self.control_center.close() {
-            self.frontlight.request_persist();
-            cx.notify();
-
-            return;
-        }
-
-        self.navigate_home(cx);
     }
 
     pub(crate) fn allows_focus_navigation(&self) -> bool {
-        !self.control_center.is_open()
-            && !(self.screen() == Screen::FileTransfer && self.file_transfer.blocks_input())
+        self.input_target() == InputTarget::Screen
     }
 
     pub(crate) fn allows_wheel_scroll(&self) -> bool {
-        !self.control_center.is_open()
-            && !(self.screen() == Screen::FileTransfer && self.file_transfer.blocks_input())
+        self.input_target() == InputTarget::Screen
     }
 
     pub(crate) fn handle_confirm_down(&self) -> bool {
-        self.control_center.is_open()
-            || (self.screen() == Screen::FileTransfer && self.file_transfer.blocks_input())
+        self.input_target() != InputTarget::Screen
     }
 
     pub(crate) fn handle_confirm_up(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        if self.file_transfer_blocks_input() {
-            return true;
-        }
+        match self.input_target() {
+            InputTarget::Blocked => true,
 
-        if !self.control_center.is_open() {
-            return false;
-        }
+            InputTarget::ControlCenter => {
+                if self.frontlight.toggle() {
+                    cx.notify();
+                }
 
-        if self.frontlight.toggle() {
-            cx.notify();
-        }
+                true
+            }
 
-        true
+            InputTarget::Screen => false,
+        }
     }
 
     pub(crate) fn handle_pointer_down(
@@ -91,7 +128,7 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
-        if self.file_transfer_blocks_input() {
+        if self.input_target() == InputTarget::Blocked {
             return PointerAction::Capture;
         }
 
@@ -106,7 +143,7 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
-        if self.file_transfer_blocks_input() {
+        if self.input_target() == InputTarget::Blocked {
             return PointerAction::Capture;
         }
 
@@ -120,7 +157,7 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
-        if self.file_transfer_blocks_input() {
+        if self.input_target() == InputTarget::Blocked {
             return PointerAction::Capture;
         }
 

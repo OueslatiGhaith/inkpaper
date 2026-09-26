@@ -1,9 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-use super::{
-    InkPaperApp, Screen,
-    navigation::{Back, Entry, ScreenLifecycle},
-};
+use super::{InkPaperApp, Screen};
 use crate::{BrowseListing, BrowseRequest};
 
 impl InkPaperApp {
@@ -46,25 +43,5 @@ impl InkPaperApp {
         self.reader.open(path, title);
 
         self.open_screen(Screen::Reader, cx);
-    }
-}
-
-pub(super) struct BrowseFilesRoute;
-
-impl ScreenLifecycle for BrowseFilesRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
-        // returning from the reader keeps the listing already shown
-        if entry == Entry::Opened {
-            app.browser.request_current_directory();
-        }
-    }
-
-    fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
-        if app.browser.request_parent() {
-            cx.notify();
-            return Back::Handled;
-        }
-
-        Back::Leave
     }
 }

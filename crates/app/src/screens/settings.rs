@@ -3,6 +3,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     BatteryStatus, ClockStatus,
+    app::{ScreenInput, ScreenLifecycle},
     components::{
         header::{BackHeader, BackHeaderProps},
         settings_row::{
@@ -138,3 +139,9 @@ impl RenderOnce for SettingsTabs {
         }
     }
 }
+
+pub(crate) struct SettingsRoute;
+
+impl ScreenLifecycle for SettingsRoute {}
+
+impl ScreenInput for SettingsRoute {}

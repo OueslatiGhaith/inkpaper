@@ -28,12 +28,14 @@ mod navigation;
 mod reader;
 mod system;
 
-use browse::BrowseFilesRoute;
-use file_transfer::FileTransferRoute;
-use history::{HomeRoute, RecentBooksRoute};
-use navigation::{NavigationStack, ScreenLifecycle};
-use reader::ReaderRoute;
-use system::SettingsRoute;
+pub(crate) use input::{ScreenInput, SideButton};
+use navigation::NavigationStack;
+pub(crate) use navigation::{Back, Entry, Exit, ScreenLifecycle};
+
+use crate::screens::{
+    browse_files::BrowseFilesRoute, file_transfer::FileTransferRoute, home::HomeRoute,
+    reader::ReaderRoute, recent_books::RecentBooksRoute, settings::SettingsRoute,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -45,8 +47,13 @@ enum Screen {
     Settings,
 }
 
+/// Everything a screen defines about its own behavior.
+trait ScreenRoute: ScreenLifecycle + ScreenInput {}
+
+impl<T: ScreenLifecycle + ScreenInput> ScreenRoute for T {}
+
 impl Screen {
-    fn lifecycle(self) -> &'static dyn ScreenLifecycle {
+    fn route(self) -> &'static dyn ScreenRoute {
         match self {
             Self::Home => &HomeRoute,
             Self::BrowseFiles => &BrowseFilesRoute,
@@ -62,13 +69,13 @@ impl Screen {
 pub struct InkPaperApp {
     navigation: NavigationStack,
     sleeping: bool,
-    browser: BrowserState,
+    pub(crate) browser: BrowserState,
     reader: ReaderState,
-    reading_history: ReadingHistoryState,
+    pub(crate) reading_history: ReadingHistoryState,
     system_status: SystemStatus,
     frontlight: FrontlightState,
     control_center: ControlCenterState,
-    file_transfer: FileTransferState,
+    pub(crate) file_transfer: FileTransferState,
 }
 
 impl InkPaperApp {

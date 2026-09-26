@@ -1,7 +1,8 @@
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, FileTransferStatus,
+    BatteryStatus, FileTransferStatus, InkPaperApp,
+    app::{Back, Exit, ScreenInput, ScreenLifecycle},
     components::{
         header::{BackHeader, BackHeaderProps, TitleHeader, TitleHeaderProps},
         icon::IconKind,
@@ -104,5 +105,30 @@ impl RenderOnce for FileTransferScreen {
                 {/if}
             </div>
         }
+    }
+}
+
+pub(crate) struct FileTransferRoute;
+
+impl ScreenLifecycle for FileTransferRoute {
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit) {
+        if exit == Exit::Closed {
+            app.file_transfer.reset();
+        }
+    }
+
+    fn back(&self, app: &mut InkPaperApp, _: &mut Context<'_, InkPaperApp>) -> Back {
+        // the SD card belongs to the host until the USB Drive session ends
+        if app.file_transfer.blocks_input() {
+            return Back::Handled;
+        }
+
+        Back::Leave
+    }
+}
+
+impl ScreenInput for FileTransferRoute {
+    fn blocks_input(&self, app: &InkPaperApp) -> bool {
+        app.file_transfer.blocks_input()
     }
 }

@@ -1,10 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use inkpaper_ui::prelude::*;
 
-use super::{
-    InkPaperApp, Screen,
-    navigation::{Entry, ScreenLifecycle},
-};
+use super::{InkPaperApp, Screen};
 use crate::{ReadingHistoryEntry, ReadingHistoryRequest};
 
 impl InkPaperApp {
@@ -46,21 +43,5 @@ impl InkPaperApp {
         self.reading_history.apply_error();
 
         cx.notify();
-    }
-}
-
-pub(super) struct HomeRoute;
-
-impl ScreenLifecycle for HomeRoute {
-    fn enter(&self, app: &mut InkPaperApp, _: Entry) {
-        app.reading_history.request_load();
-    }
-}
-
-pub(super) struct RecentBooksRoute;
-
-impl ScreenLifecycle for RecentBooksRoute {
-    fn enter(&self, app: &mut InkPaperApp, _: Entry) {
-        app.reading_history.request_load();
     }
 }

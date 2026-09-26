@@ -3,7 +3,8 @@ use alloc::vec::Vec;
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, ReadingHistoryEntry,
+    BatteryStatus, InkPaperApp, ReadingHistoryEntry,
+    app::{Entry, ScreenInput, ScreenLifecycle},
     components::{
         header::{BackHeader, BackHeaderProps},
         recent_book_row::{RecentBookRow, RecentBookRowProps},
@@ -90,3 +91,13 @@ impl RenderOnce for RecentBookList<'_> {
             .children(rows)
     }
 }
+
+pub(crate) struct RecentBooksRoute;
+
+impl ScreenLifecycle for RecentBooksRoute {
+    fn enter(&self, app: &mut InkPaperApp, _: Entry) {
+        app.reading_history.request_load();
+    }
+}
+
+impl ScreenInput for RecentBooksRoute {}

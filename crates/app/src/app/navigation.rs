@@ -7,7 +7,7 @@ use super::{InkPaperApp, Screen};
 const MAX_DEPTH: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Entry {
+pub(crate) enum Entry {
     /// The screen was pushed onto the stack.
     Opened,
     /// The screen became visible again after the screen above it closed.
@@ -15,7 +15,7 @@ pub(super) enum Entry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Exit {
+pub(crate) enum Exit {
     /// Another screen was opened on top of this one.
     Covered,
     /// The screen was removed from the stack.
@@ -23,7 +23,7 @@ pub(super) enum Exit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Back {
+pub(crate) enum Back {
     /// The screen consumed the back action.
     Handled,
     /// The navigator should close the screen.
@@ -31,7 +31,7 @@ pub(super) enum Back {
 }
 
 /// Side effects a screen runs as it enters and leaves the navigation stack.
-pub(super) trait ScreenLifecycle {
+pub(crate) trait ScreenLifecycle {
     fn enter(&self, _app: &mut InkPaperApp, _entry: Entry) {}
 
     fn exit(&self, _app: &mut InkPaperApp, _exit: Exit) {}
@@ -98,14 +98,14 @@ impl InkPaperApp {
             return;
         }
 
-        covered.lifecycle().exit(self, Exit::Covered);
-        screen.lifecycle().enter(self, Entry::Opened);
+        covered.route().exit(self, Exit::Covered);
+        screen.route().enter(self, Entry::Opened);
 
         cx.notify();
     }
 
     pub(super) fn navigate_back(&mut self, cx: &mut Context<'_, Self>) {
-        if self.screen().lifecycle().back(self, cx) == Back::Handled {
+        if self.screen().route().back(self, cx) == Back::Handled {
             return;
         }
 
@@ -113,8 +113,8 @@ impl InkPaperApp {
             return;
         };
 
-        closed.lifecycle().exit(self, Exit::Closed);
-        self.screen().lifecycle().enter(self, Entry::Returned);
+        closed.route().exit(self, Exit::Closed);
+        self.screen().route().enter(self, Entry::Returned);
 
         cx.notify();
     }
@@ -123,7 +123,7 @@ impl InkPaperApp {
         let mut changed = false;
 
         while let Some(closed) = self.navigation.pop() {
-            closed.lifecycle().exit(self, Exit::Closed);
+            closed.route().exit(self, Exit::Closed);
             changed = true;
         }
 
@@ -131,7 +131,7 @@ impl InkPaperApp {
             return;
         }
 
-        Screen::Home.lifecycle().enter(self, Entry::Returned);
+        Screen::Home.route().enter(self, Entry::Returned);
 
         cx.notify();
     }

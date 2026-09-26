@@ -1,6 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-use super::{InkPaperApp, Screen, navigation::ScreenLifecycle};
+use super::{InkPaperApp, Screen};
 use crate::{
     BatteryStatus, ClockStatus, FrontlightPreferences, FrontlightPreferencesRequest,
     FrontlightSetting,
@@ -72,7 +72,3 @@ impl InkPaperApp {
         cx.notify();
     }
 }
-
-pub(super) struct SettingsRoute;
-
-impl ScreenLifecycle for SettingsRoute {}

@@ -2,7 +2,7 @@ use alloc::string::String;
 use inkpaper_epub::SpineIndex;
 use inkpaper_ui::prelude::*;
 
-use super::{InkPaperApp, Screen, navigation::ScreenLifecycle};
+use super::InkPaperApp;
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest, reader_page::paint_reader_page,
@@ -79,28 +79,16 @@ impl InkPaperApp {
         self.reader_next_page(cx);
     }
 
-    pub fn reader_previous_page(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        if self.screen() != Screen::Reader {
-            return false;
-        }
-
+    pub(crate) fn reader_previous_page(&mut self, cx: &mut Context<'_, Self>) {
         if self.reader.previous_page() {
             cx.notify();
         }
-
-        true
     }
 
-    pub fn reader_next_page(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        if self.screen() != Screen::Reader {
-            return false;
-        }
-
+    pub(crate) fn reader_next_page(&mut self, cx: &mut Context<'_, Self>) {
         if self.reader.next_page() {
             cx.notify();
         }
-
-        true
     }
 
     pub(super) fn activate_toggle_reader_controls(
@@ -108,55 +96,25 @@ impl InkPaperApp {
         _: &ActivateEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        self.reader_toggle_controls(cx);
-    }
-
-    fn reader_toggle_controls(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        if self.screen() != Screen::Reader {
-            return false;
-        }
-
         if self.reader.toggle_controls() {
             cx.notify();
         }
-
-        true
     }
 
     pub(super) fn activate_decrease_reader_font_size(
         &mut self,
         _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
+        _: &mut Context<'_, Self>,
     ) {
-        self.reader_decrease_font_size(cx);
+        self.reader.decrease_font_size();
     }
 
     pub(super) fn activate_increase_reader_font_size(
         &mut self,
         _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
+        _: &mut Context<'_, Self>,
     ) {
-        self.reader_increase_font_size(cx);
-    }
-
-    pub fn reader_decrease_font_size(&mut self, _: &mut Context<'_, Self>) -> bool {
-        if self.screen() != Screen::Reader {
-            return false;
-        }
-
-        self.reader.decrease_font_size();
-
-        true
-    }
-
-    pub fn reader_increase_font_size(&mut self, _: &mut Context<'_, Self>) -> bool {
-        if self.screen() != Screen::Reader {
-            return false;
-        }
-
         self.reader.increase_font_size();
-
-        true
     }
 
     pub(crate) fn apply_reader_repagination(
@@ -218,7 +176,3 @@ impl InkPaperApp {
         paint_reader_page(page, document, paint);
     }
 }
-
-pub(super) struct ReaderRoute;
-
-impl ScreenLifecycle for ReaderRoute {}

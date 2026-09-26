@@ -1,7 +1,8 @@
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, ReadingHistoryEntry,
+    BatteryStatus, InkPaperApp, ReadingHistoryEntry,
+    app::{Entry, ScreenInput, ScreenLifecycle},
     components::{
         current_book_card::{CurrentBookCard, CurrentBookCardProps},
         header::{HomeHeader, HomeHeaderProps},
@@ -61,3 +62,13 @@ impl RenderOnce for HomeScreen<'_> {
         }
     }
 }
+
+pub(crate) struct HomeRoute;
+
+impl ScreenLifecycle for HomeRoute {
+    fn enter(&self, app: &mut InkPaperApp, _: Entry) {
+        app.reading_history.request_load();
+    }
+}
+
+impl ScreenInput for HomeRoute {}

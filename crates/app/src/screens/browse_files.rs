@@ -3,7 +3,8 @@ use alloc::vec::Vec;
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus,
+    BatteryStatus, InkPaperApp,
+    app::{Back, Entry, ScreenInput, ScreenLifecycle},
     browser::{BrowseEntry, BrowseEntryKind},
     components::{
         file_row::{FileKind, FileRow, FileRowProps},
@@ -107,3 +108,25 @@ impl RenderOnce for FileList<'_> {
             .children(rows)
     }
 }
+
+pub(crate) struct BrowseFilesRoute;
+
+impl ScreenLifecycle for BrowseFilesRoute {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+        // returning from the reader keeps the listing already shown
+        if entry == Entry::Opened {
+            app.browser.request_current_directory();
+        }
+    }
+
+    fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
+        if app.browser.request_parent() {
+            cx.notify();
+            return Back::Handled;
+        }
+
+        Back::Leave
+    }
+}
+
+impl ScreenInput for BrowseFilesRoute {}

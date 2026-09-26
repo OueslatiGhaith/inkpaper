@@ -2,6 +2,8 @@ use alloc::format;
 use inkpaper_ui::prelude::*;
 
 use crate::{
+    InkPaperApp,
+    app::{ScreenInput, ScreenLifecycle, SideButton},
     components::icon::{Icon, IconKind, IconProps},
     reader::reader_viewport,
 };
@@ -224,5 +226,25 @@ impl RenderOnce for ReaderStatusBar<'_> {
                 </div>
             </div>
         }
+    }
+}
+
+pub(crate) struct ReaderRoute;
+
+impl ScreenLifecycle for ReaderRoute {}
+
+impl ScreenInput for ReaderRoute {
+    fn side_button(
+        &self,
+        app: &mut InkPaperApp,
+        button: SideButton,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> bool {
+        match button {
+            SideButton::Previous => app.reader_previous_page(cx),
+            SideButton::Next => app.reader_next_page(cx),
+        }
+
+        true
     }
 }
