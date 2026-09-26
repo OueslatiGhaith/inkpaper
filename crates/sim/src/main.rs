@@ -142,22 +142,6 @@ fn main() {
                 }
 
                 SimulatorEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    repeat: false,
-                    ..
-                } => {
-                    send_input(&mut runtime, app, AppInputEvent::FocusPrevious);
-                }
-
-                SimulatorEvent::KeyDown {
-                    keycode: Keycode::Down | Keycode::Tab,
-                    repeat: false,
-                    ..
-                } => {
-                    send_input(&mut runtime, app, AppInputEvent::FocusNext);
-                }
-
-                SimulatorEvent::KeyDown {
                     keycode: Keycode::Left,
                     repeat: false,
                     ..
@@ -171,21 +155,6 @@ fn main() {
                     ..
                 } => {
                     send_input(&mut runtime, app, AppInputEvent::Next);
-                }
-
-                SimulatorEvent::KeyDown {
-                    keycode: Keycode::Return | Keycode::Space,
-                    repeat: false,
-                    ..
-                } => {
-                    send_input(&mut runtime, app, AppInputEvent::ConfirmDown);
-                }
-
-                SimulatorEvent::KeyUp {
-                    keycode: Keycode::Return | Keycode::Space,
-                    ..
-                } => {
-                    send_input(&mut runtime, app, AppInputEvent::ConfirmUp);
                 }
 
                 SimulatorEvent::KeyDown {

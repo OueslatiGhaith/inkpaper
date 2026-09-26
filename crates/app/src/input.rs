@@ -7,10 +7,6 @@ pub enum AppInputEvent {
     Previous,
     Next,
     Home,
-    FocusPrevious,
-    FocusNext,
-    ConfirmDown,
-    ConfirmUp,
     PointerDown(Point),
     PointerDrag {
         origin: Point,
@@ -57,55 +53,15 @@ pub fn dispatch_input(
 ) -> Result<(), AppInputError> {
     match event {
         AppInputEvent::Previous => {
-            let handled = runtime.update(app, |app, cx| app.handle_previous_input(cx))?;
-
-            if !handled {
-                runtime.focus_previous();
-            }
+            runtime.update(app, |app, cx| app.handle_previous_input(cx))?;
         }
 
         AppInputEvent::Next => {
-            let handled = runtime.update(app, |app, cx| app.handle_next_input(cx))?;
-
-            if !handled {
-                runtime.focus_next();
-            }
+            runtime.update(app, |app, cx| app.handle_next_input(cx))?;
         }
 
         AppInputEvent::Home => {
             runtime.update(app, |app, cx| app.handle_home_input(cx))?;
-        }
-
-        AppInputEvent::FocusPrevious => {
-            let allowed = runtime.update(app, |app, _| app.allows_focus_navigation())?;
-
-            if allowed {
-                runtime.focus_previous();
-            }
-        }
-
-        AppInputEvent::FocusNext => {
-            let allowed = runtime.update(app, |app, _| app.allows_focus_navigation())?;
-
-            if allowed {
-                runtime.focus_next();
-            }
-        }
-
-        AppInputEvent::ConfirmDown => {
-            let handled = runtime.update(app, |app, _| app.handle_confirm_down())?;
-
-            if !handled {
-                runtime.begin_focused_activation();
-            }
-        }
-
-        AppInputEvent::ConfirmUp => {
-            let handled = runtime.update(app, |app, cx| app.handle_confirm_up(cx))?;
-
-            if !handled {
-                runtime.complete_focused_activation()?;
-            }
         }
 
         AppInputEvent::PointerDown(position) => {

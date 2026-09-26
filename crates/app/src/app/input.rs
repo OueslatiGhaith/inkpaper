@@ -21,14 +21,13 @@ pub(crate) trait ScreenInput {
         false
     }
 
-    /// Handles a side button press. Unhandled presses move focus instead.
+    /// Handles a side button press. Screens without one ignore it.
     fn side_button(
         &self,
         _app: &mut InkPaperApp,
         _button: SideButton,
         _cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
-        false
+    ) {
     }
 
     /// Handles the end of a touch no overlay claimed. Returning true captures
@@ -74,17 +73,17 @@ impl InkPaperApp {
         }
     }
 
-    pub(crate) fn handle_previous_input(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        self.handle_side_button(SideButton::Previous, cx)
+    pub(crate) fn handle_previous_input(&mut self, cx: &mut Context<'_, Self>) {
+        self.handle_side_button(SideButton::Previous, cx);
     }
 
-    pub(crate) fn handle_next_input(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        self.handle_side_button(SideButton::Next, cx)
+    pub(crate) fn handle_next_input(&mut self, cx: &mut Context<'_, Self>) {
+        self.handle_side_button(SideButton::Next, cx);
     }
 
-    fn handle_side_button(&mut self, button: SideButton, cx: &mut Context<'_, Self>) -> bool {
+    fn handle_side_button(&mut self, button: SideButton, cx: &mut Context<'_, Self>) {
         match self.input_target() {
-            InputTarget::Blocked => true,
+            InputTarget::Blocked => {}
 
             InputTarget::ControlCenter => {
                 let delta = match button {
@@ -95,8 +94,6 @@ impl InkPaperApp {
                 if self.frontlight.adjust_brightness(delta) {
                     cx.notify();
                 }
-
-                true
             }
 
             InputTarget::Screen => self.screen().route().side_button(self, button, cx),
@@ -117,32 +114,8 @@ impl InkPaperApp {
         }
     }
 
-    pub(crate) fn allows_focus_navigation(&self) -> bool {
-        self.input_target() == InputTarget::Screen
-    }
-
     pub(crate) fn allows_wheel_scroll(&self) -> bool {
         self.input_target() == InputTarget::Screen
-    }
-
-    pub(crate) fn handle_confirm_down(&self) -> bool {
-        self.input_target() != InputTarget::Screen
-    }
-
-    pub(crate) fn handle_confirm_up(&mut self, cx: &mut Context<'_, Self>) -> bool {
-        match self.input_target() {
-            InputTarget::Blocked => true,
-
-            InputTarget::ControlCenter => {
-                if self.frontlight.toggle() {
-                    cx.notify();
-                }
-
-                true
-            }
-
-            InputTarget::Screen => false,
-        }
     }
 
     pub(crate) fn handle_pointer_down(

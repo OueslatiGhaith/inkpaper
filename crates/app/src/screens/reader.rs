@@ -186,18 +186,16 @@ impl ScreenInput for ReaderRoute {
         app: &mut InkPaperApp,
         button: SideButton,
         cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
-        // with the drawer open the side buttons move focus through its controls
+    ) {
+        // the drawer covers the page, so it does not turn underneath it
         if app.reader.menu_open() {
-            return false;
+            return;
         }
 
         match button {
             SideButton::Previous => app.reader_previous_page(cx),
             SideButton::Next => app.reader_next_page(cx),
         }
-
-        true
     }
 
     fn drag(
