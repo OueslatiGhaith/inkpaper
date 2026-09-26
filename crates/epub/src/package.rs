@@ -181,6 +181,18 @@ impl Package {
 
         Some(item)
     }
+
+    /// Finds the spine entry that renders the resource at `path`, such as a
+    /// navigation target. Matches the spine's own item or its resolved fallback.
+    pub fn spine_index_for_path(&self, path: &ArchivePath) -> Option<usize> {
+        (0..self.spine.items.len()).find(|&index| {
+            self.spine_manifest_item(index)
+                .is_some_and(|item| item.path() == path)
+                || self
+                    .spine_content_item(index)
+                    .is_some_and(|item| item.path() == path)
+        })
+    }
 }
 
 pub(crate) const XHTML_MEDIA_TYPE: &str = "application/xhtml+xml";
@@ -589,5 +601,26 @@ mod tests {
 
         assert_eq!(content_id(&broken), "start");
         assert_eq!(content_id(&cyclic), "start");
+    }
+
+    #[test]
+    fn spine_index_for_path_matches_spine_items_and_their_fallbacks() {
+        let xml = r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+            <manifest>
+                <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+                <item id="two" href="two.txt" media-type="text/plain" fallback="two-xhtml"/>
+                <item id="two-xhtml" href="two.xhtml" media-type="application/xhtml+xml"/>
+                <item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/>
+            </manifest>
+            <spine><itemref idref="one"/><itemref idref="two"/></spine>
+        </package>"#;
+        let package = parse_package(xml, ArchivePath::new("OEBPS/content.opf").unwrap()).unwrap();
+
+        let index = |path| package.spine_index_for_path(&ArchivePath::new(path).unwrap());
+
+        assert_eq!(index("OEBPS/one.xhtml"), Some(0));
+        assert_eq!(index("OEBPS/two.txt"), Some(1));
+        assert_eq!(index("OEBPS/two.xhtml"), Some(1));
+        assert_eq!(index("OEBPS/notes.xhtml"), None);
     }
 }

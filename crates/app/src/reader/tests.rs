@@ -1,6 +1,7 @@
 use alloc::{format, string::String};
 use futures_lite::future;
-use inkpaper_epub::{SliceSource, SpineIndex};
+use inkpaper_epub::{Epub, SliceSource, SpineIndex};
+use inkpaper_reader::PageItem;
 
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
@@ -468,4 +469,58 @@ fn persisted_reader_preferences_are_used_when_opening_a_book() {
             font_size: 26,
         }),
     );
+}
+
+#[test]
+fn navigation_target_jump_opens_the_page_with_the_anchored_heading() {
+    const BYTES: &[u8] = include_bytes!("../../../../fixtures/navigation-anchors.epub");
+    let path = String::from("/Fixtures/navigation-anchors.epub");
+
+    // Chapter 2 > Later Section points at chapter-2.xhtml#later-section
+    let mut epub = future::block_on(Epub::open(SliceSource::new(BYTES))).unwrap();
+    let navigation = future::block_on(epub.load_navigation()).unwrap().unwrap();
+    let target = navigation.entries()[1].children()[0].target().unwrap();
+    let spine = epub.package().spine_index_for_path(target.path()).unwrap();
+    let spine = SpineIndex::try_from_usize(spine).unwrap();
+    let anchor = target.fragment().map(String::from);
+
+    let mut session =
+        future::block_on(ReaderSession::open(path.clone(), SliceSource::new(BYTES))).unwrap();
+    let document = future::block_on(session.load_document()).unwrap();
+
+    let mut state = ReaderState::default();
+    state.open(path.clone(), String::from("navigation-anchors"));
+    assert!(state.apply_document(document));
+    let _ = state.take_request();
+
+    assert!(state.jump_to(spine, anchor.clone()));
+    assert_eq!(
+        state.take_request(),
+        Some(ReaderRequest::JumpTo {
+            path: path.clone(),
+            spine,
+            anchor: anchor.clone(),
+        }),
+    );
+
+    let (chapter, page_index) = future::block_on(session.load_chapter_at(spine, anchor.as_deref()))
+        .unwrap()
+        .unwrap();
+
+    // the heading sits past the first page of its chapter
+    assert!(page_index > 0);
+    assert!(state.apply_jump(&path, spine, anchor.clone(), chapter, page_index));
+
+    let page = state.page().unwrap();
+    assert!(page.items().iter().any(|item| matches!(
+        item,
+        PageItem::Text(text) if text.text().contains("Later Section")
+    )));
+
+    // landing on the new page records progress, and a repeated result is stale
+    assert!(matches!(
+        state.take_request(),
+        Some(ReaderRequest::UpdateProgress(_))
+    ));
+    assert!(!state.finish_jump_request(&path, spine, anchor));
 }

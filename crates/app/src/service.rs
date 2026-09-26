@@ -408,6 +408,38 @@ where
                 }
             }
 
+            ReaderRequest::JumpTo {
+                path,
+                spine,
+                anchor,
+            } => {
+                let target = match self.reader_session.as_mut() {
+                    Some(session) if session.path() == path => session
+                        .load_chapter_at(spine, anchor.as_deref())
+                        .await
+                        .ok()
+                        .flatten(),
+
+                    _ => None,
+                };
+
+                match target {
+                    Some((mut chapter, page_index)) => {
+                        chapter.register_images(runtime);
+
+                        runtime.update(app, move |app, cx| {
+                            app.apply_reader_jump(path, spine, anchor, chapter, page_index, cx);
+                        })?;
+                    }
+
+                    None => {
+                        runtime.update(app, move |app, _| {
+                            app.finish_reader_jump_request(path, spine, anchor);
+                        })?;
+                    }
+                }
+            }
+
             ReaderRequest::UpdateProgress(progress) => {
                 self.history.record(progress);
                 self.history_dirty = true;

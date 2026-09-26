@@ -35,6 +35,12 @@ pub(crate) enum ReaderRequest {
         font_size: u16,
     },
 
+    JumpTo {
+        path: String,
+        spine: SpineIndex,
+        anchor: Option<String>,
+    },
+
     UpdateProgress(ReadingHistoryEntry),
 }
 
@@ -43,6 +49,12 @@ struct PendingRepaginationRequest {
     spine: SpineIndex,
     position: ReadingPosition,
     font_size: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingJumpRequest {
+    spine: SpineIndex,
+    anchor: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +79,7 @@ pub(crate) struct ReaderState {
     pending_preferences: Option<ReaderPreferencesRequest>,
     pending_chapter: Option<PendingChapterRequest>,
     pending_repagination: Option<PendingRepaginationRequest>,
+    pending_jump: Option<PendingJumpRequest>,
 
     document: Option<ReaderDocument>,
     page_index: usize,
@@ -85,6 +98,7 @@ impl Default for ReaderState {
             pending_preferences: Some(ReaderPreferencesRequest::Load),
             pending_chapter: None,
             pending_repagination: None,
+            pending_jump: None,
             document: None,
             page_index: 0,
             font_size: READER_FONT_SIZE_DEFAULT,
@@ -103,6 +117,7 @@ impl ReaderState {
 
         self.pending_chapter = None;
         self.pending_repagination = None;
+        self.pending_jump = None;
 
         self.path = path;
         self.fallback_title = fallback_title;
@@ -149,6 +164,7 @@ impl ReaderState {
 
         self.pending_chapter = None;
         self.pending_repagination = None;
+        self.pending_jump = None;
         self.page_index = page_index;
         self.failed = false;
 
@@ -168,6 +184,7 @@ impl ReaderState {
         self.document = None;
         self.pending_chapter = None;
         self.pending_repagination = None;
+        self.pending_jump = None;
         self.page_index = 0;
         self.failed = true;
 
@@ -260,7 +277,7 @@ impl ReaderState {
         let Some(document) = self.document.as_ref() else {
             return false;
         };
-        if self.pending_repagination.is_some() {
+        if self.pending_repagination.is_some() || self.pending_jump.is_some() {
             return false;
         }
 
@@ -286,7 +303,7 @@ impl ReaderState {
         let Some(document) = self.document.as_ref() else {
             return false;
         };
-        if self.pending_repagination.is_some() {
+        if self.pending_repagination.is_some() || self.pending_jump.is_some() {
             return false;
         }
 
@@ -313,7 +330,10 @@ impl ReaderState {
     }
 
     fn request_adjacent_chapter(&mut self, from: SpineIndex, direction: ReaderChapterDirection) {
-        if self.pending_chapter.is_some() || self.pending_repagination.is_some() {
+        if self.pending_chapter.is_some()
+            || self.pending_repagination.is_some()
+            || self.pending_jump.is_some()
+        {
             return;
         }
 
@@ -326,6 +346,82 @@ impl ReaderState {
             from,
             direction,
         });
+    }
+
+    /// Requests the chapter at `spine`, opened on the page holding `anchor`.
+    // called by the table of contents screen
+    #[allow(dead_code)]
+    pub(crate) fn jump_to(&mut self, spine: SpineIndex, anchor: Option<String>) -> bool {
+        if self.document.is_none()
+            || self.pending_chapter.is_some()
+            || self.pending_repagination.is_some()
+            || self.pending_jump.is_some()
+        {
+            return false;
+        }
+
+        self.pending_jump = Some(PendingJumpRequest {
+            spine,
+            anchor: anchor.clone(),
+        });
+
+        self.pending = Some(ReaderRequest::JumpTo {
+            path: self.path.clone(),
+            spine,
+            anchor,
+        });
+
+        true
+    }
+
+    pub(crate) fn apply_jump(
+        &mut self,
+        path: &str,
+        spine: SpineIndex,
+        anchor: Option<String>,
+        chapter: ReaderChapter,
+        page_index: usize,
+    ) -> bool {
+        if path != self.path || chapter.spine() != spine {
+            return false;
+        }
+
+        if self.pending_jump != Some(PendingJumpRequest { spine, anchor }) {
+            return false;
+        }
+
+        self.pending_jump = None;
+
+        let Some(document) = self.document.as_mut() else {
+            return false;
+        };
+
+        document.replace_chapter(chapter);
+
+        self.page_index = page_index.min(document.page_count().saturating_sub(1));
+        self.failed = false;
+
+        self.chrome.controls_visible = false;
+
+        self.refresh_chrome();
+        self.queue_progress_update();
+
+        true
+    }
+
+    pub(crate) fn finish_jump_request(
+        &mut self,
+        path: &str,
+        spine: SpineIndex,
+        anchor: Option<String>,
+    ) -> bool {
+        if path != self.path || self.pending_jump != Some(PendingJumpRequest { spine, anchor }) {
+            return false;
+        }
+
+        self.pending_jump = None;
+
+        true
     }
 
     pub(crate) fn toggle_controls(&mut self) -> bool {
@@ -496,6 +592,7 @@ impl ReaderState {
         if font_size == self.font_size
             || self.pending_chapter.is_some()
             || self.pending_repagination.is_some()
+            || self.pending_jump.is_some()
         {
             return false;
         }

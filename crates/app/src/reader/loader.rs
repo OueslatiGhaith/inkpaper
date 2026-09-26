@@ -1,6 +1,8 @@
 use alloc::string::String;
 
-use inkpaper_epub::{Epub, EpubSource, Error as EpubError, SpineIndex};
+use inkpaper_epub::{
+    BookLocation, ContentOffset, Epub, EpubSource, Error as EpubError, SpineIndex,
+};
 use inkpaper_reader::{ReaderSettings, ReadingPosition, paginate_chapter};
 use inkpaper_trace::{async_span, span};
 use inkpaper_ui::{FontRegistryError, ShapeError};
@@ -102,6 +104,39 @@ where
         direction: ReaderChapterDirection,
     ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>> {
         load_adjacent_reader_chapter_from_epub(&mut self.epub, from, direction, self.settings).await
+    }
+
+    /// Loads the chapter at `spine` and finds the page holding `anchor`, or the
+    /// chapter's first page when there is no anchor or it cannot be found.
+    #[inkpaper_trace::instrument(
+        target = "reader.document",
+        name = "jump",
+        fields(spine = spine.get())
+    )]
+    pub async fn load_chapter_at(
+        &mut self,
+        spine: SpineIndex,
+        anchor: Option<&str>,
+    ) -> Result<Option<(ReaderChapter, usize)>, ReaderLoadError<S::Error>> {
+        let index = spine
+            .as_usize()
+            .ok_or(ReaderLoadError::SpineIndexOverflow)?;
+
+        let Some((chapter, anchor_offset)) =
+            load_chapter_with_anchor(&mut self.epub, index, self.settings, anchor).await?
+        else {
+            return Ok(None);
+        };
+
+        let page_index = anchor_offset
+            .and_then(|offset| {
+                let position = ReadingPosition::new(BookLocation::new(spine, offset), 0);
+
+                chapter.page_at_position(position)
+            })
+            .unwrap_or(0);
+
+        Ok(Some((chapter, page_index)))
     }
 
     #[inkpaper_trace::instrument(
@@ -308,16 +343,32 @@ where
     Ok(BookProgressMap::from_weights(weights))
 }
 
-#[inkpaper_trace::instrument(
-    target = "reader.chapter",
-    name = "load",
-    fields(spine = index, font_size = settings.font_size())
-)]
 async fn load_readable_chapter_at<S>(
     epub: &mut Epub<S>,
     index: usize,
     settings: ReaderSettings,
 ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
+where
+    S: EpubSource,
+{
+    Ok(load_chapter_with_anchor(epub, index, settings, None)
+        .await?
+        .map(|(chapter, _)| chapter))
+}
+
+/// Loads and paginates a readable spine entry. The anchor offset is resolved
+/// here because the parsed chapter is dropped once it is paginated.
+#[inkpaper_trace::instrument(
+    target = "reader.chapter",
+    name = "load",
+    fields(spine = index, font_size = settings.font_size())
+)]
+async fn load_chapter_with_anchor<S>(
+    epub: &mut Epub<S>,
+    index: usize,
+    settings: ReaderSettings,
+    anchor: Option<&str>,
+) -> Result<Option<(ReaderChapter, Option<ContentOffset>)>, ReaderLoadError<S::Error>>
 where
     S: EpubSource,
 {
@@ -355,6 +406,8 @@ where
     let Some(chapter) = chapter else {
         return Ok(None);
     };
+
+    let anchor_offset = anchor.and_then(|anchor| chapter.anchor_offset(anchor));
 
     let styles = {
         let _trace = async_span!(
@@ -424,10 +477,8 @@ where
         pagination.into_owned()
     };
 
-    Ok(Some(ReaderChapter::with_images(
-        chapter_path,
-        spine,
-        pagination,
-        chapter_images,
+    Ok(Some((
+        ReaderChapter::with_images(chapter_path, spine, pagination, chapter_images),
+        anchor_offset,
     )))
 }

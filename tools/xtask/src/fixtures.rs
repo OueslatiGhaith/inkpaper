@@ -23,6 +23,7 @@ pub fn generate() -> Result<()> {
     generate_transparent_image(&fixtures)?;
     generate_many_images(&fixtures)?;
     generate_image_only(&fixtures)?;
+    generate_navigation_anchors(&fixtures)?;
 
     generate_compat_encoded_container_path(&fixtures)?;
     generate_compat_epub2_entities(&fixtures)?;
@@ -59,6 +60,7 @@ const GENERATED_FIXTURES: &[&str] = &[
     "transparent-image.epub",
     "many-images.epub",
     "image-only.epub",
+    "navigation-anchors.epub",
     "compat-encoded-container-path.epub",
     "compat-epub2-entities.epub",
     "compat-manifest-fallback.epub",
@@ -429,6 +431,83 @@ fn generate_image_only(directory: &Path) -> Result<()> {
         "image-only",
         &[chapter],
         &images,
+    )
+}
+
+fn generate_navigation_anchors(directory: &Path) -> Result<()> {
+    let mut first = String::from("<h1>Chapter 1</h1>\n");
+    let mut second = String::from("<h1>Chapter 2</h1>\n");
+
+    for index in 1..=4 {
+        first.push_str(&format!("<p>Chapter 1, paragraph {index}.</p>\n"));
+    }
+
+    // enough text before the anchor to push it past the first page
+    for index in 1..=24 {
+        second.push_str(&formatdoc! {r#"
+            <p>
+                Chapter 2, paragraph {index}. Navigation entries can point into
+                the middle of a chapter, so this text pushes the anchored
+                heading below onto a later page.
+            </p>
+        "#});
+    }
+
+    second.push_str(indoc! {r#"
+        <h2 id="later-section">Later Section</h2>
+        <p>The table of contents should open the reader on this heading.</p>
+    "#});
+
+    let chapters = [
+        Chapter::new("chapter-1.xhtml", "Chapter 1", first),
+        Chapter::new("chapter-2.xhtml", "Chapter 2", second),
+    ];
+
+    let title = "Fixture — Navigation Anchors";
+
+    let navigation = formatdoc! {r#"
+        <?xml version="1.0" encoding="UTF-8"?>
+        <html
+            xmlns="http://www.w3.org/1999/xhtml"
+            xmlns:epub="http://www.idpf.org/2007/ops"
+            xml:lang="en"
+        >
+        <head>
+            <title>{title}</title>
+        </head>
+
+        <body>
+            <nav epub:type="toc">
+                <h1>{title}</h1>
+
+                <ol>
+                    <li><a href="chapter-1.xhtml">Chapter 1</a></li>
+                    <li>
+                        <a href="chapter-2.xhtml">Chapter 2</a>
+                        <ol>
+                            <li><a href="chapter-2.xhtml#later-section">Later Section</a></li>
+                        </ol>
+                    </li>
+                </ol>
+            </nav>
+        </body>
+        </html>
+    "#};
+
+    let package = package_document(title, "navigation-anchors", &chapters, &[]);
+    let first_document = chapter_document(&chapters[0].title, &chapters[0].body);
+    let second_document = chapter_document(&chapters[1].title, &chapters[1].body);
+
+    write_text_epub(
+        &directory.join("navigation-anchors.epub"),
+        &[
+            ("META-INF/container.xml", CONTAINER_XML),
+            ("OEBPS/styles.css", STYLESHEET),
+            ("OEBPS/content.opf", &package),
+            ("OEBPS/nav.xhtml", &navigation),
+            ("OEBPS/chapter-1.xhtml", &first_document),
+            ("OEBPS/chapter-2.xhtml", &second_document),
+        ],
     )
 }
 

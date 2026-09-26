@@ -146,6 +146,35 @@ impl InkPaperApp {
             .finish_repagination_request(&path, spine, font_size)
     }
 
+    pub(crate) fn apply_reader_jump(
+        &mut self,
+        path: String,
+        spine: SpineIndex,
+        anchor: Option<String>,
+        chapter: ReaderChapter,
+        page_index: usize,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let changed = self
+            .reader
+            .apply_jump(&path, spine, anchor, chapter, page_index);
+
+        if changed {
+            cx.notify();
+        }
+
+        changed
+    }
+
+    pub(crate) fn finish_reader_jump_request(
+        &mut self,
+        path: String,
+        spine: SpineIndex,
+        anchor: Option<String>,
+    ) -> bool {
+        self.reader.finish_jump_request(&path, spine, anchor)
+    }
+
     pub(crate) fn take_reader_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
         self.reader.take_preferences_request()
     }
