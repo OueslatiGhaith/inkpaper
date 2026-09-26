@@ -65,9 +65,10 @@ struct PendingChapterRequest {
 
 #[derive(Debug, Default)]
 struct ReaderChromeState {
-    controls_visible: bool,
+    menu_open: bool,
+    font_preview: Option<u16>,
     page_label: String,
-    section_label: String,
+    progress_label: String,
 }
 
 #[derive(Debug)]
@@ -168,7 +169,7 @@ impl ReaderState {
         self.page_index = page_index;
         self.failed = false;
 
-        self.chrome.controls_visible = false;
+        self.chrome.menu_open = false;
 
         self.refresh_chrome();
         self.queue_progress_update();
@@ -244,7 +245,7 @@ impl ReaderState {
         self.pending_chapter = None;
         self.failed = false;
 
-        self.chrome.controls_visible = false;
+        self.chrome.menu_open = false;
 
         self.refresh_chrome();
         self.queue_progress_update();
@@ -284,7 +285,7 @@ impl ReaderState {
         if self.page_index > 0 {
             self.page_index -= 1;
 
-            self.chrome.controls_visible = false;
+            self.chrome.menu_open = false;
 
             self.refresh_chrome();
             self.queue_progress_update();
@@ -316,7 +317,7 @@ impl ReaderState {
         if next < page_count {
             self.page_index = next;
 
-            self.chrome.controls_visible = false;
+            self.chrome.menu_open = false;
 
             self.refresh_chrome();
             self.queue_progress_update();
@@ -401,7 +402,7 @@ impl ReaderState {
         self.page_index = page_index.min(document.page_count().saturating_sub(1));
         self.failed = false;
 
-        self.chrome.controls_visible = false;
+        self.chrome.menu_open = false;
 
         self.refresh_chrome();
         self.queue_progress_update();
@@ -424,18 +425,64 @@ impl ReaderState {
         true
     }
 
-    pub(crate) fn toggle_controls(&mut self) -> bool {
-        if self.document.is_none() {
+    pub(crate) fn open_menu(&mut self) -> bool {
+        if self.document.is_none() || self.chrome.menu_open {
             return false;
         }
 
-        self.chrome.controls_visible = !self.chrome.controls_visible;
+        self.chrome.menu_open = true;
+        self.chrome.font_preview = None;
 
         true
     }
 
-    pub(crate) fn controls_visible(&self) -> bool {
-        self.chrome.controls_visible
+    pub(crate) fn close_menu(&mut self) -> bool {
+        if !self.chrome.menu_open {
+            return false;
+        }
+
+        self.chrome.menu_open = false;
+        self.chrome.font_preview = None;
+
+        true
+    }
+
+    pub(crate) fn menu_open(&self) -> bool {
+        self.chrome.menu_open
+    }
+
+    /// The font size the menu shows: a slider preview while dragging, then the
+    /// size being repaginated to, otherwise the current size.
+    pub(crate) fn menu_font_size(&self) -> u16 {
+        self.chrome
+            .font_preview
+            .or(self.pending_repagination.map(|request| request.font_size))
+            .unwrap_or(self.font_size)
+    }
+
+    pub(crate) fn preview_font_size(&mut self, font_size: u16) -> bool {
+        if !self.chrome.menu_open || self.chrome.font_preview == Some(font_size) {
+            return false;
+        }
+
+        self.chrome.font_preview = Some(font_size);
+
+        true
+    }
+
+    /// Applies the previewed font size. Returns whether a preview was pending.
+    pub(crate) fn commit_font_preview(&mut self) -> bool {
+        let Some(font_size) = self.chrome.font_preview.take() else {
+            return false;
+        };
+
+        self.request_font_size(font_size);
+
+        true
+    }
+
+    pub(crate) fn set_font_size(&mut self, font_size: u16) -> bool {
+        self.request_font_size(font_size)
     }
 
     pub(crate) fn reading_position(&self) -> Option<ReadingPosition> {
@@ -446,8 +493,8 @@ impl ReaderState {
         &self.chrome.page_label
     }
 
-    pub(crate) fn section_label(&self) -> &str {
-        &self.chrome.section_label
+    pub(crate) fn progress_label(&self) -> &str {
+        &self.chrome.progress_label
     }
 
     pub(crate) fn path(&self) -> &str {
@@ -495,7 +542,7 @@ impl ReaderState {
 
     fn refresh_chrome(&mut self) {
         self.chrome.page_label.clear();
-        self.chrome.section_label.clear();
+        self.chrome.progress_label.clear();
 
         let Some(document) = self.document.as_ref() else {
             return;
@@ -515,16 +562,9 @@ impl ReaderState {
 
         let book_progress = document.progress_at_page(self.page_index);
 
-        let section_number = document.spine().get().saturating_add(1);
-
         self.chrome.page_label = format!("{} / {}", page_number, page_count,);
 
-        self.chrome.section_label = format!(
-            "{}%  S {} / {}",
-            book_progress.percent(),
-            section_number,
-            document.spine_len(),
-        );
+        self.chrome.progress_label = format!("{}%", book_progress.percent());
     }
 
     pub(crate) fn current_progress(&self) -> Option<ReadingHistoryEntry> {
@@ -661,9 +701,6 @@ impl ReaderState {
         self.pending_repagination = None;
         self.failed = false;
 
-        // keep the chrome visible so repeated A-/A+ presses are convenient.
-        self.chrome.controls_visible = true;
-
         self.refresh_chrome();
         self.queue_preferences_update();
         self.queue_progress_update();
@@ -694,7 +731,8 @@ impl ReaderState {
         true
     }
 
-    pub(crate) const fn font_size(&self) -> u16 {
+    #[cfg(test)]
+    pub(super) const fn font_size(&self) -> u16 {
         self.font_size
     }
 

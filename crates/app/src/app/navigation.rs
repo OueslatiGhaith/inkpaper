@@ -104,7 +104,7 @@ impl InkPaperApp {
         cx.notify();
     }
 
-    pub(super) fn navigate_back(&mut self, cx: &mut Context<'_, Self>) {
+    pub(crate) fn navigate_back(&mut self, cx: &mut Context<'_, Self>) {
         if self.screen().route().back(self, cx) == Back::Handled {
             return;
         }

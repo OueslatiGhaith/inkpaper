@@ -2,7 +2,13 @@ use alloc::{format, string::String};
 
 use inkpaper_ui::prelude::*;
 
-use crate::{BatteryStatus, ClockStatus, FrontlightSetting};
+use crate::{
+    BatteryStatus, ClockStatus, FrontlightSetting,
+    components::{
+        drawer_handle::{DrawerHandle, DrawerHandleProps},
+        slider::{Slider, SliderProps},
+    },
+};
 
 const LIGHTBULB: SvgSource = include_svg!("assets/icons/lucide/lightbulb.svg");
 const LIGHTBULB_OFF: SvgSource = include_svg!("assets/icons/lucide/lightbulb-off.svg");
@@ -47,12 +53,6 @@ impl RenderOnce for ControlCenter<'_> {
         let battery_mid = battery_percent.is_some_and(|percent| percent > 40);
         let battery_high = battery_percent.is_some_and(|percent| percent > 70);
 
-        let brightness_fill = px(i32::from(self.setting.brightness()) * 280 / 100);
-        let brightness_knob = px(8 + i32::from(self.setting.brightness()) * 266 / 100);
-
-        let warmth_fill = px(i32::from(self.setting.warmth()) * 280 / 100);
-        let warmth_knob = px(8 + i32::from(self.setting.warmth()) * 266 / 100);
-
         let lightbulb = if self.setting.is_on() {
             LIGHTBULB
         } else {
@@ -61,7 +61,7 @@ impl RenderOnce for ControlCenter<'_> {
 
         rsx! {
             <div class="absolute left-0 top-0 w-[480px] h-[800px]">
-                // CrossInk top-anchored sheet. The quick-action bar is omitted
+                // Top-anchored sheet. The quick-action bar is omitted
                 // until those actions are real InkPaper features.
                 <div class="absolute left-0 top-0 w-[480px] h-[382px] bg-white">
                     // Lyra header: 5 px top padding, 84 px header.
@@ -107,9 +107,6 @@ impl RenderOnce for ControlCenter<'_> {
                         <div class="absolute left-0 bottom-0 w-full h-[3px] bg-black" />
                     </div>
 
-                    // CrossInk uses spaceLg * 2 = 32 px on each side.
-                    //
-                    // 105 = 5 top padding + 84 header + 16 leading space.
                     <div class="absolute left-8 top-[105px] w-[416px] flex flex-col">
                         // Brightness row: 56 px.
                         <div class="w-full h-14 flex items-center justify-between">
@@ -126,16 +123,15 @@ impl RenderOnce for ControlCenter<'_> {
                             </div>
                         </div>
 
-                        // CrossInk spaceSm.
                         <div class="h-1" />
 
-                        <ControlCenterSliderRow
+                        <Slider
+                            id="control-center-brightness"
                             value={self.setting.brightness()}
-                            fill_width={brightness_fill}
-                            knob_left={brightness_knob}
+                            on_decrease={None}
+                            on_increase={None}
                         />
 
-                        // CrossInk spaceLg.
                         <div class="h-4" />
 
                         // Warmth uses one body-text line, then spaceSm.
@@ -147,62 +143,22 @@ impl RenderOnce for ControlCenter<'_> {
 
                         <div class="h-1" />
 
-                        <ControlCenterSliderRow
+                        <Slider
+                            id="control-center-warmth"
                             value={self.setting.warmth()}
-                            fill_width={warmth_fill}
-                            knob_left={warmth_knob}
+                            on_decrease={None}
+                            on_increase={None}
                         />
 
                         // takeTop(..., spaceLg) + final screen.spacer(spaceLg).
                         <div class="h-8" />
                     </div>
 
-                    // CrossInk's top sheet uses the FreeInk default rule and
-                    // drawer handle, without Lyra corner rounding.
                     <div class="absolute left-0 bottom-0 w-full h-[2px] bg-black" />
 
                     <div class="absolute left-0 bottom-4 w-full flex justify-center">
-                        <div class="w-[72px] h-[5px] rounded-md bg-black" />
+                        <DrawerHandle />
                     </div>
-                </div>
-            </div>
-        }
-    }
-}
-
-#[component]
-struct ControlCenterSliderRow {
-    value: u8,
-    fill_width: Pixels,
-    knob_left: Pixels,
-}
-
-impl RenderOnce for ControlCenterSliderRow {
-    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        rsx! {
-            // 416 = 56 + 4 + 296 + 4 + 56, exactly matching CrossInk's
-            // rowHeight/spaceSm geometry at the small UI scale.
-            <div class="w-full h-14 flex items-center gap-1">
-                <div class="w-14 h-14 flex items-center justify-center">
-                    <text class="text-xl text-center">
-                        "-"
-                    </text>
-                </div>
-
-                <div class="relative w-[296px] h-14">
-                    // FreeInk's normal slider has 8 px horizontal padding,
-                    // a 4 px light-gray track, and a 14x22 black knob.
-                    <div class="absolute left-2 top-[26px] w-[280px] h-1 bg-[#aaaaaa]" />
-
-                    <div class="absolute left-2 top-[26px] w-{self.fill_width} h-1 bg-black" />
-
-                    <div class="absolute left-{self.knob_left} top-[17px] w-[14px] h-[22px] bg-black" />
-                </div>
-
-                <div class="w-14 h-14 flex items-center justify-center">
-                    <text class="text-xl text-center">
-                        "+"
-                    </text>
                 </div>
             </div>
         }

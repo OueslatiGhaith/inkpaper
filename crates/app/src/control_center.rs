@@ -1,5 +1,12 @@
 use inkpaper_ui::prelude::*;
 
+use crate::components::slider;
+
+// slider rows start at the 32 px content inset
+const SLIDER_LEFT: i32 = 32;
+const BRIGHTNESS_SLIDER_TOP: i32 = 165;
+const WARMTH_SLIDER_TOP: i32 = 265;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ControlCenterSlider {
     Brightness,
@@ -70,7 +77,7 @@ impl ControlCenterState {
         self.handle_armed = false;
         self.opened_during_pointer = false;
 
-        if in_rect(position, 92, 165, 296, 56) {
+        if slider::track_contains(position, SLIDER_LEFT, BRIGHTNESS_SLIDER_TOP) {
             self.active_slider = Some(ControlCenterSlider::Brightness);
 
             return ControlCenterPointerResult::Slider {
@@ -79,7 +86,7 @@ impl ControlCenterState {
             };
         }
 
-        if in_rect(position, 92, 265, 296, 56) {
+        if slider::track_contains(position, SLIDER_LEFT, WARMTH_SLIDER_TOP) {
             self.active_slider = Some(ControlCenterSlider::Warmth);
 
             return ControlCenterPointerResult::Slider {
@@ -90,7 +97,7 @@ impl ControlCenterState {
 
         self.pressed_action = action_at(position);
 
-        // CrossInk's drawer handle occupies the final sheet band.
+        // Drawer handle occupies the final sheet band.
         if in_rect(position, 0, 353, 480, 29) {
             self.handle_armed = true;
         }
@@ -161,7 +168,7 @@ impl ControlCenterState {
             return ControlCenterPointerResult::Capture;
         }
 
-        // CrossInk dismisses when touching outside the top sheet.
+        // Dismiss when touching outside the top sheet.
         if position.y.get() >= 382 {
             self.open = false;
             return ControlCenterPointerResult::Closed;
@@ -191,7 +198,7 @@ impl ControlCenterState {
 }
 
 fn action_at(position: Point) -> Option<ControlCenterAction> {
-    // CrossInk's lightbulb hit zone extends into the right screen edge.
+    // Lightbulb hit zone extends into the right screen edge.
     if in_rect(position, 356, 101, 124, 64) {
         return Some(ControlCenterAction::ToggleFrontlight);
     }
@@ -216,15 +223,11 @@ fn action_at(position: Point) -> Option<ControlCenterAction> {
 }
 
 fn brightness_from_x(x: i32) -> u8 {
-    let relative = (x - 92).clamp(0, 296);
-    let value = (relative * 100 + 148) / 296;
-
-    value.clamp(1, 100) as u8
+    slider::value_at(x, SLIDER_LEFT).max(1)
 }
 
 fn warmth_from_x(x: i32) -> u8 {
-    let relative = (x - 92).clamp(0, 296);
-    ((relative * 100 + 148) / 296).clamp(0, 100) as u8
+    slider::value_at(x, SLIDER_LEFT)
 }
 
 fn in_rect(point: Point, x: i32, y: i32, width: i32, height: i32) -> bool {

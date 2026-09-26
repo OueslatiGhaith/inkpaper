@@ -34,6 +34,24 @@ pub(crate) fn reader_viewport() -> Viewport {
         .expect("reader viewport is statically non-zero")
 }
 
+/// Maps a slider value from 0 to 100 to the nearest supported font size.
+pub(crate) fn font_size_from_slider(value: u8) -> u16 {
+    let steps = u32::from((READER_FONT_SIZE_MAX - READER_FONT_SIZE_MIN) / READER_FONT_SIZE_STEP);
+    let step = (u32::from(value.min(100)) * steps + 50) / 100;
+
+    READER_FONT_SIZE_MIN + u16::try_from(step).unwrap_or(0) * READER_FONT_SIZE_STEP
+}
+
+/// Where `font_size` sits on a slider from 0 to 100.
+pub(crate) fn font_size_slider_value(font_size: u16) -> u8 {
+    let range = u32::from(READER_FONT_SIZE_MAX - READER_FONT_SIZE_MIN);
+    let offset = u32::from(
+        font_size.clamp(READER_FONT_SIZE_MIN, READER_FONT_SIZE_MAX) - READER_FONT_SIZE_MIN,
+    );
+
+    u8::try_from(offset * 100 / range).unwrap_or(100)
+}
+
 fn reader_settings(font_size: u16) -> Option<ReaderSettings> {
     if !(READER_FONT_SIZE_MIN..=READER_FONT_SIZE_MAX).contains(&font_size) {
         return None;

@@ -91,14 +91,32 @@ impl InkPaperApp {
         }
     }
 
-    pub(crate) fn activate_toggle_reader_controls(
+    pub(crate) fn open_reader_menu(&mut self, cx: &mut Context<'_, Self>) {
+        if self.reader.open_menu() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn close_reader_menu(&mut self, cx: &mut Context<'_, Self>) {
+        if self.reader.close_menu() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn activate_open_reader_menu(
         &mut self,
         _: &ActivateEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.reader.toggle_controls() {
-            cx.notify();
-        }
+        self.open_reader_menu(cx);
+    }
+
+    pub(crate) fn activate_close_reader_menu(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.close_reader_menu(cx);
     }
 
     pub(crate) fn activate_decrease_reader_font_size(

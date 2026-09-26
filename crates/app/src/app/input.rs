@@ -30,6 +30,29 @@ pub(crate) trait ScreenInput {
     ) -> bool {
         false
     }
+
+    /// Handles the end of a touch no overlay claimed. Returning true captures
+    /// it instead of activating the element under the pointer.
+    fn release(
+        &self,
+        _app: &mut InkPaperApp,
+        _position: Point,
+        _cx: &mut Context<'_, InkPaperApp>,
+    ) -> bool {
+        false
+    }
+
+    /// Handles a touch drag no overlay claimed. Returning true captures the
+    /// drag instead of scrolling. Called for every move with the same origin.
+    fn drag(
+        &self,
+        _app: &mut InkPaperApp,
+        _origin: Point,
+        _position: Point,
+        _cx: &mut Context<'_, InkPaperApp>,
+    ) -> bool {
+        false
+    }
 }
 
 /// Which layer receives input right now.
@@ -64,7 +87,6 @@ impl InkPaperApp {
             InputTarget::Blocked => true,
 
             InputTarget::ControlCenter => {
-                // CrossInk uses +/- 5 for the physical side buttons.
                 let delta = match button {
                     SideButton::Previous => -5,
                     SideButton::Next => 5,
@@ -149,6 +171,12 @@ impl InkPaperApp {
 
         let result = self.control_center.pointer_drag(origin, position);
 
+        if result == ControlCenterPointerResult::Pass
+            && self.screen().route().drag(self, origin, position, cx)
+        {
+            return PointerAction::Capture;
+        }
+
         self.apply_control_center_pointer_result(result, PointerAction::Scroll, cx)
     }
 
@@ -162,6 +190,12 @@ impl InkPaperApp {
         }
 
         let result = self.control_center.pointer_up(position);
+
+        if result == ControlCenterPointerResult::Pass
+            && self.screen().route().release(self, position, cx)
+        {
+            return PointerAction::Capture;
+        }
 
         self.apply_control_center_pointer_result(result, PointerAction::Activate, cx)
     }

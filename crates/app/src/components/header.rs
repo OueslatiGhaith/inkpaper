@@ -126,7 +126,7 @@ impl RenderOnce for BatteryIndicator {
     }
 }
 
-fn battery_icon(battery: BatteryStatus) -> IconKind {
+pub(crate) fn battery_icon(battery: BatteryStatus) -> IconKind {
     match battery.percent() {
         0..=10 => IconKind::BatteryWarning,
         11..=35 => IconKind::BatteryLow,

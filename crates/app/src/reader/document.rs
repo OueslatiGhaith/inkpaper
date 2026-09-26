@@ -81,7 +81,6 @@ pub struct ReaderDocument {
     title: Option<String>,
     creators: Vec<String>,
     package_path: String,
-    spine_len: usize,
     progress: BookProgressMap,
     chapter: ReaderChapter,
     opening_page_index: usize,
@@ -95,7 +94,6 @@ impl ReaderDocument {
         title: Option<String>,
         creators: Vec<String>,
         package_path: String,
-        spine_len: usize,
         progress: BookProgressMap,
         chapter: ReaderChapter,
         opening_page_index: usize,
@@ -106,7 +104,6 @@ impl ReaderDocument {
             title,
             creators,
             package_path,
-            spine_len,
             progress,
             chapter,
             opening_page_index,
@@ -139,10 +136,6 @@ impl ReaderDocument {
 
     pub const fn spine(&self) -> SpineIndex {
         self.chapter.spine()
-    }
-
-    pub const fn spine_len(&self) -> usize {
-        self.spine_len
     }
 
     pub fn page_count(&self) -> usize {

@@ -5,7 +5,8 @@ use inkpaper_reader::PageItem;
 
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
-    ReaderRequest, ReaderSession, load_reader_document, reader::ReaderState,
+    ReaderRequest, ReaderSession, load_reader_document,
+    reader::{ReaderState, font_size_from_slider, font_size_slider_value},
 };
 
 #[test]
@@ -198,16 +199,16 @@ fn reader_chrome_tracks_the_current_reading_position() {
 
     assert_eq!(state.reading_position(), Some(expected_position));
 
-    assert!(state.section_label().contains("%  S "));
+    assert!(state.progress_label().ends_with('%'));
 }
 
 #[test]
-fn reader_controls_toggle_only_after_a_book_is_loaded() {
+fn reader_menu_opens_only_after_a_book_is_loaded() {
     let mut state = ReaderState::default();
 
-    assert!(!state.toggle_controls());
+    assert!(!state.open_menu());
 
-    assert!(!state.controls_visible());
+    assert!(!state.menu_open());
 
     let path = String::from("/Fixtures/book-boundaries.epub");
 
@@ -219,15 +220,15 @@ fn reader_controls_toggle_only_after_a_book_is_loaded() {
 
     assert!(state.apply_document(document));
 
-    assert!(!state.controls_visible());
+    assert!(!state.menu_open());
 
-    assert!(state.toggle_controls());
+    assert!(state.open_menu());
 
-    assert!(state.controls_visible());
+    assert!(state.menu_open());
 
-    assert!(state.toggle_controls());
+    assert!(state.close_menu());
 
-    assert!(!state.controls_visible());
+    assert!(!state.menu_open());
 }
 
 #[test]
@@ -426,8 +427,6 @@ fn font_size_repagination_keeps_the_current_reading_position() {
         page.position() <= target_position && target_position < page.end_position(),
         "repagination must keep the old logical position on the visible page",
     );
-
-    assert!(state.controls_visible());
 }
 
 #[test]
@@ -523,4 +522,44 @@ fn navigation_target_jump_opens_the_page_with_the_anchored_heading() {
         Some(ReaderRequest::UpdateProgress(_))
     ));
     assert!(!state.finish_jump_request(&path, spine, anchor));
+}
+
+#[test]
+fn font_slider_maps_every_supported_size_to_itself() {
+    assert_eq!(font_size_from_slider(0), 14);
+    assert_eq!(font_size_from_slider(100), 32);
+
+    for font_size in (14..=32).step_by(2) {
+        assert_eq!(
+            font_size_from_slider(font_size_slider_value(font_size)),
+            font_size
+        );
+    }
+}
+
+#[test]
+fn font_slider_preview_applies_on_commit_and_stays_shown_while_repaginating() {
+    let path = String::from("/Fixtures/book-boundaries.epub");
+    let source = SliceSource::new(include_bytes!("../../../../fixtures/book-boundaries.epub"));
+    let document = future::block_on(load_reader_document(path.clone(), source)).unwrap();
+
+    let mut state = ReaderState::default();
+    state.open(path.clone(), String::from("book-boundaries"));
+    assert!(state.apply_document(document));
+    let _ = state.take_request();
+
+    // previews only exist while the menu is open
+    assert!(!state.preview_font_size(26));
+    assert!(state.open_menu());
+    assert!(state.preview_font_size(26));
+    assert_eq!(state.menu_font_size(), 26);
+    assert!(state.take_request().is_none());
+
+    assert!(state.commit_font_preview());
+    assert!(matches!(
+        state.take_request(),
+        Some(ReaderRequest::RepaginateChapter { font_size: 26, .. })
+    ));
+    assert_eq!(state.menu_font_size(), 26);
+    assert!(!state.commit_font_preview());
 }

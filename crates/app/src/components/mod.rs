@@ -1,9 +1,12 @@
 pub(crate) mod control_center;
 pub(crate) mod current_book_card;
+pub(crate) mod drawer_handle;
 pub(crate) mod file_row;
 pub(crate) mod header;
 pub(crate) mod home_menu;
 pub(crate) mod icon;
+pub(crate) mod reader_menu;
 pub(crate) mod recent_book_row;
 pub(crate) mod settings_row;
+pub(crate) mod slider;
 pub(crate) mod transfer_mode_row;
