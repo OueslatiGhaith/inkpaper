@@ -101,6 +101,44 @@ impl DateTime {
         self.second
     }
 
+    /// builds the datetime `seconds` after 2000-01-01 00:00:00, deriving the weekday
+    /// (0 is Sunday)
+    pub fn from_seconds_since_2000(seconds: u64) -> Result<Self, DateTimeError> {
+        let mut days = seconds / 86_400;
+        let time = seconds % 86_400;
+        // 2000-01-01 was a Saturday
+        let weekday = ((days + 6) % 7) as u8;
+
+        let mut year = 2000u16;
+        loop {
+            let year_days = if is_leap_year(year) { 366 } else { 365 };
+            if days < year_days {
+                break;
+            }
+            if year == 2099 {
+                return Err(DateTimeError::Year { value: 2100 });
+            }
+            days -= year_days;
+            year += 1;
+        }
+
+        let mut month = 1u8;
+        while days >= days_in_month(year, month) as u64 {
+            days -= days_in_month(year, month) as u64;
+            month += 1;
+        }
+
+        Self::new(
+            year,
+            month,
+            days as u8 + 1,
+            weekday,
+            (time / 3_600) as u8,
+            (time % 3_600 / 60) as u8,
+            (time % 60) as u8,
+        )
+    }
+
     pub fn seconds_since_2000(self) -> u64 {
         self.days_since_2000() as u64 * 86_400
             + self.hour as u64 * 3_600
@@ -349,6 +387,27 @@ mod tests {
     #[test]
     fn accepts_leap_day() {
         assert!(DateTime::new(2028, 2, 29, 2, 12, 0, 0,).is_ok(),);
+    }
+
+    #[test]
+    fn from_seconds_since_2000_round_trips_with_weekday() {
+        for expected in [
+            datetime(2000, 1, 1, 6, 0, 0, 0),
+            datetime(2026, 8, 24, 1, 12, 30, 40),
+            datetime(2028, 2, 29, 2, 23, 59, 59),
+            datetime(2099, 12, 31, 4, 23, 59, 59),
+        ] {
+            let seconds = expected.seconds_since_2000();
+
+            assert_eq!(DateTime::from_seconds_since_2000(seconds), Ok(expected));
+        }
+    }
+
+    #[test]
+    fn from_seconds_since_2000_rejects_2100() {
+        let seconds = datetime(2099, 12, 31, 4, 23, 59, 59).seconds_since_2000() + 1;
+
+        assert!(DateTime::from_seconds_since_2000(seconds).is_err());
     }
 
     #[test]

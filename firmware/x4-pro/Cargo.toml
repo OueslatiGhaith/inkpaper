@@ -18,6 +18,7 @@ inkpaper-app = { path = "../../crates/app", features = ["defmt"] }
 inkpaper-epub = { path = "../../crates/epub" }
 inkpaper-trace = { path = "../../crates/trace" }
 inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "defmt", "eink"] }
+sntp = { path = "../../crates/sntp", features = ["defmt"] }
 ssd1677 = { path = "../../crates/ssd1677", features = ["defmt"] }
 uc8179 = { path = "../../crates/uc8179", features = ["defmt"] }
 uc8279-x4 = { path = "../../crates/uc8279-x4", features = ["defmt"] }
@@ -36,6 +37,7 @@ block-device-driver = "0.2.0"
 embassy-embedded-hal = { version = "0.6.0", features = ["defmt"] }
 embassy-executor = { version = "0.10.0", features = ["defmt"] }
 embassy-futures = "0.1.2"
+embassy-net = { version = "0.9.1", features = ["defmt", "dhcpv4", "dns", "medium-ethernet", "proto-ipv4", "udp"] }
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
 embassy-time = { version = "0.5.1", features = ["defmt", "defmt-timestamp-uptime-ms"] }
 embassy-usb = { version = "0.6.0", default-features = false }
@@ -43,7 +45,8 @@ esp-alloc = { workspace = true, features = ["esp32s3", "global-allocator"] }
 esp-backtrace = { workspace = true, features = ["esp32s3", "panic-handler", "defmt"] }
 esp-bootloader-esp-idf = { workspace = true, features = ["esp32s3", "defmt"] }
 esp-hal = { workspace = true, features = ["esp32s3", "unstable", "defmt"] }
-esp-rtos = { workspace = true, features = ["esp32s3", "embassy", "defmt"] }
+esp-radio = { version = "1.0.0-beta.1", features = ["esp32s3", "defmt", "wifi"] }
+esp-rtos = { workspace = true, features = ["esp32s3", "embassy", "defmt", "esp-alloc", "esp-radio"] }
 rtt-target = { version = "0.6.2", features = ["defmt"] }
 sdio = { version = "0.5.1", features = ["defmt"] }
 static_cell = { workspace = true }

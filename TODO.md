@@ -53,7 +53,7 @@
 - [x] deep sleep on power button
 - [x] flush app state before sleep
 - [x] change to long press
-- [ ] faster wakeup
+- [x] faster wakeup
 - [x] sleep screen
 - [x] auto sleep
 
@@ -68,3 +68,7 @@
 ## Book transfer
 
 - [x] USB mass storage mode
+
+# Future goals
+
+- [ ] daylight saving time rules for the timezone

@@ -27,6 +27,7 @@ use crate::firmware::{
     auto_sleep::AutoSleep,
     battery::{BATTERY_UPDATES, BatteryReading, battery_task},
     buttons::{Buttons, button_task},
+    clock_sync::clock_sync_task,
     display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
     frontlight::frontlight_task,
@@ -48,6 +49,7 @@ use crate::firmware::{
 mod auto_sleep;
 mod battery;
 mod buttons;
+mod clock_sync;
 mod display;
 mod framebuffer;
 mod frontlight;
@@ -97,7 +99,11 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
-    info!("PSRAM allocator initialized");
+    // the WiFi driver allocates from internal RAM only. Registered after PSRAM,
+    // these regions stay free for it while ordinary allocations land in PSRAM
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+    esp_alloc::heap_allocator!(size: 36 * 1024);
+    info!("heap allocators initialized");
 
     // establish the board's safe rail state before doing anything else
     let (mut rails, sd_power) =
@@ -303,6 +309,12 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(battery_task(i2c_bus::device(shared_i2c)).unwrap());
     spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
     info!("shared I2C services started");
+
+    // needs the RTC task running to accept the synchronized time
+    match clock_sync::build_credentials() {
+        Some(credentials) => spawner.spawn(clock_sync_task(peripherals.WIFI, credentials).unwrap()),
+        None => info!("no build-time WiFi credentials, skipping clock sync"),
+    }
 
     let mut auto_sleep = AutoSleep::new();
 
