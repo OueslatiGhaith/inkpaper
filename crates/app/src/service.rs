@@ -4,7 +4,8 @@ use inkpaper_epub::EpubSource;
 use inkpaper_ui::{Entity, EntityAccessError, ResourceRuntimeApi, RuntimeApi};
 
 use crate::{
-    BrowseEntry, BrowseListing, BrowseRequest, FileTransferRequest, FrontlightPreferences,
+    BrowseEntry, BrowseListing, BrowseRequest, ClockPreferences, FileTransferRequest,
+    FrontlightPreferences,
     FrontlightPreferencesRequest, FrontlightSetting, InkPaperApp, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest, ReaderSession, ReadingHistory, ReadingHistoryRequest,
 };
@@ -13,6 +14,8 @@ const READING_HISTORY_STATE: &str = "reading-history.dat";
 const READER_PREFERENCES_STATE: &str = "reader-preferences.dat";
 const FRONTLIGHT_PREFERENCES_STATE: &str = "frontlight-preferences.dat";
 const MAX_FRONTLIGHT_PREFERENCES_BYTES: usize = 64;
+const CLOCK_PREFERENCES_STATE: &str = "clock-preferences.dat";
+const MAX_CLOCK_PREFERENCES_BYTES: usize = 64;
 
 const MAX_READING_HISTORY_BYTES: usize = 64 * 1024;
 const MAX_READER_PREFERENCES_BYTES: usize = 256;
@@ -99,10 +102,12 @@ where
     history: ReadingHistory,
     preferences: ReaderPreferences,
     frontlight_preferences: FrontlightPreferences,
+    clock_preferences: ClockPreferences,
 
     history_dirty: bool,
     preferences_dirty: bool,
     frontlight_preferences_dirty: bool,
+    clock_preferences_dirty: bool,
 
     initialized: bool,
 }
@@ -119,10 +124,12 @@ where
             history: ReadingHistory::default(),
             preferences: ReaderPreferences::default(),
             frontlight_preferences: FrontlightPreferences::default(),
+            clock_preferences: ClockPreferences::default(),
 
             history_dirty: false,
             preferences_dirty: false,
             frontlight_preferences_dirty: false,
+            clock_preferences_dirty: false,
 
             initialized: false,
         }
@@ -151,6 +158,16 @@ where
 
             if let Some(request) = frontlight_preferences_request {
                 self.service_frontlight_preferences_request(request).await;
+                continue;
+            }
+
+            let clock_preferences_request =
+                runtime.update(app, |app, _| app.take_clock_preferences_request())?;
+
+            if let Some(preferences) = clock_preferences_request {
+                self.clock_preferences = preferences;
+                self.clock_preferences_dirty = true;
+                self.persist_clock_preferences().await;
                 continue;
             }
 
@@ -212,8 +229,9 @@ where
         let history_saved = self.persist_history().await;
         let preferences_saved = self.persist_preferences().await;
         let frontlight_preferences_saved = self.persist_frontlight_preferences().await;
+        let clock_preferences_saved = self.persist_clock_preferences().await;
 
-        history_saved && preferences_saved && frontlight_preferences_saved
+        history_saved && preferences_saved && frontlight_preferences_saved && clock_preferences_saved
     }
 
     async fn ensure_initialized<'resource, R>(
@@ -231,13 +249,16 @@ where
         self.history = self.load_history().await;
         self.preferences = self.load_preferences().await;
         self.frontlight_preferences = self.load_frontlight_preferences().await;
+        self.clock_preferences = self.load_clock_preferences().await;
 
         let entries = self.history.entries().to_vec();
         let preferences = self.preferences;
         let frontlight_preferences = self.frontlight_preferences;
+        let clock_preferences = self.clock_preferences;
 
         runtime.update(app, move |app, cx| {
             app.apply_frontlight_preferences(frontlight_preferences, cx);
+            app.apply_clock_preferences(clock_preferences, cx);
             app.apply_reader_preferences(preferences, cx);
             app.apply_reading_history(entries, cx);
         })?;
@@ -293,6 +314,21 @@ where
         };
 
         FrontlightPreferences::decode(&bytes).unwrap_or_default()
+    }
+
+    async fn load_clock_preferences(&mut self) -> ClockPreferences {
+        let bytes = match self
+            .platform
+            .load_state(CLOCK_PREFERENCES_STATE, MAX_CLOCK_PREFERENCES_BYTES)
+            .await
+        {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) | Err(_) => {
+                return ClockPreferences::default();
+            }
+        };
+
+        ClockPreferences::decode(&bytes).unwrap_or_default()
     }
 
     async fn service_browse_request<R>(
@@ -678,6 +714,29 @@ where
         }
 
         self.frontlight_preferences_dirty = false;
+
+        true
+    }
+
+    async fn persist_clock_preferences(&mut self) -> bool {
+        if !self.clock_preferences_dirty {
+            return true;
+        }
+
+        let Ok(bytes) = self.clock_preferences.encode() else {
+            return false;
+        };
+
+        if self
+            .platform
+            .save_state(CLOCK_PREFERENCES_STATE, &bytes)
+            .await
+            .is_err()
+        {
+            return false;
+        }
+
+        self.clock_preferences_dirty = false;
 
         true
     }

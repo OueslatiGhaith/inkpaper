@@ -1,7 +1,7 @@
 use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
-    FileTransferState, FrontlightState,
+    ClockState, FileTransferState, FrontlightState,
     browser::BrowserState,
     components::control_center::{ControlCenter, ControlCenterProps},
     control_center::ControlCenterState,
@@ -73,6 +73,7 @@ pub struct InkPaperApp {
     pub(crate) reader: ReaderState,
     pub(crate) reading_history: ReadingHistoryState,
     pub(crate) system_status: SystemStatus,
+    pub(crate) clock: ClockState,
     frontlight: FrontlightState,
     control_center: ControlCenterState,
     pub(crate) file_transfer: FileTransferState,
@@ -89,7 +90,7 @@ impl InkPaperApp {
 impl Render for InkPaperApp {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         let battery = self.system_status.battery();
-        let clock = self.system_status.clock();
+        let clock = self.local_clock();
         let control_center_open = self.control_center.is_open();
         let frontlight = self.frontlight.setting();
 

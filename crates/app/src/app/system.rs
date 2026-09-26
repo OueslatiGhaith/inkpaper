@@ -2,8 +2,8 @@ use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
 use crate::{
-    BatteryStatus, ClockStatus, FrontlightPreferences, FrontlightPreferencesRequest,
-    FrontlightSetting,
+    BatteryStatus, ClockPreferences, ClockStatus, FrontlightPreferences,
+    FrontlightPreferencesRequest, FrontlightSetting, UtcOffset,
 };
 
 impl InkPaperApp {
@@ -25,6 +25,65 @@ impl InkPaperApp {
         if changed && (self.screen() == Screen::Settings || self.control_center.is_open()) {
             cx.notify();
         }
+    }
+
+    /// The RTC's UTC time shifted to the chosen timezone.
+    pub(crate) fn local_clock(&self) -> Option<ClockStatus> {
+        let minutes = self.clock.utc_offset().minutes();
+
+        self.system_status
+            .clock()
+            .map(|clock| clock.offset_by(minutes))
+    }
+
+    pub(crate) fn apply_clock_preferences(
+        &mut self,
+        preferences: ClockPreferences,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.clock.apply_preferences(preferences) {
+            cx.notify();
+        }
+    }
+
+    /// Shows a timezone while its slider is dragged; release saves it.
+    pub(crate) fn preview_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
+        if self.clock.preview_utc_offset(offset) {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
+        if self.clock.set_utc_offset(offset) {
+            cx.notify();
+        }
+    }
+
+    /// Saves a timezone left by a drag. Returns whether there was one.
+    pub(crate) fn commit_utc_offset(&mut self) -> bool {
+        self.clock.commit()
+    }
+
+    pub(crate) fn activate_decrease_utc_offset(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let offset = self.clock.utc_offset().step(-1);
+        self.set_utc_offset(offset, cx);
+    }
+
+    pub(crate) fn activate_increase_utc_offset(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let offset = self.clock.utc_offset().step(1);
+        self.set_utc_offset(offset, cx);
+    }
+
+    pub(crate) fn take_clock_preferences_request(&mut self) -> Option<ClockPreferences> {
+        self.clock.take_save_request()
     }
 
     pub(crate) fn apply_frontlight_preferences(
