@@ -2,8 +2,8 @@ use alloc::{format, string::String};
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, ClockStatus,
-    app::{ScreenInput, ScreenLifecycle},
+    BatteryStatus, ClockStatus, InkPaperApp,
+    app::{ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps},
         settings_row::{
@@ -145,3 +145,18 @@ pub(crate) struct SettingsRoute;
 impl ScreenLifecycle for SettingsRoute {}
 
 impl ScreenInput for SettingsRoute {}
+
+impl ScreenView for SettingsRoute {
+    fn render<'a>(
+        &self,
+        app: &'a InkPaperApp,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> AnyElement<'a> {
+        SettingsScreen::from(SettingsScreenProps {
+            battery: app.system_status.battery(),
+            clock: app.system_status.clock(),
+            on_back: cx.listener(InkPaperApp::activate_back),
+        })
+        .into_any_element()
+    }
+}

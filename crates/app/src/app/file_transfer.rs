@@ -4,7 +4,7 @@ use super::InkPaperApp;
 use crate::{FileTransferRequest, UsbDriveConnection};
 
 impl InkPaperApp {
-    pub(super) fn activate_usb_drive(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    pub(crate) fn activate_usb_drive(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         if self.file_transfer.request_usb_drive() {
             cx.notify();
         }

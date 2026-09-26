@@ -136,23 +136,23 @@ impl InkPaperApp {
         cx.notify();
     }
 
-    pub(super) fn activate_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    pub(crate) fn activate_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.navigate_back(cx);
     }
 
-    pub(super) fn show_browse_files(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    pub(crate) fn show_browse_files(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.open_screen(Screen::BrowseFiles, cx);
     }
 
-    pub(super) fn show_recent_books(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    pub(crate) fn show_recent_books(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.open_screen(Screen::RecentBooks, cx);
     }
 
-    pub(super) fn show_file_transfer(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    pub(crate) fn show_file_transfer(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.open_screen(Screen::FileTransfer, cx);
     }
 
-    pub(super) fn show_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    pub(crate) fn show_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.open_screen(Screen::Settings, cx);
     }
 }

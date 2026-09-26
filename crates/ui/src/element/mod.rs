@@ -1,3 +1,5 @@
+#[cfg(feature = "alloc")]
+mod any;
 mod canvas;
 mod composition;
 mod div;
@@ -11,6 +13,8 @@ mod svg;
 
 use core::marker::PhantomData;
 
+#[cfg(feature = "alloc")]
+pub use any::*;
 pub use canvas::*;
 pub use composition::*;
 pub use div::*;
@@ -32,6 +36,15 @@ pub trait IntoElement {
     type Element: Element;
 
     fn into_element(self) -> Self::Element;
+
+    #[cfg(feature = "alloc")]
+    fn into_any_element<'a>(self) -> AnyElement<'a>
+    where
+        Self: Sized,
+        Self::Element: 'a,
+    {
+        AnyElement::new(self)
+    }
 }
 
 impl<T> IntoElement for T

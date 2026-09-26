@@ -4,7 +4,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     BatteryStatus, InkPaperApp,
-    app::{Back, Entry, ScreenInput, ScreenLifecycle},
+    app::{Back, Entry, ScreenInput, ScreenLifecycle, ScreenView},
     browser::{BrowseEntry, BrowseEntryKind},
     components::{
         file_row::{FileKind, FileRow, FileRowProps},
@@ -130,3 +130,35 @@ impl ScreenLifecycle for BrowseFilesRoute {
 }
 
 impl ScreenInput for BrowseFilesRoute {}
+
+impl ScreenView for BrowseFilesRoute {
+    fn render<'a>(
+        &self,
+        app: &'a InkPaperApp,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> AnyElement<'a> {
+        let entry_listeners = (0..app.browser.entries().len())
+            .map(|index| {
+                cx.listener(
+                    move |app: &mut InkPaperApp,
+                          _: &ActivateEvent,
+                          cx: &mut Context<'_, InkPaperApp>| {
+                        app.activate_browse_entry(index, cx);
+                    },
+                )
+            })
+            .collect();
+
+        BrowseFilesScreen::from(BrowseFilesScreenProps {
+            title: app.browser.title(),
+            path: app.browser.path(),
+            entries: app.browser.entries(),
+            entry_listeners,
+            revision: app.browser.revision(),
+            error: app.browser.error(),
+            battery: app.system_status.battery(),
+            on_back: cx.listener(InkPaperApp::activate_back),
+        })
+        .into_any_element()
+    }
+}

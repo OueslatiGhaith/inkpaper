@@ -2,7 +2,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     BatteryStatus, FileTransferStatus, InkPaperApp,
-    app::{Back, Exit, ScreenInput, ScreenLifecycle},
+    app::{Back, Exit, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps, TitleHeader, TitleHeaderProps},
         icon::IconKind,
@@ -130,5 +130,21 @@ impl ScreenLifecycle for FileTransferRoute {
 impl ScreenInput for FileTransferRoute {
     fn blocks_input(&self, app: &InkPaperApp) -> bool {
         app.file_transfer.blocks_input()
+    }
+}
+
+impl ScreenView for FileTransferRoute {
+    fn render<'a>(
+        &self,
+        app: &'a InkPaperApp,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> AnyElement<'a> {
+        FileTransferScreen::from(FileTransferScreenProps {
+            status: app.file_transfer.status(),
+            battery: app.system_status.battery(),
+            on_back: cx.listener(InkPaperApp::activate_back),
+            on_usb_drive: cx.listener(InkPaperApp::activate_usb_drive),
+        })
+        .into_any_element()
     }
 }

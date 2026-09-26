@@ -2,7 +2,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     BatteryStatus, InkPaperApp, ReadingHistoryEntry,
-    app::{Entry, ScreenInput, ScreenLifecycle},
+    app::{Entry, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         current_book_card::{CurrentBookCard, CurrentBookCardProps},
         header::{HomeHeader, HomeHeaderProps},
@@ -72,3 +72,22 @@ impl ScreenLifecycle for HomeRoute {
 }
 
 impl ScreenInput for HomeRoute {}
+
+impl ScreenView for HomeRoute {
+    fn render<'a>(
+        &self,
+        app: &'a InkPaperApp,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> AnyElement<'a> {
+        HomeScreen::from(HomeScreenProps {
+            current_book: app.reading_history.current(),
+            battery: app.system_status.battery(),
+            on_current_book: cx.listener(InkPaperApp::activate_current_book),
+            on_browse_files: cx.listener(InkPaperApp::show_browse_files),
+            on_recent_books: cx.listener(InkPaperApp::show_recent_books),
+            on_file_transfer: cx.listener(InkPaperApp::show_file_transfer),
+            on_settings: cx.listener(InkPaperApp::show_settings),
+        })
+        .into_any_element()
+    }
+}

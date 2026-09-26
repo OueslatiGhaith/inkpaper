@@ -5,11 +5,11 @@ use super::{InkPaperApp, Screen};
 use crate::{ReadingHistoryEntry, ReadingHistoryRequest};
 
 impl InkPaperApp {
-    pub(super) fn activate_current_book(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    pub(crate) fn activate_current_book(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.open_history_entry(0, cx);
     }
 
-    pub(super) fn activate_recent_book(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+    pub(crate) fn activate_recent_book(&mut self, index: usize, cx: &mut Context<'_, Self>) {
         self.open_history_entry(index, cx);
     }
 

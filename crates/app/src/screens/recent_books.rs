@@ -4,7 +4,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     BatteryStatus, InkPaperApp, ReadingHistoryEntry,
-    app::{Entry, ScreenInput, ScreenLifecycle},
+    app::{Entry, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps},
         recent_book_row::{RecentBookRow, RecentBookRowProps},
@@ -101,3 +101,33 @@ impl ScreenLifecycle for RecentBooksRoute {
 }
 
 impl ScreenInput for RecentBooksRoute {}
+
+impl ScreenView for RecentBooksRoute {
+    fn render<'a>(
+        &self,
+        app: &'a InkPaperApp,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> AnyElement<'a> {
+        let entry_listeners = (0..app.reading_history.entries().len())
+            .map(|index| {
+                cx.listener(
+                    move |app: &mut InkPaperApp,
+                          _: &ActivateEvent,
+                          cx: &mut Context<'_, InkPaperApp>| {
+                        app.activate_recent_book(index, cx);
+                    },
+                )
+            })
+            .collect();
+
+        RecentBooksScreen::from(RecentBooksScreenProps {
+            entries: app.reading_history.entries(),
+            entry_listeners,
+            revision: app.reading_history.revision(),
+            error: app.reading_history.error(),
+            battery: app.system_status.battery(),
+            on_back: cx.listener(InkPaperApp::activate_back),
+        })
+        .into_any_element()
+    }
+}

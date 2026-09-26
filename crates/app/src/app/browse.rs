@@ -22,7 +22,7 @@ impl InkPaperApp {
         cx.notify();
     }
 
-    pub(super) fn activate_browse_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+    pub(crate) fn activate_browse_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
         if self.browser.request_entry(index) {
             cx.notify();
             return;

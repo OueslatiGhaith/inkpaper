@@ -63,7 +63,7 @@ impl InkPaperApp {
         changed
     }
 
-    pub(super) fn activate_previous_reader_page(
+    pub(crate) fn activate_previous_reader_page(
         &mut self,
         _: &ActivateEvent,
         cx: &mut Context<'_, Self>,
@@ -71,7 +71,7 @@ impl InkPaperApp {
         self.reader_previous_page(cx);
     }
 
-    pub(super) fn activate_next_reader_page(
+    pub(crate) fn activate_next_reader_page(
         &mut self,
         _: &ActivateEvent,
         cx: &mut Context<'_, Self>,
@@ -91,7 +91,7 @@ impl InkPaperApp {
         }
     }
 
-    pub(super) fn activate_toggle_reader_controls(
+    pub(crate) fn activate_toggle_reader_controls(
         &mut self,
         _: &ActivateEvent,
         cx: &mut Context<'_, Self>,
@@ -101,7 +101,7 @@ impl InkPaperApp {
         }
     }
 
-    pub(super) fn activate_decrease_reader_font_size(
+    pub(crate) fn activate_decrease_reader_font_size(
         &mut self,
         _: &ActivateEvent,
         _: &mut Context<'_, Self>,
@@ -109,7 +109,7 @@ impl InkPaperApp {
         self.reader.decrease_font_size();
     }
 
-    pub(super) fn activate_increase_reader_font_size(
+    pub(crate) fn activate_increase_reader_font_size(
         &mut self,
         _: &ActivateEvent,
         _: &mut Context<'_, Self>,
@@ -164,7 +164,7 @@ impl InkPaperApp {
         changed
     }
 
-    pub(super) fn paint_reader_page(&self, paint: &mut PaintCx<'_>) {
+    pub(crate) fn paint_reader_page(&self, paint: &mut PaintCx<'_>) {
         let Some(document) = self.reader.document() else {
             return;
         };

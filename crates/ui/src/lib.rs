@@ -74,6 +74,9 @@ pub mod prelude {
         TextStyled, TextWrap, VectorPath, VectorPoint, canvas, div, image, px, svg, text,
     };
 
+    #[cfg(feature = "alloc")]
+    pub use crate::AnyElement;
+
     #[cfg(feature = "macros")]
     pub use inkpaper_ui_macros::{component, include_svg, rsx};
 }

@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     InkPaperApp,
-    app::{ScreenInput, ScreenLifecycle, SideButton},
+    app::{ScreenInput, ScreenLifecycle, ScreenView, SideButton},
     components::icon::{Icon, IconKind, IconProps},
     reader::reader_viewport,
 };
@@ -246,5 +246,39 @@ impl ScreenInput for ReaderRoute {
         }
 
         true
+    }
+}
+
+impl ScreenView for ReaderRoute {
+    fn render<'a>(
+        &self,
+        app: &'a InkPaperApp,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> AnyElement<'a> {
+        let page_canvas = app
+            .reader
+            .page()
+            .is_some()
+            .then(|| cx.canvas(|app: &InkPaperApp, paint| app.paint_reader_page(paint)));
+
+        ReaderScreen::from(ReaderScreenProps {
+            title: app.reader.title(),
+            creator: app.reader.creator(),
+            status: app.reader.status(),
+            detail: app.reader.detail(),
+            path: app.reader.path(),
+            page_canvas,
+            page_label: app.reader.page_label(),
+            section_label: app.reader.section_label(),
+            controls_visible: app.reader.controls_visible(),
+            font_size: app.reader.font_size(),
+            on_decrease_font_size: cx.listener(InkPaperApp::activate_decrease_reader_font_size),
+            on_increase_font_size: cx.listener(InkPaperApp::activate_increase_reader_font_size),
+            on_previous_page: cx.listener(InkPaperApp::activate_previous_reader_page),
+            on_toggle_controls: cx.listener(InkPaperApp::activate_toggle_reader_controls),
+            on_next_page: cx.listener(InkPaperApp::activate_next_reader_page),
+            on_back: cx.listener(InkPaperApp::activate_back),
+        })
+        .into_any_element()
     }
 }
