@@ -19,6 +19,7 @@ pub(crate) struct BrowseFilesScreen<'a> {
     entries: &'a [BrowseEntry],
     entry_listeners: Vec<Listener<ActivateEvent>>,
     revision: u64,
+    return_to: Option<usize>,
     error: bool,
     battery: Option<BatteryStatus>,
     on_back: Listener<ActivateEvent>,
@@ -54,6 +55,7 @@ impl RenderOnce for BrowseFilesScreen<'_> {
                             entries={self.entries}
                             listeners={self.entry_listeners}
                             revision={self.revision}
+                            return_to={self.return_to}
                         />
                     {/if}
                 </div>
@@ -77,6 +79,7 @@ struct FileList<'a> {
     entries: &'a [BrowseEntry],
     listeners: Vec<Listener<ActivateEvent>>,
     revision: u64,
+    return_to: Option<usize>,
 }
 
 impl RenderOnce for FileList<'_> {
@@ -98,14 +101,21 @@ impl RenderOnce for FileList<'_> {
             },
         );
 
-        div()
+        let list = div()
             .id(("browse-list", self.revision))
             .w_full()
             .h_full()
             .flex()
             .flex_col()
-            .overflow_y_scroll()
-            .children(rows)
+            .overflow_y_scroll();
+
+        // like crosspoint, going up a level brings the folder just left into view
+        let list = match self.return_to {
+            Some(index) => list.initial_scroll_to_child(index),
+            None => list,
+        };
+
+        list.children(rows)
     }
 }
 
@@ -155,6 +165,7 @@ impl ScreenView for BrowseFilesRoute {
             entries: app.browser.entries(),
             entry_listeners,
             revision: app.browser.revision(),
+            return_to: app.browser.return_to(),
             error: app.browser.error(),
             battery: app.system_status.battery(),
             on_back: cx.listener(InkPaperApp::activate_back),

@@ -116,6 +116,7 @@ pub(crate) struct BrowserState {
     pending: Option<BrowseRequest>,
     error: bool,
     revision: u64,
+    return_to: Option<usize>,
 }
 
 impl Default for BrowserState {
@@ -126,6 +127,7 @@ impl Default for BrowserState {
             pending: None,
             error: false,
             revision: 0,
+            return_to: None,
         }
     }
 }
@@ -156,6 +158,11 @@ impl BrowserState {
 
     pub(crate) fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// after going up a level, the entry for the folder that was just left
+    pub(crate) fn return_to(&self) -> Option<usize> {
+        self.return_to
     }
 
     pub(crate) fn request_current_directory(&mut self) {
@@ -198,6 +205,11 @@ impl BrowserState {
     pub(crate) fn apply_listing(&mut self, listing: BrowseListing) {
         let (path, entries) = listing.into_parts();
 
+        self.return_to = child_name(&path, &self.path).and_then(|name| {
+            entries
+                .iter()
+                .position(|entry| entry.kind == BrowseEntryKind::Directory && entry.name == name)
+        });
         self.path = path;
         self.entries = entries;
         self.error = false;
@@ -206,6 +218,7 @@ impl BrowserState {
 
     pub(crate) fn apply_error(&mut self) {
         self.error = true;
+        self.return_to = None;
         self.revision = self.revision.wrapping_add(1);
     }
 
@@ -250,6 +263,15 @@ fn join_path(parent: &str, child: &str) -> String {
     path
 }
 
+/// the last component of `child` when it lives directly inside `parent`
+fn child_name<'a>(parent: &str, child: &'a str) -> Option<&'a str> {
+    if child == parent || parent_path(child) != parent {
+        return None;
+    }
+
+    child.trim_end_matches('/').rsplit('/').next()
+}
+
 fn parent_path(path: &str) -> String {
     let path = path.trim_end_matches('/');
 
@@ -261,5 +283,58 @@ fn parent_path(path: &str) -> String {
         "/".to_owned()
     } else {
         path[..index].to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use super::*;
+
+    fn list(path: &str, entries: Vec<BrowseEntry>) -> BrowseListing {
+        BrowseListing::new(path, entries)
+    }
+
+    #[test]
+    fn going_up_remembers_the_folder_that_was_left() {
+        let mut browser = BrowserState::default();
+        browser.apply_listing(list("/books/sci-fi", vec![BrowseEntry::file("a.epub")]));
+
+        browser.apply_listing(list(
+            "/books",
+            vec![
+                BrowseEntry::file("sci-fi.epub"),
+                BrowseEntry::directory("fantasy"),
+                BrowseEntry::directory("sci-fi"),
+            ],
+        ));
+
+        // directories sort first: fantasy, sci-fi, then the file
+        assert_eq!(browser.return_to(), Some(1));
+    }
+
+    #[test]
+    fn going_up_to_root_remembers_the_folder_that_was_left() {
+        let mut browser = BrowserState::default();
+        browser.apply_listing(list("/books", vec![]));
+
+        browser.apply_listing(list(
+            "/",
+            vec![BrowseEntry::directory("art"), BrowseEntry::directory("books")],
+        ));
+
+        assert_eq!(browser.return_to(), Some(1));
+    }
+
+    #[test]
+    fn opening_or_reloading_a_folder_starts_at_the_top() {
+        let mut browser = BrowserState::default();
+        browser.apply_listing(list("/", vec![BrowseEntry::directory("books")]));
+        browser.apply_listing(list("/books", vec![BrowseEntry::directory("books")]));
+        assert_eq!(browser.return_to(), None);
+
+        browser.apply_listing(list("/books", vec![BrowseEntry::directory("books")]));
+        assert_eq!(browser.return_to(), None);
     }
 }
