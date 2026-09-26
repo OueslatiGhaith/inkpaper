@@ -126,6 +126,7 @@ pub(crate) struct NodeInteraction {
     pub(crate) pressed_style: StylePatch,
     pub(crate) scroll_axes: ScrollAxes,
     pub(crate) scroll_offset: Offset,
+    pub(crate) initial_scroll_child: Option<usize>,
 }
 
 impl NodeInteraction {
@@ -135,6 +136,9 @@ impl NodeInteraction {
         self.pressed_style = self.pressed_style.merge(interaction.pressed_style);
         if interaction.scroll_axes.any() {
             self.scroll_axes = interaction.scroll_axes;
+        }
+        if interaction.initial_scroll_child.is_some() {
+            self.initial_scroll_child = interaction.initial_scroll_child;
         }
     }
 }

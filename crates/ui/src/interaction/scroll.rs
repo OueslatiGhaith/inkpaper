@@ -97,6 +97,12 @@ impl<const SLOTS: usize> ScrollStateTable<SLOTS> {
         }
     }
 
+    pub(crate) fn is_initialized(&self, id: ElementStateId) -> bool {
+        self.slots
+            .get(id.slot())
+            .is_some_and(|slot| slot.initialized && slot.generation == id.generation())
+    }
+
     pub(crate) fn set_offset(&mut self, id: ElementStateId, offset: Offset) {
         let slot = &mut self.slots[id.slot()];
         slot.initialized = true;

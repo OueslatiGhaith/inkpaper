@@ -100,6 +100,7 @@ pub struct StatefulInteractivity {
     pub(crate) focused_style: StylePatch,
     pub(crate) pressed_style: StylePatch,
     pub(crate) scroll_axes: ScrollAxes,
+    pub(crate) initial_scroll_child: Option<usize>,
 }
 
 pub trait StatefulInteractiveElement: Element + Sized {
@@ -185,6 +186,14 @@ pub trait StatefulInteractiveElementExt: StatefulInteractiveElement {
     {
         self.style_mut().clip_children = true;
         self.stateful_interactivity_mut().scroll_axes = ScrollAxes::Both;
+        self
+    }
+
+    /// when this scroll container first appears, scroll so the child at `index`
+    /// starts at the top/left of the viewport, clamped to the scrollable range.
+    /// later frames keep whatever offset the user scrolled to
+    fn initial_scroll_to_child(mut self, index: usize) -> Self {
+        self.stateful_interactivity_mut().initial_scroll_child = Some(index);
         self
     }
 }

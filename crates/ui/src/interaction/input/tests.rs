@@ -675,6 +675,83 @@ fn focus_navigation_scrolls_target_into_view() {
     );
 }
 
+struct InitialScrollApp {
+    target: usize,
+}
+
+impl Render for InitialScrollApp {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        div()
+            .id("list")
+            .w(px(100))
+            .h(px(40))
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .initial_scroll_to_child(self.target)
+            .child(div().w(px(100)).h(px(30)))
+            .child(div().w(px(100)).h(px(30)))
+            .child(div().w(px(100)).h(px(30)))
+            .child(div().w(px(100)).h(px(30)))
+    }
+}
+
+fn initial_scroll_offset(runtime: &TestRuntime) -> Offset {
+    let root = runtime.root_node().unwrap();
+    let list = runtime.frame().node(root).first_child.unwrap();
+    runtime.frame().node(list).interaction.scroll_offset
+}
+
+#[test]
+fn initial_scroll_puts_target_child_at_top() {
+    let mut runtime = TestRuntime::default();
+    runtime
+        .create_root(|_| InitialScrollApp { target: 1 })
+        .unwrap();
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
+        .unwrap();
+
+    assert_eq!(initial_scroll_offset(&runtime), Offset::new(px(0), px(30)));
+}
+
+#[test]
+fn initial_scroll_clamps_to_end_of_content() {
+    let mut runtime = TestRuntime::default();
+    runtime
+        .create_root(|_| InitialScrollApp { target: 3 })
+        .unwrap();
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
+        .unwrap();
+
+    // 4 * 30 content in a 40 viewport can scroll at most 80
+    assert_eq!(initial_scroll_offset(&runtime), Offset::new(px(0), px(80)));
+}
+
+#[test]
+fn initial_scroll_does_not_override_user_scrolling() {
+    let mut runtime = TestRuntime::default();
+    runtime
+        .create_root(|_| InitialScrollApp { target: 1 })
+        .unwrap();
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
+        .unwrap();
+
+    assert!(runtime.scroll_at(Point::new(px(10), px(10)), Offset::new(px(0), px(-20))));
+
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer)
+        .unwrap();
+
+    assert_eq!(initial_scroll_offset(&runtime), Offset::new(px(0), px(10)));
+}
+
 struct NestedFocusScrollApp;
 impl NestedFocusScrollApp {
     fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {}

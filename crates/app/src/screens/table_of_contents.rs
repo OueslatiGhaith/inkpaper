@@ -91,14 +91,21 @@ impl RenderOnce for TocList<'_> {
             },
         );
 
-        div()
+        let list = div()
             .id(("toc-list", 0u8))
             .w_full()
             .h_full()
             .flex()
             .flex_col()
-            .overflow_y_scroll()
-            .children(rows)
+            .overflow_y_scroll();
+
+        // open chapter selection with the current chapter at the top
+        let list = match current {
+            Some(index) => list.initial_scroll_to_child(index),
+            None => list,
+        };
+
+        list.children(rows)
     }
 }
 

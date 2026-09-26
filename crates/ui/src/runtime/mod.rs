@@ -321,6 +321,8 @@ impl<
     ) -> Option<Size> {
         let root = self.root?;
         let size = self.frame.layout(root, viewport, text_measurer);
+        self.frame
+            .apply_initial_scroll_offsets(&mut self.scroll_states);
         self.frame.clamp_scroll_offset(&mut self.scroll_states);
 
         if let Some(element) = self.pending_scroll_into_view.take() {
@@ -973,6 +975,8 @@ where
         let root = self.root?;
         let size = self.frame.layout(root, viewport, &self.resources);
 
+        self.frame
+            .apply_initial_scroll_offsets(&mut self.scroll_states);
         self.frame.clamp_scroll_offset(&mut self.scroll_states);
 
         if let Some(element) = self.pending_scroll_into_view.take() {

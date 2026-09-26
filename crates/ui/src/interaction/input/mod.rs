@@ -275,6 +275,54 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.node_mut(node).interaction.scroll_offset = offset;
     }
 
+    /// scroll containers seen for the first time start at their requested child.
+    /// must run after layout and before `clamp_scroll_offset`, which marks every
+    /// container's offset as initialized
+    pub(crate) fn apply_initial_scroll_offsets<const SLOTS: usize>(
+        &mut self,
+        states: &mut ScrollStateTable<SLOTS>,
+    ) {
+        for index in 0..self.nodes.len() {
+            let node_id = NodeId::new(index as u16);
+            let node = self.node(node_id);
+            let axes = node.interaction.scroll_axes;
+            let (Some(child_index), Some(element)) =
+                (node.interaction.initial_scroll_child, node.element_state_id)
+            else {
+                continue;
+            };
+            if !axes.any() || states.is_initialized(element) {
+                continue;
+            }
+
+            let mut child = node.first_child;
+            for _ in 0..child_index {
+                child = child.and_then(|child| self.node(child).next_sibling);
+            }
+            let Some(child) = child else {
+                continue;
+            };
+
+            let target = self.node(child).layout.bounds;
+            let viewport = self.scroll_viewport_bounds(node_id, node.layout.bounds);
+            let maximum = self.max_scroll_offset(node_id);
+            let offset = Offset::new(
+                if axes.horizontal() {
+                    (target.x() - viewport.x()).clamp(px(0), maximum.x.non_negative())
+                } else {
+                    px(0)
+                },
+                if axes.vertical() {
+                    (target.y() - viewport.y()).clamp(px(0), maximum.y.non_negative())
+                } else {
+                    px(0)
+                },
+            );
+
+            states.set_offset(element, offset);
+        }
+    }
+
     pub(crate) fn clamp_scroll_offset<const SLOTS: usize>(
         &mut self,
         states: &mut ScrollStateTable<SLOTS>,
