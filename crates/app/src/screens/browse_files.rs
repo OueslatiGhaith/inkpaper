@@ -6,7 +6,7 @@ use crate::{
     browser::{BrowseEntry, BrowseEntryKind},
     components::{
         file_row::{FileKind, FileRow, FileRowProps},
-        header::{FileBrowserHeader, FileBrowserHeaderProps},
+        header::{BackHeader, BackHeaderProps},
     },
 };
 
@@ -28,7 +28,7 @@ impl RenderOnce for BrowseFilesScreen<'_> {
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
                 <div class="absolute left-0 top-[5px] w-[480px] h-[77px]">
-                    <FileBrowserHeader
+                    <BackHeader
                         title={self.title}
                         battery={self.battery}
                         on_back={self.on_back}

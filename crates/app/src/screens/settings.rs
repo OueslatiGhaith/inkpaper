@@ -6,10 +6,7 @@ use crate::{
     app::{ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps},
-        settings_row::{
-            ListRow, ListRowProps, SettingsToggleRow, SettingsToggleRowProps, SettingsValueRow,
-            SettingsValueRowProps,
-        },
+        settings_row::{ListRow, ListRowProps},
     },
 };
 
@@ -51,72 +48,7 @@ impl RenderOnce for SettingsScreen {
                     </div>
                 </div>
 
-                <div class="absolute left-0 top-[81px] w-[480px] h-[50px]">
-                    <SettingsTabs />
-                </div>
-
-                <div class="absolute left-0 top-[147px] w-[480px] flex flex-col">
-                    <ListRow
-                        id={("settings-sleep-screen", 0)}
-                        label="Sleep Screen"
-                        depth={0}
-                        selected={false}
-                        chevron={true}
-                        on_activate={None}
-                    />
-
-                    <SettingsToggleRow
-                        label="Hide Battery %"
-                        enabled={false}
-                        selected={false}
-                    />
-
-                    <SettingsToggleRow
-                        label="Hide Clock"
-                        enabled={false}
-                        selected={false}
-                    />
-
-                    <SettingsValueRow
-                        id={("settings-value", 0)}
-                        label="Refresh Frequency"
-                        value="5"
-                        selected={false}
-                        on_activate={None}
-                    />
-
-                    <SettingsToggleRow
-                        label="Dark Mode"
-                        enabled={false}
-                        selected={false}
-                    />
-
-                    <SettingsValueRow
-                        id={("settings-value", 1)}
-                        label="UI Theme"
-                        value="Lyra"
-                        selected={false}
-                        on_activate={None}
-                    />
-
-                    <SettingsValueRow
-                        id={("settings-value", 2)}
-                        label="UI Scale"
-                        value="Small"
-                        selected={false}
-                        on_activate={None}
-                    />
-
-                    <SettingsValueRow
-                        id={("settings-value", 3)}
-                        label="Recent Books View"
-                        value="List View"
-                        selected={false}
-                        on_activate={None}
-                    />
-                </div>
-
-                <div class="absolute left-0 top-[675px] w-[480px]">
+                <div class="absolute left-0 top-[98px] w-[480px]">
                     <ListRow
                         id={("settings-clock", 0)}
                         label="Clock"
@@ -126,39 +58,6 @@ impl RenderOnce for SettingsScreen {
                         on_activate={Some(self.on_clock)}
                     />
                 </div>
-            </div>
-        }
-    }
-}
-
-#[component]
-struct SettingsTabs;
-
-impl RenderOnce for SettingsTabs {
-    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let background = Color::rgb(170, 170, 170);
-
-        rsx! {
-            <div class="w-full h-full relative bg-{background}">
-                <div class="absolute left-0 top-0 w-[120px] h-[49px] flex items-center justify-center">
-                    <div class="w-[112px] h-[42px] rounded-md bg-black flex items-center justify-center">
-                        <text class="text-base text-white">{"Display"}</text>
-                    </div>
-                </div>
-
-                <div class="absolute left-[120px] top-0 w-[120px] h-[49px] flex items-center justify-center">
-                    <text class="text-base">{"Reader"}</text>
-                </div>
-
-                <div class="absolute left-[240px] top-0 w-[120px] h-[49px] flex items-center justify-center">
-                    <text class="text-base">{"Controls"}</text>
-                </div>
-
-                <div class="absolute left-[360px] top-0 w-[120px] h-[49px] flex items-center justify-center">
-                    <text class="text-base">{"System"}</text>
-                </div>
-
-                <div class="absolute left-0 bottom-0 w-full h-px bg-black" />
             </div>
         }
     }

@@ -28,7 +28,7 @@
 - [x] recent books screen
 - [x] persisted reading history
 - [x] basic browse error state
-- [ ] remove or hide library actions that are not functional
+- [x] remove or hide library actions that are not functional
 
 ## Frontlight
 
@@ -46,7 +46,7 @@
 - [x] battery status in app
 - [x] RTC integration
 - [x] clock/date in app
-- [ ] set RTC state
+- [x] set RTC state
 
 ## Power management
 
@@ -63,7 +63,7 @@
 
 ## Settings
 
-- [ ] remove fake settings
+- [x] remove fake settings
 
 ## Book transfer
 

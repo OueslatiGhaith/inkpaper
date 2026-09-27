@@ -76,31 +76,6 @@ impl RenderOnce for BackHeader<'_> {
 }
 
 #[component]
-pub(crate) struct FileBrowserHeader<'a> {
-    title: &'a str,
-    battery: Option<BatteryStatus>,
-    on_back: Listener<ActivateEvent>,
-}
-
-impl RenderOnce for FileBrowserHeader<'_> {
-    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        rsx! {
-            <div class="w-full h-full relative">
-                <BackHeader
-                    title={self.title}
-                    battery={self.battery}
-                    on_back={self.on_back}
-                />
-
-                <div class="absolute right-3.5 top-[26px] w-6 h-6">
-                    <Icon kind={IconKind::SlidersHorizontal} size={px(24)} />
-                </div>
-            </div>
-        }
-    }
-}
-
-#[component]
 struct BatteryIndicator {
     battery: Option<BatteryStatus>,
 }
