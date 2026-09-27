@@ -32,6 +32,10 @@ enum Command {
         /// label of an earlier run to compare against
         #[arg(short, long)]
         compare: Option<String>,
+
+        /// least glyph coverage (0-255) that inks a pixel, instead of the device default
+        #[arg(long)]
+        min_ink_coverage: Option<u8>,
     },
 
     /// convert trace/v4 firmware logs to a Perfetto trace
@@ -62,7 +66,11 @@ fn main() -> anyhow::Result<()> {
             PerfCommand::Summary { input } => trace::summarize_performance(&input)?,
             PerfCommand::Compare { before, after } => trace::compare_performance(&before, &after)?,
         },
-        Command::TextQuality { label, compare } => text_quality::run(&label, compare.as_deref())?,
+        Command::TextQuality {
+            label,
+            compare,
+            min_ink_coverage,
+        } => text_quality::run(&label, compare.as_deref(), min_ink_coverage)?,
         Command::TracePerfetto { input, output } => {
             let output = trace::convert_perfetto(&input, output.as_deref())?;
             println!("wrote {}", output.display(),);

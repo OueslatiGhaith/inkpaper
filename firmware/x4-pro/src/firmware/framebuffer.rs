@@ -8,7 +8,7 @@ use embedded_graphics::{
     pixelcolor::GrayColor,
     primitives::Rectangle,
 };
-use inkpaper_ui::backend::{EInkOrderedCoverageBitmap, Gray2};
+use inkpaper_ui::backend::{EInkCoverageBitmap, Gray2, inks};
 
 #[cfg(all(feature = "trace", target_arch = "xtensa"))]
 use crate::firmware::perf::CycleTimer;
@@ -22,22 +22,6 @@ pub const LOGICAL_HEIGHT: usize = 800;
 pub const PHYSICAL_STRIDE: usize = PHYSICAL_WIDTH / 8;
 
 pub const FRAMEBUFFER_LEN: usize = PHYSICAL_STRIDE * PHYSICAL_HEIGHT;
-
-/// must remain byte-for-byte equivalent to inkpaper-ui's ordered_dither_accepts().
-/// 
-/// these are the 4x4 Bayer ranks transformed with:
-/// ```
-///     threshold = rank * 16 + 8
-/// ```
-/// 
-/// the framebuffer equivalence tests protect this contract.
-#[rustfmt::skip]
-const BAYER_4X4_THRESHOLDS: [u8; 16] = [
-    8, 136, 40, 168,
-    200, 72, 232, 104,
-    56, 184, 24, 152,
-    248, 120, 216, 88,
-];
 
 pub struct FramebufferStorage {
     lsb: Vec<u8>,
@@ -231,11 +215,11 @@ pub struct Framebuffer<'a> {
     #[cfg(feature = "trace")]
     draw_iter_pixels: u64,
     #[cfg(feature = "trace")]
-    ordered_coverage_calls: u64,
+    coverage_blitter_calls: u64,
     #[cfg(feature = "trace")]
-    ordered_coverage_pixels: u64,
+    coverage_blitter_pixels: u64,
     #[cfg(feature = "trace")]
-    ordered_coverage_cycles: u64,
+    coverage_blitter_cycles: u64,
 }
 
 impl<'a> Framebuffer<'a> {
@@ -247,11 +231,11 @@ impl<'a> Framebuffer<'a> {
             #[cfg(feature = "trace")]
             draw_iter_pixels: 0,
             #[cfg(feature = "trace")]
-            ordered_coverage_calls: 0,
+            coverage_blitter_calls: 0,
             #[cfg(feature = "trace")]
-            ordered_coverage_pixels: 0,
+            coverage_blitter_pixels: 0,
             #[cfg(feature = "trace")]
-            ordered_coverage_cycles: 0,
+            coverage_blitter_cycles: 0,
         }
     }
 
@@ -264,18 +248,18 @@ impl<'a> Framebuffer<'a> {
     }
 
     #[cfg(feature = "trace")]
-    pub const fn ordered_coverage_calls(&self) -> u64 {
-        self.ordered_coverage_calls
+    pub const fn coverage_blitter_calls(&self) -> u64 {
+        self.coverage_blitter_calls
     }
 
     #[cfg(feature = "trace")]
-    pub const fn ordered_coverage_pixels(&self) -> u64 {
-        self.ordered_coverage_pixels
+    pub const fn coverage_blitter_pixels(&self) -> u64 {
+        self.coverage_blitter_pixels
     }
 
     #[cfg(feature = "trace")]
-    pub const fn ordered_coverage_cycles(&self) -> u64 {
-        self.ordered_coverage_cycles
+    pub const fn coverage_blitter_cycles(&self) -> u64 {
+        self.coverage_blitter_cycles
     }
 
     pub fn clear_white(&mut self) {
@@ -346,10 +330,7 @@ impl<'a> Framebuffer<'a> {
         self.draw_iter_pixels
     }
 
-    pub fn draw_ordered_coverage_bitmap(
-        &mut self,
-        bitmap: EInkOrderedCoverageBitmap<'_>,
-    ) -> Option<u64> {
+    pub fn draw_coverage_bitmap(&mut self, bitmap: EInkCoverageBitmap<'_>) -> Option<u64> {
         if self.orientation != Orientation::Portrait {
             return None;
         }
@@ -364,21 +345,21 @@ impl<'a> Framebuffer<'a> {
         let timer = CycleTimer::start();
 
         let result = match foreground {
-            0 => self.blit_ordered_coverage_portrait_binary::<false>(bitmap),
-            3 => self.blit_ordered_coverage_portrait_binary::<true>(bitmap),
+            0 => self.blit_coverage_portrait_binary::<false>(bitmap),
+            3 => self.blit_coverage_portrait_binary::<true>(bitmap),
             _ => unreachable!(),
         };
 
         #[cfg(feature = "trace")]
         if let Some(accepted) = result {
-            self.ordered_coverage_calls = self.ordered_coverage_calls.saturating_add(1);
+            self.coverage_blitter_calls = self.coverage_blitter_calls.saturating_add(1);
 
-            self.ordered_coverage_pixels = self.ordered_coverage_pixels.saturating_add(accepted);
+            self.coverage_blitter_pixels = self.coverage_blitter_pixels.saturating_add(accepted);
 
             #[cfg(target_arch = "xtensa")]
             {
-                self.ordered_coverage_cycles = self
-                    .ordered_coverage_cycles
+                self.coverage_blitter_cycles = self
+                    .coverage_blitter_cycles
                     .saturating_add(u64::from(timer.elapsed()));
             }
         }
@@ -386,9 +367,9 @@ impl<'a> Framebuffer<'a> {
         result
     }
 
-    fn blit_ordered_coverage_portrait_binary<const WHITE: bool>(
+    fn blit_coverage_portrait_binary<const WHITE: bool>(
         &mut self,
-        bitmap: EInkOrderedCoverageBitmap<'_>,
+        bitmap: EInkCoverageBitmap<'_>,
     ) -> Option<u64> {
         let width = usize::from(bitmap.width());
         let height = usize::from(bitmap.height());
@@ -431,7 +412,7 @@ impl<'a> Framebuffer<'a> {
         let end_row = usize::try_from(bottom - origin_y).ok()?;
 
         let physical_y_start = PHYSICAL_HEIGHT - right as usize;
-        let initial_x_phase = ((right - 1) as usize) & 0b11;
+        let min_coverage = bitmap.min_coverage();
 
         let mut accepted = 0u64;
 
@@ -457,13 +438,8 @@ impl<'a> Framebuffer<'a> {
 
             let row_coverage = &coverage[row_start + start_col..row_start + end_col];
 
-            let threshold_row = (logical_y & 0b11) * 4;
-            let mut x_phase = initial_x_phase;
-
             for sample in row_coverage.iter().rev().copied() {
-                let threshold = BAYER_4X4_THRESHOLDS[threshold_row + x_phase];
-
-                if sample > threshold {
+                if inks(sample, min_coverage) {
                     if WHITE {
                         self.storage.lsb[framebuffer_index] |= mask;
                         self.storage.msb[framebuffer_index] |= mask;
@@ -475,7 +451,6 @@ impl<'a> Framebuffer<'a> {
                     accepted = accepted.saturating_add(1);
                 }
 
-                x_phase = (x_phase + 3) & 0b11;
                 framebuffer_index += PHYSICAL_STRIDE;
             }
         }

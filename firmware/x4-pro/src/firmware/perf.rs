@@ -899,7 +899,7 @@ pub(crate) fn record_coverage_metrics(
     );
 }
 
-pub(crate) fn record_ordered_coverage_metrics(calls: u64, pixels: u64, cycles: u64) {
+pub(crate) fn record_coverage_blitter_metrics(calls: u64, pixels: u64, cycles: u64) {
     inkpaper_trace::gauge!(
         target: "ui.coverage_fast",
         "calls",

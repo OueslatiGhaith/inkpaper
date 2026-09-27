@@ -336,7 +336,7 @@ fn render_invalidation(
 
     let (paint_report, eink_report) = {
         let mut painter = EInkPainter::new(&mut display)
-            .with_ordered_coverage_blitter(Framebuffer::draw_ordered_coverage_bitmap)
+            .with_coverage_blitter(Framebuffer::draw_coverage_bitmap)
             .with_ui_mode(EInkUiMode::BinaryDither);
 
         match invalidation.kind() {
@@ -425,13 +425,13 @@ fn render_invalidation(
     let framebuffer_draw_iter_pixels = display.draw_iter_pixels();
 
     #[cfg(feature = "trace")]
-    let ordered_coverage_calls = display.ordered_coverage_calls();
+    let coverage_blitter_calls = display.coverage_blitter_calls();
 
     #[cfg(feature = "trace")]
-    let ordered_coverage_pixels = display.ordered_coverage_pixels();
+    let coverage_blitter_pixels = display.coverage_blitter_pixels();
 
     #[cfg(feature = "trace")]
-    let ordered_coverage_cycles = display.ordered_coverage_cycles();
+    let coverage_blitter_cycles = display.coverage_blitter_cycles();
 
     drop(display);
 
@@ -441,10 +441,10 @@ fn render_invalidation(
 
     #[cfg(feature = "trace")]
     {
-        crate::firmware::perf::record_ordered_coverage_metrics(
-            ordered_coverage_calls,
-            ordered_coverage_pixels,
-            ordered_coverage_cycles,
+        crate::firmware::perf::record_coverage_blitter_metrics(
+            coverage_blitter_calls,
+            coverage_blitter_pixels,
+            coverage_blitter_cycles,
         );
 
         crate::firmware::perf::record_ui_metrics(runtime.performance_metrics());

@@ -27,7 +27,9 @@ mod image;
 mod text;
 mod tone;
 
-pub use coverage::{EInkCoverageMode, EInkOrderedCoverageBitmap, EInkOrderedCoverageBlitter};
+pub use coverage::{
+    DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkCoverageBlitter, EInkCoverageMode, inks,
+};
 pub use tone::{EInkPaintReport, EInkTone, EInkUiMode};
 
 pub use embedded_graphics::pixelcolor::Gray2;
@@ -50,7 +52,8 @@ where
 {
     target: &'target mut D,
     coverage_mode: EInkCoverageMode<D>,
-    ordered_coverage_blitter: Option<EInkOrderedCoverageBlitter<D>>,
+    coverage_blitter: Option<EInkCoverageBlitter<D>>,
+    min_ink_coverage: u8,
     ui_mode: EInkUiMode,
     report: EInkPaintReport,
     pair_positioning_cache: PairPositioningCache<PAIR_POSITIONING_CACHE_SLOTS>,
@@ -64,7 +67,8 @@ where
         Self {
             target,
             coverage_mode: EInkCoverageMode::BinaryThreshold,
-            ordered_coverage_blitter: None,
+            coverage_blitter: None,
+            min_ink_coverage: DEFAULT_MIN_INK_COVERAGE,
             ui_mode: EInkUiMode::NativeGray2,
             report: EInkPaintReport::default(),
             pair_positioning_cache: PairPositioningCache::default(),
@@ -76,8 +80,14 @@ where
         self
     }
 
-    pub fn with_ordered_coverage_blitter(mut self, blitter: EInkOrderedCoverageBlitter<D>) -> Self {
-        self.ordered_coverage_blitter = Some(blitter);
+    pub fn with_coverage_blitter(mut self, blitter: EInkCoverageBlitter<D>) -> Self {
+        self.coverage_blitter = Some(blitter);
+        self
+    }
+
+    /// the least glyph or path coverage that inks a pixel in `BinaryDither` mode
+    pub fn with_min_ink_coverage(mut self, min_coverage: u8) -> Self {
+        self.min_ink_coverage = min_coverage;
         self
     }
 
@@ -97,9 +107,11 @@ where
     fn effective_coverage_mode(&self) -> EInkCoverageMode<D> {
         match self.ui_mode {
             EInkUiMode::NativeGray2 => self.coverage_mode,
-            EInkUiMode::BinaryDither => match self.ordered_coverage_blitter {
-                Some(blitter) => EInkCoverageMode::ordered_dither_4x4_with_blitter(blitter),
-                None => EInkCoverageMode::ordered_dither_4x4(),
+            EInkUiMode::BinaryDither => match self.coverage_blitter {
+                Some(blitter) => {
+                    EInkCoverageMode::ink_threshold_with_blitter(self.min_ink_coverage, blitter)
+                }
+                None => EInkCoverageMode::ink_threshold(self.min_ink_coverage),
             },
         }
     }

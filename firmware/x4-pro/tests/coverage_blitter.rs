@@ -3,7 +3,7 @@ extern crate alloc;
 use embedded_graphics::{pixelcolor::GrayColor, prelude::DrawTarget as _};
 use inkpaper_ui::{
     CanvasPainter, Color, Painter, Point, Rect, Size,
-    backend::{EInkOrderedCoverageBitmap, EInkPainter, EInkUiMode, Gray2},
+    backend::{DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkPainter, EInkUiMode, Gray2},
     px,
 };
 
@@ -36,6 +36,7 @@ fn full_screen_clip() -> Rect {
     rect(0, 0, LOGICAL_WIDTH as i32, LOGICAL_HEIGHT as i32)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_generic(
     coverage: &[u8],
     width: u16,
@@ -44,6 +45,7 @@ fn render_generic(
     clip: Rect,
     foreground: Color,
     background: Gray2,
+    min_coverage: u8,
 ) -> FramebufferStorage {
     let mut storage = FramebufferStorage::white();
 
@@ -57,7 +59,9 @@ fn render_generic(
             Size::new(px(i32::from(width)), px(i32::from(height))),
         );
 
-        let mut painter = EInkPainter::new(&mut framebuffer).with_ui_mode(EInkUiMode::BinaryDither);
+        let mut painter = EInkPainter::new(&mut framebuffer)
+            .with_ui_mode(EInkUiMode::BinaryDither)
+            .with_min_ink_coverage(min_coverage);
 
         let mut draw = |_: Rect, canvas: &mut dyn CanvasPainter| {
             for y in 0..height {
@@ -79,6 +83,7 @@ fn render_generic(
     storage
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_fast(
     coverage: &[u8],
     width: u16,
@@ -87,6 +92,7 @@ fn render_fast(
     clip: Rect,
     foreground: Gray2,
     background: Gray2,
+    min_coverage: u8,
 ) -> (FramebufferStorage, u64) {
     let mut storage = FramebufferStorage::white();
 
@@ -96,8 +102,14 @@ fn render_fast(
         framebuffer.clear(background).unwrap();
 
         framebuffer
-            .draw_ordered_coverage_bitmap(EInkOrderedCoverageBitmap::new(
-                coverage, width, height, origin, foreground, clip,
+            .draw_coverage_bitmap(EInkCoverageBitmap::new(
+                coverage,
+                width,
+                height,
+                origin,
+                foreground,
+                clip,
+                min_coverage,
             ))
             .expect("portrait binary coverage should use the fast path")
     };
@@ -114,8 +126,38 @@ fn assert_fast_matches_generic(
     foreground_gray: Gray2,
     background: Gray2,
 ) {
+    assert_fast_matches_generic_at(
+        name,
+        coverage,
+        origin,
+        clip,
+        foreground,
+        foreground_gray,
+        background,
+        DEFAULT_MIN_INK_COVERAGE,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assert_fast_matches_generic_at(
+    name: &str,
+    coverage: &[u8],
+    origin: Point,
+    clip: Rect,
+    foreground: Color,
+    foreground_gray: Gray2,
+    background: Gray2,
+    min_coverage: u8,
+) {
     let generic = render_generic(
-        coverage, WIDTH, HEIGHT, origin, clip, foreground, background,
+        coverage,
+        WIDTH,
+        HEIGHT,
+        origin,
+        clip,
+        foreground,
+        background,
+        min_coverage,
     );
 
     let (fast, _) = render_fast(
@@ -126,6 +168,7 @@ fn assert_fast_matches_generic(
         clip,
         foreground_gray,
         background,
+        min_coverage,
     );
 
     assert_eq!(generic.lsb(), fast.lsb(), "{name}: LSB plane differs",);
@@ -134,7 +177,7 @@ fn assert_fast_matches_generic(
 }
 
 #[test]
-fn fast_ordered_coverage_matches_generic_inside_clip() {
+fn coverage_blitter_matches_generic_inside_clip() {
     assert_fast_matches_generic(
         "inside",
         &MIXED_COVERAGE,
@@ -147,7 +190,7 @@ fn fast_ordered_coverage_matches_generic_inside_clip() {
 }
 
 #[test]
-fn fast_ordered_coverage_matches_generic_for_each_clip_edge() {
+fn coverage_blitter_matches_generic_for_each_clip_edge() {
     let origin = point(21, 37);
 
     let cases = [
@@ -171,28 +214,24 @@ fn fast_ordered_coverage_matches_generic_for_each_clip_edge() {
 }
 
 #[test]
-fn fast_ordered_coverage_matches_generic_at_all_bayer_phases() {
-    let clip = full_screen_clip();
-
-    for y_phase in 0..4 {
-        for x_phase in 0..4 {
-            let origin = point(20 + x_phase, 36 + y_phase);
-
-            assert_fast_matches_generic(
-                "bayer phase",
-                &MIXED_COVERAGE,
-                origin,
-                clip,
-                Color::BLACK,
-                Gray2::new(0),
-                Gray2::new(3),
-            );
-        }
+fn coverage_blitter_matches_generic_at_every_threshold() {
+    // on and either side of the mixed coverage values, plus both extremes
+    for min_coverage in [0, 1, 8, 9, 64, 128, 136, 137, 254, 255] {
+        assert_fast_matches_generic_at(
+            "threshold",
+            &MIXED_COVERAGE,
+            point(21, 37),
+            full_screen_clip(),
+            Color::BLACK,
+            Gray2::new(0),
+            Gray2::new(3),
+            min_coverage,
+        );
     }
 }
 
 #[test]
-fn fast_ordered_coverage_matches_generic_at_display_edges() {
+fn coverage_blitter_matches_generic_at_display_edges() {
     let clip = full_screen_clip();
 
     let cases = [
@@ -216,7 +255,7 @@ fn fast_ordered_coverage_matches_generic_at_display_edges() {
 }
 
 #[test]
-fn fast_ordered_coverage_matches_zero_coverage() {
+fn coverage_blitter_matches_zero_coverage() {
     let origin = point(23, 41);
     let clip = full_screen_clip();
 
@@ -238,13 +277,14 @@ fn fast_ordered_coverage_matches_zero_coverage() {
         clip,
         Gray2::new(0),
         Gray2::new(3),
+        DEFAULT_MIN_INK_COVERAGE,
     );
 
     assert_eq!(accepted, 0);
 }
 
 #[test]
-fn fast_ordered_coverage_matches_full_coverage() {
+fn coverage_blitter_matches_full_coverage() {
     let origin = point(23, 41);
     let clip = full_screen_clip();
 
@@ -266,13 +306,14 @@ fn fast_ordered_coverage_matches_full_coverage() {
         clip,
         Gray2::new(0),
         Gray2::new(3),
+        DEFAULT_MIN_INK_COVERAGE,
     );
 
     assert_eq!(accepted, u64::from(WIDTH) * u64::from(HEIGHT),);
 }
 
 #[test]
-fn fast_ordered_coverage_matches_partial_coverage() {
+fn coverage_blitter_matches_partial_coverage() {
     assert_fast_matches_generic(
         "partial",
         &MIXED_COVERAGE,
@@ -285,7 +326,7 @@ fn fast_ordered_coverage_matches_partial_coverage() {
 }
 
 #[test]
-fn fast_ordered_coverage_matches_white_foreground_on_black() {
+fn coverage_blitter_matches_white_foreground_on_black() {
     assert_fast_matches_generic(
         "white",
         &MIXED_COVERAGE,
@@ -298,37 +339,39 @@ fn fast_ordered_coverage_matches_white_foreground_on_black() {
 }
 
 #[test]
-fn fast_ordered_coverage_declines_non_portrait_orientation() {
+fn coverage_blitter_declines_non_portrait_orientation() {
     let mut storage = FramebufferStorage::white();
 
     let mut framebuffer = Framebuffer::new(&mut storage, Orientation::PortraitInverted);
 
-    let request = EInkOrderedCoverageBitmap::new(
+    let request = EInkCoverageBitmap::new(
         &MIXED_COVERAGE,
         WIDTH,
         HEIGHT,
         point(20, 30),
         Gray2::new(0),
         full_screen_clip(),
+        DEFAULT_MIN_INK_COVERAGE,
     );
 
-    assert_eq!(framebuffer.draw_ordered_coverage_bitmap(request), None,);
+    assert_eq!(framebuffer.draw_coverage_bitmap(request), None,);
 }
 
 #[test]
-fn fast_ordered_coverage_declines_native_gray_foreground() {
+fn coverage_blitter_declines_native_gray_foreground() {
     let mut storage = FramebufferStorage::white();
 
     let mut framebuffer = Framebuffer::new(&mut storage, Orientation::Portrait);
 
-    let request = EInkOrderedCoverageBitmap::new(
+    let request = EInkCoverageBitmap::new(
         &MIXED_COVERAGE,
         WIDTH,
         HEIGHT,
         point(20, 30),
         Gray2::new(1),
         full_screen_clip(),
+        DEFAULT_MIN_INK_COVERAGE,
     );
 
-    assert_eq!(framebuffer.draw_ordered_coverage_bitmap(request), None,);
+    assert_eq!(framebuffer.draw_coverage_bitmap(request), None,);
 }

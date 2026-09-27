@@ -15,7 +15,7 @@ use crate::{
 
 use super::{
     EInkCoverageMode, Gray2,
-    coverage::{alpha_blend_gray2, color_to_gray2, ordered_dither_accepts},
+    coverage::{alpha_blend_gray2, color_to_gray2, inks},
     to_embedded_point, to_embedded_rect,
 };
 
@@ -287,8 +287,8 @@ where
 
                 color_to_gray2(color)
             }
-            EInkCoverageMode::OrderedDither4x4 { .. } => {
-                if !ordered_dither_accepts(coverage, point) {
+            EInkCoverageMode::InkThreshold { min_coverage, .. } => {
+                if !inks(coverage, min_coverage) {
                     return;
                 }
 

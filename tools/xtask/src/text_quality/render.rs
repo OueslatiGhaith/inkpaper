@@ -4,8 +4,8 @@
 //! like the reader, each line is wrapped from separately measured words and drawn as
 //! one run.
 //!
-//! the firmware also installs a fast ordered-coverage blitter. its output is pinned to
-//! this generic path by `firmware/x4-pro/tests/ordered_coverage.rs`.
+//! the firmware also installs a fast coverage blitter. its output is pinned to
+//! this generic path by `firmware/x4-pro/tests/coverage_blitter.rs`.
 
 use std::convert::Infallible;
 
@@ -101,7 +101,7 @@ pub struct Rendered {
     pub stem_glyphs: Vec<(GlyphId, usize)>,
 }
 
-pub fn render(corpus: &str, size: u16) -> Result<Rendered> {
+pub fn render(corpus: &str, size: u16, min_ink_coverage: Option<u8>) -> Result<Rendered> {
     let mut resources = Box::new(MeasureResources::default());
     let family = resources
         .register_font_family()
@@ -152,7 +152,7 @@ pub fn render(corpus: &str, size: u16) -> Result<Rendered> {
         runs.push((line.clone(), clip));
     }
 
-    let ink = paint_page(runs, size, width, height)?;
+    let ink = paint_page(runs, size, width, height, min_ink_coverage)?;
 
     let x_glyph = glyph_id(font, 'x')?;
     let x_height = -resources
@@ -411,6 +411,7 @@ fn paint_page(
     size: u16,
     width: usize,
     height: usize,
+    min_ink_coverage: Option<u8>,
 ) -> Result<Vec<bool>> {
     let mut runtime = RuntimeBuilder::default()
         .entities::<4096, 16>()
@@ -444,6 +445,10 @@ fn paint_page(
 
     {
         let mut painter = EInkPainter::new(&mut page).with_ui_mode(EInkUiMode::BinaryDither);
+
+        if let Some(min_coverage) = min_ink_coverage {
+            painter = painter.with_min_ink_coverage(min_coverage);
+        }
 
         runtime
             .paint(&mut painter)

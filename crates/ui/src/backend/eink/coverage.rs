@@ -13,17 +13,29 @@ use crate::{
 
 use super::EInkError;
 
+/// the least coverage that inks a pixel in binary output: 7/16 of a pixel.
+///
+/// crosspoint inks from 25% coverage, but its outlines are hinted so stems already sit
+/// on whole pixels. Ours are not, and at 25% every stem grows by a pixel: text
+/// measured 28-50% heavier than its outlines (`cargo xtask text-quality`). From 7/16
+/// the weight stays within 15% of the outlines at reader sizes
+pub const DEFAULT_MIN_INK_COVERAGE: u8 = 112;
+
+/// a coverage bitmap handed to a target's fast blitter. The blitter must ink exactly
+/// the pixels [`inks`] accepts
 #[derive(Debug, Clone, Copy)]
-pub struct EInkOrderedCoverageBitmap<'a> {
+pub struct EInkCoverageBitmap<'a> {
     coverage: &'a [u8],
     width: u16,
     height: u16,
     origin: Point,
     foreground: Gray2,
     clip: Rect,
+    min_coverage: u8,
 }
 
-impl<'a> EInkOrderedCoverageBitmap<'a> {
+impl<'a> EInkCoverageBitmap<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         coverage: &'a [u8],
         width: u16,
@@ -31,6 +43,7 @@ impl<'a> EInkOrderedCoverageBitmap<'a> {
         origin: Point,
         foreground: Gray2,
         clip: Rect,
+        min_coverage: u8,
     ) -> Self {
         debug_assert_eq!(
             coverage.len(),
@@ -44,6 +57,7 @@ impl<'a> EInkOrderedCoverageBitmap<'a> {
             origin,
             foreground,
             clip,
+            min_coverage,
         }
     }
 
@@ -70,16 +84,24 @@ impl<'a> EInkOrderedCoverageBitmap<'a> {
     pub const fn clip(self) -> Rect {
         self.clip
     }
+
+    pub const fn min_coverage(self) -> u8 {
+        self.min_coverage
+    }
 }
 
-pub type EInkOrderedCoverageBlitter<D> =
-    for<'bitmap> fn(&mut D, EInkOrderedCoverageBitmap<'bitmap>) -> Option<u64>;
+pub type EInkCoverageBlitter<D> =
+    for<'bitmap> fn(&mut D, EInkCoverageBitmap<'bitmap>) -> Option<u64>;
 
 #[derive(Debug)]
 pub enum EInkCoverageMode<D> {
+    /// native gray output: pixels with at least half coverage take the foreground
     BinaryThreshold,
-    OrderedDither4x4 {
-        blitter: Option<EInkOrderedCoverageBlitter<D>>,
+    /// binary output: pixels with at least `min_coverage` are inked, and gray
+    /// foregrounds are dithered so the panel still only sees black and white
+    InkThreshold {
+        min_coverage: u8,
+        blitter: Option<EInkCoverageBlitter<D>>,
     },
     AlphaBlend {
         read_pixel: fn(&D, EgPoint) -> Option<Gray2>,
@@ -99,12 +121,19 @@ impl<D> EInkCoverageMode<D> {
         Self::BinaryThreshold
     }
 
-    pub const fn ordered_dither_4x4() -> Self {
-        Self::OrderedDither4x4 { blitter: None }
+    pub const fn ink_threshold(min_coverage: u8) -> Self {
+        Self::InkThreshold {
+            min_coverage,
+            blitter: None,
+        }
     }
 
-    pub const fn ordered_dither_4x4_with_blitter(blitter: EInkOrderedCoverageBlitter<D>) -> Self {
-        Self::OrderedDither4x4 {
+    pub const fn ink_threshold_with_blitter(
+        min_coverage: u8,
+        blitter: EInkCoverageBlitter<D>,
+    ) -> Self {
+        Self::InkThreshold {
+            min_coverage,
             blitter: Some(blitter),
         }
     }
@@ -224,15 +253,19 @@ where
             result
         }
 
-        EInkCoverageMode::OrderedDither4x4 { blitter } => {
+        EInkCoverageMode::InkThreshold {
+            min_coverage,
+            blitter,
+        } => {
             if let Some(blitter) = blitter {
-                let bitmap = EInkOrderedCoverageBitmap::new(
+                let bitmap = EInkCoverageBitmap::new(
                     coverage,
                     bitmap.width(),
                     bitmap.height(),
                     origin,
                     foreground,
                     clip,
+                    min_coverage,
                 );
 
                 if let Some(accepted) = blitter(target, bitmap) {
@@ -259,7 +292,7 @@ where
                 .filter_map(|(index, coverage)| {
                     let point = coverage_point(origin, width, index)?;
 
-                    if !point_in_rect(point, clip) || !ordered_dither_accepts(coverage, point) {
+                    if !point_in_rect(point, clip) || !inks(coverage, min_coverage) {
                         return None;
                     }
 
@@ -364,24 +397,10 @@ fn point_in_rect(point: EgPoint, rect: Rect) -> bool {
         && point.y < rect.bottom().get()
 }
 
-pub(super) fn ordered_dither_accepts(coverage: u8, point: EgPoint) -> bool {
-    if coverage == 0 {
-        return false;
-    }
-
-    if coverage == u8::MAX {
-        return true;
-    }
-
-    const BAYER_4X4: [u8; 16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
-
-    let x = point.x.rem_euclid(4) as usize;
-    let y = point.y.rem_euclid(4) as usize;
-
-    let rank = BAYER_4X4[y * 4 + x];
-    let threshold = rank.saturating_mul(16).saturating_add(8);
-
-    coverage > threshold
+/// whether a pixel with this coverage is inked in binary output
+#[inline]
+pub fn inks(coverage: u8, min_coverage: u8) -> bool {
+    coverage != 0 && coverage >= min_coverage
 }
 
 #[cfg(test)]
