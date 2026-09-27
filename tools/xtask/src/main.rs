@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 mod fixtures;
+mod text_quality;
 mod trace;
 
 #[derive(Parser)]
@@ -20,6 +21,17 @@ enum Command {
     Perf {
         #[command(subcommand)]
         command: PerfCommand,
+    },
+
+    /// measure reader text as the device draws it
+    TextQuality {
+        /// name of this run, written to target/text-quality/<label>
+        #[arg(short, long, default_value = "latest")]
+        label: String,
+
+        /// label of an earlier run to compare against
+        #[arg(short, long)]
+        compare: Option<String>,
     },
 
     /// convert trace/v4 firmware logs to a Perfetto trace
@@ -50,6 +62,7 @@ fn main() -> anyhow::Result<()> {
             PerfCommand::Summary { input } => trace::summarize_performance(&input)?,
             PerfCommand::Compare { before, after } => trace::compare_performance(&before, &after)?,
         },
+        Command::TextQuality { label, compare } => text_quality::run(&label, compare.as_deref())?,
         Command::TracePerfetto { input, output } => {
             let output = trace::convert_perfetto(&input, output.as_deref())?;
             println!("wrote {}", output.display(),);

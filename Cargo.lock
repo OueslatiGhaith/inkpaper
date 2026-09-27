@@ -3734,7 +3734,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "embedded-graphics",
  "indoc",
+ "inkpaper-ui",
  "png",
  "zip",
 ]
