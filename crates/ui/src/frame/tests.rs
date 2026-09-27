@@ -593,7 +593,13 @@ fn mounted_listener_updates_owning_entity() {
 
     let listener = Listener::<ActivateEvent>::from_id(listener_id);
     callbacks
-        .invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified)
+        .invoke_listener(
+            listener,
+            &ActivateEvent::new(ElementId::Name("test")),
+            &entities,
+            &globals,
+            &notified,
+        )
         .unwrap();
 
     let value = entities.read(counter, |counter| counter.value);
@@ -657,7 +663,13 @@ fn rendered_listener_can_update_another_entity() {
         .expect("activation listener missing");
     let listener = Listener::<ActivateEvent>::from_id(listener_id);
     callbacks
-        .invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified)
+        .invoke_listener(
+            listener,
+            &ActivateEvent::new(ElementId::Name("test")),
+            &entities,
+            &globals,
+            &notified,
+        )
         .unwrap();
 
     assert_eq!(entities.read(status, |status| status.value,), Ok(10));

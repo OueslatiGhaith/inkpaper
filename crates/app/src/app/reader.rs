@@ -133,7 +133,11 @@ impl InkPaperApp {
 
     /// Jumps to a chapter list entry and returns to the reader. Entries that
     /// lead nowhere just close the list.
-    pub(crate) fn activate_toc_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+    pub(crate) fn activate_toc_entry(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
         let target = match self.reader.table_of_contents() {
             TableOfContents::Loaded(entries) => {
                 entries.get(index).and_then(TocEntry::target).cloned()

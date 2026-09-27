@@ -1,14 +1,36 @@
 use core::any::TypeId;
 
 use crate::{
-    Element, IntoElement, Listener, MountCx, MountError, NodeId, ParentElement,
+    Element, ElementId, IntoElement, Listener, MountCx, MountError, NodeId, ParentElement,
     StatefulInteractiveElement, StatefulInteractivity, Style, Styled, callback::CallbackId,
     element::state::ElementStateId,
 };
 
+/// An element was activated. It carries the element's id, so one listener can
+/// serve many elements, such as every row of a list or every key of a keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ActivateEvent;
+pub struct ActivateEvent {
+    id: ElementId,
+}
+
+impl ActivateEvent {
+    pub const fn new(id: ElementId) -> Self {
+        Self { id }
+    }
+
+    /// The id of the activated element.
+    pub const fn id(self) -> ElementId {
+        self.id
+    }
+
+    /// The number in the activated element's id, such as 3 for `("row", 3)`.
+    pub const fn index(self) -> Option<usize> {
+        match self.id {
+            ElementId::Value(value) | ElementId::NamedValue(_, value) => Some(value as usize),
+            ElementId::Name(_) => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EventTarget {

@@ -536,7 +536,13 @@ mod tests {
         };
 
         callbacks
-            .invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified)
+            .invoke_listener(
+                listener,
+                &ActivateEvent::new(ElementId::Name("test")),
+                &entities,
+                &globals,
+                &notified,
+            )
             .unwrap();
 
         assert_eq!(entities.read(root, |counter| { counter.value }), Ok(1));
@@ -562,7 +568,13 @@ mod tests {
         };
 
         callbacks
-            .invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified)
+            .invoke_listener(
+                listener,
+                &ActivateEvent::new(ElementId::Name("test")),
+                &entities,
+                &globals,
+                &notified,
+            )
             .unwrap();
 
         assert_eq!(entities.read(counter, |counter| counter.value), Ok(5));
@@ -588,7 +600,13 @@ mod tests {
         };
 
         callbacks
-            .invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified)
+            .invoke_listener(
+                listener,
+                &ActivateEvent::new(ElementId::Name("test")),
+                &entities,
+                &globals,
+                &notified,
+            )
             .unwrap();
     }
 
@@ -621,7 +639,13 @@ mod tests {
         };
 
         callbacks
-            .invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified)
+            .invoke_listener(
+                listener,
+                &ActivateEvent::new(ElementId::Name("test")),
+                &entities,
+                &globals,
+                &notified,
+            )
             .unwrap();
 
         assert_eq!(entities.read(counter, |counter| counter.value), Ok(1));
@@ -645,8 +669,13 @@ mod tests {
 
         callbacks.reset();
 
-        let result =
-            callbacks.invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified);
+        let result = callbacks.invoke_listener(
+            listener,
+            &ActivateEvent::new(ElementId::Name("test")),
+            &entities,
+            &globals,
+            &notified,
+        );
 
         assert!(matches!(result, Err(ListenerInvokeError::InvalidListener)));
     }
@@ -725,5 +754,4 @@ mod tests {
 
         assert!(matches!(result, Err(CallbackAllocError::StorageFull)));
     }
-
 }

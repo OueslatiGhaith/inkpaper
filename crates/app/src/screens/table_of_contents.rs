@@ -1,5 +1,3 @@
-use alloc::vec::Vec;
-
 use inkpaper_ui::prelude::*;
 
 use crate::{
@@ -18,7 +16,7 @@ use crate::{
 pub(crate) struct TableOfContentsScreen<'a> {
     toc: &'a TableOfContents,
     current: Option<usize>,
-    entry_listeners: Vec<Listener<ActivateEvent>>,
+    on_entry: Listener<ActivateEvent>,
     battery: Option<BatteryStatus>,
     on_back: Listener<ActivateEvent>,
 }
@@ -58,7 +56,7 @@ impl RenderOnce for TableOfContentsScreen<'_> {
                         <TocList
                             entries={entries}
                             current={self.current}
-                            listeners={self.entry_listeners}
+                            on_entry={self.on_entry}
                         />
                     {/if}
                 </div>
@@ -71,25 +69,25 @@ impl RenderOnce for TableOfContentsScreen<'_> {
 struct TocList<'a> {
     entries: &'a [TocEntry],
     current: Option<usize>,
-    listeners: Vec<Listener<ActivateEvent>>,
+    on_entry: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for TocList<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let current = self.current;
+        let on_entry = self.on_entry;
 
-        let rows = self.entries.iter().zip(self.listeners).enumerate().map(
-            move |(index, (entry, listener))| {
-                ListRow::from(ListRowProps {
-                    id: ("toc-entry", index),
-                    label: entry.label(),
-                    depth: entry.depth(),
-                    selected: current == Some(index),
-                    chevron: false,
-                    on_activate: Some(listener),
-                })
-            },
-        );
+        // every row shares one listener; the row's id says which was tapped
+        let rows = self.entries.iter().enumerate().map(move |(index, entry)| {
+            ListRow::from(ListRowProps {
+                id: ("toc-entry", index),
+                label: entry.label(),
+                depth: entry.depth(),
+                selected: current == Some(index),
+                chevron: false,
+                on_activate: Some(on_entry),
+            })
+        });
 
         let list = div()
             .id(("toc-list", 0u8))
@@ -127,29 +125,10 @@ impl ScreenView for TableOfContentsRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
-        let toc = app.reader.table_of_contents();
-
-        let entry_count = match toc {
-            TableOfContents::Loaded(entries) => entries.len(),
-            _ => 0,
-        };
-
-        let entry_listeners = (0..entry_count)
-            .map(|index| {
-                cx.listener(
-                    move |app: &mut InkPaperApp,
-                          _: &ActivateEvent,
-                          cx: &mut Context<'_, InkPaperApp>| {
-                        app.activate_toc_entry(index, cx);
-                    },
-                )
-            })
-            .collect();
-
         TableOfContentsScreen::from(TableOfContentsScreenProps {
-            toc,
+            toc: app.reader.table_of_contents(),
             current: app.reader.current_toc_index(),
-            entry_listeners,
+            on_entry: cx.listener(InkPaperApp::activate_toc_entry),
             battery: app.system_status.battery(),
             on_back: cx.listener(InkPaperApp::activate_back),
         })

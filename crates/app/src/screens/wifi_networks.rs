@@ -1,5 +1,3 @@
-use alloc::vec::Vec;
-
 use inkpaper_ui::prelude::*;
 
 use crate::{
@@ -17,7 +15,7 @@ use crate::{
 pub(crate) struct WifiNetworksScreen<'a> {
     networks: &'a [WifiNetwork],
     saved: &'a SavedNetworks,
-    network_listeners: Vec<Option<Listener<ActivateEvent>>>,
+    on_network: Listener<ActivateEvent>,
     scan: WifiScanStatus,
     revision: u64,
     battery: Option<BatteryStatus>,
@@ -68,7 +66,7 @@ impl RenderOnce for WifiNetworksScreen<'_> {
                     <NetworkList
                         networks={self.networks}
                         saved={self.saved}
-                        listeners={self.network_listeners}
+                        on_network={self.on_network}
                         revision={self.revision}
                     />
                 </div>
@@ -81,7 +79,7 @@ impl RenderOnce for WifiNetworksScreen<'_> {
 struct NetworkList<'a> {
     networks: &'a [WifiNetwork],
     saved: &'a SavedNetworks,
-    listeners: Vec<Option<Listener<ActivateEvent>>>,
+    on_network: Listener<ActivateEvent>,
     revision: u64,
 }
 
@@ -89,12 +87,23 @@ impl RenderOnce for NetworkList<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let saved = self.saved;
         let current = saved.current().map(|network| network.ssid());
+        let on_network = self.on_network;
 
-        let rows = self.networks.iter().zip(self.listeners).enumerate().map(
-            move |(index, (network, listener))| {
+        // every row shares one listener; the row's id says which was tapped
+        let rows = self
+            .networks
+            .iter()
+            .enumerate()
+            .map(move |(index, network)| {
+                let known = saved.find(network.ssid()).is_some();
+
+                // secured networks without a saved password can't be chosen
+                // until passwords can be typed
+                let choosable = known || !network.secured();
+
                 let value = if current == Some(network.ssid()) {
                     "In use"
-                } else if saved.find(network.ssid()).is_some() {
+                } else if known {
                     "Saved"
                 } else if network.secured() {
                     "Password"
@@ -107,10 +116,9 @@ impl RenderOnce for NetworkList<'_> {
                     label: network.ssid(),
                     value,
                     selected: false,
-                    on_activate: listener,
+                    on_activate: choosable.then_some(on_network),
                 })
-            },
-        );
+            });
 
         div()
             .id(("wifi-network-list", self.revision))
@@ -141,34 +149,10 @@ impl ScreenView for WifiNetworksRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
-        let saved = app.wifi.saved();
-
-        // secured networks without a saved password can't be chosen until
-        // passwords can be typed
-        let network_listeners = app
-            .wifi
-            .networks()
-            .iter()
-            .enumerate()
-            .map(|(index, network)| {
-                let choosable = !network.secured() || saved.find(network.ssid()).is_some();
-
-                choosable.then(|| {
-                    cx.listener(
-                        move |app: &mut InkPaperApp,
-                              _: &ActivateEvent,
-                              cx: &mut Context<'_, InkPaperApp>| {
-                            app.activate_wifi_network(index, cx);
-                        },
-                    )
-                })
-            })
-            .collect();
-
         WifiNetworksScreen::from(WifiNetworksScreenProps {
             networks: app.wifi.networks(),
-            saved,
-            network_listeners,
+            saved: app.wifi.saved(),
+            on_network: cx.listener(InkPaperApp::activate_wifi_network),
             scan: app.wifi.scan_status(),
             revision: app.wifi.revision(),
             battery: app.system_status.battery(),

@@ -9,7 +9,15 @@ impl InkPaperApp {
         self.open_history_entry(0, cx);
     }
 
-    pub(crate) fn activate_recent_book(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+    pub(crate) fn activate_recent_book(
+        &mut self,
+        event: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
         self.open_history_entry(index, cx);
     }
 

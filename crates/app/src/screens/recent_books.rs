@@ -1,5 +1,3 @@
-use alloc::vec::Vec;
-
 use inkpaper_ui::prelude::*;
 
 use crate::{
@@ -14,7 +12,7 @@ use crate::{
 #[component]
 pub(crate) struct RecentBooksScreen<'a> {
     entries: &'a [ReadingHistoryEntry],
-    entry_listeners: Vec<Listener<ActivateEvent>>,
+    on_entry: Listener<ActivateEvent>,
     revision: u64,
     error: bool,
     battery: Option<BatteryStatus>,
@@ -51,7 +49,7 @@ impl RenderOnce for RecentBooksScreen<'_> {
                     {:else}
                         <RecentBookList
                             entries={self.entries}
-                            listeners={self.entry_listeners}
+                            on_entry={self.on_entry}
                             revision={self.revision}
                         />
                     {/if}
@@ -64,22 +62,23 @@ impl RenderOnce for RecentBooksScreen<'_> {
 #[component]
 struct RecentBookList<'a> {
     entries: &'a [ReadingHistoryEntry],
-    listeners: Vec<Listener<ActivateEvent>>,
+    on_entry: Listener<ActivateEvent>,
     revision: u64,
 }
 
 impl RenderOnce for RecentBookList<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let rows = self.entries.iter().zip(self.listeners).enumerate().map(
-            |(index, (entry, listener))| {
-                RecentBookRow::from(RecentBookRowProps {
-                    id: index,
-                    title: entry.display_title(),
-                    subtitle: entry.display_subtitle(),
-                    on_activate: listener,
-                })
-            },
-        );
+        let on_entry = self.on_entry;
+
+        // every row shares one listener; the row's id says which was tapped
+        let rows = self.entries.iter().enumerate().map(move |(index, entry)| {
+            RecentBookRow::from(RecentBookRowProps {
+                id: index,
+                title: entry.display_title(),
+                subtitle: entry.display_subtitle(),
+                on_activate: on_entry,
+            })
+        });
 
         div()
             .id(("recent-books-list", self.revision))
@@ -108,21 +107,9 @@ impl ScreenView for RecentBooksRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
-        let entry_listeners = (0..app.reading_history.entries().len())
-            .map(|index| {
-                cx.listener(
-                    move |app: &mut InkPaperApp,
-                          _: &ActivateEvent,
-                          cx: &mut Context<'_, InkPaperApp>| {
-                        app.activate_recent_book(index, cx);
-                    },
-                )
-            })
-            .collect();
-
         RecentBooksScreen::from(RecentBooksScreenProps {
             entries: app.reading_history.entries(),
-            entry_listeners,
+            on_entry: cx.listener(InkPaperApp::activate_recent_book),
             revision: app.reading_history.revision(),
             error: app.reading_history.error(),
             battery: app.system_status.battery(),

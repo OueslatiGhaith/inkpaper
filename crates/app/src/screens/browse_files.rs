@@ -1,5 +1,3 @@
-use alloc::vec::Vec;
-
 use inkpaper_ui::prelude::*;
 
 use crate::{
@@ -17,7 +15,7 @@ pub(crate) struct BrowseFilesScreen<'a> {
     title: &'a str,
     path: &'a str,
     entries: &'a [BrowseEntry],
-    entry_listeners: Vec<Listener<ActivateEvent>>,
+    on_entry: Listener<ActivateEvent>,
     revision: u64,
     return_to: Option<usize>,
     error: bool,
@@ -53,7 +51,7 @@ impl RenderOnce for BrowseFilesScreen<'_> {
                     {:else}
                         <FileList
                             entries={self.entries}
-                            listeners={self.entry_listeners}
+                            on_entry={self.on_entry}
                             revision={self.revision}
                             return_to={self.return_to}
                         />
@@ -77,29 +75,30 @@ impl RenderOnce for BrowseFilesScreen<'_> {
 #[component]
 struct FileList<'a> {
     entries: &'a [BrowseEntry],
-    listeners: Vec<Listener<ActivateEvent>>,
+    on_entry: Listener<ActivateEvent>,
     revision: u64,
     return_to: Option<usize>,
 }
 
 impl RenderOnce for FileList<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let rows = self.entries.iter().zip(self.listeners).enumerate().map(
-            |(index, (entry, listener))| {
-                let kind = match entry.kind() {
-                    BrowseEntryKind::Directory => FileKind::Folder,
-                    BrowseEntryKind::File => FileKind::File,
-                };
+        let on_entry = self.on_entry;
 
-                FileRow::from(FileRowProps {
-                    id: index,
-                    name: entry.display_name(),
-                    extension: entry.extension(),
-                    kind,
-                    on_activate: listener,
-                })
-            },
-        );
+        // every row shares one listener; the row's id says which was tapped
+        let rows = self.entries.iter().enumerate().map(move |(index, entry)| {
+            let kind = match entry.kind() {
+                BrowseEntryKind::Directory => FileKind::Folder,
+                BrowseEntryKind::File => FileKind::File,
+            };
+
+            FileRow::from(FileRowProps {
+                id: index,
+                name: entry.display_name(),
+                extension: entry.extension(),
+                kind,
+                on_activate: on_entry,
+            })
+        });
 
         let list = div()
             .id(("browse-list", self.revision))
@@ -147,23 +146,11 @@ impl ScreenView for BrowseFilesRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
-        let entry_listeners = (0..app.browser.entries().len())
-            .map(|index| {
-                cx.listener(
-                    move |app: &mut InkPaperApp,
-                          _: &ActivateEvent,
-                          cx: &mut Context<'_, InkPaperApp>| {
-                        app.activate_browse_entry(index, cx);
-                    },
-                )
-            })
-            .collect();
-
         BrowseFilesScreen::from(BrowseFilesScreenProps {
             title: app.browser.title(),
             path: app.browser.path(),
             entries: app.browser.entries(),
-            entry_listeners,
+            on_entry: cx.listener(InkPaperApp::activate_browse_entry),
             revision: app.browser.revision(),
             return_to: app.browser.return_to(),
             error: app.browser.error(),

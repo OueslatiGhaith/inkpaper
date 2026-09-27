@@ -51,7 +51,15 @@ impl InkPaperApp {
     }
 
     /// Chooses a scanned network: a saved one with its password, or an open one.
-    pub(crate) fn activate_wifi_network(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+    pub(crate) fn activate_wifi_network(
+        &mut self,
+        event: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
         let Some(network) = self.wifi.networks().get(index) else {
             return;
         };

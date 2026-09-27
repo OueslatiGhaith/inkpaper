@@ -60,7 +60,7 @@ pub mod prelude {
     pub use crate::{
         ActivateEvent, AffineTransform, AppContext, Canvas, CanvasPainter, Children, Color,
         ComponentChildren, ComponentSlot, ConditionalElementExt, Context, DamageRegion, Div,
-        Either, Element, EmptySlot, Entity, EventTarget, FillRule, FontFamilyId, FontId,
+        Either, Element, ElementId, EmptySlot, Entity, EventTarget, FillRule, FontFamilyId, FontId,
         FontResources, FontWeight, FrameBuildError, Global, GlobalAccessError, GlobalMut,
         GlobalRef, GlobalSetError, IdentifiableElementExt, Image, ImageColorMode, ImageDither,
         ImageFit, ImageId, ImagePaint, ImagePosition, ImageRegistry, ImageRegistryError,

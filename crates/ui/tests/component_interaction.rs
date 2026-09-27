@@ -166,7 +166,11 @@ fn component_event_target_survives_rebuild() {
 
     runtime.rebuild().unwrap();
 
-    assert!(runtime.dispatch_to(target, &ActivateEvent).unwrap());
+    assert!(
+        runtime
+            .dispatch_to(target, &ActivateEvent::new(ElementId::Name("first")))
+            .unwrap()
+    );
 
     assert_eq!(first_activations.get(), 1);
     assert_eq!(second_activations.get(), 0);

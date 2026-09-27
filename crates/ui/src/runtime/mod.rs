@@ -451,7 +451,20 @@ impl<
     }
 
     pub fn activate_focused(&mut self) -> Result<bool, ListenerInvokeError> {
-        self.dispatch_to_focused(&ActivateEvent)
+        let Some(target) = self.focused_target() else {
+            return Ok(false);
+        };
+
+        self.activate(target)
+    }
+
+    /// Sends `target` an [`ActivateEvent`] carrying its element id.
+    fn activate(&self, target: EventTarget) -> Result<bool, ListenerInvokeError> {
+        let Some(entry) = self.element_states.entry(target.element()) else {
+            return Ok(false);
+        };
+
+        self.dispatch_to(target, &ActivateEvent::new(entry.key.local))
     }
 
     fn invalidate_render(&self, invalidation: RenderInvalidation) {
@@ -800,7 +813,7 @@ impl<
             return Ok(false);
         };
 
-        self.dispatch_to(target, &ActivateEvent)
+        self.activate(target)
     }
 
     pub fn cancel_activation(&mut self) {
@@ -838,7 +851,7 @@ impl<
             return Ok(false);
         };
 
-        self.dispatch_to(target, &ActivateEvent)
+        self.activate(target)
     }
 
     fn node_for_target(&self, target: EventTarget) -> Option<NodeId> {

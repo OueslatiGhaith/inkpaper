@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    ActivateEvent, Context, EntityAccessError, EntityArena, GlobalArena, PaintCx, Point, Rect,
-    ResolvedTextStyle, Size,
+    ActivateEvent, Context, ElementId, EntityAccessError, EntityArena, GlobalArena, PaintCx, Point,
+    Rect, ResolvedTextStyle, Size,
     callback::{register_canvas_callback, register_listener},
     px, text,
 };
@@ -56,7 +56,13 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
     let address = callbacks.lookup(listener.id).unwrap().0;
 
     callbacks
-        .invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified)
+        .invoke_listener(
+            listener,
+            &ActivateEvent::new(ElementId::Name("test")),
+            &entities,
+            &globals,
+            &notified,
+        )
         .unwrap();
 
     assert_eq!(callbacks.lookup(listener.id).unwrap().0, address);
@@ -107,7 +113,7 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
     assert_eq!(
         callbacks.invoke_listener(
             Listener::<ActivateEvent>::from_id(canvas),
-            &ActivateEvent,
+            &ActivateEvent::new(ElementId::Name("test")),
             &entities,
             &globals,
             &notified
@@ -132,7 +138,13 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
     assert_ne!(replacement.generation(), listener.id.generation());
 
     assert_eq!(
-        callbacks.invoke_listener(listener, &ActivateEvent, &entities, &globals, &notified),
+        callbacks.invoke_listener(
+            listener,
+            &ActivateEvent::new(ElementId::Name("test")),
+            &entities,
+            &globals,
+            &notified
+        ),
         Err(ListenerInvokeError::InvalidListener)
     );
 
