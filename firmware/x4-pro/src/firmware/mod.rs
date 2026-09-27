@@ -569,6 +569,7 @@ fn apply_wifi_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: Wi
     let applied = runtime.update(app, move |app, cx| match event {
         WifiEvent::Scanned(result) => app.apply_wifi_scan_result(result, cx),
         WifiEvent::ClockSynced(result) => app.apply_clock_sync_result(result, cx),
+        WifiEvent::Joined(result) => app.apply_wifi_join_result(result, cx),
     });
 
     if applied.is_err() {

@@ -4,8 +4,7 @@ use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
 use crate::{
-    SavedNetworks, WifiCredentials, WifiNetwork, WifiScanError,
-    keyboard::{Key, KeyResult},
+    SavedNetworks, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError, keyboard::Key,
 };
 
 impl InkPaperApp {
@@ -90,22 +89,36 @@ impl InkPaperApp {
             return;
         };
 
-        let Some(entry) = self.wifi.password_entry_mut() else {
+        if self
+            .wifi
+            .password_entry_mut()
+            .is_some_and(|entry| entry.press(key))
+        {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn take_wifi_join_request(&mut self) -> Option<WifiCredentials> {
+        self.wifi.take_join_request()
+    }
+
+    /// Reports how joining a network with a typed password ended. A network
+    /// that joined is saved as the one in use.
+    pub fn apply_wifi_join_result(
+        &mut self,
+        result: Result<(), WifiJoinFailure>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(credentials) = self.wifi.finish_join(result) else {
+            if self.screen() == Screen::WifiPassword {
+                cx.notify();
+            }
+
             return;
         };
 
-        match entry.keyboard_mut().press(key) {
-            KeyResult::Unchanged => {}
-            KeyResult::Changed => cx.notify(),
-            KeyResult::Submit => {
-                let Some(credentials) = entry.credentials() else {
-                    return;
-                };
-
-                self.remember_wifi_network(credentials, cx);
-                self.navigate_back(cx);
-            }
-        }
+        self.remember_wifi_network(credentials, cx);
+        self.navigate_back(cx);
     }
 
     pub(crate) fn activate_toggle_wifi_password(

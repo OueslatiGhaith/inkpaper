@@ -17,7 +17,9 @@ use esp_radio::wifi::{
     AuthenticationMethod, AuthenticationMethodConfig, Config as WifiConfig, ControllerConfig,
     Interface, WifiController, scan::ScanConfig, sta::StationConfig,
 };
-use inkpaper_app::{ClockSyncFailure, WifiCredentials, WifiNetwork, WifiScanError};
+use inkpaper_app::{
+    ClockSyncFailure, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError,
+};
 
 use crate::firmware::rtc::{self, RtcSyncResult};
 
@@ -41,11 +43,13 @@ const SOCKETS: usize = 3;
 enum WifiRequest {
     Scan,
     SyncClock(WifiCredentials),
+    Join(WifiCredentials),
 }
 
 pub enum WifiEvent {
     Scanned(Result<Vec<WifiNetwork>, WifiScanError>),
     ClockSynced(Result<(), ClockSyncFailure>),
+    Joined(Result<(), WifiJoinFailure>),
 }
 
 // the app runs one request at a time, so a newer one never overwrites a
@@ -62,6 +66,12 @@ pub fn request_scan() {
 /// [`WIFI_EVENTS`].
 pub fn request_clock_sync(network: WifiCredentials) {
     REQUESTS.signal(WifiRequest::SyncClock(network));
+}
+
+/// Asks the WiFi task to join `network` and leave it again, checking its
+/// password; the outcome arrives on [`WIFI_EVENTS`].
+pub fn request_join(network: WifiCredentials) {
+    REQUESTS.signal(WifiRequest::Join(network));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
@@ -98,6 +108,7 @@ pub async fn wifi_task(mut wifi: WIFI<'static>) {
             WifiRequest::SyncClock(network) => {
                 WifiEvent::ClockSynced(sync_clock(wifi.reborrow(), &network).await)
             }
+            WifiRequest::Join(network) => WifiEvent::Joined(join(wifi.reborrow(), &network).await),
         };
 
         WIFI_EVENTS.send(event).await;
@@ -168,7 +179,64 @@ async fn sync_clock(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<(), Clo
     }
 }
 
+/// Joins `network` and leaves it again. A join that works means the network
+/// took the password.
+async fn join(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<(), WifiJoinFailure> {
+    info!("WiFi join: checking {}", network.ssid());
+
+    let mut controller = connect(wifi, network).await.map_err(|failure| {
+        warn!("WiFi join failed at {}", failure);
+
+        match failure {
+            SyncFailure::Radio => WifiJoinFailure::Radio,
+            _ => WifiJoinFailure::Rejected,
+        }
+    })?;
+
+    if let Err(error) = controller.disconnect_async().await {
+        warn!("WiFi disconnect failed: {:?}", error);
+    }
+
+    // dropping the controller deinitializes WiFi and powers the radio down
+    drop(controller);
+
+    Ok(())
+}
+
 async fn sync(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<DateTime, SyncFailure> {
+    let mut controller = connect(wifi, network).await?;
+
+    let rng = Rng::new();
+    let seed = u64::from(rng.random()) << 32 | u64::from(rng.random());
+    let mut resources = StackResources::<SOCKETS>::new();
+    let (stack, mut runner) = embassy_net::new(
+        Interface::station(),
+        NetConfig::dhcpv4(Default::default()),
+        &mut resources,
+        seed,
+    );
+
+    // the stack only makes progress while its runner is polled
+    let result = match select(runner.run(), fetch_and_apply(stack, rng)).await {
+        Either::First(never) => match never {},
+        Either::Second(result) => result,
+    };
+
+    if let Err(error) = controller.disconnect_async().await {
+        warn!("WiFi disconnect failed: {:?}", error);
+    }
+
+    // dropping the controller deinitializes WiFi and powers the radio down
+    drop(controller);
+
+    result
+}
+
+/// Starts the radio and joins `network`.
+async fn connect<'d>(
+    wifi: WIFI<'d>,
+    network: &WifiCredentials,
+) -> Result<WifiController<'d>, SyncFailure> {
     let ssid = network
         .ssid()
         .try_into()
@@ -197,7 +265,7 @@ async fn sync(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<DateTime, Syn
     })?;
 
     match with_timeout(CONNECT_TIMEOUT, controller.connect_async()).await {
-        Ok(Ok(_)) => info!("clock sync: WiFi connected"),
+        Ok(Ok(_)) => info!("WiFi connected to {}", network.ssid()),
         Ok(Err(error)) => {
             warn!("WiFi connect failed: {:?}", error);
             return Err(SyncFailure::Connect);
@@ -208,30 +276,7 @@ async fn sync(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<DateTime, Syn
         }
     }
 
-    let rng = Rng::new();
-    let seed = u64::from(rng.random()) << 32 | u64::from(rng.random());
-    let mut resources = StackResources::<SOCKETS>::new();
-    let (stack, mut runner) = embassy_net::new(
-        Interface::station(),
-        NetConfig::dhcpv4(Default::default()),
-        &mut resources,
-        seed,
-    );
-
-    // the stack only makes progress while its runner is polled
-    let result = match select(runner.run(), fetch_and_apply(stack, rng)).await {
-        Either::First(never) => match never {},
-        Either::Second(result) => result,
-    };
-
-    if let Err(error) = controller.disconnect_async().await {
-        warn!("WiFi disconnect failed: {:?}", error);
-    }
-
-    // dropping the controller deinitializes WiFi and powers the radio down
-    drop(controller);
-
-    result
+    Ok(controller)
 }
 
 async fn fetch_and_apply(stack: Stack<'_>, rng: Rng) -> Result<DateTime, SyncFailure> {

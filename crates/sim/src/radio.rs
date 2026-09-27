@@ -3,12 +3,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use inkpaper_app::{ClockSyncFailure, InkPaperApp, WifiNetwork};
+use inkpaper_app::{ClockSyncFailure, InkPaperApp, WifiJoinFailure, WifiNetwork};
 use inkpaper_ui::prelude::*;
 
 // long enough to see the scanning and syncing states
 const SCAN_DURATION: Duration = Duration::from_millis(1500);
 const CLOCK_SYNC_DURATION: Duration = Duration::from_secs(2);
+const JOIN_DURATION: Duration = Duration::from_secs(2);
 
 /// Stands in for the WiFi radio: work the platform starts finishes a moment
 /// later, when the main loop calls [`SimulatedRadio::finish_due`].
@@ -16,6 +17,7 @@ const CLOCK_SYNC_DURATION: Duration = Duration::from_secs(2);
 pub(super) struct SimulatedRadio {
     scan: Cell<Option<Instant>>,
     clock_sync: Cell<Option<Instant>>,
+    join: Cell<Option<Instant>>,
 }
 
 impl SimulatedRadio {
@@ -27,6 +29,10 @@ impl SimulatedRadio {
         self.clock_sync.set(Some(Instant::now()));
     }
 
+    pub(super) fn start_join(&self) {
+        self.join.set(Some(Instant::now()));
+    }
+
     /// Reports work whose time has come. Returns whether anything finished.
     pub(super) fn finish_due(
         &self,
@@ -35,8 +41,9 @@ impl SimulatedRadio {
     ) -> bool {
         let scanned = take_due(&self.scan, SCAN_DURATION);
         let synced = take_due(&self.clock_sync, CLOCK_SYNC_DURATION);
+        let joined = take_due(&self.join, JOIN_DURATION);
 
-        if !scanned && !synced {
+        if !scanned && !synced && !joined {
             return false;
         }
 
@@ -48,6 +55,10 @@ impl SimulatedRadio {
 
                 if synced {
                     app.apply_clock_sync_result(clock_sync_result(), cx);
+                }
+
+                if joined {
+                    app.apply_wifi_join_result(join_result(), cx);
                 }
             })
             .expect("application root must remain available");
@@ -76,6 +87,15 @@ fn scan_results() -> Vec<WifiNetwork> {
         WifiNetwork::new("Office", -49, true),
         WifiNetwork::new("", -45, true),
     ]
+}
+
+/// Succeeds, or turns the password away when `INKPAPER_SIM_WIFI_JOIN_FAIL` is
+/// set.
+fn join_result() -> Result<(), WifiJoinFailure> {
+    match std::env::var_os("INKPAPER_SIM_WIFI_JOIN_FAIL") {
+        Some(_) => Err(WifiJoinFailure::Rejected),
+        None => Ok(()),
+    }
 }
 
 /// Succeeds, or fails to join WiFi when `INKPAPER_SIM_CLOCK_SYNC_FAIL` is set.

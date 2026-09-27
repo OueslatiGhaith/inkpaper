@@ -8,11 +8,11 @@ use crate::{
         keyboard::{Keyboard, KeyboardProps},
         text_field::{TextField, TextFieldProps},
     },
-    wifi::PasswordEntry,
+    wifi::{JoinStatus, PasswordEntry},
 };
 
 /// Typing the password of a secured network, like crosspoint's keyboard entry.
-/// Join saves the network as the one in use.
+/// Join tries the network first and saves it as the one in use once it joins.
 #[component]
 pub(crate) struct WifiPasswordScreen<'a> {
     entry: &'a PasswordEntry,
@@ -26,11 +26,14 @@ impl RenderOnce for WifiPasswordScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let keyboard = self.entry.keyboard();
 
-        // WPA passwords are at least 8 characters
-        let hint = if keyboard.can_submit() {
-            ""
-        } else {
-            "At least 8 characters"
+        let status = self.entry.status();
+
+        let hint = match status {
+            // WPA passwords are at least 8 characters
+            JoinStatus::Typing if !keyboard.can_submit() => "At least 8 characters",
+            JoinStatus::Typing => "",
+            JoinStatus::Checking => "Checking...",
+            JoinStatus::Failed(failure) => failure.message(),
         };
 
         rsx! {
@@ -69,7 +72,7 @@ impl RenderOnce for WifiPasswordScreen<'_> {
                         layer={keyboard.layer()}
                         shift={keyboard.shift()}
                         submit_label="Join"
-                        can_submit={keyboard.can_submit()}
+                        can_submit={keyboard.can_submit() && status != JoinStatus::Checking}
                         on_key={self.on_key}
                     />
                 </div>

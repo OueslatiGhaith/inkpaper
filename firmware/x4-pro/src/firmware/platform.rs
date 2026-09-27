@@ -149,6 +149,12 @@ impl AppPlatform for X4Platform {
         key
     }
 
+    async fn start_wifi_join(&mut self, network: &WifiCredentials) -> Result<(), Self::Error> {
+        wifi::request_join(network.clone());
+
+        Ok(())
+    }
+
     async fn start_wifi_scan(&mut self) -> Result<(), Self::Error> {
         wifi::request_scan();
 

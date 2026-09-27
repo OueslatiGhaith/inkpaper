@@ -7,7 +7,8 @@ use crate::{
     BrowseEntry, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure, DeviceKey,
     FileTransferRequest, FrontlightPreferences, FrontlightPreferencesRequest, FrontlightSetting,
     InkPaperApp, ReaderPreferences, ReaderPreferencesRequest, ReaderRequest, ReaderSession,
-    ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials, WifiScanError,
+    ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials, WifiJoinFailure,
+    WifiScanError,
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
@@ -88,6 +89,11 @@ pub trait AppPlatform {
     /// The platform reports the outcome through
     /// [`InkPaperApp::apply_clock_sync_result`].
     async fn start_clock_sync(&mut self, network: &WifiCredentials) -> Result<(), Self::Error>;
+
+    /// Starts joining `network` to check its password, then leaves it, and
+    /// returns without waiting. The platform reports the outcome through
+    /// [`InkPaperApp::apply_wifi_join_result`].
+    async fn start_wifi_join(&mut self, network: &WifiCredentials) -> Result<(), Self::Error>;
 
     /// Starts a WiFi scan and returns without waiting. The platform reports the
     /// networks through [`InkPaperApp::apply_wifi_scan_result`].
@@ -181,6 +187,18 @@ where
                 if self.platform.start_clock_sync(&network).await.is_err() {
                     runtime.update(app, |app, cx| {
                         app.apply_clock_sync_result(Err(ClockSyncFailure::Radio), cx);
+                    })?;
+                }
+
+                continue;
+            }
+
+            let wifi_join_request = runtime.update(app, |app, _| app.take_wifi_join_request())?;
+
+            if let Some(network) = wifi_join_request {
+                if self.platform.start_wifi_join(&network).await.is_err() {
+                    runtime.update(app, |app, cx| {
+                        app.apply_wifi_join_result(Err(WifiJoinFailure::Radio), cx);
                     })?;
                 }
 

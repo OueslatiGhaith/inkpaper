@@ -110,6 +110,12 @@ impl AppPlatform for SimulatorPlatform {
         *b"inksim"
     }
 
+    async fn start_wifi_join(&mut self, _: &WifiCredentials) -> Result<(), Self::Error> {
+        self.radio.start_join();
+
+        Ok(())
+    }
+
     async fn start_wifi_scan(&mut self) -> Result<(), Self::Error> {
         self.radio.start_scan();
 

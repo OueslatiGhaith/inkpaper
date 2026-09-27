@@ -2,7 +2,7 @@ use alloc::{string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
-use crate::keyboard::KeyboardState;
+use crate::keyboard::{Key, KeyResult, KeyboardState};
 
 const STORAGE_VERSION: u8 = 1;
 
@@ -72,6 +72,25 @@ impl WifiNetwork {
 /// The scan could not run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WifiScanError;
+
+/// Why joining a network with a new password failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WifiJoinFailure {
+    /// the WiFi radio could not start
+    Radio,
+    /// the network turned the device away or didn't answer, most often
+    /// because of a wrong password
+    Rejected,
+}
+
+impl WifiJoinFailure {
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::Radio => "WiFi could not start",
+            Self::Rejected => "Could not join. Check the password",
+        }
+    }
+}
 
 /// Remembered networks, most recently chosen first. The first one is the
 /// network the device uses.
@@ -185,12 +204,24 @@ struct StoredNetwork {
     password: Vec<u8>,
 }
 
+/// Where a typed password is in being tried, like crosspoint, which joins
+/// the network before saving it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JoinStatus {
+    #[default]
+    Typing,
+    Checking,
+    Failed(WifiJoinFailure),
+}
+
 /// The password being typed for a secured network.
 #[derive(Debug)]
 pub(crate) struct PasswordEntry {
     ssid: String,
     keyboard: KeyboardState,
     shown: bool,
+    status: JoinStatus,
+    join_requested: bool,
 }
 
 impl PasswordEntry {
@@ -199,6 +230,57 @@ impl PasswordEntry {
             ssid,
             keyboard: KeyboardState::new(MIN_PASSWORD_BYTES, MAX_PASSWORD_BYTES),
             shown: false,
+            status: JoinStatus::Typing,
+            join_requested: false,
+        }
+    }
+
+    pub(crate) const fn status(&self) -> JoinStatus {
+        self.status
+    }
+
+    /// Presses a key. Submitting tries to join with the password; the keys
+    /// wait while that runs. Returns whether anything changed.
+    pub(crate) fn press(&mut self, key: Key) -> bool {
+        if self.status == JoinStatus::Checking {
+            return false;
+        }
+
+        match self.keyboard.press(key) {
+            KeyResult::Unchanged => false,
+            // editing clears a failure
+            KeyResult::Changed => {
+                self.status = JoinStatus::Typing;
+                true
+            }
+            KeyResult::Submit => {
+                self.status = JoinStatus::Checking;
+                self.join_requested = true;
+                true
+            }
+        }
+    }
+
+    fn take_join_request(&mut self) -> Option<WifiCredentials> {
+        if !core::mem::take(&mut self.join_requested) {
+            return None;
+        }
+
+        self.credentials()
+    }
+
+    /// Ends a join. Returns the credentials to save when it worked.
+    fn finish_join(&mut self, result: Result<(), WifiJoinFailure>) -> Option<WifiCredentials> {
+        if self.status != JoinStatus::Checking {
+            return None;
+        }
+
+        match result {
+            Ok(()) => self.credentials(),
+            Err(failure) => {
+                self.status = JoinStatus::Failed(failure);
+                None
+            }
         }
     }
 
@@ -210,10 +292,6 @@ impl PasswordEntry {
         &self.keyboard
     }
 
-    pub(crate) fn keyboard_mut(&mut self) -> &mut KeyboardState {
-        &mut self.keyboard
-    }
-
     /// Whether the password is shown instead of masked.
     pub(crate) const fn shown(&self) -> bool {
         self.shown
@@ -223,7 +301,7 @@ impl PasswordEntry {
         self.shown = !self.shown;
     }
 
-    pub(crate) fn credentials(&self) -> Option<WifiCredentials> {
+    fn credentials(&self) -> Option<WifiCredentials> {
         WifiCredentials::new(self.ssid.clone(), self.keyboard.text())
     }
 }
@@ -301,6 +379,19 @@ impl WifiState {
 
     pub(crate) fn end_password_entry(&mut self) {
         self.password_entry = None;
+    }
+
+    pub(crate) fn take_join_request(&mut self) -> Option<WifiCredentials> {
+        self.password_entry.as_mut()?.take_join_request()
+    }
+
+    /// Ends the password entry's join. Returns the credentials to save when it
+    /// worked; a result that comes after the entry closed is dropped.
+    pub(crate) fn finish_join(
+        &mut self,
+        result: Result<(), WifiJoinFailure>,
+    ) -> Option<WifiCredentials> {
+        self.password_entry.as_mut()?.finish_join(result)
     }
 
     pub(crate) fn take_save_request(&mut self) -> Option<SavedNetworks> {
@@ -430,5 +521,65 @@ mod tests {
                 .current()
                 .is_none_or(|network| network.password() != "correct horse battery")
         );
+    }
+
+    fn type_password(wifi: &mut WifiState, password: &str) {
+        let entry = wifi.password_entry_mut().unwrap();
+
+        for byte in password.bytes() {
+            entry.press(Key::Char(byte));
+        }
+
+        entry.press(Key::Submit);
+    }
+
+    #[test]
+    fn a_typed_password_is_saved_only_after_joining_works() {
+        let mut wifi = WifiState::default();
+        wifi.begin_password_entry(String::from("home"));
+        type_password(&mut wifi, "password");
+
+        let request = wifi.take_join_request().unwrap();
+        assert_eq!(request.password(), "password");
+        assert_eq!(wifi.take_join_request(), None);
+
+        // the keys wait while the join runs
+        let entry = wifi.password_entry_mut().unwrap();
+        assert!(!entry.press(Key::Delete));
+        assert_eq!(entry.status(), JoinStatus::Checking);
+
+        assert_eq!(wifi.finish_join(Ok(())), Some(request));
+    }
+
+    #[test]
+    fn a_failed_join_keeps_the_password_to_fix() {
+        let mut wifi = WifiState::default();
+        wifi.begin_password_entry(String::from("home"));
+        type_password(&mut wifi, "password");
+        wifi.take_join_request();
+
+        assert_eq!(wifi.finish_join(Err(WifiJoinFailure::Rejected)), None);
+
+        let entry = wifi.password_entry_mut().unwrap();
+        assert_eq!(
+            entry.status(),
+            JoinStatus::Failed(WifiJoinFailure::Rejected)
+        );
+
+        assert!(entry.press(Key::Char(b's')));
+        assert_eq!(entry.status(), JoinStatus::Typing);
+        assert_eq!(entry.keyboard().text(), "passwords");
+    }
+
+    #[test]
+    fn a_join_result_after_the_entry_closed_is_dropped() {
+        let mut wifi = WifiState::default();
+        wifi.begin_password_entry(String::from("home"));
+        type_password(&mut wifi, "password");
+        wifi.take_join_request();
+        wifi.end_password_entry();
+
+        assert_eq!(wifi.finish_join(Ok(())), None);
+        assert!(wifi.saved().current().is_none());
     }
 }
