@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use inkpaper_app::{ClockSyncFailure, InkPaperApp, WifiCredentials, WifiNetwork};
+use inkpaper_app::{ClockSyncFailure, InkPaperApp, WifiNetwork};
 use inkpaper_ui::prelude::*;
 
 // long enough to see the scanning and syncing states
@@ -66,35 +66,16 @@ fn take_due(started: &Cell<Option<Instant>>, duration: Duration) -> bool {
     }
 }
 
-/// The network from `INKPAPER_WIFI_SSID` and `INKPAPER_WIFI_PASS`, as on the
-/// device, until passwords can be typed.
-pub(super) fn build_credentials() -> Option<WifiCredentials> {
-    let ssid = std::env::var("INKPAPER_WIFI_SSID").ok()?;
-    let password = std::env::var("INKPAPER_WIFI_PASS").unwrap_or_default();
-
-    WifiCredentials::new(ssid, password)
-}
-
-/// A few networks around the desk, plus the build-time one if set.
+/// A few networks around the desk.
 fn scan_results() -> Vec<WifiNetwork> {
-    let mut networks = vec![
+    vec![
         WifiNetwork::new("Cafe Corner", -58, false),
         WifiNetwork::new("Neighbors 5G", -71, true),
         WifiNetwork::new("Library Guest", -80, false),
         WifiNetwork::new("Office", -66, true),
         WifiNetwork::new("Office", -49, true),
         WifiNetwork::new("", -45, true),
-    ];
-
-    if let Some(credentials) = build_credentials() {
-        networks.push(WifiNetwork::new(
-            credentials.ssid(),
-            -40,
-            !credentials.password().is_empty(),
-        ));
-    }
-
-    networks
+    ]
 }
 
 /// Succeeds, or fails to join WiFi when `INKPAPER_SIM_CLOCK_SYNC_FAIL` is set.

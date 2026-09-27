@@ -2,13 +2,16 @@ use alloc::{string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
+use crate::keyboard::KeyboardState;
+
 const STORAGE_VERSION: u8 = 1;
 
 /// Like crosspoint, up to eight networks are remembered.
 const MAX_SAVED_NETWORKS: usize = 8;
 
-// 802.11 limits: SSIDs are at most 32 bytes, WPA passphrases at most 64
+// 802.11 limits: SSIDs are at most 32 bytes, WPA passphrases 8 to 64
 const MAX_SSID_BYTES: usize = 32;
+const MIN_PASSWORD_BYTES: usize = 8;
 const MAX_PASSWORD_BYTES: usize = 64;
 
 /// A network the device can join.
@@ -182,6 +185,49 @@ struct StoredNetwork {
     password: Vec<u8>,
 }
 
+/// The password being typed for a secured network.
+#[derive(Debug)]
+pub(crate) struct PasswordEntry {
+    ssid: String,
+    keyboard: KeyboardState,
+    shown: bool,
+}
+
+impl PasswordEntry {
+    fn new(ssid: String) -> Self {
+        Self {
+            ssid,
+            keyboard: KeyboardState::new(MIN_PASSWORD_BYTES, MAX_PASSWORD_BYTES),
+            shown: false,
+        }
+    }
+
+    pub(crate) fn ssid(&self) -> &str {
+        &self.ssid
+    }
+
+    pub(crate) fn keyboard(&self) -> &KeyboardState {
+        &self.keyboard
+    }
+
+    pub(crate) fn keyboard_mut(&mut self) -> &mut KeyboardState {
+        &mut self.keyboard
+    }
+
+    /// Whether the password is shown instead of masked.
+    pub(crate) const fn shown(&self) -> bool {
+        self.shown
+    }
+
+    pub(crate) fn toggle_shown(&mut self) {
+        self.shown = !self.shown;
+    }
+
+    pub(crate) fn credentials(&self) -> Option<WifiCredentials> {
+        WifiCredentials::new(self.ssid.clone(), self.keyboard.text())
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WifiScanStatus {
     #[default]
@@ -200,6 +246,7 @@ pub(crate) struct WifiState {
     scan: WifiScanStatus,
     scan_requested: bool,
     revision: u64,
+    password_entry: Option<PasswordEntry>,
 }
 
 impl WifiState {
@@ -238,6 +285,22 @@ impl WifiState {
         self.save_requested = true;
 
         true
+    }
+
+    pub(crate) fn begin_password_entry(&mut self, ssid: String) {
+        self.password_entry = Some(PasswordEntry::new(ssid));
+    }
+
+    pub(crate) fn password_entry(&self) -> Option<&PasswordEntry> {
+        self.password_entry.as_ref()
+    }
+
+    pub(crate) fn password_entry_mut(&mut self) -> Option<&mut PasswordEntry> {
+        self.password_entry.as_mut()
+    }
+
+    pub(crate) fn end_password_entry(&mut self) {
+        self.password_entry = None;
     }
 
     pub(crate) fn take_save_request(&mut self) -> Option<SavedNetworks> {

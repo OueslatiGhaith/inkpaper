@@ -1,9 +1,12 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
-use crate::{SavedNetworks, WifiCredentials, WifiNetwork, WifiScanError};
+use crate::{
+    SavedNetworks, WifiCredentials, WifiNetwork, WifiScanError,
+    keyboard::{Key, KeyResult},
+};
 
 impl InkPaperApp {
     pub(crate) fn apply_wifi_networks(&mut self, saved: SavedNetworks, cx: &mut Context<'_, Self>) {
@@ -13,11 +16,7 @@ impl InkPaperApp {
     }
 
     /// Makes `credentials` the network the device uses and saves it.
-    pub fn remember_wifi_network(
-        &mut self,
-        credentials: WifiCredentials,
-        cx: &mut Context<'_, Self>,
-    ) {
+    fn remember_wifi_network(&mut self, credentials: WifiCredentials, cx: &mut Context<'_, Self>) {
         if self.wifi.remember(credentials) {
             cx.notify();
         }
@@ -50,7 +49,8 @@ impl InkPaperApp {
         }
     }
 
-    /// Chooses a scanned network: a saved one with its password, or an open one.
+    /// Chooses a scanned network: a saved one with its password, an open one, or
+    /// a secured one after its password is typed.
     pub(crate) fn activate_wifi_network(
         &mut self,
         event: &ActivateEvent,
@@ -70,10 +70,52 @@ impl InkPaperApp {
                 Some(credentials) => credentials,
                 None => return,
             },
-            // joining a secured network needs a password entry
-            None => return,
+            None => {
+                self.wifi.begin_password_entry(String::from(network.ssid()));
+                self.open_screen(Screen::WifiPassword, cx);
+
+                return;
+            }
         };
 
         self.remember_wifi_network(credentials, cx);
+    }
+
+    pub(crate) fn activate_wifi_password_key(
+        &mut self,
+        event: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(key) = event.index().and_then(Key::from_code) else {
+            return;
+        };
+
+        let Some(entry) = self.wifi.password_entry_mut() else {
+            return;
+        };
+
+        match entry.keyboard_mut().press(key) {
+            KeyResult::Unchanged => {}
+            KeyResult::Changed => cx.notify(),
+            KeyResult::Submit => {
+                let Some(credentials) = entry.credentials() else {
+                    return;
+                };
+
+                self.remember_wifi_network(credentials, cx);
+                self.navigate_back(cx);
+            }
+        }
+    }
+
+    pub(crate) fn activate_toggle_wifi_password(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(entry) = self.wifi.password_entry_mut() {
+            entry.toggle_shown();
+            cx.notify();
+        }
     }
 }

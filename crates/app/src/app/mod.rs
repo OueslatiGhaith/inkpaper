@@ -30,6 +30,7 @@ use crate::screens::{
     file_transfer::FileTransferRoute, home::HomeRoute, reader::ReaderRoute,
     recent_books::RecentBooksRoute, settings::SettingsRoute,
     table_of_contents::TableOfContentsRoute, wifi_networks::WifiNetworksRoute,
+    wifi_password::WifiPasswordRoute,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +43,7 @@ enum Screen {
     Settings,
     ClockSettings,
     WifiNetworks,
+    WifiPassword,
     TableOfContents,
 }
 
@@ -67,6 +69,7 @@ impl Screen {
             Self::Settings => &SettingsRoute,
             Self::ClockSettings => &ClockSettingsRoute,
             Self::WifiNetworks => &WifiNetworksRoute,
+            Self::WifiPassword => &WifiPasswordRoute,
             Self::TableOfContents => &TableOfContentsRoute,
         }
     }

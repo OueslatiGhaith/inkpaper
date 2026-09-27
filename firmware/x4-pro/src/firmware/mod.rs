@@ -257,18 +257,6 @@ async fn main(spawner: Spawner) -> ! {
         warn!("failed to request initial frontlight state");
     }
 
-    // after loading, so saved networks don't replace it; saved with the
-    // frontlight work below
-    if let Some(credentials) = wifi::build_credentials()
-        && runtime
-            .update(app, move |app, cx| {
-                app.remember_wifi_network(credentials, cx)
-            })
-            .is_err()
-    {
-        warn!("failed to remember build-time WiFi network");
-    }
-
     if app_service.service_pending(runtime, app).await.is_err() {
         warn!("failed to apply initial frontlight state");
     }

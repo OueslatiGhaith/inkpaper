@@ -14,7 +14,7 @@ use inkpaper_ui::prelude::*;
 use crate::{
     gesture::wheel_scroll_offset,
     platform::SimulatorPlatform,
-    radio::{SimulatedRadio, build_credentials},
+    radio::SimulatedRadio,
     render::{
         DISPLAY_HEIGHT, DISPLAY_SIZE_EG, DISPLAY_WIDTH, rebuild_ui, render_pending_ui, ui_point,
     },
@@ -44,18 +44,6 @@ fn main() {
     let mut app_service = AppService::new(SimulatorPlatform::new(radio.clone()));
     future::block_on(app_service.service_pending(&mut runtime, app))
         .expect("application service must remain available");
-
-    // after loading, so saved networks don't replace it
-    if let Some(credentials) = build_credentials() {
-        runtime
-            .update(app, move |app, cx| {
-                app.remember_wifi_network(credentials, cx)
-            })
-            .expect("application root must remain available");
-
-        future::block_on(app_service.service_pending(&mut runtime, app))
-            .expect("application service must remain available");
-    }
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 

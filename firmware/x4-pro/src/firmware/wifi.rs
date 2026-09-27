@@ -64,15 +64,6 @@ pub fn request_clock_sync(network: WifiCredentials) {
     REQUESTS.signal(WifiRequest::SyncClock(network));
 }
 
-/// The network from `INKPAPER_WIFI_SSID` and `INKPAPER_WIFI_PASS` at build time.
-/// A development stand-in until passwords can be typed.
-pub fn build_credentials() -> Option<WifiCredentials> {
-    WifiCredentials::new(
-        option_env!("INKPAPER_WIFI_SSID")?,
-        option_env!("INKPAPER_WIFI_PASS").unwrap_or(""),
-    )
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
 enum SyncFailure {
     Credentials,

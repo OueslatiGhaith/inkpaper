@@ -97,10 +97,6 @@ impl RenderOnce for NetworkList<'_> {
             .map(move |(index, network)| {
                 let known = saved.find(network.ssid()).is_some();
 
-                // secured networks without a saved password can't be chosen
-                // until passwords can be typed
-                let choosable = known || !network.secured();
-
                 let value = if current == Some(network.ssid()) {
                     "In use"
                 } else if known {
@@ -116,7 +112,7 @@ impl RenderOnce for NetworkList<'_> {
                     label: network.ssid(),
                     value,
                     selected: false,
-                    on_activate: choosable.then_some(on_network),
+                    on_activate: Some(on_network),
                 })
             });
 

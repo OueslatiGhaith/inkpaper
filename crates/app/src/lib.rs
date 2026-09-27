@@ -11,6 +11,7 @@ mod file_transfer;
 mod frontlight;
 mod gesture;
 mod input;
+mod keyboard;
 mod reader;
 mod reader_page;
 mod reading_history;
