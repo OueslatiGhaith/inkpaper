@@ -8,7 +8,7 @@ use crate::{
     FileTransferRequest, FrontlightPreferences, FrontlightPreferencesRequest, FrontlightSetting,
     InkPaperApp, ReaderPreferences, ReaderPreferencesRequest, ReaderRequest, ReaderSession,
     ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials, WifiJoinFailure,
-    WifiScanError,
+    WifiJoinPlan, WifiScanError,
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
@@ -85,10 +85,11 @@ pub trait AppPlatform {
     /// Bytes unique to this device, used to obfuscate saved WiFi passwords.
     fn device_key(&self) -> DeviceKey;
 
-    /// Starts setting the clock over `network` and returns without waiting.
-    /// The platform reports the outcome through
-    /// [`InkPaperApp::apply_clock_sync_result`].
-    async fn start_clock_sync(&mut self, network: &WifiCredentials) -> Result<(), Self::Error>;
+    /// Starts setting the clock over a network from `plan` and returns without
+    /// waiting. The connected network comes first; when it can't be joined,
+    /// the platform scans and tries the fallbacks in range. It reports the
+    /// outcome through [`InkPaperApp::apply_clock_sync_result`].
+    async fn start_clock_sync(&mut self, plan: &WifiJoinPlan) -> Result<(), Self::Error>;
 
     /// Starts joining `network` to check its password, then leaves it, and
     /// returns without waiting. The platform reports the outcome through
@@ -183,10 +184,10 @@ where
 
             let clock_sync_request = runtime.update(app, |app, _| app.take_clock_sync_request())?;
 
-            if let Some(network) = clock_sync_request {
-                if self.platform.start_clock_sync(&network).await.is_err() {
+            if let Some(plan) = clock_sync_request {
+                if self.platform.start_clock_sync(&plan).await.is_err() {
                     runtime.update(app, |app, cx| {
-                        app.apply_clock_sync_result(Err(ClockSyncFailure::Radio), cx);
+                        app.apply_clock_sync_result(None, Err(ClockSyncFailure::Radio), cx);
                     })?;
                 }
 

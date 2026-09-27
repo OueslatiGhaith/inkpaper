@@ -568,7 +568,9 @@ fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: Rtc
 fn apply_wifi_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: WifiEvent) {
     let applied = runtime.update(app, move |app, cx| match event {
         WifiEvent::Scanned(result) => app.apply_wifi_scan_result(result, cx),
-        WifiEvent::ClockSynced(result) => app.apply_clock_sync_result(result, cx),
+        WifiEvent::ClockSynced { joined, result } => {
+            app.apply_clock_sync_result(joined.as_deref(), result, cx)
+        }
         WifiEvent::Joined(result) => app.apply_wifi_join_result(result, cx),
     });
 

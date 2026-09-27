@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::keyboard::{Key, KeyResult, KeyboardState};
 
-const STORAGE_VERSION: u8 = 1;
+const STORAGE_VERSION: u8 = 2;
 
 /// Like crosspoint, up to eight networks are remembered.
 const MAX_SAVED_NETWORKS: usize = 8;
@@ -92,46 +92,148 @@ impl WifiJoinFailure {
     }
 }
 
-/// Remembered networks, most recently chosen first. The first one is the
-/// network the device uses.
+/// A remembered network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SavedNetwork {
+    credentials: WifiCredentials,
+    /// whether a connection may fall back to it when the connected network
+    /// can't be joined
+    auto_connect: bool,
+}
+
+impl SavedNetwork {
+    pub(crate) fn ssid(&self) -> &str {
+        self.credentials.ssid()
+    }
+
+    pub(crate) const fn credentials(&self) -> &WifiCredentials {
+        &self.credentials
+    }
+
+    pub(crate) const fn auto_connect(&self) -> bool {
+        self.auto_connect
+    }
+}
+
+/// Remembered networks, most recently connected first. The first one is the
+/// connected network, the one the device joins when it needs WiFi, unless it
+/// was disconnected.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct SavedNetworks {
-    networks: Vec<WifiCredentials>,
+    networks: Vec<SavedNetwork>,
+    connected: bool,
 }
 
 impl SavedNetworks {
-    pub(crate) fn current(&self) -> Option<&WifiCredentials> {
-        self.networks.first()
+    pub(crate) fn connected(&self) -> Option<&WifiCredentials> {
+        self.networks
+            .first()
+            .filter(|_| self.connected)
+            .map(|network| &network.credentials)
     }
 
-    pub(crate) fn find(&self, ssid: &str) -> Option<&WifiCredentials> {
-        self.networks.iter().find(|network| network.ssid == ssid)
+    pub(crate) fn find(&self, ssid: &str) -> Option<&SavedNetwork> {
+        self.networks.iter().find(|network| network.ssid() == ssid)
     }
 
-    /// Makes `credentials` the network in use. Returns whether anything changed.
-    fn remember(&mut self, credentials: WifiCredentials) -> bool {
-        if self.current() == Some(&credentials) {
+    /// Makes `credentials` the connected network, keeping its auto-connect
+    /// setting if it was saved. Returns whether anything changed.
+    fn connect(&mut self, credentials: WifiCredentials) -> bool {
+        if self.connected() == Some(&credentials) {
             return false;
         }
 
+        let auto_connect = self
+            .find(credentials.ssid())
+            .is_none_or(SavedNetwork::auto_connect);
+
         self.networks
-            .retain(|network| network.ssid != credentials.ssid);
-        self.networks.insert(0, credentials);
+            .retain(|network| network.ssid() != credentials.ssid());
+        self.networks.insert(
+            0,
+            SavedNetwork {
+                credentials,
+                auto_connect,
+            },
+        );
         self.networks.truncate(MAX_SAVED_NETWORKS);
+        self.connected = true;
 
         true
+    }
+
+    fn disconnect(&mut self) -> bool {
+        core::mem::take(&mut self.connected)
+    }
+
+    /// Drops a network and its password.
+    fn forget(&mut self, ssid: &str) -> bool {
+        let Some(index) = self
+            .networks
+            .iter()
+            .position(|network| network.ssid() == ssid)
+        else {
+            return false;
+        };
+
+        self.networks.remove(index);
+
+        if index == 0 {
+            self.connected = false;
+        }
+
+        true
+    }
+
+    fn set_auto_connect(&mut self, ssid: &str, auto_connect: bool) -> bool {
+        let Some(network) = self
+            .networks
+            .iter_mut()
+            .find(|network| network.ssid() == ssid)
+        else {
+            return false;
+        };
+
+        let changed = network.auto_connect != auto_connect;
+        network.auto_connect = auto_connect;
+
+        changed
+    }
+
+    /// The networks a connection may use, or nothing when there are none.
+    pub(crate) fn join_plan(&self) -> Option<WifiJoinPlan> {
+        let connected = self.connected().cloned();
+
+        let fallbacks: Vec<_> = self
+            .networks
+            .iter()
+            .filter(|network| network.auto_connect)
+            .map(|network| network.credentials.clone())
+            .filter(|credentials| Some(credentials) != connected.as_ref())
+            .collect();
+
+        if connected.is_none() && fallbacks.is_empty() {
+            return None;
+        }
+
+        Some(WifiJoinPlan {
+            connected,
+            fallbacks,
+        })
     }
 
     /// Encodes the networks with each password obfuscated by `device_key`.
     pub(crate) fn encode(&self, device_key: &DeviceKey) -> Result<Vec<u8>, SavedNetworksError> {
         let stored = StoredSavedNetworks {
             version: STORAGE_VERSION,
+            connected: self.connected,
             networks: self
                 .networks
                 .iter()
                 .map(|network| StoredNetwork {
-                    ssid: network.ssid.clone(),
-                    password: obfuscate(network.password.as_bytes(), device_key),
+                    ssid: network.credentials.ssid.clone(),
+                    password: obfuscate(network.credentials.password.as_bytes(), device_key),
+                    auto_connect: network.auto_connect,
                 })
                 .collect(),
         };
@@ -142,29 +244,114 @@ impl SavedNetworks {
     /// Decodes networks saved with the same `device_key`. Networks that don't
     /// decode, such as from a card moved over from another device, are dropped.
     pub(crate) fn decode(bytes: &[u8], device_key: &DeviceKey) -> Result<Self, SavedNetworksError> {
-        let (stored, remainder) = postcard::take_from_bytes::<StoredSavedNetworks>(bytes)
-            .map_err(|_| SavedNetworksError::Decode)?;
+        let (version, _) =
+            postcard::take_from_bytes::<u8>(bytes).map_err(|_| SavedNetworksError::Decode)?;
 
-        if !remainder.is_empty() {
-            return Err(SavedNetworksError::TrailingData);
+        let stored = match version {
+            STORAGE_VERSION => decode_all::<StoredSavedNetworks>(bytes)?,
+
+            // version 1 had no connected flag or auto-connect: the first
+            // network was always the one in use
+            1 => {
+                let stored = decode_all::<StoredSavedNetworksV1>(bytes)?;
+
+                StoredSavedNetworks {
+                    version: STORAGE_VERSION,
+                    connected: true,
+                    networks: stored
+                        .networks
+                        .into_iter()
+                        .map(|network| StoredNetwork {
+                            ssid: network.ssid,
+                            password: network.password,
+                            auto_connect: true,
+                        })
+                        .collect(),
+                }
+            }
+
+            version => return Err(SavedNetworksError::UnsupportedVersion(version)),
+        };
+
+        let mut connected = stored.connected;
+        let mut networks = Vec::new();
+
+        for (index, network) in stored.networks.into_iter().enumerate() {
+            let credentials = String::from_utf8(obfuscate(&network.password, device_key))
+                .ok()
+                .and_then(|password| WifiCredentials::new(network.ssid, password));
+
+            match credentials {
+                Some(credentials) if networks.len() < MAX_SAVED_NETWORKS => {
+                    networks.push(SavedNetwork {
+                        credentials,
+                        auto_connect: network.auto_connect,
+                    });
+                }
+                // a connected network that didn't decode can't stay connected
+                _ if index == 0 => connected = false,
+                _ => {}
+            }
         }
 
-        if stored.version != STORAGE_VERSION {
-            return Err(SavedNetworksError::UnsupportedVersion(stored.version));
-        }
+        Ok(Self {
+            networks,
+            connected,
+        })
+    }
+}
 
-        let networks = stored
-            .networks
-            .into_iter()
-            .filter_map(|network| {
-                let password = String::from_utf8(obfuscate(&network.password, device_key)).ok()?;
+fn decode_all<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, SavedNetworksError> {
+    let (stored, remainder) =
+        postcard::take_from_bytes::<T>(bytes).map_err(|_| SavedNetworksError::Decode)?;
 
-                WifiCredentials::new(network.ssid, password)
+    if !remainder.is_empty() {
+        return Err(SavedNetworksError::TrailingData);
+    }
+
+    Ok(stored)
+}
+
+/// The networks a connection may use: the connected network first, then saved
+/// networks with auto-connect on, which are only worth trying when a scan
+/// finds them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WifiJoinPlan {
+    connected: Option<WifiCredentials>,
+    fallbacks: Vec<WifiCredentials>,
+}
+
+impl WifiJoinPlan {
+    pub fn connected(&self) -> Option<&WifiCredentials> {
+        self.connected.as_ref()
+    }
+
+    pub fn has_fallbacks(&self) -> bool {
+        !self.fallbacks.is_empty()
+    }
+
+    /// The fallback networks a scan found, strongest first.
+    pub fn fallbacks_in_range(&self, found: &[WifiNetwork]) -> Vec<&WifiCredentials> {
+        let mut in_range: Vec<_> = self
+            .fallbacks
+            .iter()
+            .filter_map(|credentials| {
+                let strongest = found
+                    .iter()
+                    .filter(|network| network.ssid == credentials.ssid)
+                    .map(|network| network.rssi)
+                    .max()?;
+
+                Some((credentials, strongest))
             })
-            .take(MAX_SAVED_NETWORKS)
             .collect();
 
-        Ok(Self { networks })
+        in_range.sort_by_key(|(_, rssi)| core::cmp::Reverse(*rssi));
+
+        in_range
+            .into_iter()
+            .map(|(credentials, _)| credentials)
+            .collect()
     }
 }
 
@@ -194,6 +381,7 @@ fn obfuscate(bytes: &[u8], device_key: &DeviceKey) -> Vec<u8> {
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredSavedNetworks {
     version: u8,
+    connected: bool,
     networks: Vec<StoredNetwork>,
 }
 
@@ -201,6 +389,19 @@ struct StoredSavedNetworks {
 struct StoredNetwork {
     ssid: String,
     /// obfuscated with the device key
+    password: Vec<u8>,
+    auto_connect: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredSavedNetworksV1 {
+    version: u8,
+    networks: Vec<StoredNetworkV1>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredNetworkV1 {
+    ssid: String,
     password: Vec<u8>,
 }
 
@@ -325,6 +526,24 @@ pub(crate) struct WifiState {
     scan_requested: bool,
     revision: u64,
     password_entry: Option<PasswordEntry>,
+    menu: Option<NetworkMenu>,
+}
+
+/// The long-press menu of a saved network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NetworkMenu {
+    ssid: String,
+    top: i32,
+}
+
+impl NetworkMenu {
+    pub(crate) fn ssid(&self) -> &str {
+        &self.ssid
+    }
+
+    pub(crate) const fn top(&self) -> i32 {
+        self.top
+    }
 }
 
 impl WifiState {
@@ -355,14 +574,55 @@ impl WifiState {
         changed
     }
 
-    pub(crate) fn remember(&mut self, credentials: WifiCredentials) -> bool {
-        if !self.saved.remember(credentials) {
+    /// Applies a change to the saved networks, saving them if it changed
+    /// anything.
+    fn change_saved(&mut self, change: impl FnOnce(&mut SavedNetworks) -> bool) -> bool {
+        let changed = change(&mut self.saved);
+        self.save_requested |= changed;
+
+        changed
+    }
+
+    pub(crate) fn connect(&mut self, credentials: WifiCredentials) -> bool {
+        self.change_saved(|saved| saved.connect(credentials))
+    }
+
+    pub(crate) fn disconnect(&mut self) -> bool {
+        self.change_saved(SavedNetworks::disconnect)
+    }
+
+    pub(crate) fn forget(&mut self, ssid: &str) -> bool {
+        self.change_saved(|saved| saved.forget(ssid))
+    }
+
+    pub(crate) fn toggle_auto_connect(&mut self, ssid: &str) -> bool {
+        let Some(auto_connect) = self.saved.find(ssid).map(SavedNetwork::auto_connect) else {
+            return false;
+        };
+
+        self.change_saved(|saved| saved.set_auto_connect(ssid, !auto_connect))
+    }
+
+    /// Opens the menu of a saved network, `top` px down the screen.
+    pub(crate) fn open_menu(&mut self, ssid: &str, top: i32) -> bool {
+        if self.saved.find(ssid).is_none() {
             return false;
         }
 
-        self.save_requested = true;
+        self.menu = Some(NetworkMenu {
+            ssid: String::from(ssid),
+            top,
+        });
 
         true
+    }
+
+    pub(crate) fn menu(&self) -> Option<&NetworkMenu> {
+        self.menu.as_ref()
+    }
+
+    pub(crate) fn close_menu(&mut self) -> bool {
+        self.menu.take().is_some()
     }
 
     pub(crate) fn begin_password_entry(&mut self, ssid: String) {
@@ -449,18 +709,18 @@ mod tests {
     }
 
     #[test]
-    fn remembering_moves_a_network_to_the_front_without_duplicates() {
+    fn connecting_moves_a_network_to_the_front_without_duplicates() {
         let mut saved = SavedNetworks::default();
 
         for index in 0..=MAX_SAVED_NETWORKS {
-            saved.remember(credentials(&alloc::format!("net-{index}")));
+            saved.connect(credentials(&alloc::format!("net-{index}")));
         }
         assert_eq!(saved.networks.len(), MAX_SAVED_NETWORKS);
         assert!(saved.find("net-0").is_none());
 
-        saved.remember(WifiCredentials::new("net-3", "changed").unwrap());
+        saved.connect(WifiCredentials::new("net-3", "changed").unwrap());
 
-        assert_eq!(saved.current().unwrap().password(), "changed");
+        assert_eq!(saved.connected().unwrap().password(), "changed");
         assert_eq!(saved.networks.len(), MAX_SAVED_NETWORKS);
         assert_eq!(
             saved
@@ -491,10 +751,99 @@ mod tests {
     const KEY: DeviceKey = [0x3c, 0x71, 0xbf, 0x0a, 0x9e, 0x42];
 
     #[test]
+    fn disconnecting_or_forgetting_leaves_no_network_connected() {
+        let mut saved = SavedNetworks::default();
+        saved.connect(credentials("home"));
+        saved.connect(credentials("office"));
+
+        assert!(saved.disconnect());
+        assert_eq!(saved.connected(), None);
+        assert!(saved.find("office").is_some());
+
+        saved.connect(credentials("home"));
+        assert!(saved.forget("home"));
+        assert_eq!(saved.connected(), None);
+        assert!(saved.find("home").is_none());
+
+        // forgetting another network keeps the connected one
+        saved.connect(credentials("home"));
+        saved.forget("office");
+        assert_eq!(saved.connected().map(WifiCredentials::ssid), Some("home"));
+    }
+
+    #[test]
+    fn a_new_password_keeps_the_auto_connect_setting() {
+        let mut saved = SavedNetworks::default();
+        saved.connect(credentials("home"));
+        saved.set_auto_connect("home", false);
+
+        saved.connect(WifiCredentials::new("home", "new password").unwrap());
+
+        let home = saved.find("home").unwrap();
+        assert_eq!(home.credentials.password(), "new password");
+        assert!(!home.auto_connect());
+    }
+
+    #[test]
+    fn a_join_plan_falls_back_to_auto_connect_networks_in_range() {
+        let mut saved = SavedNetworks::default();
+        assert_eq!(saved.join_plan(), None);
+
+        for ssid in ["far", "weak", "manual", "strong", "home"] {
+            saved.connect(credentials(ssid));
+        }
+        saved.set_auto_connect("manual", false);
+
+        let plan = saved.join_plan().unwrap();
+        assert_eq!(plan.connected().map(WifiCredentials::ssid), Some("home"));
+
+        let found = [
+            WifiNetwork::new("weak", -80, true),
+            WifiNetwork::new("home", -30, true),
+            WifiNetwork::new("manual", -40, true),
+            WifiNetwork::new("strong", -60, true),
+            WifiNetwork::new("weak", -50, true),
+        ];
+        let fallbacks: Vec<_> = plan
+            .fallbacks_in_range(&found)
+            .into_iter()
+            .map(WifiCredentials::ssid)
+            .collect();
+
+        // the connected network is tried on its own, first
+        assert_eq!(fallbacks, ["weak", "strong"]);
+
+        // with nothing connected, the auto-connect networks are still a plan
+        saved.disconnect();
+        let plan = saved.join_plan().unwrap();
+        assert_eq!(plan.connected(), None);
+        assert!(plan.has_fallbacks());
+    }
+
+    #[test]
+    fn version_1_files_load_with_their_first_network_connected() {
+        let stored = StoredSavedNetworksV1 {
+            version: 1,
+            networks: alloc::vec![StoredNetworkV1 {
+                ssid: String::from("home"),
+                password: obfuscate(b"password", &KEY),
+            }],
+        };
+        let bytes = postcard::to_allocvec(&stored).unwrap();
+
+        let saved = SavedNetworks::decode(&bytes, &KEY).unwrap();
+
+        assert_eq!(saved.connected(), Some(&credentials("home")));
+        assert!(saved.find("home").unwrap().auto_connect());
+    }
+
+    #[test]
     fn saved_networks_round_trip_with_the_device_key() {
         let mut saved = SavedNetworks::default();
-        saved.remember(credentials("home"));
-        saved.remember(WifiCredentials::new("cafe", "").unwrap());
+        saved.connect(credentials("home"));
+        saved.connect(WifiCredentials::new("cafe", "").unwrap());
+        saved.set_auto_connect("home", false);
+        saved.disconnect();
 
         let bytes = saved.encode(&KEY).unwrap();
 
@@ -504,7 +853,7 @@ mod tests {
     #[test]
     fn passwords_are_not_stored_readably() {
         let mut saved = SavedNetworks::default();
-        saved.remember(WifiCredentials::new("home", "correct horse battery").unwrap());
+        saved.connect(WifiCredentials::new("home", "correct horse battery").unwrap());
 
         let bytes = saved.encode(&KEY).unwrap();
 
@@ -518,7 +867,7 @@ mod tests {
         let decoded = SavedNetworks::decode(&bytes, &other_device).unwrap();
         assert!(
             decoded
-                .current()
+                .connected()
                 .is_none_or(|network| network.password() != "correct horse battery")
         );
     }
@@ -580,6 +929,6 @@ mod tests {
         wifi.end_password_entry();
 
         assert_eq!(wifi.finish_join(Ok(())), None);
-        assert!(wifi.saved().current().is_none());
+        assert!(wifi.saved().connected().is_none());
     }
 }

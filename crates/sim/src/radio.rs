@@ -1,9 +1,9 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     time::{Duration, Instant},
 };
 
-use inkpaper_app::{ClockSyncFailure, InkPaperApp, WifiJoinFailure, WifiNetwork};
+use inkpaper_app::{ClockSyncFailure, InkPaperApp, WifiJoinFailure, WifiJoinPlan, WifiNetwork};
 use inkpaper_ui::prelude::*;
 
 // long enough to see the scanning and syncing states
@@ -17,6 +17,7 @@ const JOIN_DURATION: Duration = Duration::from_secs(2);
 pub(super) struct SimulatedRadio {
     scan: Cell<Option<Instant>>,
     clock_sync: Cell<Option<Instant>>,
+    clock_sync_plan: RefCell<Option<WifiJoinPlan>>,
     join: Cell<Option<Instant>>,
 }
 
@@ -25,8 +26,9 @@ impl SimulatedRadio {
         self.scan.set(Some(Instant::now()));
     }
 
-    pub(super) fn start_clock_sync(&self) {
+    pub(super) fn start_clock_sync(&self, plan: WifiJoinPlan) {
         self.clock_sync.set(Some(Instant::now()));
+        self.clock_sync_plan.replace(Some(plan));
     }
 
     pub(super) fn start_join(&self) {
@@ -40,10 +42,12 @@ impl SimulatedRadio {
         app: Entity<InkPaperApp>,
     ) -> bool {
         let scanned = take_due(&self.scan, SCAN_DURATION);
-        let synced = take_due(&self.clock_sync, CLOCK_SYNC_DURATION);
+        let synced = take_due(&self.clock_sync, CLOCK_SYNC_DURATION)
+            .then(|| self.clock_sync_plan.take())
+            .flatten();
         let joined = take_due(&self.join, JOIN_DURATION);
 
-        if !scanned && !synced && !joined {
+        if !scanned && synced.is_none() && !joined {
             return false;
         }
 
@@ -53,8 +57,9 @@ impl SimulatedRadio {
                     app.apply_wifi_scan_result(Ok(scan_results()), cx);
                 }
 
-                if synced {
-                    app.apply_clock_sync_result(clock_sync_result(), cx);
+                if let Some(plan) = synced {
+                    let (joined, result) = clock_sync_outcome(&plan);
+                    app.apply_clock_sync_result(joined, result, cx);
                 }
 
                 if joined {
@@ -98,11 +103,19 @@ fn join_result() -> Result<(), WifiJoinFailure> {
     }
 }
 
-/// Succeeds, or fails to join WiFi when `INKPAPER_SIM_CLOCK_SYNC_FAIL` is set.
-/// A successful sync leaves the simulated clock as it is.
-fn clock_sync_result() -> Result<(), ClockSyncFailure> {
-    match std::env::var_os("INKPAPER_SIM_CLOCK_SYNC_FAIL") {
-        Some(_) => Err(ClockSyncFailure::Join),
-        None => Ok(()),
+/// Joins the connected network, or when `INKPAPER_SIM_CLOCK_SYNC_FAIL` is set
+/// and it can't be joined, the strongest fallback in range. Returns the
+/// network joined. A successful sync leaves the simulated clock as it is.
+fn clock_sync_outcome(plan: &WifiJoinPlan) -> (Option<&str>, Result<(), ClockSyncFailure>) {
+    let connected_fails = std::env::var_os("INKPAPER_SIM_CLOCK_SYNC_FAIL").is_some();
+
+    let joined = match plan.connected() {
+        Some(connected) if !connected_fails => Some(connected),
+        _ => plan.fallbacks_in_range(&scan_results()).first().copied(),
+    };
+
+    match joined {
+        Some(network) => (Some(network.ssid()), Ok(())),
+        None => (None, Err(ClockSyncFailure::Join)),
     }
 }

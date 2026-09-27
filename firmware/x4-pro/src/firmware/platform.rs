@@ -1,6 +1,8 @@
 use alloc::vec::Vec;
 
-use inkpaper_app::{AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials};
+use inkpaper_app::{
+    AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials, WifiJoinPlan,
+};
 use inkpaper_epub::EpubSource;
 
 use crate::firmware::{
@@ -136,8 +138,8 @@ impl AppPlatform for X4Platform {
         storage::save_state_and_wait(name, bytes).await
     }
 
-    async fn start_clock_sync(&mut self, network: &WifiCredentials) -> Result<(), Self::Error> {
-        wifi::request_clock_sync(network.clone());
+    async fn start_clock_sync(&mut self, plan: &WifiJoinPlan) -> Result<(), Self::Error> {
+        wifi::request_clock_sync(plan.clone());
 
         Ok(())
     }

@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use bm8563::DateTime;
 use defmt::{info, warn};
@@ -18,7 +18,7 @@ use esp_radio::wifi::{
     Interface, WifiController, scan::ScanConfig, sta::StationConfig,
 };
 use inkpaper_app::{
-    ClockSyncFailure, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError,
+    ClockSyncFailure, WifiCredentials, WifiJoinFailure, WifiJoinPlan, WifiNetwork, WifiScanError,
 };
 
 use crate::firmware::rtc::{self, RtcSyncResult};
@@ -42,13 +42,16 @@ const SOCKETS: usize = 3;
 
 enum WifiRequest {
     Scan,
-    SyncClock(WifiCredentials),
+    SyncClock(WifiJoinPlan),
     Join(WifiCredentials),
 }
 
 pub enum WifiEvent {
     Scanned(Result<Vec<WifiNetwork>, WifiScanError>),
-    ClockSynced(Result<(), ClockSyncFailure>),
+    ClockSynced {
+        joined: Option<String>,
+        result: Result<(), ClockSyncFailure>,
+    },
     Joined(Result<(), WifiJoinFailure>),
 }
 
@@ -62,10 +65,10 @@ pub fn request_scan() {
     REQUESTS.signal(WifiRequest::Scan);
 }
 
-/// Asks the WiFi task to set the clock over `network`; the outcome arrives on
-/// [`WIFI_EVENTS`].
-pub fn request_clock_sync(network: WifiCredentials) {
-    REQUESTS.signal(WifiRequest::SyncClock(network));
+/// Asks the WiFi task to set the clock over a network from `plan`; the
+/// outcome arrives on [`WIFI_EVENTS`].
+pub fn request_clock_sync(plan: WifiJoinPlan) {
+    REQUESTS.signal(WifiRequest::SyncClock(plan));
 }
 
 /// Asks the WiFi task to join `network` and leave it again, checking its
@@ -84,6 +87,13 @@ enum SyncFailure {
     Ntp,
     Time,
     Rtc,
+}
+
+impl SyncFailure {
+    /// Whether the network couldn't be joined, so another may be tried.
+    const fn is_join(self) -> bool {
+        matches!(self, Self::Credentials | Self::Connect)
+    }
 }
 
 impl From<SyncFailure> for ClockSyncFailure {
@@ -105,8 +115,10 @@ pub async fn wifi_task(mut wifi: WIFI<'static>) {
     loop {
         let event = match REQUESTS.wait().await {
             WifiRequest::Scan => WifiEvent::Scanned(scan(wifi.reborrow()).await),
-            WifiRequest::SyncClock(network) => {
-                WifiEvent::ClockSynced(sync_clock(wifi.reborrow(), &network).await)
+            WifiRequest::SyncClock(plan) => {
+                let (joined, result) = sync_clock(wifi.reborrow(), &plan).await;
+
+                WifiEvent::ClockSynced { joined, result }
             }
             WifiRequest::Join(network) => WifiEvent::Joined(join(wifi.reborrow(), &network).await),
         };
@@ -154,10 +166,47 @@ async fn scan(wifi: WIFI<'_>) -> Result<Vec<WifiNetwork>, WifiScanError> {
         .collect())
 }
 
-async fn sync_clock(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<(), ClockSyncFailure> {
-    info!("clock sync: joining {}", network.ssid());
+/// Sets the clock over the connected network, or when that can't be joined,
+/// over the strongest fallback a scan finds. Returns the network joined.
+async fn sync_clock(
+    mut wifi: WIFI<'_>,
+    plan: &WifiJoinPlan,
+) -> (Option<String>, Result<(), ClockSyncFailure>) {
+    if let Some(network) = plan.connected() {
+        match sync(wifi.reborrow(), network).await {
+            Err(failure) if failure.is_join() && plan.has_fallbacks() => {
+                warn!("clock sync: could not join {}", network.ssid());
+            }
+            result => return report(network, result),
+        }
+    }
 
-    match sync(wifi, network).await {
+    // fallbacks are only worth joining when they're in range
+    let Ok(found) = scan(wifi.reborrow()).await else {
+        return (None, Err(ClockSyncFailure::Radio));
+    };
+
+    for network in plan.fallbacks_in_range(&found) {
+        match sync(wifi.reborrow(), network).await {
+            Err(failure) if failure.is_join() => {
+                warn!("clock sync: could not join {}", network.ssid());
+            }
+            result => return report(network, result),
+        }
+    }
+
+    warn!("clock sync: no network could be joined");
+
+    (None, Err(ClockSyncFailure::Join))
+}
+
+/// Logs how a sync over `network` ended. The network is reported as joined
+/// unless starting the radio or joining it is what failed.
+fn report(
+    network: &WifiCredentials,
+    result: Result<DateTime, SyncFailure>,
+) -> (Option<String>, Result<(), ClockSyncFailure>) {
+    match result {
         Ok(datetime) => {
             info!(
                 "clock sync: RTC set to {:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
@@ -169,12 +218,15 @@ async fn sync_clock(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<(), Clo
                 datetime.second(),
             );
 
-            Ok(())
+            (Some(String::from(network.ssid())), Ok(()))
         }
         Err(failure) => {
             warn!("clock sync failed at {}", failure);
 
-            Err(failure.into())
+            let joined = (!failure.is_join() && failure != SyncFailure::Radio)
+                .then(|| String::from(network.ssid()));
+
+            (joined, Err(failure.into()))
         }
     }
 }
@@ -204,6 +256,8 @@ async fn join(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<(), WifiJoinF
 }
 
 async fn sync(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<DateTime, SyncFailure> {
+    info!("clock sync: joining {}", network.ssid());
+
     let mut controller = connect(wifi, network).await?;
 
     let rng = Rng::new();

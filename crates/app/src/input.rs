@@ -31,14 +31,15 @@ pub enum AppInputEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LongPressEvent {
     id: ElementId,
+    position: Point,
 }
 
 impl LongPressEvent {
-    const fn new(id: ElementId) -> Self {
-        Self { id }
+    /// Where the touch was held.
+    pub(crate) const fn position(self) -> Point {
+        self.position
     }
 
-    #[expect(dead_code, reason = "the WiFi network menu is the first to use it")]
     pub(crate) const fn index(self) -> Option<usize> {
         match self.id {
             ElementId::Value(value) | ElementId::NamedValue(_, value) => Some(value as usize),
@@ -137,7 +138,7 @@ pub fn dispatch_input(
             let captured = match action {
                 LongPressAction::Ignore => false,
                 LongPressAction::Dispatch => {
-                    runtime.dispatch_at_with(position, LongPressEvent::new)?
+                    runtime.dispatch_at_with(position, |id| LongPressEvent { id, position })?
                 }
                 LongPressAction::Capture => true,
             };

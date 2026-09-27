@@ -27,7 +27,9 @@ pub use frontlight::FrontlightSetting;
 pub use gesture::{LONG_PRESS_MS, TouchGesture};
 pub use service::{AppPlatform, AppService, AppServiceError, PlatformEntry};
 pub use system::{BatteryStatus, ClockStatus};
-pub use wifi::{DeviceKey, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError};
+pub use wifi::{
+    DeviceKey, WifiCredentials, WifiJoinFailure, WifiJoinPlan, WifiNetwork, WifiScanError,
+};
 
 // internal application domain/effect types.
 //

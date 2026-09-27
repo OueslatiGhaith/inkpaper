@@ -101,7 +101,7 @@ impl RenderOnce for ClockSettingsScreen<'_> {
                     <SettingsValueRow
                         id={("clock-wifi", 0)}
                         label="WiFi Network"
-                        value={self.network.unwrap_or("Not set")}
+                        value={self.network.unwrap_or("Not connected")}
                         selected={false}
                         on_activate={Some(self.on_wifi)}
                     />
@@ -182,7 +182,7 @@ impl ScreenView for ClockSettingsRoute {
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
         ClockSettingsScreen::from(ClockSettingsScreenProps {
-            network: app.wifi.saved().current().map(|network| network.ssid()),
+            network: app.wifi.saved().connected().map(|network| network.ssid()),
             battery: app.system_status.battery(),
             clock: app.local_clock(),
             utc_offset: app.clock.utc_offset(),

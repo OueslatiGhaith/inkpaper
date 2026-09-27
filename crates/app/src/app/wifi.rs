@@ -4,7 +4,8 @@ use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
 use crate::{
-    SavedNetworks, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError, keyboard::Key,
+    SavedNetworks, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError,
+    input::LongPressEvent, keyboard::Key, screens::wifi_networks::WifiMenuItem,
 };
 
 impl InkPaperApp {
@@ -14,11 +15,23 @@ impl InkPaperApp {
         }
     }
 
-    /// Makes `credentials` the network the device uses and saves it.
-    fn remember_wifi_network(&mut self, credentials: WifiCredentials, cx: &mut Context<'_, Self>) {
-        if self.wifi.remember(credentials) {
+    /// Makes `credentials` the connected network and saves it.
+    fn connect_wifi_network(&mut self, credentials: WifiCredentials, cx: &mut Context<'_, Self>) {
+        if self.wifi.connect(credentials) {
             cx.notify();
         }
+    }
+
+    fn disconnect_wifi_network(&mut self, cx: &mut Context<'_, Self>) {
+        if self.wifi.disconnect() {
+            cx.notify();
+        }
+    }
+
+    /// Opens the keyboard to type the password of `ssid`.
+    fn enter_wifi_password(&mut self, ssid: &str, cx: &mut Context<'_, Self>) {
+        self.wifi.begin_password_entry(String::from(ssid));
+        self.open_screen(Screen::WifiPassword, cx);
     }
 
     pub(crate) fn take_wifi_networks_save_request(&mut self) -> Option<SavedNetworks> {
@@ -48,36 +61,115 @@ impl InkPaperApp {
         }
     }
 
-    /// Chooses a scanned network: a saved one with its password, an open one, or
-    /// a secured one after its password is typed.
+    /// Tapping a network disconnects it when it's connected, and otherwise
+    /// connects it: a saved or open one at once, a secured one once its
+    /// password is typed.
     pub(crate) fn activate_wifi_network(
         &mut self,
         event: &ActivateEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(index) = event.index() else {
+        let Some(network) = event
+            .index()
+            .and_then(|index| self.wifi.networks().get(index))
+        else {
             return;
         };
 
-        let Some(network) = self.wifi.networks().get(index) else {
-            return;
-        };
+        let ssid = String::from(network.ssid());
+        self.toggle_wifi_connection(&ssid, network.secured(), cx);
+    }
 
-        let credentials = match self.wifi.saved().find(network.ssid()) {
-            Some(saved) => saved.clone(),
-            None if !network.secured() => match WifiCredentials::new(network.ssid(), "") {
+    fn toggle_wifi_connection(&mut self, ssid: &str, secured: bool, cx: &mut Context<'_, Self>) {
+        let saved = self.wifi.saved();
+
+        if saved
+            .connected()
+            .is_some_and(|connected| connected.ssid() == ssid)
+        {
+            self.disconnect_wifi_network(cx);
+            return;
+        }
+
+        let credentials = match saved.find(ssid) {
+            Some(network) => network.credentials().clone(),
+            None if !secured => match WifiCredentials::new(ssid, "") {
                 Some(credentials) => credentials,
                 None => return,
             },
             None => {
-                self.wifi.begin_password_entry(String::from(network.ssid()));
-                self.open_screen(Screen::WifiPassword, cx);
-
+                self.enter_wifi_password(ssid, cx);
                 return;
             }
         };
 
-        self.remember_wifi_network(credentials, cx);
+        self.connect_wifi_network(credentials, cx);
+    }
+
+    /// Holding a saved network opens its menu next to the finger.
+    pub(crate) fn long_press_wifi_network(
+        &mut self,
+        event: &LongPressEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(network) = event
+            .index()
+            .and_then(|index| self.wifi.networks().get(index))
+        else {
+            return;
+        };
+
+        let ssid = String::from(network.ssid());
+
+        if self.wifi.open_menu(&ssid, event.position().y.get()) {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn activate_wifi_menu_item(
+        &mut self,
+        event: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(menu) = self.wifi.menu() else {
+            return;
+        };
+
+        let ssid = String::from(menu.ssid());
+
+        match event.index().and_then(WifiMenuItem::from_index) {
+            Some(WifiMenuItem::Connection) => {
+                self.wifi.close_menu();
+                self.toggle_wifi_connection(&ssid, true, cx);
+                cx.notify();
+            }
+
+            // the menu stays open to show the new setting
+            Some(WifiMenuItem::AutoConnect) => {
+                if self.wifi.toggle_auto_connect(&ssid) {
+                    cx.notify();
+                }
+            }
+
+            Some(WifiMenuItem::ChangePassword) => {
+                self.wifi.close_menu();
+                self.enter_wifi_password(&ssid, cx);
+            }
+
+            Some(WifiMenuItem::Forget) => {
+                self.wifi.close_menu();
+                self.wifi.forget(&ssid);
+                cx.notify();
+            }
+
+            None => {}
+        }
+    }
+
+    pub(crate) fn dismiss_wifi_menu(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        if self.wifi.close_menu() {
+            cx.notify();
+        }
     }
 
     pub(crate) fn activate_wifi_password_key(
@@ -117,7 +209,7 @@ impl InkPaperApp {
             return;
         };
 
-        self.remember_wifi_network(credentials, cx);
+        self.connect_wifi_network(credentials, cx);
         self.navigate_back(cx);
     }
 

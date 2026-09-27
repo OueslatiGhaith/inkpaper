@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     BatteryStatus, ClockPreferences, ClockStatus, ClockSyncFailure, FrontlightPreferences,
-    FrontlightPreferencesRequest, FrontlightSetting, UtcOffset, WifiCredentials,
+    FrontlightPreferencesRequest, FrontlightSetting, UtcOffset, WifiJoinPlan,
 };
 
 impl InkPaperApp {
@@ -90,7 +90,7 @@ impl InkPaperApp {
     }
 
     pub(crate) fn activate_sync_clock(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        let changed = if self.wifi.saved().current().is_some() {
+        let changed = if self.wifi.saved().join_plan().is_some() {
             self.clock.request_sync()
         } else {
             self.clock.finish_sync(Err(ClockSyncFailure::NoNetwork))
@@ -101,23 +101,33 @@ impl InkPaperApp {
         }
     }
 
-    /// The network a requested sync should use.
-    pub(crate) fn take_clock_sync_request(&mut self) -> Option<WifiCredentials> {
+    /// The networks a requested sync may join.
+    pub(crate) fn take_clock_sync_request(&mut self) -> Option<WifiJoinPlan> {
         if !self.clock.take_sync_request() {
             return None;
         }
 
-        self.wifi.saved().current().cloned()
+        self.wifi.saved().join_plan()
     }
 
-    /// Reports how a sync started by the app ended. On success the platform
-    /// also delivers the new time through [`Self::apply_clock_status`].
+    /// Reports how a sync started by the app ended, and which network it
+    /// joined, if any. That network becomes the connected one, like
+    /// crosspoint's last connected network. On success the platform also
+    /// delivers the new time through [`Self::apply_clock_status`].
     pub fn apply_clock_sync_result(
         &mut self,
+        joined: Option<&str>,
         result: Result<(), ClockSyncFailure>,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.clock.finish_sync(result) && self.screen() == Screen::ClockSettings {
+        let connected = joined
+            .and_then(|ssid| self.wifi.saved().find(ssid))
+            .map(|network| network.credentials().clone())
+            .is_some_and(|credentials| self.wifi.connect(credentials));
+
+        let finished = self.clock.finish_sync(result) && self.screen() == Screen::ClockSettings;
+
+        if connected || finished {
             cx.notify();
         }
     }

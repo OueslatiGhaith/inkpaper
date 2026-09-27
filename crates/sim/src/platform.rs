@@ -4,7 +4,9 @@ use std::{
     rc::Rc,
 };
 
-use inkpaper_app::{AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials};
+use inkpaper_app::{
+    AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials, WifiJoinPlan,
+};
 
 use crate::{fake_fs::simulator_listing, host_epub::HostFileSource, radio::SimulatedRadio};
 
@@ -99,8 +101,8 @@ impl AppPlatform for SimulatorPlatform {
         Ok(())
     }
 
-    async fn start_clock_sync(&mut self, _: &WifiCredentials) -> Result<(), Self::Error> {
-        self.radio.start_clock_sync();
+    async fn start_clock_sync(&mut self, plan: &WifiJoinPlan) -> Result<(), Self::Error> {
+        self.radio.start_clock_sync(plan.clone());
 
         Ok(())
     }
