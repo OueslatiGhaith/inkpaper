@@ -748,6 +748,65 @@ fn arabic_with_numbers_keeps_digits_in_ltr_order() {
 }
 
 #[test]
+fn long_ltr_line_is_not_limited_by_word_count() {
+    static CHARACTERS: [char; 6] = ['a', ' ', '1', ',', '"', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+
+    // every word, number and punctuation mark switches directional class
+    let text = "\"a, 1 ".repeat(20);
+    let mut output = [ShapedGlyph::EMPTY; 128];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, &text, &mut output)
+        .unwrap();
+
+    assert_eq!(run.direction(), TextDirection::LeftToRight);
+    assert_eq!(run.len(), text.len());
+    assert!(
+        run.glyphs()
+            .windows(2)
+            .all(|pair| pair[0].cluster() < pair[1].cluster())
+    );
+}
+
+#[test]
+fn long_rtl_line_is_not_limited_by_word_count() {
+    static CHARACTERS: [char; 3] = ['ب', ' ', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+
+    let text = "ب ".repeat(40);
+    let mut output = [ShapedGlyph::EMPTY; 128];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, text.trim_end(), &mut output)
+        .unwrap();
+
+    assert_eq!(run.direction(), TextDirection::RightToLeft);
+    assert_eq!(run.len(), 79);
+    assert!(
+        run.glyphs()
+            .windows(2)
+            .all(|pair| pair[0].cluster() > pair[1].cluster())
+    );
+}
+
+#[test]
 fn arabic_with_latin_preserves_ltr_run_order() {
     static CHARACTERS: [char; 5] = ['ب', ' ', 'A', 'B', '?'];
 

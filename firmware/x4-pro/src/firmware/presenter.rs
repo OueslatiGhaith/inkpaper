@@ -1,6 +1,6 @@
 use inkpaper_ui::{
     RuntimeResources,
-    backend::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
+    backend::{EInkError, EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
     prelude::*,
 };
 
@@ -391,10 +391,20 @@ fn render_invalidation(
                 "paint",
             );
 
-            runtime
-                .paint_with_damage(damage, &mut painter)
-                .unwrap()
-                .expect("painting requires a mounted root")
+            match runtime.paint_with_damage(damage, &mut painter) {
+                Ok(report) => report.expect("painting requires a mounted root"),
+                // painting stops at the first element that fails. Present what was
+                // drawn instead of taking the device down over one bad text run
+                Err(error) => {
+                    match error {
+                        EInkError::Font(error) => defmt::error!("paint failed: {}", error),
+                        EInkError::Shape(error) => defmt::error!("paint failed: {}", error),
+                        EInkError::Target(never) => match never {},
+                    }
+
+                    PaintReport::new(damage)
+                }
+            }
         };
 
         let eink_report = painter.report();

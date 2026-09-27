@@ -1,10 +1,8 @@
 //! renders the corpus through the path the reader uses on the device:
 //! runtime canvas -> `PaintCx::draw_text_run` -> `EInkPainter` in `BinaryDither` mode.
 //!
-//! each word is its own run, placed where the reader's pagination would put it. The
-//! reader merges a line's words into one run, but the shaper cannot take a whole line
-//! at small sizes (it runs out of directional runs), and word runs only lose kerning
-//! across spaces.
+//! like the reader, each line is wrapped from separately measured words and drawn as
+//! one run.
 //!
 //! the firmware also installs a fast ordered-coverage blitter. its output is pinned to
 //! this generic path by `firmware/x4-pro/tests/ordered_coverage.rs`.
@@ -132,30 +130,26 @@ pub fn render(corpus: &str, size: u16) -> Result<Rendered> {
     for (index, line) in lines.iter().enumerate() {
         let top = TOP + line_height * index as i32;
 
-        for (word_index, word) in line.iter().enumerate() {
-            // the run starts the pen, so ink left of it is clipped as in a reader fragment
-            let clip = ClipRect {
-                left: COLUMN_X + word.x,
-                top,
-                right: COLUMN_X + COLUMN_WIDTH,
-                bottom: top + line_height,
-            };
+        let clip = ClipRect {
+            left: COLUMN_X,
+            top,
+            right: COLUMN_X + COLUMN_WIDTH,
+            bottom: top + line_height,
+        };
 
-            place_word(
-                &mut resources,
-                font,
-                size,
-                word,
-                word_index == 0,
-                top + ascent,
-                clip,
-                &mut glyphs,
-                &mut ideal,
-                width,
-            )?;
+        place_line(
+            &mut resources,
+            font,
+            size,
+            line,
+            top + ascent,
+            clip,
+            &mut glyphs,
+            &mut ideal,
+            width,
+        )?;
 
-            runs.push((word.text.clone(), clip));
-        }
+        runs.push((line.clone(), clip));
     }
 
     let ink = paint_page(runs, size, width, height)?;
@@ -208,77 +202,48 @@ fn glyph_id(font: ResolvedFont<'_>, character: char) -> Result<GlyphId> {
         .ok_or_else(|| anyhow!("reader font has no glyph for {character:?}"))
 }
 
-/// a piece's advance as drawn, and unrounded
-struct Width {
-    actual: i32,
-    ideal: f64,
-}
-
 fn measure(
     resources: &MeasureResources,
     font: ResolvedFont<'_>,
     size: u16,
     text: &str,
-) -> Result<Width> {
+) -> Result<i32> {
     let registry = resources.font_registry();
     let shaper = SimpleShaper::with_properties(font.properties());
     let mut output = [ShapedGlyph::EMPTY; SHAPED_GLYPHS];
 
-    let mut advance = |size| {
-        shaper
-            .measure(&registry, font.id(), size, text, &mut output)
-            .map(|summary| summary.advance().get())
-            .map_err(|error| anyhow!("{error:?}"))
-    };
+    let summary = shaper
+        .measure(&registry, font.id(), size, text, &mut output)
+        .map_err(|error| anyhow!("{error:?}"))?;
 
-    Ok(Width {
-        actual: advance(size)?,
-        ideal: f64::from(advance(size * IDEAL_POSITION_SCALE)?) / f64::from(IDEAL_POSITION_SCALE),
-    })
-}
-
-/// a word placed in the column, relative to the column's left edge
-struct Word {
-    text: String,
-    x: i32,
-    ideal_x: f64,
+    Ok(summary.advance().get())
 }
 
 /// greedy word wrap into the reader column, one paragraph per corpus line.
 ///
-/// like the reader's pagination, words and spaces are measured separately and placed
-/// end to end
-fn wrap(corpus: &str, mut measure: impl FnMut(&str) -> Result<Width>) -> Result<Vec<Vec<Word>>> {
+/// like the reader's pagination, words and spaces are measured separately
+fn wrap(corpus: &str, mut measure: impl FnMut(&str) -> Result<i32>) -> Result<Vec<String>> {
     let space = measure(" ")?;
     let mut lines = Vec::new();
 
     for paragraph in corpus.lines().filter(|line| !line.trim().is_empty()) {
-        let mut line: Vec<Word> = Vec::new();
-        let mut x = 0;
-        let mut ideal_x = 0.0;
+        let mut line = String::new();
+        let mut line_width = 0;
 
-        for text in paragraph.split_whitespace() {
-            let width = measure(text)?;
+        for word in paragraph.split_whitespace() {
+            let width = measure(word)?;
 
-            if !line.is_empty() {
-                if x + space.actual + width.actual > COLUMN_WIDTH {
-                    lines.push(std::mem::take(&mut line));
-                    x = 0;
-                    ideal_x = 0.0;
-                } else {
-                    x += space.actual;
-                    ideal_x += space.ideal;
-                }
+            if line.is_empty() {
+                line_width = width;
+            } else if line_width + space + width > COLUMN_WIDTH {
+                lines.push(std::mem::take(&mut line));
+                line_width = width;
+            } else {
+                line.push(' ');
+                line_width += space + width;
             }
 
-            line.push(Word {
-                text: text.to_owned(),
-                x,
-                ideal_x,
-            });
-
-            x += width.actual;
-            ideal_x += width.ideal;
+            line.push_str(word);
         }
 
         if !line.is_empty() {
@@ -290,12 +255,11 @@ fn wrap(corpus: &str, mut measure: impl FnMut(&str) -> Result<Width>) -> Result<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn place_word(
+fn place_line(
     resources: &mut MeasureResources,
     font: ResolvedFont<'_>,
     size: u16,
-    word: &Word,
-    first_in_line: bool,
+    text: &str,
     baseline: i32,
     clip: ClipRect,
     glyphs: &mut Vec<Placement>,
@@ -304,7 +268,6 @@ fn place_word(
 ) -> Result<()> {
     let registry = resources.font_registry();
     let shaper = SimpleShaper::with_properties(font.properties());
-    let text = word.text.as_str();
 
     let mut actual = [ShapedGlyph::EMPTY; SHAPED_GLYPHS];
     let actual = shaper
@@ -340,14 +303,8 @@ fn place_word(
     let raster_scale = i32::from(IDEAL_RASTER_SCALE);
     let page_height = ideal.len() / page_width;
 
-    let mut pen_x = COLUMN_X + word.x;
-    let mut ideal_pen_x = f64::from(COLUMN_X) + word.ideal_x;
-
-    // the ideal word sits at its unrounded position, so only the line bounds apply
-    let line_clip = ClipRect {
-        left: COLUMN_X,
-        ..clip
-    };
+    let mut pen_x = clip.left;
+    let mut ideal_pen_x = f64::from(clip.left);
 
     for (index, (shaped, scaled)) in actual.iter().zip(&scaled).enumerate() {
         // mirrors draw_shaped_run in crates/ui/src/backend/eink/text.rs
@@ -367,7 +324,7 @@ fn place_word(
             baseline,
             pen_x,
             ideal_pen_x,
-            first_in_line: first_in_line && index == 0,
+            first_in_line: index == 0,
             clip,
         });
 
@@ -398,7 +355,7 @@ fn place_word(
             let x = (origin_x + (sample % large_width) as i32).div_euclid(raster_scale);
             let y = (origin_y + (sample / large_width) as i32).div_euclid(raster_scale);
 
-            if !line_clip.contains(x, y) || x as usize >= page_width || y as usize >= page_height {
+            if !clip.contains(x, y) || x as usize >= page_width || y as usize >= page_height {
                 continue;
             }
 

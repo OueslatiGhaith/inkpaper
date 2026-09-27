@@ -182,6 +182,21 @@ fn build_directional_runs(
     glyphs: &[ShapedGlyph],
     output: &mut [DirectionalRun],
 ) -> Result<usize, ShapeError> {
+    // without right-to-left text every glyph resolves to level 0, so the text is one run
+    // however often words, numbers and punctuation alternate
+    if !text
+        .chars()
+        .any(|character| directional_class(character) == DirectionalClass::RightToLeft)
+    {
+        let Some(destination) = output.first_mut() else {
+            return Err(ShapeError::TooManyDirectionalRuns);
+        };
+
+        *destination = DirectionalRun::new(0, glyphs.len(), DirectionalClass::LeftToRight);
+
+        return Ok(1);
+    }
+
     let mut written = 0;
 
     for (index, glyph) in glyphs.iter().copied().enumerate() {
@@ -196,6 +211,24 @@ fn build_directional_runs(
 
         if written > 0 && output[written - 1].class == class {
             output[written - 1].end = index.saturating_add(1);
+            continue;
+        }
+
+        // a neutral between two runs of the same strong direction resolves to that
+        // direction and is merged with them later, so fold it in now instead of
+        // spending two runs on every space between words
+        let strong = matches!(
+            class,
+            DirectionalClass::LeftToRight | DirectionalClass::RightToLeft
+        );
+
+        if strong
+            && written >= 2
+            && output[written - 1].class == DirectionalClass::Neutral
+            && output[written - 2].class == class
+        {
+            output[written - 2].end = index.saturating_add(1);
+            written -= 1;
             continue;
         }
 
