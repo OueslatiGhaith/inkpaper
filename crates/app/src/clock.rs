@@ -113,12 +113,53 @@ struct StoredClockPreferences {
     utc_offset_quarters: i8,
 }
 
+/// Why setting the clock from the network failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClockSyncFailure {
+    /// no WiFi network is set up
+    NoNetwork,
+    /// the WiFi radio could not start
+    Radio,
+    /// joining the WiFi network failed
+    Join,
+    /// the network gave no address or could not resolve the time server
+    NoInternet,
+    /// no time server answered with a usable time
+    TimeServer,
+    /// the time could not be written to the clock
+    ClockWrite,
+}
+
+impl ClockSyncFailure {
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::NoNetwork => "No WiFi network set up",
+            Self::Radio => "WiFi could not start",
+            Self::Join => "Could not join WiFi",
+            Self::NoInternet => "No internet connection",
+            Self::TimeServer => "Time server did not answer",
+            Self::ClockWrite => "Could not set the clock",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClockSyncStatus {
+    #[default]
+    Idle,
+    Syncing,
+    Synced,
+    Failed(ClockSyncFailure),
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct ClockState {
     preferences: ClockPreferences,
     /// changed by a drag and not saved yet
     unsaved: bool,
     pending_save: Option<ClockPreferences>,
+    sync: ClockSyncStatus,
+    sync_requested: bool,
 }
 
 impl ClockState {
@@ -170,6 +211,48 @@ impl ClockState {
     pub(crate) fn take_save_request(&mut self) -> Option<ClockPreferences> {
         self.pending_save.take()
     }
+
+    pub(crate) const fn sync_status(&self) -> ClockSyncStatus {
+        self.sync
+    }
+
+    /// Starts a network sync unless one is already running.
+    pub(crate) fn request_sync(&mut self) -> bool {
+        if self.sync == ClockSyncStatus::Syncing {
+            return false;
+        }
+
+        self.sync = ClockSyncStatus::Syncing;
+        self.sync_requested = true;
+
+        true
+    }
+
+    pub(crate) fn take_sync_request(&mut self) -> bool {
+        core::mem::take(&mut self.sync_requested)
+    }
+
+    pub(crate) fn finish_sync(&mut self, result: Result<(), ClockSyncFailure>) -> bool {
+        let status = match result {
+            Ok(()) => ClockSyncStatus::Synced,
+            Err(failure) => ClockSyncStatus::Failed(failure),
+        };
+
+        if self.sync == status {
+            return false;
+        }
+
+        self.sync = status;
+
+        true
+    }
+
+    /// Forgets the last result so the screen opens without a stale message.
+    pub(crate) fn clear_sync_result(&mut self) {
+        if self.sync != ClockSyncStatus::Syncing {
+            self.sync = ClockSyncStatus::Idle;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -216,6 +299,23 @@ mod tests {
             ClockPreferences::decode(&bytes),
             Err(ClockPreferencesError::InvalidOffset(57))
         );
+    }
+
+    #[test]
+    fn a_running_sync_is_not_restarted_or_cleared() {
+        let mut clock = ClockState::default();
+
+        assert!(clock.request_sync());
+        assert!(clock.take_sync_request());
+
+        assert!(!clock.request_sync());
+        assert!(!clock.take_sync_request());
+
+        clock.clear_sync_result();
+        assert_eq!(clock.sync_status(), ClockSyncStatus::Syncing);
+
+        clock.finish_sync(Err(ClockSyncFailure::Join));
+        assert!(clock.request_sync());
     }
 
     #[test]

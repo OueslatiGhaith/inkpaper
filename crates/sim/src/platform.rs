@@ -1,6 +1,9 @@
 use std::{
+    cell::Cell,
     fs, io,
     path::{Path, PathBuf},
+    rc::Rc,
+    time::Instant,
 };
 
 use inkpaper_app::{AppPlatform, FrontlightSetting, PlatformEntry};
@@ -9,15 +12,20 @@ use crate::{fake_fs::simulator_listing, host_epub::HostFileSource};
 
 pub(super) struct SimulatorPlatform {
     state_directory: PathBuf,
+    /// when the running clock sync started; the main loop reports its result
+    clock_sync: Rc<Cell<Option<Instant>>>,
 }
 
 impl SimulatorPlatform {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(clock_sync: Rc<Cell<Option<Instant>>>) -> Self {
         let state_directory = simulator_state_directory();
 
         fs::create_dir_all(&state_directory).expect("simulator state directory must be creatable");
 
-        Self { state_directory }
+        Self {
+            state_directory,
+            clock_sync,
+        }
     }
 
     fn state_path(&self, name: &str) -> PathBuf {
@@ -91,6 +99,12 @@ impl AppPlatform for SimulatorPlatform {
     async fn enter_usb_drive(&mut self) -> Result<(), Self::Error> {
         // The simulator only exercise the app-side USB drive state. It does not expose
         // a host block device
+        Ok(())
+    }
+
+    async fn start_clock_sync(&mut self) -> Result<(), Self::Error> {
+        self.clock_sync.set(Some(Instant::now()));
+
         Ok(())
     }
 }

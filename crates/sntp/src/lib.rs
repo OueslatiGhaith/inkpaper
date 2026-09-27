@@ -75,7 +75,11 @@ pub fn parse_response(packet: &[u8], nonce: u64) -> Result<u64, Error> {
 
     // era 0 ends in February 2036; like RFC 4330 §3, a set top bit means era 0
     // (1968–2036) and a clear one means era 1 (2036–2104)
-    let era = if seconds & 0x8000_0000 == 0 { 1u64 << 32 } else { 0 };
+    let era = if seconds & 0x8000_0000 == 0 {
+        1u64 << 32
+    } else {
+        0
+    };
 
     Ok(seconds + era + rounding - UNIX_OFFSET)
 }
@@ -130,7 +134,10 @@ mod tests {
         // era 1 second 10 is 2036-02-07 06:28:26 UTC
         let packet = reply(ntp(10, 0));
 
-        assert_eq!(parse_response(&packet, NONCE), Ok((1 << 32) + 10 - UNIX_OFFSET));
+        assert_eq!(
+            parse_response(&packet, NONCE),
+            Ok((1 << 32) + 10 - UNIX_OFFSET)
+        );
     }
 
     #[test]

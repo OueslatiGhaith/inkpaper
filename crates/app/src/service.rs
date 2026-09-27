@@ -4,10 +4,10 @@ use inkpaper_epub::EpubSource;
 use inkpaper_ui::{Entity, EntityAccessError, ResourceRuntimeApi, RuntimeApi};
 
 use crate::{
-    BrowseEntry, BrowseListing, BrowseRequest, ClockPreferences, FileTransferRequest,
-    FrontlightPreferences,
-    FrontlightPreferencesRequest, FrontlightSetting, InkPaperApp, ReaderPreferences,
-    ReaderPreferencesRequest, ReaderRequest, ReaderSession, ReadingHistory, ReadingHistoryRequest,
+    BrowseEntry, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure,
+    FileTransferRequest, FrontlightPreferences, FrontlightPreferencesRequest, FrontlightSetting,
+    InkPaperApp, ReaderPreferences, ReaderPreferencesRequest, ReaderRequest, ReaderSession,
+    ReadingHistory, ReadingHistoryRequest,
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
@@ -78,6 +78,11 @@ pub trait AppPlatform {
     async fn save_state(&mut self, name: &str, bytes: &[u8]) -> Result<(), Self::Error>;
 
     async fn enter_usb_drive(&mut self) -> Result<(), Self::Error>;
+
+    /// Starts setting the clock from the network and returns without waiting.
+    /// The platform reports the outcome through
+    /// [`InkPaperApp::apply_clock_sync_result`].
+    async fn start_clock_sync(&mut self) -> Result<(), Self::Error>;
 }
 
 #[derive(Debug)]
@@ -161,6 +166,16 @@ where
                 continue;
             }
 
+            if runtime.update(app, |app, _| app.take_clock_sync_request())? {
+                if self.platform.start_clock_sync().await.is_err() {
+                    runtime.update(app, |app, cx| {
+                        app.apply_clock_sync_result(Err(ClockSyncFailure::Radio), cx);
+                    })?;
+                }
+
+                continue;
+            }
+
             let clock_preferences_request =
                 runtime.update(app, |app, _| app.take_clock_preferences_request())?;
 
@@ -231,7 +246,10 @@ where
         let frontlight_preferences_saved = self.persist_frontlight_preferences().await;
         let clock_preferences_saved = self.persist_clock_preferences().await;
 
-        history_saved && preferences_saved && frontlight_preferences_saved && clock_preferences_saved
+        history_saved
+            && preferences_saved
+            && frontlight_preferences_saved
+            && clock_preferences_saved
     }
 
     async fn ensure_initialized<'resource, R>(

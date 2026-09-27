@@ -3,8 +3,9 @@ use alloc::vec::Vec;
 use inkpaper_app::{AppPlatform, FrontlightSetting, PlatformEntry};
 use inkpaper_epub::EpubSource;
 
-use crate::firmware::storage::{
-    self, MAX_RANDOM_ACCESS_READ_BYTES, RandomAccessHandle, StorageError,
+use crate::firmware::{
+    clock_sync,
+    storage::{self, MAX_RANDOM_ACCESS_READ_BYTES, RandomAccessHandle, StorageError},
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -133,6 +134,12 @@ impl AppPlatform for X4Platform {
 
     async fn save_state(&mut self, name: &str, bytes: &[u8]) -> Result<(), Self::Error> {
         storage::save_state_and_wait(name, bytes).await
+    }
+
+    async fn start_clock_sync(&mut self) -> Result<(), Self::Error> {
+        clock_sync::request();
+
+        Ok(())
     }
 
     async fn enter_usb_drive(&mut self) -> Result<(), Self::Error> {

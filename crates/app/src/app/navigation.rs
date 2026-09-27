@@ -155,6 +155,10 @@ impl InkPaperApp {
     pub(crate) fn show_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.open_screen(Screen::Settings, cx);
     }
+
+    pub(crate) fn show_clock_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.open_screen(Screen::ClockSettings, cx);
+    }
 }
 
 #[cfg(test)]

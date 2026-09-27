@@ -1,6 +1,6 @@
 use defmt::{debug, error, info, warn};
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either6, select6};
+use embassy_futures::select::{Either, Either6, select, select6};
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
@@ -17,7 +17,7 @@ use esp_hal::{
 };
 use inkpaper_app::{
     AppInputEvent, AppService, BatteryStatus as AppBatteryStatus, ClockStatus as AppClockStatus,
-    InkPaperApp, UsbDriveConnection as AppUsbDriveConnection,
+    ClockSyncFailure, InkPaperApp, UsbDriveConnection as AppUsbDriveConnection,
 };
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
@@ -27,7 +27,7 @@ use crate::firmware::{
     auto_sleep::AutoSleep,
     battery::{BATTERY_UPDATES, BatteryReading, battery_task},
     buttons::{Buttons, button_task},
-    clock_sync::clock_sync_task,
+    clock_sync::{CLOCK_SYNC_RESULTS, clock_sync_task},
     display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
     frontlight::frontlight_task,
@@ -310,11 +310,8 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
     info!("shared I2C services started");
 
-    // needs the RTC task running to accept the synchronized time
-    match clock_sync::build_credentials() {
-        Some(credentials) => spawner.spawn(clock_sync_task(peripherals.WIFI, credentials).unwrap()),
-        None => info!("no build-time WiFi credentials, skipping clock sync"),
-    }
+    // syncs write through the RTC task, so it starts after it
+    spawner.spawn(clock_sync_task(peripherals.WIFI, clock_sync::build_credentials()).unwrap());
 
     let mut auto_sleep = AutoSleep::new();
 
@@ -325,19 +322,24 @@ async fn main(spawner: Spawner) -> ! {
         // - physical user input arrives
         // - the battery service has a new reading
         // - the inactivity countdown expires
+        // - a clock sync finished
         // `BATTERY_UPDATES` is a signal, so dropping its pending wait when input
         // wins this select is safe and doesn't lose a stored reading
-        match select6(
-            INPUT_EVENTS.receive(),
-            BATTERY_UPDATES.wait(),
-            RTC_UPDATES.wait(),
-            display_power.wait_idle_timeout(),
-            USB_HOST_UPDATES.wait(),
-            auto_sleep.wait(),
+        match select(
+            select6(
+                INPUT_EVENTS.receive(),
+                BATTERY_UPDATES.wait(),
+                RTC_UPDATES.wait(),
+                display_power.wait_idle_timeout(),
+                USB_HOST_UPDATES.wait(),
+                auto_sleep.wait(),
+            ),
+            CLOCK_SYNC_RESULTS.wait(),
         )
         .await
         {
-            Either6::First(event) => {
+            Either::Second(result) => apply_clock_sync_result(runtime, app, result),
+            Either::First(Either6::First(event)) => {
                 auto_sleep.reset();
 
                 action = handle_input_event(runtime, app, event);
@@ -351,9 +353,9 @@ async fn main(spawner: Spawner) -> ! {
                     action = handle_input_event(runtime, app, event);
                 }
             }
-            Either6::Second(reading) => apply_battery_reading(runtime, app, reading),
-            Either6::Third(state) => apply_rtc_state(runtime, app, state),
-            Either6::Fourth(()) => {
+            Either::First(Either6::Second(reading)) => apply_battery_reading(runtime, app, reading),
+            Either::First(Either6::Third(state)) => apply_rtc_state(runtime, app, state),
+            Either::First(Either6::Fourth(())) => {
                 display_power
                     .handle_idle_timeout(&mut panel, &mut bus, &mut delay)
                     .await
@@ -361,8 +363,8 @@ async fn main(spawner: Spawner) -> ! {
 
                 continue;
             }
-            Either6::Fifth(state) => apply_usb_host_state(runtime, app, state),
-            Either6::Sixth(()) => {
+            Either::First(Either6::Fifth(state)) => apply_usb_host_state(runtime, app, state),
+            Either::First(Either6::Sixth(())) => {
                 // re-arm first, so a blocked auto-sleep waits another full timeout
                 auto_sleep.reset();
 
@@ -586,6 +588,19 @@ fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: Rtc
         .is_err()
     {
         warn!("failed to apply RTC status to app");
+    }
+}
+
+fn apply_clock_sync_result(
+    runtime: &mut UiRuntime,
+    app: Entity<InkPaperApp>,
+    result: Result<(), ClockSyncFailure>,
+) {
+    if runtime
+        .update(app, move |app, cx| app.apply_clock_sync_result(result, cx))
+        .is_err()
+    {
+        warn!("failed to apply clock sync result to app");
     }
 }
 

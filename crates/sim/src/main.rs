@@ -3,8 +3,12 @@ use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
     sdl2::{Keycode, MouseButton},
 };
+use std::{cell::Cell, rc::Rc, time::Duration};
+
 use futures_lite::future;
-use inkpaper_app::{AppInputEvent, AppService, BatteryStatus, ClockStatus, InkPaperApp};
+use inkpaper_app::{
+    AppInputEvent, AppService, BatteryStatus, ClockStatus, ClockSyncFailure, InkPaperApp,
+};
 use inkpaper_ui::prelude::*;
 
 use crate::{
@@ -15,6 +19,9 @@ use crate::{
     },
     runtime::new_runtime,
 };
+
+// long enough to see the syncing state
+const SIMULATED_CLOCK_SYNC: Duration = Duration::from_secs(2);
 
 mod fake_fs;
 mod gesture;
@@ -34,7 +41,8 @@ fn main() {
 
     seed_system_status(&mut runtime, app);
 
-    let mut app_service = AppService::new(SimulatorPlatform::new());
+    let clock_sync = Rc::new(Cell::new(None));
+    let mut app_service = AppService::new(SimulatorPlatform::new(clock_sync.clone()));
     future::block_on(app_service.service_pending(&mut runtime, app))
         .expect("application service must remain available");
 
@@ -52,6 +60,14 @@ fn main() {
 
     'running: loop {
         window.update(&display);
+
+        if let Some(started) = clock_sync.get()
+            && started.elapsed() >= SIMULATED_CLOCK_SYNC
+        {
+            clock_sync.set(None);
+            finish_clock_sync(&mut runtime, app);
+            render_pending_ui(&mut runtime, &mut display);
+        }
 
         for event in window.events() {
             match event {
@@ -189,6 +205,19 @@ fn seed_system_status(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>) {
             app.apply_battery_status(battery, cx);
             app.apply_clock_status(Some(clock), cx);
         })
+        .expect("application root must remain available");
+}
+
+/// Succeeds, or fails to join WiFi when `INKPAPER_SIM_CLOCK_SYNC_FAIL` is set.
+/// A successful sync leaves the simulated clock as it is.
+fn finish_clock_sync(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>) {
+    let result = match std::env::var_os("INKPAPER_SIM_CLOCK_SYNC_FAIL") {
+        Some(_) => Err(ClockSyncFailure::Join),
+        None => Ok(()),
+    };
+
+    runtime
+        .update(app, move |app, cx| app.apply_clock_sync_result(result, cx))
         .expect("application root must remain available");
 }
 

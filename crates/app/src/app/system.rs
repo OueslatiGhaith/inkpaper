@@ -2,7 +2,7 @@ use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
 use crate::{
-    BatteryStatus, ClockPreferences, ClockStatus, FrontlightPreferences,
+    BatteryStatus, ClockPreferences, ClockStatus, ClockSyncFailure, FrontlightPreferences,
     FrontlightPreferencesRequest, FrontlightSetting, UtcOffset,
 };
 
@@ -18,11 +18,14 @@ impl InkPaperApp {
     pub fn apply_clock_status(&mut self, clock: Option<ClockStatus>, cx: &mut Context<'_, Self>) {
         let changed = self.system_status.set_clock(clock);
 
-        // The clock is currently rendered only by Settings.
+        // The clock is currently rendered only by Settings and Clock.
         //
         // Keeping RTC updates out of the Reader avoids waking the e-ink display
         // once per minute while somebody is reading.
-        if changed && (self.screen() == Screen::Settings || self.control_center.is_open()) {
+        let shown = matches!(self.screen(), Screen::Settings | Screen::ClockSettings)
+            || self.control_center.is_open();
+
+        if changed && shown {
             cx.notify();
         }
     }
@@ -84,6 +87,28 @@ impl InkPaperApp {
 
     pub(crate) fn take_clock_preferences_request(&mut self) -> Option<ClockPreferences> {
         self.clock.take_save_request()
+    }
+
+    pub(crate) fn activate_sync_clock(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        if self.clock.request_sync() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn take_clock_sync_request(&mut self) -> bool {
+        self.clock.take_sync_request()
+    }
+
+    /// Reports how a sync started by the app ended. On success the platform
+    /// also delivers the new time through [`Self::apply_clock_status`].
+    pub fn apply_clock_sync_result(
+        &mut self,
+        result: Result<(), ClockSyncFailure>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.clock.finish_sync(result) && self.screen() == Screen::ClockSettings {
+            cx.notify();
+        }
     }
 
     pub(crate) fn apply_frontlight_preferences(

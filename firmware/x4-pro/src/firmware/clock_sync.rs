@@ -6,12 +6,14 @@ use embassy_net::{
     dns::DnsQueryType,
     udp::{PacketMetadata, UdpSocket},
 };
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, with_timeout};
 use esp_hal::{peripherals::WIFI, rng::Rng};
 use esp_radio::wifi::{
     AuthenticationMethodConfig, Config as WifiConfig, ControllerConfig, Interface, WifiController,
     sta::StationConfig,
 };
+use inkpaper_app::ClockSyncFailure;
 
 use crate::firmware::rtc::{self, RtcSyncResult};
 
@@ -28,6 +30,16 @@ const UNIX_TO_2000: u64 = 946_684_800;
 
 // DHCP, DNS and the NTP socket
 const SOCKETS: usize = 3;
+
+static REQUESTS: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub static CLOCK_SYNC_RESULTS: Signal<CriticalSectionRawMutex, Result<(), ClockSyncFailure>> =
+    Signal::new();
+
+/// Asks the clock sync task to run once; the outcome arrives on
+/// [`CLOCK_SYNC_RESULTS`].
+pub fn request() {
+    REQUESTS.signal(());
+}
 
 pub struct Credentials {
     ssid: &'static str,
@@ -55,27 +67,59 @@ enum SyncFailure {
     Rtc,
 }
 
-/// Joins WiFi, asks an NTP server for the time, writes it to the RTC, then
-/// shuts the radio down.
-#[embassy_executor::task]
-pub async fn clock_sync_task(wifi: WIFI<'static>, credentials: Credentials) {
-    info!("clock sync: joining {}", credentials.ssid);
-
-    match sync(wifi, credentials).await {
-        Ok(datetime) => info!(
-            "clock sync: RTC set to {:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-            datetime.year(),
-            datetime.month(),
-            datetime.day(),
-            datetime.hour(),
-            datetime.minute(),
-            datetime.second(),
-        ),
-        Err(failure) => warn!("clock sync failed at {}", failure),
+impl From<SyncFailure> for ClockSyncFailure {
+    fn from(failure: SyncFailure) -> Self {
+        match failure {
+            SyncFailure::Credentials | SyncFailure::Connect => Self::Join,
+            SyncFailure::Radio => Self::Radio,
+            SyncFailure::Dhcp | SyncFailure::Dns => Self::NoInternet,
+            SyncFailure::Ntp => Self::TimeServer,
+            SyncFailure::Time | SyncFailure::Rtc => Self::ClockWrite,
+        }
     }
 }
 
-async fn sync(wifi: WIFI<'static>, credentials: Credentials) -> Result<DateTime, SyncFailure> {
+/// On each request: joins WiFi, asks an NTP server for the time, writes it to
+/// the RTC, then shuts the radio down.
+#[embassy_executor::task]
+pub async fn clock_sync_task(mut wifi: WIFI<'static>, credentials: Option<Credentials>) {
+    loop {
+        REQUESTS.wait().await;
+
+        let Some(credentials) = &credentials else {
+            info!("clock sync: no WiFi credentials");
+            CLOCK_SYNC_RESULTS.signal(Err(ClockSyncFailure::NoNetwork));
+            continue;
+        };
+
+        info!("clock sync: joining {}", credentials.ssid);
+
+        let result = match sync(wifi.reborrow(), credentials).await {
+            Ok(datetime) => {
+                info!(
+                    "clock sync: RTC set to {:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+                    datetime.year(),
+                    datetime.month(),
+                    datetime.day(),
+                    datetime.hour(),
+                    datetime.minute(),
+                    datetime.second(),
+                );
+
+                Ok(())
+            }
+            Err(failure) => {
+                warn!("clock sync failed at {}", failure);
+
+                Err(failure.into())
+            }
+        };
+
+        CLOCK_SYNC_RESULTS.signal(result);
+    }
+}
+
+async fn sync(wifi: WIFI<'_>, credentials: &Credentials) -> Result<DateTime, SyncFailure> {
     let ssid = credentials
         .ssid
         .try_into()
@@ -150,23 +194,22 @@ async fn fetch_and_apply(stack: Stack<'_>, rng: Rng) -> Result<DateTime, SyncFai
         return Err(SyncFailure::Dhcp);
     }
 
-    let servers = match with_timeout(DNS_TIMEOUT, stack.dns_query(NTP_SERVER, DnsQueryType::A))
-        .await
-    {
-        Ok(Ok(servers)) if !servers.is_empty() => servers,
-        Ok(Ok(_)) => {
-            warn!("DNS returned no address for {}", NTP_SERVER);
-            return Err(SyncFailure::Dns);
-        }
-        Ok(Err(error)) => {
-            warn!("DNS query failed: {:?}", error);
-            return Err(SyncFailure::Dns);
-        }
-        Err(_) => {
-            warn!("DNS query timed out");
-            return Err(SyncFailure::Dns);
-        }
-    };
+    let servers =
+        match with_timeout(DNS_TIMEOUT, stack.dns_query(NTP_SERVER, DnsQueryType::A)).await {
+            Ok(Ok(servers)) if !servers.is_empty() => servers,
+            Ok(Ok(_)) => {
+                warn!("DNS returned no address for {}", NTP_SERVER);
+                return Err(SyncFailure::Dns);
+            }
+            Ok(Err(error)) => {
+                warn!("DNS query failed: {:?}", error);
+                return Err(SyncFailure::Dns);
+            }
+            Err(_) => {
+                warn!("DNS query timed out");
+                return Err(SyncFailure::Dns);
+            }
+        };
 
     let unix = query_ntp(stack, &servers, rng).await?;
 

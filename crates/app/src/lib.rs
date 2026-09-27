@@ -29,7 +29,8 @@ pub use system::{BatteryStatus, ClockStatus};
 // keep these available through `crate::...` so the existing internal modules don't need
 // artificial public APIs, while preventing platform wrappers from depending on them.
 pub(crate) use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
-pub(crate) use clock::{ClockPreferences, ClockState, UtcOffset};
+pub use clock::ClockSyncFailure;
+pub(crate) use clock::{ClockPreferences, ClockState, ClockSyncStatus, UtcOffset};
 pub(crate) use file_transfer::{FileTransferRequest, FileTransferState, FileTransferStatus};
 pub(crate) use frontlight::{
     FrontlightPreferences, FrontlightPreferencesError, FrontlightPreferencesRequest,

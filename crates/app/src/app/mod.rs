@@ -24,8 +24,9 @@ use navigation::NavigationStack;
 pub(crate) use navigation::{Back, Entry, Exit, ScreenLifecycle};
 
 use crate::screens::{
-    browse_files::BrowseFilesRoute, file_transfer::FileTransferRoute, home::HomeRoute,
-    reader::ReaderRoute, recent_books::RecentBooksRoute, settings::SettingsRoute,
+    browse_files::BrowseFilesRoute, clock_settings::ClockSettingsRoute,
+    file_transfer::FileTransferRoute, home::HomeRoute, reader::ReaderRoute,
+    recent_books::RecentBooksRoute, settings::SettingsRoute,
     table_of_contents::TableOfContentsRoute,
 };
 
@@ -37,6 +38,7 @@ enum Screen {
     RecentBooks,
     FileTransfer,
     Settings,
+    ClockSettings,
     TableOfContents,
 }
 
@@ -60,6 +62,7 @@ impl Screen {
             Self::RecentBooks => &RecentBooksRoute,
             Self::FileTransfer => &FileTransferRoute,
             Self::Settings => &SettingsRoute,
+            Self::ClockSettings => &ClockSettingsRoute,
             Self::TableOfContents => &TableOfContentsRoute,
         }
     }
