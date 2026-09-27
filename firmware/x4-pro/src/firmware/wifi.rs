@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use bm8563::DateTime;
 use defmt::{info, warn};
 use embassy_futures::select::{Either, select};
@@ -6,20 +8,25 @@ use embassy_net::{
     dns::DnsQueryType,
     udp::{PacketMetadata, UdpSocket},
 };
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+};
 use embassy_time::{Duration, with_timeout};
 use esp_hal::{peripherals::WIFI, rng::Rng};
 use esp_radio::wifi::{
-    AuthenticationMethodConfig, Config as WifiConfig, ControllerConfig, Interface, WifiController,
-    sta::StationConfig,
+    AuthenticationMethod, AuthenticationMethodConfig, Config as WifiConfig, ControllerConfig,
+    Interface, WifiController, scan::ScanConfig, sta::StationConfig,
 };
-use inkpaper_app::ClockSyncFailure;
+use inkpaper_app::{ClockSyncFailure, WifiCredentials, WifiNetwork, WifiScanError};
 
 use crate::firmware::rtc::{self, RtcSyncResult};
 
 const NTP_SERVER: &str = "pool.ntp.org";
 const NTP_ATTEMPTS: usize = 3;
 
+const MAX_SCAN_RESULTS: usize = 24;
+
+const SCAN_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const DHCP_TIMEOUT: Duration = Duration::from_secs(15);
 const DNS_TIMEOUT: Duration = Duration::from_secs(10);
@@ -31,28 +38,39 @@ const UNIX_TO_2000: u64 = 946_684_800;
 // DHCP, DNS and the NTP socket
 const SOCKETS: usize = 3;
 
-static REQUESTS: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-pub static CLOCK_SYNC_RESULTS: Signal<CriticalSectionRawMutex, Result<(), ClockSyncFailure>> =
-    Signal::new();
-
-/// Asks the clock sync task to run once; the outcome arrives on
-/// [`CLOCK_SYNC_RESULTS`].
-pub fn request() {
-    REQUESTS.signal(());
+enum WifiRequest {
+    Scan,
+    SyncClock(WifiCredentials),
 }
 
-pub struct Credentials {
-    ssid: &'static str,
-    password: &'static str,
+pub enum WifiEvent {
+    Scanned(Result<Vec<WifiNetwork>, WifiScanError>),
+    ClockSynced(Result<(), ClockSyncFailure>),
 }
 
-/// WiFi credentials baked in at build time from `INKPAPER_WIFI_SSID` and
-/// `INKPAPER_WIFI_PASS`. A development stand-in until the app can collect them.
-pub fn build_credentials() -> Option<Credentials> {
-    Some(Credentials {
-        ssid: option_env!("INKPAPER_WIFI_SSID")?,
-        password: option_env!("INKPAPER_WIFI_PASS").unwrap_or(""),
-    })
+// the app runs one request at a time, so a newer one never overwrites a
+// waiting one
+static REQUESTS: Signal<CriticalSectionRawMutex, WifiRequest> = Signal::new();
+pub static WIFI_EVENTS: Channel<CriticalSectionRawMutex, WifiEvent, 2> = Channel::new();
+
+/// Asks the WiFi task for a scan; the networks arrive on [`WIFI_EVENTS`].
+pub fn request_scan() {
+    REQUESTS.signal(WifiRequest::Scan);
+}
+
+/// Asks the WiFi task to set the clock over `network`; the outcome arrives on
+/// [`WIFI_EVENTS`].
+pub fn request_clock_sync(network: WifiCredentials) {
+    REQUESTS.signal(WifiRequest::SyncClock(network));
+}
+
+/// The network from `INKPAPER_WIFI_SSID` and `INKPAPER_WIFI_PASS` at build time.
+/// A development stand-in until passwords can be typed.
+pub fn build_credentials() -> Option<WifiCredentials> {
+    WifiCredentials::new(
+        option_env!("INKPAPER_WIFI_SSID")?,
+        option_env!("INKPAPER_WIFI_PASS").unwrap_or(""),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
@@ -79,57 +97,97 @@ impl From<SyncFailure> for ClockSyncFailure {
     }
 }
 
-/// On each request: joins WiFi, asks an NTP server for the time, writes it to
-/// the RTC, then shuts the radio down.
+/// Owns the radio. Each request starts WiFi, does its work, and shuts the
+/// radio down again.
 #[embassy_executor::task]
-pub async fn clock_sync_task(mut wifi: WIFI<'static>, credentials: Option<Credentials>) {
+pub async fn wifi_task(mut wifi: WIFI<'static>) {
     loop {
-        REQUESTS.wait().await;
-
-        let Some(credentials) = &credentials else {
-            info!("clock sync: no WiFi credentials");
-            CLOCK_SYNC_RESULTS.signal(Err(ClockSyncFailure::NoNetwork));
-            continue;
-        };
-
-        info!("clock sync: joining {}", credentials.ssid);
-
-        let result = match sync(wifi.reborrow(), credentials).await {
-            Ok(datetime) => {
-                info!(
-                    "clock sync: RTC set to {:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-                    datetime.year(),
-                    datetime.month(),
-                    datetime.day(),
-                    datetime.hour(),
-                    datetime.minute(),
-                    datetime.second(),
-                );
-
-                Ok(())
-            }
-            Err(failure) => {
-                warn!("clock sync failed at {}", failure);
-
-                Err(failure.into())
+        let event = match REQUESTS.wait().await {
+            WifiRequest::Scan => WifiEvent::Scanned(scan(wifi.reborrow()).await),
+            WifiRequest::SyncClock(network) => {
+                WifiEvent::ClockSynced(sync_clock(wifi.reborrow(), &network).await)
             }
         };
 
-        CLOCK_SYNC_RESULTS.signal(result);
+        WIFI_EVENTS.send(event).await;
     }
 }
 
-async fn sync(wifi: WIFI<'_>, credentials: &Credentials) -> Result<DateTime, SyncFailure> {
-    let ssid = credentials
-        .ssid
+async fn scan(wifi: WIFI<'_>) -> Result<Vec<WifiNetwork>, WifiScanError> {
+    let mut controller =
+        WifiController::new(wifi, ControllerConfig::default()).map_err(|error| {
+            warn!("WiFi init failed: {:?}", error);
+            WifiScanError
+        })?;
+
+    let config = ScanConfig::default().with_max(MAX_SCAN_RESULTS);
+    let found = match with_timeout(SCAN_TIMEOUT, controller.scan_async(&config)).await {
+        Ok(Ok(found)) => found,
+        Ok(Err(error)) => {
+            warn!("WiFi scan failed: {:?}", error);
+            return Err(WifiScanError);
+        }
+        Err(_) => {
+            warn!("WiFi scan timed out");
+            return Err(WifiScanError);
+        }
+    };
+
+    info!("WiFi scan found {} access points", found.len());
+
+    Ok(found
+        .iter()
+        .map(|access_point| {
+            let secured = !matches!(
+                access_point.auth_method,
+                None | Some(AuthenticationMethod::None)
+            );
+
+            WifiNetwork::new(
+                access_point.ssid.as_str(),
+                access_point.signal_strength,
+                secured,
+            )
+        })
+        .collect())
+}
+
+async fn sync_clock(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<(), ClockSyncFailure> {
+    info!("clock sync: joining {}", network.ssid());
+
+    match sync(wifi, network).await {
+        Ok(datetime) => {
+            info!(
+                "clock sync: RTC set to {:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+                datetime.year(),
+                datetime.month(),
+                datetime.day(),
+                datetime.hour(),
+                datetime.minute(),
+                datetime.second(),
+            );
+
+            Ok(())
+        }
+        Err(failure) => {
+            warn!("clock sync failed at {}", failure);
+
+            Err(failure.into())
+        }
+    }
+}
+
+async fn sync(wifi: WIFI<'_>, network: &WifiCredentials) -> Result<DateTime, SyncFailure> {
+    let ssid = network
+        .ssid()
         .try_into()
         .map_err(|_| SyncFailure::Credentials)?;
-    let authentication = if credentials.password.is_empty() {
+    let authentication = if network.password().is_empty() {
         AuthenticationMethodConfig::Open
     } else {
         AuthenticationMethodConfig::Wpa2Personal(
-            credentials
-                .password
+            network
+                .password()
                 .try_into()
                 .map_err(|_| SyncFailure::Credentials)?,
         )

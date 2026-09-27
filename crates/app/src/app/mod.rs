@@ -9,6 +9,7 @@ use crate::{
     reading_history::ReadingHistoryState,
     screens::sleep::{SleepScreen, SleepScreenProps},
     system::SystemStatus,
+    wifi::WifiState,
 };
 
 mod browse;
@@ -18,6 +19,7 @@ mod input;
 mod navigation;
 mod reader;
 mod system;
+mod wifi;
 
 pub(crate) use input::{ScreenInput, SideButton};
 use navigation::NavigationStack;
@@ -27,7 +29,7 @@ use crate::screens::{
     browse_files::BrowseFilesRoute, clock_settings::ClockSettingsRoute,
     file_transfer::FileTransferRoute, home::HomeRoute, reader::ReaderRoute,
     recent_books::RecentBooksRoute, settings::SettingsRoute,
-    table_of_contents::TableOfContentsRoute,
+    table_of_contents::TableOfContentsRoute, wifi_networks::WifiNetworksRoute,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +41,7 @@ enum Screen {
     FileTransfer,
     Settings,
     ClockSettings,
+    WifiNetworks,
     TableOfContents,
 }
 
@@ -63,6 +66,7 @@ impl Screen {
             Self::FileTransfer => &FileTransferRoute,
             Self::Settings => &SettingsRoute,
             Self::ClockSettings => &ClockSettingsRoute,
+            Self::WifiNetworks => &WifiNetworksRoute,
             Self::TableOfContents => &TableOfContentsRoute,
         }
     }
@@ -77,6 +81,7 @@ pub struct InkPaperApp {
     pub(crate) reading_history: ReadingHistoryState,
     pub(crate) system_status: SystemStatus,
     pub(crate) clock: ClockState,
+    pub(crate) wifi: WifiState,
     frontlight: FrontlightState,
     control_center: ControlCenterState,
     pub(crate) file_transfer: FileTransferState,

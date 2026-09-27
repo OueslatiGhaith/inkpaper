@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     BatteryStatus, ClockPreferences, ClockStatus, ClockSyncFailure, FrontlightPreferences,
-    FrontlightPreferencesRequest, FrontlightSetting, UtcOffset,
+    FrontlightPreferencesRequest, FrontlightSetting, UtcOffset, WifiCredentials,
 };
 
 impl InkPaperApp {
@@ -90,13 +90,24 @@ impl InkPaperApp {
     }
 
     pub(crate) fn activate_sync_clock(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        if self.clock.request_sync() {
+        let changed = if self.wifi.saved().current().is_some() {
+            self.clock.request_sync()
+        } else {
+            self.clock.finish_sync(Err(ClockSyncFailure::NoNetwork))
+        };
+
+        if changed {
             cx.notify();
         }
     }
 
-    pub(crate) fn take_clock_sync_request(&mut self) -> bool {
-        self.clock.take_sync_request()
+    /// The network a requested sync should use.
+    pub(crate) fn take_clock_sync_request(&mut self) -> Option<WifiCredentials> {
+        if !self.clock.take_sync_request() {
+            return None;
+        }
+
+        self.wifi.saved().current().cloned()
     }
 
     /// Reports how a sync started by the app ended. On success the platform

@@ -1,30 +1,27 @@
 use std::{
-    cell::Cell,
     fs, io,
     path::{Path, PathBuf},
     rc::Rc,
-    time::Instant,
 };
 
-use inkpaper_app::{AppPlatform, FrontlightSetting, PlatformEntry};
+use inkpaper_app::{AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials};
 
-use crate::{fake_fs::simulator_listing, host_epub::HostFileSource};
+use crate::{fake_fs::simulator_listing, host_epub::HostFileSource, radio::SimulatedRadio};
 
 pub(super) struct SimulatorPlatform {
     state_directory: PathBuf,
-    /// when the running clock sync started; the main loop reports its result
-    clock_sync: Rc<Cell<Option<Instant>>>,
+    radio: Rc<SimulatedRadio>,
 }
 
 impl SimulatorPlatform {
-    pub(super) fn new(clock_sync: Rc<Cell<Option<Instant>>>) -> Self {
+    pub(super) fn new(radio: Rc<SimulatedRadio>) -> Self {
         let state_directory = simulator_state_directory();
 
         fs::create_dir_all(&state_directory).expect("simulator state directory must be creatable");
 
         Self {
             state_directory,
-            clock_sync,
+            radio,
         }
     }
 
@@ -102,8 +99,19 @@ impl AppPlatform for SimulatorPlatform {
         Ok(())
     }
 
-    async fn start_clock_sync(&mut self) -> Result<(), Self::Error> {
-        self.clock_sync.set(Some(Instant::now()));
+    async fn start_clock_sync(&mut self, _: &WifiCredentials) -> Result<(), Self::Error> {
+        self.radio.start_clock_sync();
+
+        Ok(())
+    }
+
+    fn device_key(&self) -> DeviceKey {
+        // stands in for the device's MAC address
+        *b"inksim"
+    }
+
+    async fn start_wifi_scan(&mut self) -> Result<(), Self::Error> {
+        self.radio.start_scan();
 
         Ok(())
     }

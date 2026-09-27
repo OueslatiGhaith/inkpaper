@@ -17,7 +17,7 @@ use esp_hal::{
 };
 use inkpaper_app::{
     AppInputEvent, AppService, BatteryStatus as AppBatteryStatus, ClockStatus as AppClockStatus,
-    ClockSyncFailure, InkPaperApp, UsbDriveConnection as AppUsbDriveConnection,
+    InkPaperApp, UsbDriveConnection as AppUsbDriveConnection,
 };
 use inkpaper_ui::prelude::*;
 use static_cell::StaticCell;
@@ -27,7 +27,6 @@ use crate::firmware::{
     auto_sleep::AutoSleep,
     battery::{BATTERY_UPDATES, BatteryReading, battery_task},
     buttons::{Buttons, button_task},
-    clock_sync::{CLOCK_SYNC_RESULTS, clock_sync_task},
     display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
     frontlight::frontlight_task,
@@ -44,12 +43,12 @@ use crate::firmware::{
     suspend::SuspendContext,
     touch::{TouchController, touch_task},
     usb_mass_storage::{USB_HOST_UPDATES, UsbHostState},
+    wifi::{WIFI_EVENTS, WifiEvent, wifi_task},
 };
 
 mod auto_sleep;
 mod battery;
 mod buttons;
-mod clock_sync;
 mod display;
 mod framebuffer;
 mod frontlight;
@@ -69,6 +68,7 @@ mod storage;
 mod suspend;
 mod touch;
 mod usb_mass_storage;
+mod wifi;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -259,6 +259,18 @@ async fn main(spawner: Spawner) -> ! {
         warn!("failed to request initial frontlight state");
     }
 
+    // after loading, so saved networks don't replace it; saved with the
+    // frontlight work below
+    if let Some(credentials) = wifi::build_credentials()
+        && runtime
+            .update(app, move |app, cx| {
+                app.remember_wifi_network(credentials, cx)
+            })
+            .is_err()
+    {
+        warn!("failed to remember build-time WiFi network");
+    }
+
     if app_service.service_pending(runtime, app).await.is_err() {
         warn!("failed to apply initial frontlight state");
     }
@@ -310,8 +322,8 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
     info!("shared I2C services started");
 
-    // syncs write through the RTC task, so it starts after it
-    spawner.spawn(clock_sync_task(peripherals.WIFI, clock_sync::build_credentials()).unwrap());
+    // clock syncs write through the RTC task, so it starts after it
+    spawner.spawn(wifi_task(peripherals.WIFI).unwrap());
 
     let mut auto_sleep = AutoSleep::new();
 
@@ -322,7 +334,7 @@ async fn main(spawner: Spawner) -> ! {
         // - physical user input arrives
         // - the battery service has a new reading
         // - the inactivity countdown expires
-        // - a clock sync finished
+        // - a WiFi scan or clock sync finished
         // `BATTERY_UPDATES` is a signal, so dropping its pending wait when input
         // wins this select is safe and doesn't lose a stored reading
         match select(
@@ -334,11 +346,11 @@ async fn main(spawner: Spawner) -> ! {
                 USB_HOST_UPDATES.wait(),
                 auto_sleep.wait(),
             ),
-            CLOCK_SYNC_RESULTS.wait(),
+            WIFI_EVENTS.receive(),
         )
         .await
         {
-            Either::Second(result) => apply_clock_sync_result(runtime, app, result),
+            Either::Second(event) => apply_wifi_event(runtime, app, event),
             Either::First(Either6::First(event)) => {
                 auto_sleep.reset();
 
@@ -591,16 +603,14 @@ fn apply_rtc_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state: Rtc
     }
 }
 
-fn apply_clock_sync_result(
-    runtime: &mut UiRuntime,
-    app: Entity<InkPaperApp>,
-    result: Result<(), ClockSyncFailure>,
-) {
-    if runtime
-        .update(app, move |app, cx| app.apply_clock_sync_result(result, cx))
-        .is_err()
-    {
-        warn!("failed to apply clock sync result to app");
+fn apply_wifi_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: WifiEvent) {
+    let applied = runtime.update(app, move |app, cx| match event {
+        WifiEvent::Scanned(result) => app.apply_wifi_scan_result(result, cx),
+        WifiEvent::ClockSynced(result) => app.apply_clock_sync_result(result, cx),
+    });
+
+    if applied.is_err() {
+        warn!("failed to apply WiFi result to app");
     }
 }
 

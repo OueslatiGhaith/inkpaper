@@ -4,10 +4,10 @@ use inkpaper_epub::EpubSource;
 use inkpaper_ui::{Entity, EntityAccessError, ResourceRuntimeApi, RuntimeApi};
 
 use crate::{
-    BrowseEntry, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure,
+    BrowseEntry, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure, DeviceKey,
     FileTransferRequest, FrontlightPreferences, FrontlightPreferencesRequest, FrontlightSetting,
     InkPaperApp, ReaderPreferences, ReaderPreferencesRequest, ReaderRequest, ReaderSession,
-    ReadingHistory, ReadingHistoryRequest,
+    ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials, WifiScanError,
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
@@ -16,6 +16,8 @@ const FRONTLIGHT_PREFERENCES_STATE: &str = "frontlight-preferences.dat";
 const MAX_FRONTLIGHT_PREFERENCES_BYTES: usize = 64;
 const CLOCK_PREFERENCES_STATE: &str = "clock-preferences.dat";
 const MAX_CLOCK_PREFERENCES_BYTES: usize = 64;
+const WIFI_NETWORKS_STATE: &str = "wifi-networks.dat";
+const MAX_WIFI_NETWORKS_BYTES: usize = 1024;
 
 const MAX_READING_HISTORY_BYTES: usize = 64 * 1024;
 const MAX_READER_PREFERENCES_BYTES: usize = 256;
@@ -79,10 +81,17 @@ pub trait AppPlatform {
 
     async fn enter_usb_drive(&mut self) -> Result<(), Self::Error>;
 
-    /// Starts setting the clock from the network and returns without waiting.
+    /// Bytes unique to this device, used to obfuscate saved WiFi passwords.
+    fn device_key(&self) -> DeviceKey;
+
+    /// Starts setting the clock over `network` and returns without waiting.
     /// The platform reports the outcome through
     /// [`InkPaperApp::apply_clock_sync_result`].
-    async fn start_clock_sync(&mut self) -> Result<(), Self::Error>;
+    async fn start_clock_sync(&mut self, network: &WifiCredentials) -> Result<(), Self::Error>;
+
+    /// Starts a WiFi scan and returns without waiting. The platform reports the
+    /// networks through [`InkPaperApp::apply_wifi_scan_result`].
+    async fn start_wifi_scan(&mut self) -> Result<(), Self::Error>;
 }
 
 #[derive(Debug)]
@@ -166,13 +175,33 @@ where
                 continue;
             }
 
-            if runtime.update(app, |app, _| app.take_clock_sync_request())? {
-                if self.platform.start_clock_sync().await.is_err() {
+            let clock_sync_request = runtime.update(app, |app, _| app.take_clock_sync_request())?;
+
+            if let Some(network) = clock_sync_request {
+                if self.platform.start_clock_sync(&network).await.is_err() {
                     runtime.update(app, |app, cx| {
                         app.apply_clock_sync_result(Err(ClockSyncFailure::Radio), cx);
                     })?;
                 }
 
+                continue;
+            }
+
+            if runtime.update(app, |app, _| app.take_wifi_scan_request())? {
+                if self.platform.start_wifi_scan().await.is_err() {
+                    runtime.update(app, |app, cx| {
+                        app.apply_wifi_scan_result(Err(WifiScanError), cx);
+                    })?;
+                }
+
+                continue;
+            }
+
+            let wifi_networks_save =
+                runtime.update(app, |app, _| app.take_wifi_networks_save_request())?;
+
+            if let Some(networks) = wifi_networks_save {
+                self.save_wifi_networks(&networks).await;
                 continue;
             }
 
@@ -268,6 +297,7 @@ where
         self.preferences = self.load_preferences().await;
         self.frontlight_preferences = self.load_frontlight_preferences().await;
         self.clock_preferences = self.load_clock_preferences().await;
+        let wifi_networks = self.load_wifi_networks().await;
 
         let entries = self.history.entries().to_vec();
         let preferences = self.preferences;
@@ -277,6 +307,7 @@ where
         runtime.update(app, move |app, cx| {
             app.apply_frontlight_preferences(frontlight_preferences, cx);
             app.apply_clock_preferences(clock_preferences, cx);
+            app.apply_wifi_networks(wifi_networks, cx);
             app.apply_reader_preferences(preferences, cx);
             app.apply_reading_history(entries, cx);
         })?;
@@ -347,6 +378,33 @@ where
         };
 
         ClockPreferences::decode(&bytes).unwrap_or_default()
+    }
+
+    async fn load_wifi_networks(&mut self) -> SavedNetworks {
+        let bytes = match self
+            .platform
+            .load_state(WIFI_NETWORKS_STATE, MAX_WIFI_NETWORKS_BYTES)
+            .await
+        {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) | Err(_) => {
+                return SavedNetworks::default();
+            }
+        };
+
+        SavedNetworks::decode(&bytes, &self.platform.device_key()).unwrap_or_default()
+    }
+
+    /// Networks are saved as soon as one is chosen; they change rarely.
+    async fn save_wifi_networks(&mut self, networks: &SavedNetworks) -> bool {
+        let Ok(bytes) = networks.encode(&self.platform.device_key()) else {
+            return false;
+        };
+
+        self.platform
+            .save_state(WIFI_NETWORKS_STATE, &bytes)
+            .await
+            .is_ok()
     }
 
     async fn service_browse_request<R>(

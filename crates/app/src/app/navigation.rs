@@ -159,6 +159,10 @@ impl InkPaperApp {
     pub(crate) fn show_clock_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.open_screen(Screen::ClockSettings, cx);
     }
+
+    pub(crate) fn show_wifi_networks(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.open_screen(Screen::WifiNetworks, cx);
+    }
 }
 
 #[cfg(test)]

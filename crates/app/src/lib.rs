@@ -17,12 +17,14 @@ mod screens;
 mod service;
 mod system;
 mod typography;
+mod wifi;
 
 pub use app::InkPaperApp;
 pub use file_transfer::UsbDriveConnection;
 pub use frontlight::FrontlightSetting;
 pub use service::{AppPlatform, AppService, AppServiceError, PlatformEntry};
 pub use system::{BatteryStatus, ClockStatus};
+pub use wifi::{DeviceKey, WifiCredentials, WifiNetwork, WifiScanError};
 
 // internal application domain/effect types.
 //
@@ -46,3 +48,4 @@ pub(crate) use reading_history::{
     BookProgress, MAX_READING_HISTORY_ENTRIES, ReadingHistory, ReadingHistoryEntry,
     ReadingHistoryError, ReadingHistoryRequest,
 };
+pub(crate) use wifi::{SavedNetworks, WifiScanStatus};

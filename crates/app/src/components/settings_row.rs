@@ -59,11 +59,15 @@ impl RenderOnce for ListRow<'_> {
     }
 }
 
+/// A list row with a label and a value on the right. Like [`ListRow`], it takes
+/// taps only when a listener is given.
 #[component]
 pub(crate) struct SettingsValueRow<'a> {
+    id: (&'static str, usize),
     label: &'a str,
     value: &'a str,
     selected: bool,
+    on_activate: Option<Listener<ActivateEvent>>,
 }
 
 impl RenderOnce for SettingsValueRow<'_> {
@@ -73,6 +77,14 @@ impl RenderOnce for SettingsValueRow<'_> {
         rsx! {
             <div class="w-full h-16 relative">
                 <div class="absolute left-5 top-0 w-[440px] h-16 rounded-md bg-{background}" />
+
+                {#if let Some(listener) = self.on_activate}
+                    <div
+                        id={self.id}
+                        on:activate={listener}
+                        class="absolute left-5 top-0 w-[440px] h-16 rounded-md"
+                    />
+                {/if}
 
                 <div class="absolute left-7 top-0 w-[290px] h-16 flex items-center">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">

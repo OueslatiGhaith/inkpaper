@@ -78,9 +78,11 @@ impl RenderOnce for SettingsScreen {
                     />
 
                     <SettingsValueRow
+                        id={("settings-value", 0)}
                         label="Refresh Frequency"
                         value="5"
                         selected={false}
+                        on_activate={None}
                     />
 
                     <SettingsToggleRow
@@ -90,21 +92,27 @@ impl RenderOnce for SettingsScreen {
                     />
 
                     <SettingsValueRow
+                        id={("settings-value", 1)}
                         label="UI Theme"
                         value="Lyra"
                         selected={false}
+                        on_activate={None}
                     />
 
                     <SettingsValueRow
+                        id={("settings-value", 2)}
                         label="UI Scale"
                         value="Small"
                         selected={false}
+                        on_activate={None}
                     />
 
                     <SettingsValueRow
+                        id={("settings-value", 3)}
                         label="Recent Books View"
                         value="List View"
                         selected={false}
+                        on_activate={None}
                     />
                 </div>
 

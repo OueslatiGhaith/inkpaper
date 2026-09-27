@@ -7,3 +7,4 @@ pub(crate) mod recent_books;
 pub(crate) mod settings;
 pub(crate) mod sleep;
 pub(crate) mod table_of_contents;
+pub(crate) mod wifi_networks;

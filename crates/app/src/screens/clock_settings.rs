@@ -6,7 +6,7 @@ use crate::{
     app::{Entry, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps},
-        settings_row::{ListRow, ListRowProps},
+        settings_row::{ListRow, ListRowProps, SettingsValueRow, SettingsValueRowProps},
         slider::{self, Slider, SliderProps},
     },
 };
@@ -19,7 +19,8 @@ const TIMEZONE_SLIDER_TOP: i32 = 186 + 24 + 4;
 /// Clock settings, grouped like crosspoint's clock screen: the local time, the
 /// timezone, and a network sync.
 #[component]
-pub(crate) struct ClockSettingsScreen {
+pub(crate) struct ClockSettingsScreen<'a> {
+    network: Option<&'a str>,
     battery: Option<BatteryStatus>,
     clock: Option<ClockStatus>,
     utc_offset: UtcOffset,
@@ -28,9 +29,10 @@ pub(crate) struct ClockSettingsScreen {
     on_decrease_utc_offset: Listener<ActivateEvent>,
     on_increase_utc_offset: Listener<ActivateEvent>,
     on_sync: Listener<ActivateEvent>,
+    on_wifi: Listener<ActivateEvent>,
 }
 
-impl RenderOnce for ClockSettingsScreen {
+impl RenderOnce for ClockSettingsScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let (time, date) = match self.clock {
             None => (String::from("--:--"), String::from("Time not set")),
@@ -95,7 +97,15 @@ impl RenderOnce for ClockSettingsScreen {
                     />
                 </div>
 
-                <div class="absolute left-0 top-[286px] w-[480px]">
+                <div class="absolute left-0 top-[286px] w-[480px] flex flex-col">
+                    <SettingsValueRow
+                        id={("clock-wifi", 0)}
+                        label="WiFi Network"
+                        value={self.network.unwrap_or("Not set")}
+                        selected={false}
+                        on_activate={Some(self.on_wifi)}
+                    />
+
                     <ListRow
                         id={("clock-sync", 0)}
                         label="Sync Clock"
@@ -106,7 +116,7 @@ impl RenderOnce for ClockSettingsScreen {
                     />
                 </div>
 
-                <div class="absolute left-7 top-[354px] w-[424px]">
+                <div class="absolute left-7 top-[422px] w-[424px]">
                     <text class="text-base wrap max-lines-2 text-ellipsis">
                         {status}
                     </text>
@@ -172,6 +182,7 @@ impl ScreenView for ClockSettingsRoute {
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
         ClockSettingsScreen::from(ClockSettingsScreenProps {
+            network: app.wifi.saved().current().map(|network| network.ssid()),
             battery: app.system_status.battery(),
             clock: app.local_clock(),
             utc_offset: app.clock.utc_offset(),
@@ -180,6 +191,7 @@ impl ScreenView for ClockSettingsRoute {
             on_decrease_utc_offset: cx.listener(InkPaperApp::activate_decrease_utc_offset),
             on_increase_utc_offset: cx.listener(InkPaperApp::activate_increase_utc_offset),
             on_sync: cx.listener(InkPaperApp::activate_sync_clock),
+            on_wifi: cx.listener(InkPaperApp::show_wifi_networks),
         })
         .into_any_element()
     }

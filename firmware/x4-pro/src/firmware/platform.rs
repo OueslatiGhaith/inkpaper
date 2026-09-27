@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
 
-use inkpaper_app::{AppPlatform, FrontlightSetting, PlatformEntry};
+use inkpaper_app::{AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials};
 use inkpaper_epub::EpubSource;
 
 use crate::firmware::{
-    clock_sync,
     storage::{self, MAX_RANDOM_ACCESS_READ_BYTES, RandomAccessHandle, StorageError},
+    wifi,
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -136,8 +136,21 @@ impl AppPlatform for X4Platform {
         storage::save_state_and_wait(name, bytes).await
     }
 
-    async fn start_clock_sync(&mut self) -> Result<(), Self::Error> {
-        clock_sync::request();
+    async fn start_clock_sync(&mut self, network: &WifiCredentials) -> Result<(), Self::Error> {
+        wifi::request_clock_sync(network.clone());
+
+        Ok(())
+    }
+
+    /// The factory MAC address, like crosspoint's password obfuscation key.
+    fn device_key(&self) -> DeviceKey {
+        let mut key = DeviceKey::default();
+        key.copy_from_slice(esp_hal::efuse::base_mac_address().as_bytes());
+        key
+    }
+
+    async fn start_wifi_scan(&mut self) -> Result<(), Self::Error> {
+        wifi::request_scan();
 
         Ok(())
     }
