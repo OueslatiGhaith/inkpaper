@@ -84,6 +84,8 @@ pub struct InkPaperApp {
     pub(crate) wifi: WifiState,
     frontlight: FrontlightState,
     control_center: ControlCenterState,
+    /// set once a long press took the current touch
+    pointer_captured: bool,
     pub(crate) file_transfer: FileTransferState,
 }
 

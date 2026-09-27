@@ -1,4 +1,5 @@
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
+use inkpaper_app::AppInputEvent;
 
 const INPUT_QUEUE_CAPACITY: usize = 16;
 
@@ -44,34 +45,9 @@ pub enum PowerButtonEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TouchPosition {
-    x: u16,
-    y: u16,
-}
-
-impl TouchPosition {
-    pub const fn new(x: u16, y: u16) -> Self {
-        Self { x, y }
-    }
-
-    pub const fn x(self) -> u16 {
-        self.x
-    }
-
-    pub const fn y(self) -> u16 {
-        self.y
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchEvent {
-    Down(TouchPosition),
-    Up(TouchPosition),
-    Drag {
-        origin: TouchPosition,
-        previous: TouchPosition,
-        position: TouchPosition,
-    },
+    /// touch screen input, already turned into taps, drags and long presses.
+    Pointer(AppInputEvent),
     /// short press of the capacitive Home pad.
     HomeTap,
 }

@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 use super::InkPaperApp;
 use crate::{
     control_center::{ControlCenterAction, ControlCenterPointerResult, ControlCenterSlider},
-    input::PointerAction,
+    input::{LongPressAction, PointerAction},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +33,17 @@ pub(crate) trait ScreenInput {
     /// Handles the end of a touch no overlay claimed. Returning true captures
     /// it instead of activating the element under the pointer.
     fn release(
+        &self,
+        _app: &mut InkPaperApp,
+        _position: Point,
+        _cx: &mut Context<'_, InkPaperApp>,
+    ) -> bool {
+        false
+    }
+
+    /// Handles a touch held still that no overlay claimed. Returning true
+    /// captures it instead of offering it to the element under the pointer.
+    fn long_press(
         &self,
         _app: &mut InkPaperApp,
         _position: Point,
@@ -123,6 +134,8 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
+        self.pointer_captured = false;
+
         if self.input_target() == InputTarget::Blocked {
             return PointerAction::Capture;
         }
@@ -138,7 +151,7 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
-        if self.input_target() == InputTarget::Blocked {
+        if self.pointer_captured || self.input_target() == InputTarget::Blocked {
             return PointerAction::Capture;
         }
 
@@ -158,7 +171,9 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
-        if self.input_target() == InputTarget::Blocked {
+        if core::mem::take(&mut self.pointer_captured)
+            || self.input_target() == InputTarget::Blocked
+        {
             return PointerAction::Capture;
         }
 
@@ -173,7 +188,29 @@ impl InkPaperApp {
         self.apply_control_center_pointer_result(result, PointerAction::Activate, cx)
     }
 
+    pub(crate) fn handle_pointer_long_press(
+        &mut self,
+        position: Point,
+        cx: &mut Context<'_, Self>,
+    ) -> LongPressAction {
+        if self.pointer_captured || self.input_target() != InputTarget::Screen {
+            return LongPressAction::Ignore;
+        }
+
+        if self.screen().route().long_press(self, position, cx) {
+            LongPressAction::Capture
+        } else {
+            LongPressAction::Dispatch
+        }
+    }
+
+    /// The rest of the current touch, up to its release, is ignored.
+    pub(crate) fn capture_pointer(&mut self) {
+        self.pointer_captured = true;
+    }
+
     pub(crate) fn cancel_pointer_input(&mut self) {
+        self.pointer_captured = false;
         self.control_center.cancel_pointer();
     }
 

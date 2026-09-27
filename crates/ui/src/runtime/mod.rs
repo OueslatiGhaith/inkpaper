@@ -4,10 +4,10 @@ use core::{any::TypeId, cell::Cell};
 use alloc::boxed::Box;
 
 use crate::{
-    ActivateEvent, Context, DamageRegion, Entity, EntityAccessError, EntityAllocError, EntityArena,
-    EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageRegistryError,
-    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintReport,
-    Point, Render, RenderInvalidation, ResourcePainter, Size, TextMeasurer,
+    ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
+    EntityArena, EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena,
+    ImageRegistryError, ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId,
+    Offset, PaintReport, Point, Render, RenderInvalidation, ResourcePainter, Size, TextMeasurer,
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     entity::create_entity,
@@ -460,11 +460,7 @@ impl<
 
     /// Sends `target` an [`ActivateEvent`] carrying its element id.
     fn activate(&self, target: EventTarget) -> Result<bool, ListenerInvokeError> {
-        let Some(entry) = self.element_states.entry(target.element()) else {
-            return Ok(false);
-        };
-
-        self.dispatch_to(target, &ActivateEvent::new(entry.key.local))
+        self.dispatch_to_with(target, ActivateEvent::new)
     }
 
     fn invalidate_render(&self, invalidation: RenderInvalidation) {
@@ -746,6 +742,38 @@ impl<
         };
 
         self.dispatch_to(target, event)
+    }
+
+    /// Like [`Self::dispatch_at`], but builds the event from the id of the element
+    /// that listens for it, so one listener can serve many elements.
+    pub fn dispatch_at_with<E>(
+        &self,
+        position: Point,
+        event: impl FnOnce(ElementId) -> E,
+    ) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        let Some(target) = self.target_at::<E>(position) else {
+            return Ok(false);
+        };
+
+        self.dispatch_to_with(target, event)
+    }
+
+    fn dispatch_to_with<E>(
+        &self,
+        target: EventTarget,
+        event: impl FnOnce(ElementId) -> E,
+    ) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        let Some(entry) = self.element_states.entry(target.element()) else {
+            return Ok(false);
+        };
+
+        self.dispatch_to(target, &event(entry.key.local))
     }
 
     fn activation_target_for_element(&self, element: ElementStateId) -> Option<EventTarget> {

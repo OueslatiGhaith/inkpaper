@@ -1,4 +1,6 @@
-use inkpaper_ui::{Entity, EntityAccessError, ListenerInvokeError, Offset, Point, RuntimeApi};
+use inkpaper_ui::{
+    ElementId, Entity, EntityAccessError, ListenerInvokeError, Offset, Point, RuntimeApi,
+};
 
 use crate::InkPaperApp;
 
@@ -13,12 +15,36 @@ pub enum AppInputEvent {
         previous: Point,
         position: Point,
     },
+    /// The pointer stayed down without moving; see [`crate::TouchGesture`].
+    PointerLongPress(Point),
     PointerUp(Point),
     PointerCancel,
     ScrollWheel {
         position: Point,
         delta: Offset,
     },
+}
+
+/// A touch held still on an element. Like `ActivateEvent`, it carries the
+/// element's id, so one listener can serve many elements. Elements take it
+/// with `on:LongPressEvent`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LongPressEvent {
+    id: ElementId,
+}
+
+impl LongPressEvent {
+    const fn new(id: ElementId) -> Self {
+        Self { id }
+    }
+
+    #[expect(dead_code, reason = "the WiFi network menu is the first to use it")]
+    pub(crate) const fn index(self) -> Option<usize> {
+        match self.id {
+            ElementId::Value(value) | ElementId::NamedValue(_, value) => Some(value as usize),
+            ElementId::Name(_) => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -44,6 +70,16 @@ pub(crate) enum PointerAction {
     Activate,
     Capture,
     Scroll,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LongPressAction {
+    /// Nothing takes it; the touch can still end as a tap.
+    Ignore,
+    /// Offer it to the element under the pointer.
+    Dispatch,
+    /// The screen took it.
+    Capture,
 }
 
 pub fn dispatch_input(
@@ -91,6 +127,25 @@ pub fn dispatch_input(
 
             if action == PointerAction::Scroll {
                 runtime.scroll_at(origin, previous - position);
+            }
+        }
+
+        AppInputEvent::PointerLongPress(position) => {
+            let action =
+                runtime.update(app, |app, cx| app.handle_pointer_long_press(position, cx))?;
+
+            let captured = match action {
+                LongPressAction::Ignore => false,
+                LongPressAction::Dispatch => {
+                    runtime.dispatch_at_with(position, LongPressEvent::new)?
+                }
+                LongPressAction::Capture => true,
+            };
+
+            // the rest of a touch that long pressed something isn't also a tap
+            if captured {
+                runtime.cancel_activation();
+                runtime.update(app, |app, _| app.capture_pointer())?;
             }
         }
 

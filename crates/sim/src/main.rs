@@ -4,13 +4,15 @@ use embedded_graphics_simulator::{
     sdl2::{Keycode, MouseButton},
 };
 use futures_lite::future;
-use std::rc::Rc;
+use std::{rc::Rc, time::Instant};
 
-use inkpaper_app::{AppInputEvent, AppService, BatteryStatus, ClockStatus, InkPaperApp};
+use inkpaper_app::{
+    AppInputEvent, AppService, BatteryStatus, ClockStatus, InkPaperApp, TouchGesture,
+};
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    gesture::{PointerGesture, PointerRelease, wheel_scroll_offset},
+    gesture::wheel_scroll_offset,
     platform::SimulatorPlatform,
     radio::{SimulatedRadio, build_credentials},
     render::{
@@ -63,7 +65,10 @@ fn main() {
 
     let mut window = Window::new("InkPaper", &output_settings);
 
-    let mut pointer = PointerGesture::default();
+    let started = Instant::now();
+    let now_ms = || started.elapsed().as_millis() as u64;
+
+    let mut pointer = TouchGesture::default();
     let mut mouse_position =
         Point::new(px(DISPLAY_WIDTH as i32 / 2), px(DISPLAY_HEIGHT as i32 / 2));
 
@@ -71,6 +76,12 @@ fn main() {
         window.update(&display);
 
         if radio.finish_due(&mut runtime, app) {
+            render_pending_ui(&mut runtime, &mut display);
+        }
+
+        // a mouse button held still long presses
+        if let Some(input) = pointer.tick(now_ms()) {
+            send_input(&mut runtime, app, input);
             render_pending_ui(&mut runtime, &mut display);
         }
 
@@ -87,27 +98,21 @@ fn main() {
                 } => {
                     mouse_position = ui_point(point);
 
-                    pointer.begin(mouse_position);
-                    send_input(
-                        &mut runtime,
-                        app,
-                        AppInputEvent::PointerDown(mouse_position),
-                    );
+                    // a press that was never released starts over
+                    pointer.release();
+
+                    if let Some(input) = pointer.touch(mouse_position, now_ms()) {
+                        send_input(&mut runtime, app, input);
+                    }
                 }
 
                 SimulatorEvent::MouseMove { point } => {
                     mouse_position = ui_point(point);
 
-                    if let Some(update) = pointer.move_to(mouse_position) {
-                        send_input(
-                            &mut runtime,
-                            app,
-                            AppInputEvent::PointerDrag {
-                                origin: update.origin,
-                                previous: update.previous,
-                                position: update.position,
-                            },
-                        );
+                    if pointer.is_touching()
+                        && let Some(input) = pointer.touch(mouse_position, now_ms())
+                    {
+                        send_input(&mut runtime, app, input);
                     }
                 }
 
@@ -117,35 +122,14 @@ fn main() {
                 } => {
                     mouse_position = ui_point(point);
 
-                    match pointer.finish(mouse_position) {
-                        PointerRelease::None => {
-                            send_input(&mut runtime, app, AppInputEvent::PointerCancel);
-                        }
-
-                        PointerRelease::Tap(position) => {
-                            send_input(&mut runtime, app, AppInputEvent::PointerUp(position));
-                        }
-
-                        PointerRelease::Drag {
-                            origin,
-                            previous,
-                            position,
-                        } => {
-                            if previous != position {
-                                send_input(
-                                    &mut runtime,
-                                    app,
-                                    AppInputEvent::PointerDrag {
-                                        origin,
-                                        previous,
-                                        position,
-                                    },
-                                );
-                            }
-
-                            send_input(&mut runtime, app, AppInputEvent::PointerUp(position));
-                        }
+                    if pointer.is_touching()
+                        && let Some(input) = pointer.touch(mouse_position, now_ms())
+                    {
+                        send_input(&mut runtime, app, input);
                     }
+
+                    let input = pointer.release().unwrap_or(AppInputEvent::PointerCancel);
+                    send_input(&mut runtime, app, input);
                 }
 
                 SimulatorEvent::MouseWheel {

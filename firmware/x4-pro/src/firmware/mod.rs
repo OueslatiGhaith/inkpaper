@@ -30,9 +30,7 @@ use crate::firmware::{
     display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
     frontlight::frontlight_task,
-    input::{
-        Button, ButtonEdge, INPUT_EVENTS, InputEvent, PowerButtonEvent, TouchEvent, TouchPosition,
-    },
+    input::{Button, ButtonEdge, INPUT_EVENTS, InputEvent, PowerButtonEvent, TouchEvent},
     platform::X4Platform,
     power::PowerRails,
     power_button::power_button_task,
@@ -502,38 +500,14 @@ fn handle_input_event(
             InputAction::Continue
         }
 
-        InputEvent::Touch(TouchEvent::Down(position)) => {
-            dispatch_app_input(runtime, app, AppInputEvent::PointerDown(ui_point(position)));
-
-            InputAction::Continue
-        }
-
-        InputEvent::Touch(TouchEvent::Up(position)) => {
-            dispatch_app_input(runtime, app, AppInputEvent::PointerUp(ui_point(position)));
+        InputEvent::Touch(TouchEvent::Pointer(event)) => {
+            dispatch_app_input(runtime, app, event);
 
             InputAction::Continue
         }
 
         InputEvent::Touch(TouchEvent::HomeTap) => {
             dispatch_app_input(runtime, app, AppInputEvent::Home);
-
-            InputAction::Continue
-        }
-
-        InputEvent::Touch(TouchEvent::Drag {
-            origin,
-            previous,
-            position,
-        }) => {
-            dispatch_app_input(
-                runtime,
-                app,
-                AppInputEvent::PointerDrag {
-                    origin: ui_point(origin),
-                    previous: ui_point(previous),
-                    position: ui_point(position),
-                },
-            );
 
             InputAction::Continue
         }
@@ -628,8 +602,4 @@ fn apply_usb_host_state(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, state
     {
         warn!("failed to apply USB host state to app");
     }
-}
-
-fn ui_point(position: TouchPosition) -> Point {
-    Point::new(px(i32::from(position.x())), px(i32::from(position.y())))
 }

@@ -2,7 +2,7 @@
 use alloc::boxed::Box;
 
 use crate::{
-    Context, DamageRegion, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
+    Context, DamageRegion, ElementId, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
     FontRegistryError, FrameBuildError, ImageRegistryError, ImageResource, ImageSource, Offset,
     PaintReport, Point, RenderInvalidation, ResourcePainter, Runtime, RuntimeResources, Size,
     TextMeasurer, callback::ListenerInvokeError,
@@ -35,6 +35,16 @@ pub trait RuntimeApi {
     fn cancel_activation(&mut self);
 
     fn scroll_at(&mut self, position: Point, delta: Offset) -> bool;
+
+    /// Sends an event to the element under `position` that listens for it,
+    /// built from that element's id. Returns whether any listener ran.
+    fn dispatch_at_with<E>(
+        &mut self,
+        position: Point,
+        event: impl FnOnce(ElementId) -> E,
+    ) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static;
 }
 
 pub trait ResourceRuntimeApi<'resource> {
@@ -138,6 +148,17 @@ impl<
 
     fn scroll_at(&mut self, position: Point, delta: Offset) -> bool {
         self.scroll_at(position, delta)
+    }
+
+    fn dispatch_at_with<E>(
+        &mut self,
+        position: Point,
+        event: impl FnOnce(ElementId) -> E,
+    ) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        Runtime::dispatch_at_with(self, position, event)
     }
 }
 

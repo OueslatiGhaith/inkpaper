@@ -1,70 +1,20 @@
 use defmt::warn;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_hal_async::{delay::DelayNs, i2c::I2c};
 use esp_hal::gpio::{Flex, InputConfig, Level, Output, OutputConfig, OutputPin, Pin, Pull};
 use gt911::{
     ALTERNATE_ADDRESS, Gt911, PRIMARY_ADDRESS, PointLayout, ProductInfo, TouchFrame, TouchPoint,
 };
+use inkpaper_app::TouchGesture;
+use inkpaper_ui::{Point, px};
 
 use crate::firmware::{
     framebuffer::{LOGICAL_HEIGHT, LOGICAL_WIDTH},
     i2c_bus::SharedI2cDevice,
-    input::{INPUT_EVENTS, InputEvent, TouchEvent, TouchPosition},
+    input::{INPUT_EVENTS, InputEvent, TouchEvent},
 };
 
 const POLL_INTERVAL_MS: u64 = 10;
-const DRAG_THRESHOLD_PX: u16 = 12;
-
-#[derive(Debug, Clone, Copy)]
-struct ActiveTouch {
-    origin: TouchPosition,
-    position: TouchPosition,
-    dragged: bool,
-}
-
-impl ActiveTouch {
-    fn new(position: TouchPosition) -> Self {
-        Self {
-            origin: position,
-            position,
-            dragged: false,
-        }
-    }
-
-    fn update(&mut self, position: TouchPosition) -> Option<TouchEvent> {
-        let previous = self.position;
-        if previous == position {
-            return None;
-        }
-
-        self.position = position;
-        if self.dragged {
-            return Some(TouchEvent::Drag {
-                origin: self.origin,
-                previous,
-                position,
-            });
-        }
-
-        let threshold_reached = self.origin.x().abs_diff(position.x()) >= DRAG_THRESHOLD_PX
-            || self.origin.y().abs_diff(position.y()) >= DRAG_THRESHOLD_PX;
-
-        if !threshold_reached {
-            return None;
-        }
-
-        self.dragged = true;
-
-        // Include the movement accumulated before crossing the threshold in the first
-        // drag update
-        Some(TouchEvent::Drag {
-            origin: self.origin,
-            previous: self.origin,
-            position,
-        })
-    }
-}
-
 pub struct TouchController<'d, I2C> {
     driver: Gt911<I2C>,
     reset: Output<'d>,
@@ -157,7 +107,7 @@ where
 
 #[embassy_executor::task]
 pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
-    let mut active_touch: Option<ActiveTouch> = None;
+    let mut gesture = TouchGesture::default();
     let mut home_pressed = false;
     let mut consecutive_errors = 0u16;
 
@@ -176,31 +126,15 @@ pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
                         .await;
                 }
 
-                let next_touch = frame.first_point().map(logical_position);
+                let input = match frame.first_point() {
+                    Some(point) => gesture.touch(logical_position(point), now_ms()),
+                    None => gesture.release(),
+                };
 
-                match next_touch {
-                    Some(position) => {
-                        if let Some(active) = active_touch.as_mut() {
-                            if let Some(event) = active.update(position) {
-                                INPUT_EVENTS.send(InputEvent::Touch(event)).await;
-                            }
-                        } else {
-                            active_touch = Some(ActiveTouch::new(position));
-
-                            INPUT_EVENTS
-                                .send(InputEvent::Touch(TouchEvent::Down(position)))
-                                .await;
-                        }
-                    }
-                    None => {
-                        let Some(active) = active_touch.take() else {
-                            continue;
-                        };
-
-                        INPUT_EVENTS
-                            .send(InputEvent::Touch(TouchEvent::Up(active.position)))
-                            .await;
-                    }
+                if let Some(input) = input {
+                    INPUT_EVENTS
+                        .send(InputEvent::Touch(TouchEvent::Pointer(input)))
+                        .await;
                 }
             }
             Ok(None) => consecutive_errors = 0,
@@ -212,15 +146,27 @@ pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
             }
         }
 
+        // a finger held still may not report new frames, so the long press
+        // is timed here
+        if let Some(input) = gesture.tick(now_ms()) {
+            INPUT_EVENTS
+                .send(InputEvent::Touch(TouchEvent::Pointer(input)))
+                .await;
+        }
+
         Timer::after(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 }
 
-fn logical_position(point: TouchPoint) -> TouchPosition {
+fn now_ms() -> u64 {
+    Instant::now().as_millis()
+}
+
+fn logical_position(point: TouchPoint) -> Point {
     // X4 Pro's GT911 is physically mounted in portrait coordinates.
 
     let x = point.x().min(LOGICAL_WIDTH as u16 - 1);
     let y = point.y().min(LOGICAL_HEIGHT as u16 - 1);
 
-    TouchPosition::new(x, y)
+    Point::new(px(i32::from(x)), px(i32::from(y)))
 }
