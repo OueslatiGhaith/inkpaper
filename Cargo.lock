@@ -2257,6 +2257,7 @@ dependencies = [
  "inkpaper-ui",
  "rtt-target",
  "sdio",
+ "skrifa",
  "sntp",
  "ssd1677",
  "static_cell",

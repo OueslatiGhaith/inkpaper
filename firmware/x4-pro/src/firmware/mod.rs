@@ -50,6 +50,8 @@ mod buttons;
 mod display;
 mod framebuffer;
 mod frontlight;
+#[cfg(feature = "glyph-profile")]
+mod glyph_profile;
 mod i2c_bus;
 mod input;
 #[cfg(feature = "trace")]
@@ -106,6 +108,9 @@ async fn main(spawner: Spawner) -> ! {
     // establish the board's safe rail state before doing anything else
     let (mut rails, sd_power) =
         PowerRails::new(peripherals.GPIO1, peripherals.GPIO2, peripherals.GPIO5);
+
+    #[cfg(feature = "glyph-profile")]
+    glyph_profile::run();
 
     let timer_group = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timer_group.timer0, peripherals.FROM_CPU_INTR0);

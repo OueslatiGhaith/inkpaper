@@ -51,3 +51,10 @@ x4-trace-report log="target/perf/latest-trace.log":
 
 x4-trace-compare before="target/perf/before-trace.log" after="target/perf/latest-trace.log":
     cargo xtask perf compare "{{before}}" "{{after}}"
+
+x4-glyph-profile output="target/perf/glyph-profile.log":
+    mkdir -p target/perf
+    cargo +inkpaper-esp run -p {{firmware_package}} \
+        --target {{x4_pro_target}} \
+        --profile firmware \
+        --features glyph-profile 2>&1 | tee "{{output}}"
