@@ -11,4 +11,5 @@ embedded-graphics = { workspace = true }
 indoc = "2.0.7"
 inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "eink"] }
 png = "0.18.1"
+skrifa = "0.44.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

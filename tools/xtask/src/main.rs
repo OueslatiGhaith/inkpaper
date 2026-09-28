@@ -36,6 +36,10 @@ enum Command {
         /// least glyph coverage (0-255) that inks a pixel, instead of the device default
         #[arg(long)]
         min_ink_coverage: Option<u8>,
+
+        /// draw glyphs from skrifa's autohinter instead of the device rasterizer
+        #[arg(long, value_enum)]
+        hinting: Option<text_quality::Hinting>,
     },
 
     /// convert trace/v4 firmware logs to a Perfetto trace
@@ -70,7 +74,8 @@ fn main() -> anyhow::Result<()> {
             label,
             compare,
             min_ink_coverage,
-        } => text_quality::run(&label, compare.as_deref(), min_ink_coverage)?,
+            hinting,
+        } => text_quality::run(&label, compare.as_deref(), min_ink_coverage, hinting)?,
         Command::TracePerfetto { input, output } => {
             let output = trace::convert_perfetto(&input, output.as_deref())?;
             println!("wrote {}", output.display(),);

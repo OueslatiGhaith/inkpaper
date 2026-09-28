@@ -6,6 +6,10 @@
 //!
 //! the firmware also installs a fast coverage blitter. its output is pinned to
 //! this generic path by `firmware/x4-pro/tests/coverage_blitter.rs`.
+//!
+//! with `--hinting`, glyphs come from [`super::hinted`] instead and the page is
+//! composited from the placements, which is checked against the painter on every
+//! unhinted run.
 
 use std::convert::Infallible;
 
@@ -19,17 +23,17 @@ use embedded_graphics::{
 use inkpaper_ui::{
     FontData, FontWeight, GlyphId, ResolvedFont, RuntimeResources, ShapedGlyph, SimpleShaper,
     TtfFont,
-    backend::{EInkPainter, EInkUiMode, Gray2},
+    backend::{DEFAULT_MIN_INK_COVERAGE, EInkPainter, EInkUiMode, Gray2, inks},
     prelude::*,
 };
 
+use super::hinted::{GlyphCoverage, HintedFont, Hinting};
+
 /// the reader's font. Keep in sync with `crates/app/src/typography.rs`
-static READER_FONT: TtfFont<'static> = TtfFont::from_data(
-    FontData::new(include_bytes!(
-        "../../../../crates/app/assets/fonts/InterVariable.ttf"
-    )),
-    0,
-);
+static READER_FONT_DATA: &[u8] =
+    include_bytes!("../../../../crates/app/assets/fonts/InterVariable.ttf");
+
+static READER_FONT: TtfFont<'static> = TtfFont::from_data(FontData::new(READER_FONT_DATA), 0);
 
 pub const PAGE_WIDTH: usize = 480;
 
@@ -101,7 +105,12 @@ pub struct Rendered {
     pub stem_glyphs: Vec<(GlyphId, usize)>,
 }
 
-pub fn render(corpus: &str, size: u16, min_ink_coverage: Option<u8>) -> Result<Rendered> {
+pub fn render(
+    corpus: &str,
+    size: u16,
+    min_ink_coverage: Option<u8>,
+    hinting: Option<Hinting>,
+) -> Result<Rendered> {
     let mut resources = Box::new(MeasureResources::default());
     let family = resources
         .register_font_family()
@@ -119,6 +128,17 @@ pub fn render(corpus: &str, size: u16, min_ink_coverage: Option<u8>) -> Result<R
     let ascent = metrics.ascent.get();
 
     let lines = wrap(corpus, |text| measure(&resources, font, size, text))?;
+
+    let hinted = hinting
+        .map(|hinting| {
+            HintedFont::new(
+                READER_FONT_DATA,
+                size,
+                f32::from(FontWeight::NORMAL.value()),
+                hinting,
+            )
+        })
+        .transpose()?;
 
     let width = PAGE_WIDTH;
     let height = usize::try_from(TOP + line_height * lines.len() as i32 + BOTTOM)?;
@@ -139,6 +159,7 @@ pub fn render(corpus: &str, size: u16, min_ink_coverage: Option<u8>) -> Result<R
 
         place_line(
             &mut resources,
+            hinted.as_ref(),
             font,
             size,
             line,
@@ -152,15 +173,25 @@ pub fn render(corpus: &str, size: u16, min_ink_coverage: Option<u8>) -> Result<R
         runs.push((line.clone(), clip));
     }
 
-    let ink = paint_page(runs, size, width, height, min_ink_coverage)?;
+    let min_ink_coverage = min_ink_coverage.unwrap_or(DEFAULT_MIN_INK_COVERAGE);
+    let composited = composite(&glyphs, width, height, min_ink_coverage);
+
+    let ink = match hinted {
+        Some(_) => composited,
+        None => {
+            let ink = paint_page(runs, size, width, height, min_ink_coverage)?;
+
+            ensure!(
+                ink == composited,
+                "compositing the placements does not reproduce the painted page"
+            );
+
+            ink
+        }
+    };
 
     let x_glyph = glyph_id(font, 'x')?;
-    let x_height = -resources
-        .glyph_bitmap(font.instance(), x_glyph, size)
-        .map_err(|error| anyhow!("{error:?}"))?
-        .metrics()
-        .bearing_y
-        .get();
+    let x_height = -glyph_coverage(&mut resources, hinted.as_ref(), font, x_glyph, size)?.top;
 
     let stem_glyphs = [
         ('n', 2),
@@ -254,9 +285,57 @@ fn wrap(corpus: &str, mut measure: impl FnMut(&str) -> Result<i32>) -> Result<Ve
     Ok(lines)
 }
 
+fn glyph_coverage(
+    resources: &mut MeasureResources,
+    hinted: Option<&HintedFont>,
+    font: ResolvedFont<'_>,
+    glyph: GlyphId,
+    size: u16,
+) -> Result<GlyphCoverage> {
+    if let Some(hinted) = hinted {
+        return hinted.glyph(glyph);
+    }
+
+    let bitmap = resources
+        .glyph_bitmap(font.instance(), glyph, size)
+        .map_err(|error| anyhow!("{error:?}"))?;
+    let metrics = bitmap.metrics();
+
+    Ok(GlyphCoverage {
+        left: metrics.bearing_x.get(),
+        top: metrics.bearing_y.get(),
+        width: usize::from(metrics.width),
+        height: usize::from(metrics.height),
+        coverage: bitmap.coverage().to_vec(),
+    })
+}
+
+/// the page `EInkPainter` draws for black text on white in `BinaryDither` mode
+fn composite(glyphs: &[Placement], width: usize, height: usize, min_coverage: u8) -> Vec<bool> {
+    let mut ink = vec![false; width * height];
+
+    for glyph in glyphs {
+        for (index, coverage) in glyph.coverage.iter().enumerate() {
+            let x = glyph.x + (index % glyph.width) as i32;
+            let y = glyph.y + (index / glyph.width) as i32;
+
+            if inks(*coverage, min_coverage)
+                && glyph.clip.contains(x, y)
+                && (x as usize) < width
+                && (y as usize) < height
+            {
+                ink[y as usize * width + x as usize] = true;
+            }
+        }
+    }
+
+    ink
+}
+
 #[allow(clippy::too_many_arguments)]
 fn place_line(
     resources: &mut MeasureResources,
+    hinted: Option<&HintedFont>,
     font: ResolvedFont<'_>,
     size: u16,
     text: &str,
@@ -308,19 +387,16 @@ fn place_line(
 
     for (index, (shaped, scaled)) in actual.iter().zip(&scaled).enumerate() {
         // mirrors draw_shaped_run in crates/ui/src/backend/eink/text.rs
-        let bitmap = resources
-            .glyph_bitmap(shaped.font_instance(), shaped.glyph(), size)
-            .map_err(|error| anyhow!("{error:?}"))?;
-        let metrics = bitmap.metrics();
+        let bitmap = glyph_coverage(resources, hinted, font, shaped.glyph(), size)?;
         let offset = shaped.offset();
 
         glyphs.push(Placement {
             glyph: shaped.glyph(),
-            x: pen_x + offset.x.get() + metrics.bearing_x.get(),
-            y: baseline + offset.y.get() + metrics.bearing_y.get(),
-            width: usize::from(metrics.width),
-            height: usize::from(metrics.height),
-            coverage: bitmap.coverage().to_vec(),
+            x: pen_x + offset.x.get() + bitmap.left,
+            y: baseline + offset.y.get() + bitmap.top,
+            width: bitmap.width,
+            height: bitmap.height,
+            coverage: bitmap.coverage,
             baseline,
             pen_x,
             ideal_pen_x,
@@ -411,7 +487,7 @@ fn paint_page(
     size: u16,
     width: usize,
     height: usize,
-    min_ink_coverage: Option<u8>,
+    min_ink_coverage: u8,
 ) -> Result<Vec<bool>> {
     let mut runtime = RuntimeBuilder::default()
         .entities::<4096, 16>()
@@ -444,11 +520,9 @@ fn paint_page(
     let mut page = PageTarget::new(width, height);
 
     {
-        let mut painter = EInkPainter::new(&mut page).with_ui_mode(EInkUiMode::BinaryDither);
-
-        if let Some(min_coverage) = min_ink_coverage {
-            painter = painter.with_min_ink_coverage(min_coverage);
-        }
+        let mut painter = EInkPainter::new(&mut page)
+            .with_ui_mode(EInkUiMode::BinaryDither)
+            .with_min_ink_coverage(min_ink_coverage);
 
         runtime
             .paint(&mut painter)

@@ -9,9 +9,11 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 
+mod hinted;
 mod metrics;
 mod render;
 
+pub use hinted::Hinting;
 use metrics::SizeMetrics;
 use render::Rendered;
 
@@ -31,7 +33,12 @@ Call me Ishmael. Some years ago\u{2014}never mind how long precisely\u{2014}havi
 abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?'\"()-\u{2013}\u{2014}\u{2018}\u{2019}\u{201c}\u{201d}
 ";
 
-pub fn run(label: &str, compare: Option<&str>, min_ink_coverage: Option<u8>) -> Result<()> {
+pub fn run(
+    label: &str,
+    compare: Option<&str>,
+    min_ink_coverage: Option<u8>,
+    hinting: Option<Hinting>,
+) -> Result<()> {
     let output = output_directory().join(label);
 
     std::fs::create_dir_all(&output)?;
@@ -45,7 +52,7 @@ pub fn run(label: &str, compare: Option<&str>, min_ink_coverage: Option<u8>) -> 
                 SIZES
                     .iter()
                     .map(|size| {
-                        let rendered = render::render(CORPUS, *size, min_ink_coverage)
+                        let rendered = render::render(CORPUS, *size, min_ink_coverage, hinting)
                             .with_context(|| format!("rendering {size}px"))?;
 
                         write_images(&output, *size, &rendered)?;
