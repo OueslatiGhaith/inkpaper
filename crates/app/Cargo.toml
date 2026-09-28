@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = []
+default = ["hinting"]
 defmt = ["inkpaper-ui/defmt"]
 # draw text from autohinted glyph outlines
 hinting = ["inkpaper-ui/hinting"]
