@@ -1,11 +1,17 @@
-use inkpaper_ui::{FontData, FontRegistryError, ResourceRuntimeApi, TtfFont};
+use inkpaper_ui::{FontData, FontFace, FontRegistryError, ResourceRuntimeApi, TtfFont};
 
-static UI_FONT: TtfFont<'static> = TtfFont::from_data(
+const INTER: TtfFont<'static> = TtfFont::from_data(
     FontData::new(include_bytes!("../assets/fonts/InterVariable.ttf")),
     0,
 );
 
-pub(crate) fn ui_font() -> &'static TtfFont<'static> {
+#[cfg(not(feature = "hinting"))]
+static UI_FONT: TtfFont<'static> = INTER;
+
+#[cfg(feature = "hinting")]
+static UI_FONT: inkpaper_ui::HintedTtfFont<'static> = inkpaper_ui::HintedTtfFont::new(INTER);
+
+pub(crate) fn ui_font() -> &'static dyn FontFace {
     &UI_FONT
 }
 

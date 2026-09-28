@@ -2193,9 +2193,12 @@ dependencies = [
  "embedded-graphics",
  "embedded-graphics-simulator",
  "heapless 0.9.3",
+ "inkpaper-ui",
  "inkpaper-ui-macros",
  "inkpaper-ui-style-schema",
  "num-traits",
+ "skrifa",
+ "spin",
  "trybuild",
  "ttf-parser",
 ]
@@ -2823,6 +2826,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "046a7d674daf459825b32f5062056d6882db0d2f5a479fbd76ccfc870ac18709"
 dependencies = [
  "bytemuck",
+ "core_maths",
  "font-types",
  "once_cell",
 ]
@@ -3149,6 +3153,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "819ab7d62b1d3e72d9d9dea5650bac30424f9111364bb94928dbf5ecad1baa68"
 dependencies = [
  "bytemuck",
+ "core_maths",
  "read-fonts",
 ]
 
@@ -3768,7 +3773,6 @@ dependencies = [
  "indoc",
  "inkpaper-ui",
  "png",
- "skrifa",
  "zip",
 ]
 

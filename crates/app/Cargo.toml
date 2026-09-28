@@ -6,6 +6,8 @@ edition = "2024"
 [features]
 default = []
 defmt = ["inkpaper-ui/defmt"]
+# draw text from autohinted glyph outlines
+hinting = ["inkpaper-ui/hinting"]
 
 [dependencies]
 inkpaper-epub = { path = "../epub" }

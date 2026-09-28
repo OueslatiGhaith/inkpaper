@@ -124,3 +124,121 @@ fn multi_output_multiple_substitution_is_rejected() {
 
     assert_eq!(result, None);
 }
+
+#[cfg(feature = "hinting")]
+mod hinting {
+    use alloc::{vec, vec::Vec};
+
+    use crate::{FontData, FontFace, FontProperties, FontWeight, HintedTtfFont, TtfFont};
+
+    const INTER: TtfFont<'static> = TtfFont::from_data(
+        FontData::new(include_bytes!(
+            "../../../../app/assets/fonts/InterVariable.ttf"
+        )),
+        0,
+    );
+
+    const SIZES: [u16; 4] = [14, 20, 26, 32];
+
+    const TEXT: &str =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,;:!?\u{201c}";
+
+    const NORMAL: FontProperties = FontProperties::new(FontWeight::NORMAL);
+
+    fn rasterize(font: &dyn FontFace, character: char, size: u16) -> (usize, Vec<u8>) {
+        let glyph = font.glyph_id(character).unwrap();
+        let metrics = font
+            .glyph_metrics_with_properties(NORMAL, glyph, size)
+            .unwrap();
+        let mut coverage = vec![0; metrics.coverage_bytes().unwrap()];
+
+        font.rasterize_with_properties(NORMAL, glyph, size, &mut coverage)
+            .unwrap();
+
+        (usize::from(metrics.width), coverage)
+    }
+
+    /// the glyph cache sizes each bitmap from the metrics before rasterizing into it
+    #[test]
+    fn hinted_glyphs_rasterize_into_the_bitmap_their_metrics_describe() {
+        let font = HintedTtfFont::new(INTER);
+
+        for size in SIZES {
+            for character in TEXT.chars() {
+                let (_, coverage) = rasterize(&font, character, size);
+
+                assert!(
+                    coverage.iter().any(|value| *value > 0),
+                    "{character:?} at {size}px"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hinting_keeps_unhinted_advances() {
+        let font = HintedTtfFont::new(INTER);
+
+        for size in SIZES {
+            for character in TEXT.chars() {
+                let glyph = INTER.glyph_id(character).unwrap();
+
+                assert_eq!(
+                    font.glyph_metrics_with_properties(NORMAL, glyph, size)
+                        .unwrap()
+                        .advance,
+                    INTER
+                        .glyph_metrics_with_properties(NORMAL, glyph, size)
+                        .unwrap()
+                        .advance,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hinted_stems_share_one_width_at_each_size() {
+        let font = HintedTtfFont::new(INTER);
+
+        for size in SIZES {
+            let x_height = -font
+                .glyph_metrics_with_properties(NORMAL, font.glyph_id('x').unwrap(), size)
+                .unwrap()
+                .bearing_y
+                .get();
+
+            let widths: Vec<_> = "lihnmur"
+                .chars()
+                .flat_map(|character| {
+                    let glyph = font.glyph_id(character).unwrap();
+                    let top = font
+                        .glyph_metrics_with_properties(NORMAL, glyph, size)
+                        .unwrap()
+                        .bearing_y
+                        .get();
+                    let (width, coverage) = rasterize(&font, character, size);
+
+                    // the middle of the x-height crosses only the stems of these letters
+                    let row = usize::try_from(-x_height / 2 - top).unwrap();
+
+                    // the device inks coverage of at least 7/16
+                    let inked: Vec<_> = coverage[row * width..][..width]
+                        .iter()
+                        .map(|value| *value >= 112)
+                        .collect();
+
+                    inked
+                        .chunk_by(|a, b| a == b)
+                        .filter(|run| run[0])
+                        .map(<[bool]>::len)
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+
+            assert!(
+                widths.iter().all(|width| *width == widths[0]),
+                "stem widths at {size}px: {widths:?}"
+            );
+        }
+    }
+}

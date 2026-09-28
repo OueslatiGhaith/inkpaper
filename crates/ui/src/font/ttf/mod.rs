@@ -8,6 +8,8 @@ use crate::{
 
 mod gpos;
 mod gsub;
+#[cfg(feature = "hinting")]
+mod hinted;
 mod metrics;
 mod raster;
 
@@ -18,6 +20,9 @@ use gpos::{
 use gsub::{gsub_pair_ligature_for_face, gsub_single_substitution_for_face};
 use metrics::{font_scale, glyph_advance_for_face, glyph_metrics_for_face, positive_scaled_units};
 use raster::{SUPERSAMPLE_Y, ScanlineBuilder, accumulate_scanline, normalize_coverage};
+
+#[cfg(feature = "hinting")]
+pub use hinted::HintedTtfFont;
 
 #[cfg(test)]
 mod tests;

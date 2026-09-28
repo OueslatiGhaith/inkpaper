@@ -37,9 +37,9 @@ enum Command {
         #[arg(long)]
         min_ink_coverage: Option<u8>,
 
-        /// draw glyphs from skrifa's autohinter instead of the device rasterizer
-        #[arg(long, value_enum)]
-        hinting: Option<text_quality::Hinting>,
+        /// draw autohinted glyphs, as firmware built with the `hinting` feature does
+        #[arg(long)]
+        hinted: bool,
     },
 
     /// convert trace/v4 firmware logs to a Perfetto trace
@@ -74,8 +74,8 @@ fn main() -> anyhow::Result<()> {
             label,
             compare,
             min_ink_coverage,
-            hinting,
-        } => text_quality::run(&label, compare.as_deref(), min_ink_coverage, hinting)?,
+            hinted,
+        } => text_quality::run(&label, compare.as_deref(), min_ink_coverage, hinted)?,
         Command::TracePerfetto { input, output } => {
             let output = trace::convert_perfetto(&input, output.as_deref())?;
             println!("wrote {}", output.display(),);

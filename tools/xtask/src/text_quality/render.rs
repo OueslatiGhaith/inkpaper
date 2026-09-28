@@ -7,9 +7,8 @@
 //! the firmware also installs a fast coverage blitter. its output is pinned to
 //! this generic path by `firmware/x4-pro/tests/coverage_blitter.rs`.
 //!
-//! with `--hinting`, glyphs come from [`super::hinted`] instead and the page is
-//! composited from the placements, which is checked against the painter on every
-//! unhinted run.
+//! the metrics read glyphs from placements recorded alongside, so every run checks
+//! that compositing those placements reproduces the painted page.
 
 use std::convert::Infallible;
 
@@ -21,19 +20,21 @@ use embedded_graphics::{
     primitives::Rectangle,
 };
 use inkpaper_ui::{
-    FontData, FontWeight, GlyphId, ResolvedFont, RuntimeResources, ShapedGlyph, SimpleShaper,
-    TtfFont,
+    FontData, FontFace, FontWeight, GlyphId, HintedTtfFont, ResolvedFont, RuntimeResources,
+    ShapedGlyph, SimpleShaper, TtfFont,
     backend::{DEFAULT_MIN_INK_COVERAGE, EInkPainter, EInkUiMode, Gray2, inks},
     prelude::*,
 };
 
-use super::hinted::{GlyphCoverage, HintedFont, Hinting};
-
 /// the reader's font. Keep in sync with `crates/app/src/typography.rs`
-static READER_FONT_DATA: &[u8] =
-    include_bytes!("../../../../crates/app/assets/fonts/InterVariable.ttf");
+static READER_FONT: TtfFont<'static> = TtfFont::from_data(
+    FontData::new(include_bytes!(
+        "../../../../crates/app/assets/fonts/InterVariable.ttf"
+    )),
+    0,
+);
 
-static READER_FONT: TtfFont<'static> = TtfFont::from_data(FontData::new(READER_FONT_DATA), 0);
+static HINTED_READER_FONT: HintedTtfFont<'static> = HintedTtfFont::new(READER_FONT);
 
 pub const PAGE_WIDTH: usize = 480;
 
@@ -109,36 +110,23 @@ pub fn render(
     corpus: &str,
     size: u16,
     min_ink_coverage: Option<u8>,
-    hinting: Option<Hinting>,
+    hinted: bool,
 ) -> Result<Rendered> {
-    let mut resources = Box::new(MeasureResources::default());
-    let family = resources
-        .register_font_family()
-        .map_err(|error| anyhow!("{error:?}"))?;
-    resources
-        .register_font_face(family, &READER_FONT)
-        .map_err(|error| anyhow!("{error:?}"))?;
+    let drawn_font: &'static dyn FontFace = if hinted {
+        &HINTED_READER_FONT
+    } else {
+        &READER_FONT
+    };
 
-    let font = resources
-        .resolve_font_family_weight(family, FontWeight::NORMAL)
-        .ok_or_else(|| anyhow!("reader font did not resolve"))?;
+    // shaping and the ideal image always use the unhinted outlines
+    let (mut resources, font) = font_resources(&READER_FONT)?;
+    let (mut glyph_resources, glyph_font) = font_resources(drawn_font)?;
 
     let metrics = font.metrics(size);
     let line_height = metrics.line_height().get();
     let ascent = metrics.ascent.get();
 
     let lines = wrap(corpus, |text| measure(&resources, font, size, text))?;
-
-    let hinted = hinting
-        .map(|hinting| {
-            HintedFont::new(
-                READER_FONT_DATA,
-                size,
-                f32::from(FontWeight::NORMAL.value()),
-                hinting,
-            )
-        })
-        .transpose()?;
 
     let width = PAGE_WIDTH;
     let height = usize::try_from(TOP + line_height * lines.len() as i32 + BOTTOM)?;
@@ -159,8 +147,9 @@ pub fn render(
 
         place_line(
             &mut resources,
-            hinted.as_ref(),
+            &mut glyph_resources,
             font,
+            glyph_font,
             size,
             line,
             top + ascent,
@@ -176,22 +165,20 @@ pub fn render(
     let min_ink_coverage = min_ink_coverage.unwrap_or(DEFAULT_MIN_INK_COVERAGE);
     let composited = composite(&glyphs, width, height, min_ink_coverage);
 
-    let ink = match hinted {
-        Some(_) => composited,
-        None => {
-            let ink = paint_page(runs, size, width, height, min_ink_coverage)?;
+    let ink = paint_page(runs, size, width, height, min_ink_coverage, drawn_font)?;
 
-            ensure!(
-                ink == composited,
-                "compositing the placements does not reproduce the painted page"
-            );
-
-            ink
-        }
-    };
+    ensure!(
+        ink == composited,
+        "compositing the placements does not reproduce the painted page"
+    );
 
     let x_glyph = glyph_id(font, 'x')?;
-    let x_height = -glyph_coverage(&mut resources, hinted.as_ref(), font, x_glyph, size)?.top;
+    let x_height = -glyph_resources
+        .glyph_bitmap(glyph_font.instance(), x_glyph, size)
+        .map_err(|error| anyhow!("{error:?}"))?
+        .metrics()
+        .bearing_y
+        .get();
 
     let stem_glyphs = [
         ('n', 2),
@@ -285,29 +272,22 @@ fn wrap(corpus: &str, mut measure: impl FnMut(&str) -> Result<i32>) -> Result<Ve
     Ok(lines)
 }
 
-fn glyph_coverage(
-    resources: &mut MeasureResources,
-    hinted: Option<&HintedFont>,
-    font: ResolvedFont<'_>,
-    glyph: GlyphId,
-    size: u16,
-) -> Result<GlyphCoverage> {
-    if let Some(hinted) = hinted {
-        return hinted.glyph(glyph);
-    }
-
-    let bitmap = resources
-        .glyph_bitmap(font.instance(), glyph, size)
+fn font_resources(
+    face: &'static dyn FontFace,
+) -> Result<(Box<MeasureResources>, ResolvedFont<'static>)> {
+    let mut resources = Box::new(MeasureResources::default());
+    let family = resources
+        .register_font_family()
         .map_err(|error| anyhow!("{error:?}"))?;
-    let metrics = bitmap.metrics();
+    resources
+        .register_font_face(family, face)
+        .map_err(|error| anyhow!("{error:?}"))?;
 
-    Ok(GlyphCoverage {
-        left: metrics.bearing_x.get(),
-        top: metrics.bearing_y.get(),
-        width: usize::from(metrics.width),
-        height: usize::from(metrics.height),
-        coverage: bitmap.coverage().to_vec(),
-    })
+    let font = resources
+        .resolve_font_family_weight(family, FontWeight::NORMAL)
+        .ok_or_else(|| anyhow!("reader font did not resolve"))?;
+
+    Ok((resources, font))
 }
 
 /// the page `EInkPainter` draws for black text on white in `BinaryDither` mode
@@ -335,8 +315,9 @@ fn composite(glyphs: &[Placement], width: usize, height: usize, min_coverage: u8
 #[allow(clippy::too_many_arguments)]
 fn place_line(
     resources: &mut MeasureResources,
-    hinted: Option<&HintedFont>,
+    glyph_resources: &mut MeasureResources,
     font: ResolvedFont<'_>,
+    glyph_font: ResolvedFont<'_>,
     size: u16,
     text: &str,
     baseline: i32,
@@ -387,16 +368,19 @@ fn place_line(
 
     for (index, (shaped, scaled)) in actual.iter().zip(&scaled).enumerate() {
         // mirrors draw_shaped_run in crates/ui/src/backend/eink/text.rs
-        let bitmap = glyph_coverage(resources, hinted, font, shaped.glyph(), size)?;
+        let bitmap = glyph_resources
+            .glyph_bitmap(glyph_font.instance(), shaped.glyph(), size)
+            .map_err(|error| anyhow!("{error:?}"))?;
+        let metrics = bitmap.metrics();
         let offset = shaped.offset();
 
         glyphs.push(Placement {
             glyph: shaped.glyph(),
-            x: pen_x + offset.x.get() + bitmap.left,
-            y: baseline + offset.y.get() + bitmap.top,
-            width: bitmap.width,
-            height: bitmap.height,
-            coverage: bitmap.coverage,
+            x: pen_x + offset.x.get() + metrics.bearing_x.get(),
+            y: baseline + offset.y.get() + metrics.bearing_y.get(),
+            width: usize::from(metrics.width),
+            height: usize::from(metrics.height),
+            coverage: bitmap.coverage().to_vec(),
             baseline,
             pen_x,
             ideal_pen_x,
@@ -488,6 +472,7 @@ fn paint_page(
     width: usize,
     height: usize,
     min_ink_coverage: u8,
+    font: &'static dyn FontFace,
 ) -> Result<Vec<bool>> {
     let mut runtime = RuntimeBuilder::default()
         .entities::<4096, 16>()
@@ -501,7 +486,7 @@ fn paint_page(
         .register_font_family()
         .map_err(|error| anyhow!("{error:?}"))?;
     runtime
-        .register_font_face(family, &READER_FONT)
+        .register_font_face(family, font)
         .map_err(|error| anyhow!("{error:?}"))?;
 
     let view = PageView {

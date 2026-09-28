@@ -9,11 +9,9 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 
-mod hinted;
 mod metrics;
 mod render;
 
-pub use hinted::Hinting;
 use metrics::SizeMetrics;
 use render::Rendered;
 
@@ -37,7 +35,7 @@ pub fn run(
     label: &str,
     compare: Option<&str>,
     min_ink_coverage: Option<u8>,
-    hinting: Option<Hinting>,
+    hinted: bool,
 ) -> Result<()> {
     let output = output_directory().join(label);
 
@@ -52,7 +50,7 @@ pub fn run(
                 SIZES
                     .iter()
                     .map(|size| {
-                        let rendered = render::render(CORPUS, *size, min_ink_coverage, hinting)
+                        let rendered = render::render(CORPUS, *size, min_ink_coverage, hinted)
                             .with_context(|| format!("rendering {size}px"))?;
 
                         write_images(&output, *size, &rendered)?;

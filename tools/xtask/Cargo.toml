@@ -9,7 +9,6 @@ anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 embedded-graphics = { workspace = true }
 indoc = "2.0.7"
-inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "eink"] }
+inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "eink", "hinting"] }
 png = "0.18.1"
-skrifa = "0.44.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
