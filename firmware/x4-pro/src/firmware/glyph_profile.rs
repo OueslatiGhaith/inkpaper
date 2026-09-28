@@ -180,8 +180,9 @@ pub(crate) fn run() {
                 );
             });
 
-            // the two things `HintedTtfFont` does per glyph besides decoding and
-            // hinting: the unhinted advance, and opening the font in skrifa
+            // what `HintedTtfFont` paid per glyph before it kept both fonts open:
+            // the unhinted advance from a freshly parsed font, and opening the font
+            // in skrifa
             totals.advance += cycles(|| {
                 core::hint::black_box(INTER.glyph_advance_with_properties(PROPERTIES, glyph, size));
             });

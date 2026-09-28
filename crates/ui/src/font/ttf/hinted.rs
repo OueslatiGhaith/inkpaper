@@ -15,14 +15,15 @@ use skrifa::{
         OutlinePen, SmoothMode, Target,
     },
 };
-use ttf_parser::OutlineBuilder;
+use ttf_parser::{Face, OutlineBuilder};
 
 use super::{
     TtfFont,
-    metrics::{ceil_to_i32, floor_to_i32},
+    metrics::{ceil_to_i32, floor_to_i32, glyph_advance_for_face},
     raster::{
         Edge, EdgeBuilder, SUPERSAMPLE_Y, ScanlineBuilder, accumulate_scanline, normalize_coverage,
     },
+    to_ttf_glyph,
 };
 use crate::{
     CursiveAttachment, FontFace, FontMetrics, FontProperties, FontRasterError, FontWeight,
@@ -33,6 +34,9 @@ use crate::{
 /// the reader and the UI each use a few sizes, and a hinting instance costs a pass
 /// over the font's style metrics to build
 const CACHED_INSTANCES: usize = 4;
+
+/// one parsed font per weight in use, usually regular and bold
+const CACHED_FACES: usize = 2;
 
 /// normal hinting also snaps vertical stems, which is what makes their widths
 /// consistent. Light hinting only snaps heights
@@ -45,16 +49,30 @@ const TARGET: Target = Target::Smooth {
 
 pub struct HintedTtfFont<'a> {
     font: TtfFont<'a>,
-    state: spin::Mutex<HintingState>,
+    state: spin::Mutex<HintingState<'a>>,
 }
 
-struct HintingState {
+struct HintingState<'a> {
+    /// opened on first use, so a new glyph doesn't reopen the font
+    outlines: Option<OutlineGlyphCollection<'a>>,
+    /// parsed on first use, so a new glyph's advance doesn't reparse the font
+    faces: Vec<CachedFace<'a>>,
+    instances: Instances,
+    /// the glyph cache asks for a glyph's metrics right before rasterizing it
+    last_outline: Option<CachedOutline>,
+}
+
+struct Instances {
     /// computed from the whole font on first use, then shared by every instance
     styles: Option<GlyphStyles>,
     /// most recently used last
-    instances: Vec<CachedInstance>,
-    /// the glyph cache asks for a glyph's metrics right before rasterizing it
-    last_outline: Option<CachedOutline>,
+    cached: Vec<CachedInstance>,
+}
+
+/// the unhinted font the advances come from, with its weight already set
+struct CachedFace<'a> {
+    weight: Option<FontWeight>,
+    face: Face<'a>,
 }
 
 struct CachedInstance {
@@ -80,8 +98,12 @@ impl<'a> HintedTtfFont<'a> {
         Self {
             font,
             state: spin::Mutex::new(HintingState {
-                styles: None,
-                instances: Vec::new(),
+                outlines: None,
+                faces: Vec::new(),
+                instances: Instances {
+                    styles: None,
+                    cached: Vec::new(),
+                },
                 last_outline: None,
             }),
         }
@@ -92,14 +114,12 @@ impl<'a> HintedTtfFont<'a> {
     }
 
     fn glyph_metrics_at(&self, key: InstanceKey, glyph: GlyphId) -> Option<GlyphMetrics> {
-        let advance = match key.weight {
-            Some(weight) => self.font.glyph_advance_with_properties(
-                FontProperties::new(weight),
-                glyph,
-                key.size_px,
-            ),
-            None => self.font.glyph_advance(glyph, key.size_px),
-        }?;
+        let advance = {
+            let mut state = self.state.lock();
+            let face = state.face(&self.font, key.weight)?;
+
+            glyph_advance_for_face(face, to_ttf_glyph(glyph), key.size_px)?
+        };
 
         self.with_outline(key, glyph, |outline| outline.metrics(advance))
             .ok()
@@ -134,10 +154,19 @@ impl<'a> HintedTtfFont<'a> {
             return Ok(use_outline(&cached.outline));
         }
 
-        let font = FontRef::from_index(self.font.data().bytes(), self.font.face_index())
-            .map_err(|_| FontRasterError::InvalidFont)?;
-        let outlines = font.outline_glyphs();
-        let instance = state.instance(&font, &outlines, key)?;
+        if state.outlines.is_none() {
+            let font = FontRef::from_index(self.font.data().bytes(), self.font.face_index())
+                .map_err(|_| FontRasterError::InvalidFont)?;
+
+            state.outlines = Some(font.outline_glyphs());
+        }
+
+        let state = &mut *state;
+        let outlines = state
+            .outlines
+            .as_ref()
+            .expect("the outlines were just opened");
+        let instance = state.instances.get(&self.font, outlines, key)?;
 
         let mut recorder = OutlineRecorder::default();
 
@@ -160,16 +189,39 @@ impl<'a> HintedTtfFont<'a> {
     }
 }
 
-impl HintingState {
-    fn instance(
+impl<'a> HintingState<'a> {
+    fn face(&mut self, font: &TtfFont<'a>, weight: Option<FontWeight>) -> Option<&Face<'a>> {
+        if let Some(index) = self.faces.iter().position(|cached| cached.weight == weight) {
+            let cached = self.faces.remove(index);
+            self.faces.push(cached);
+        } else {
+            let face = match weight {
+                Some(weight) => font.face_with_properties(FontProperties::new(weight)),
+                None => font.face(),
+            }
+            .ok()?;
+
+            if self.faces.len() == CACHED_FACES {
+                self.faces.remove(0);
+            }
+
+            self.faces.push(CachedFace { weight, face });
+        }
+
+        self.faces.last().map(|cached| &cached.face)
+    }
+}
+
+impl Instances {
+    fn get(
         &mut self,
-        font: &FontRef<'_>,
+        font: &TtfFont<'_>,
         outlines: &OutlineGlyphCollection<'_>,
         key: InstanceKey,
     ) -> Result<&HintingInstance, FontRasterError> {
-        if let Some(index) = self.instances.iter().position(|cached| cached.key == key) {
-            let cached = self.instances.remove(index);
-            self.instances.push(cached);
+        if let Some(index) = self.cached.iter().position(|cached| cached.key == key) {
+            let cached = self.cached.remove(index);
+            self.cached.push(cached);
         } else {
             let styles = self
                 .styles
@@ -179,7 +231,7 @@ impl HintingState {
             let instance = HintingInstance::new(
                 outlines,
                 Size::new(f32::from(key.size_px)),
-                &location(font, key.weight),
+                &location(font, key.weight)?,
                 HintingOptions {
                     engine: Engine::Auto(Some(styles)),
                     target: TARGET,
@@ -187,32 +239,37 @@ impl HintingState {
             )
             .map_err(|_| FontRasterError::Unsupported)?;
 
-            if self.instances.len() == CACHED_INSTANCES {
-                self.instances.remove(0);
+            if self.cached.len() == CACHED_INSTANCES {
+                self.cached.remove(0);
             }
 
-            self.instances.push(CachedInstance { key, instance });
+            self.cached.push(CachedInstance { key, instance });
         }
 
         Ok(&self
-            .instances
+            .cached
             .last()
             .expect("the requested instance was just pushed")
             .instance)
     }
 }
 
+/// opens the font only for a new instance, which is rare
 #[cfg(feature = "variable-fonts")]
-fn location(font: &FontRef<'_>, weight: Option<FontWeight>) -> Location {
-    match weight {
-        Some(weight) => font.axes().location([("wght", f32::from(weight.value()))]),
-        None => Location::default(),
-    }
+fn location(font: &TtfFont<'_>, weight: Option<FontWeight>) -> Result<Location, FontRasterError> {
+    let Some(weight) = weight else {
+        return Ok(Location::default());
+    };
+
+    let font = FontRef::from_index(font.data().bytes(), font.face_index())
+        .map_err(|_| FontRasterError::InvalidFont)?;
+
+    Ok(font.axes().location([("wght", f32::from(weight.value()))]))
 }
 
 #[cfg(not(feature = "variable-fonts"))]
-fn location(_font: &FontRef<'_>, _weight: Option<FontWeight>) -> Location {
-    Location::default()
+fn location(_font: &TtfFont<'_>, _weight: Option<FontWeight>) -> Result<Location, FontRasterError> {
+    Ok(Location::default())
 }
 
 #[derive(Clone, Copy)]
