@@ -161,21 +161,8 @@ impl OutlineBuilder for ScanlineBuilder {
         };
 
         let control = self.transform(x1, y1);
-        let steps = curve_steps(&[start, control, end]);
-        let mut previous = start;
 
-        for step in 1..=steps {
-            let t = step as f32 / steps as f32;
-            let inverse = 1.0 - t;
-            let point = RasterPoint {
-                x: inverse * inverse * start.x + 2.0 * inverse * t * control.x + t * t * end.x,
-                y: inverse * inverse * start.y + 2.0 * inverse * t * control.y + t * t * end.y,
-            };
-
-            self.add_segment(previous, point);
-
-            previous = point;
-        }
+        flatten_quad(start, control, end, |from, to| self.add_segment(from, to));
 
         self.current = Some(end);
     }
@@ -191,30 +178,10 @@ impl OutlineBuilder for ScanlineBuilder {
 
         let control_1 = self.transform(x1, y1);
         let control_2 = self.transform(x2, y2);
-        let steps = curve_steps(&[start, control_1, control_2, end]);
-        let mut previous = start;
 
-        for step in 1..=steps {
-            let t = step as f32 / steps as f32;
-            let inverse = 1.0 - t;
-            let inverse_2 = inverse * inverse;
-            let t_2 = t * t;
-
-            let point = RasterPoint {
-                x: inverse_2 * inverse * start.x
-                    + 3.0 * inverse_2 * t * control_1.x
-                    + 3.0 * inverse * t_2 * control_2.x
-                    + t_2 * t * end.x,
-                y: inverse_2 * inverse * start.y
-                    + 3.0 * inverse_2 * t * control_1.y
-                    + 3.0 * inverse * t_2 * control_2.y
-                    + t_2 * t * end.y,
-            };
-
-            self.add_segment(previous, point);
-
-            previous = point;
-        }
+        flatten_cubic(start, control_1, control_2, end, |from, to| {
+            self.add_segment(from, to)
+        });
 
         self.current = Some(end);
     }
@@ -226,6 +193,206 @@ impl OutlineBuilder for ScanlineBuilder {
 
         self.current = None;
         self.contour_start = None;
+    }
+}
+
+/// a line segment of an outline that is already in bitmap space, for filling many
+/// rows from one flattening
+#[cfg(feature = "hinting")]
+#[derive(Clone, Copy)]
+pub(super) struct Edge {
+    pub(super) from: RasterPoint,
+    pub(super) to: RasterPoint,
+    /// the lower of the two y's
+    pub(super) top: f32,
+    /// the higher of the two y's
+    pub(super) bottom: f32,
+}
+
+#[cfg(feature = "hinting")]
+impl Edge {
+    /// `None` for horizontal segments, which never cross a sample row
+    fn new(from: RasterPoint, to: RasterPoint) -> Option<Self> {
+        if from.y == to.y {
+            return None;
+        }
+
+        let (top, bottom) = if from.y < to.y {
+            (from.y, to.y)
+        } else {
+            (to.y, from.y)
+        };
+
+        Some(Self {
+            from,
+            to,
+            top,
+            bottom,
+        })
+    }
+}
+
+/// flattens an outline into the same segments `ScanlineBuilder` tests against each
+/// row, once, so a glyph's rows don't each redo the curve math
+#[cfg(feature = "hinting")]
+pub(super) struct EdgeBuilder {
+    left: f32,
+    top: f32,
+
+    current: Option<RasterPoint>,
+    contour_start: Option<RasterPoint>,
+    edges: alloc::vec::Vec<Edge>,
+}
+
+#[cfg(feature = "hinting")]
+impl EdgeBuilder {
+    pub(super) fn new(left: i32, top: i32) -> Self {
+        Self {
+            left: left as f32,
+            top: top as f32,
+            current: None,
+            contour_start: None,
+            edges: alloc::vec::Vec::new(),
+        }
+    }
+
+    /// sorted by `top`, so a row can stop at the first edge below it
+    pub(super) fn finish(mut self) -> alloc::vec::Vec<Edge> {
+        self.edges.sort_unstable_by(|a, b| a.top.total_cmp(&b.top));
+
+        self.edges
+    }
+
+    // the same as `ScanlineBuilder::transform` at scale 1.0, which is exact
+    fn transform(&self, x: f32, y: f32) -> RasterPoint {
+        RasterPoint {
+            x: x - self.left,
+            y: -y - self.top,
+        }
+    }
+
+    fn add_segment(&mut self, from: RasterPoint, to: RasterPoint) {
+        self.edges.extend(Edge::new(from, to));
+    }
+}
+
+#[cfg(feature = "hinting")]
+impl OutlineBuilder for EdgeBuilder {
+    fn move_to(&mut self, x: f32, y: f32) {
+        let point = self.transform(x, y);
+
+        self.current = Some(point);
+        self.contour_start = Some(point);
+    }
+
+    fn line_to(&mut self, x: f32, y: f32) {
+        let to = self.transform(x, y);
+
+        if let Some(from) = self.current {
+            self.add_segment(from, to);
+        }
+
+        self.current = Some(to);
+    }
+
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        let end = self.transform(x, y);
+
+        let Some(start) = self.current else {
+            self.current = Some(end);
+
+            return;
+        };
+
+        let control = self.transform(x1, y1);
+
+        flatten_quad(start, control, end, |from, to| self.add_segment(from, to));
+
+        self.current = Some(end);
+    }
+
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        let end = self.transform(x, y);
+
+        let Some(start) = self.current else {
+            self.current = Some(end);
+
+            return;
+        };
+
+        let control_1 = self.transform(x1, y1);
+        let control_2 = self.transform(x2, y2);
+
+        flatten_cubic(start, control_1, control_2, end, |from, to| {
+            self.add_segment(from, to)
+        });
+
+        self.current = Some(end);
+    }
+
+    fn close(&mut self) {
+        if let (Some(current), Some(start)) = (self.current, self.contour_start) {
+            self.add_segment(current, start);
+        }
+
+        self.current = None;
+        self.contour_start = None;
+    }
+}
+
+fn flatten_quad(
+    start: RasterPoint,
+    control: RasterPoint,
+    end: RasterPoint,
+    mut add_segment: impl FnMut(RasterPoint, RasterPoint),
+) {
+    let steps = curve_steps(&[start, control, end]);
+    let mut previous = start;
+
+    for step in 1..=steps {
+        let t = step as f32 / steps as f32;
+        let inverse = 1.0 - t;
+        let point = RasterPoint {
+            x: inverse * inverse * start.x + 2.0 * inverse * t * control.x + t * t * end.x,
+            y: inverse * inverse * start.y + 2.0 * inverse * t * control.y + t * t * end.y,
+        };
+
+        add_segment(previous, point);
+
+        previous = point;
+    }
+}
+
+fn flatten_cubic(
+    start: RasterPoint,
+    control_1: RasterPoint,
+    control_2: RasterPoint,
+    end: RasterPoint,
+    mut add_segment: impl FnMut(RasterPoint, RasterPoint),
+) {
+    let steps = curve_steps(&[start, control_1, control_2, end]);
+    let mut previous = start;
+
+    for step in 1..=steps {
+        let t = step as f32 / steps as f32;
+        let inverse = 1.0 - t;
+        let inverse_2 = inverse * inverse;
+        let t_2 = t * t;
+
+        let point = RasterPoint {
+            x: inverse_2 * inverse * start.x
+                + 3.0 * inverse_2 * t * control_1.x
+                + 3.0 * inverse * t_2 * control_2.x
+                + t_2 * t * end.x,
+            y: inverse_2 * inverse * start.y
+                + 3.0 * inverse_2 * t * control_1.y
+                + 3.0 * inverse * t_2 * control_2.y
+                + t_2 * t * end.y,
+        };
+
+        add_segment(previous, point);
+
+        previous = point;
     }
 }
 

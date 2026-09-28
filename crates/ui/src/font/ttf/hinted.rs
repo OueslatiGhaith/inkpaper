@@ -20,7 +20,9 @@ use ttf_parser::OutlineBuilder;
 use super::{
     TtfFont,
     metrics::{ceil_to_i32, floor_to_i32},
-    raster::{SUPERSAMPLE_Y, ScanlineBuilder, accumulate_scanline, normalize_coverage},
+    raster::{
+        Edge, EdgeBuilder, SUPERSAMPLE_Y, ScanlineBuilder, accumulate_scanline, normalize_coverage,
+    },
 };
 use crate::{
     CursiveAttachment, FontFace, FontMetrics, FontProperties, FontRasterError, FontWeight,
@@ -137,14 +139,15 @@ impl<'a> HintedTtfFont<'a> {
         let outlines = font.outline_glyphs();
         let instance = state.instance(&font, &outlines, key)?;
 
-        let mut outline = HintedOutline::default();
+        let mut recorder = OutlineRecorder::default();
 
         outlines
             .get(skrifa::GlyphId::new(u32::from(glyph.value())))
             .ok_or(FontRasterError::InvalidGlyph)?
-            .draw(DrawSettings::hinted(instance, false), &mut outline)
+            .draw(DrawSettings::hinted(instance, false), &mut recorder)
             .map_err(|_| FontRasterError::Unsupported)?;
 
+        let outline = recorder.finish();
         let result = use_outline(&outline);
 
         state.last_outline = Some(CachedOutline {
@@ -221,15 +224,15 @@ enum PathCommand {
     Close,
 }
 
-/// a hinted outline in pixels, y up
+/// a hinted outline in pixels, y up, as the pen draws it
 #[derive(Default)]
-struct HintedOutline {
+struct OutlineRecorder {
     commands: Vec<PathCommand>,
     /// left, bottom, right, top of every point, including off-curve points
     bounds: Option<(f32, f32, f32, f32)>,
 }
 
-impl HintedOutline {
+impl OutlineRecorder {
     fn include(&mut self, x: f32, y: f32) {
         self.bounds = Some(match self.bounds {
             None => (x, y, x, y),
@@ -251,73 +254,37 @@ impl HintedOutline {
         Some((left, top, width, height))
     }
 
-    fn metrics(&self, advance: Pixels) -> Option<GlyphMetrics> {
-        let Some((left, top, width, height)) = self.pixel_bounds() else {
-            return Some(GlyphMetrics::new(0, 0, px(0), px(0), advance));
+    /// flattens the outline into bitmap space once, so rasterizing it doesn't
+    /// redo the curve math for every sample row
+    fn finish(self) -> HintedOutline {
+        let Some(bounds) = self.pixel_bounds() else {
+            return HintedOutline {
+                bounds: None,
+                edges: Vec::new(),
+            };
         };
 
-        Some(GlyphMetrics::new(
-            u16::try_from(width).ok()?,
-            u16::try_from(height).ok()?,
-            px(left),
-            px(top),
-            advance,
-        ))
-    }
+        let (left, top, _, _) = bounds;
+        let mut edges = EdgeBuilder::new(left, top);
 
-    /// fills the outline exactly like `rasterize_face` fills an unhinted one
-    fn rasterize(&self, coverage: &mut [u8]) -> Result<(), FontRasterError> {
-        let Some((left, top, width, height)) = self.pixel_bounds() else {
-            return Ok(());
-        };
-
-        let width = usize::try_from(width).map_err(|_| FontRasterError::InvalidGlyph)?;
-        let height = usize::try_from(height).map_err(|_| FontRasterError::InvalidGlyph)?;
-        let required = width
-            .checked_mul(height)
-            .ok_or(FontRasterError::InvalidGlyph)?;
-
-        let coverage = coverage
-            .get_mut(..required)
-            .ok_or(FontRasterError::BufferTooSmall)?;
-
-        coverage.fill(0);
-
-        for row in 0..height {
-            for sub_y in 0..SUPERSAMPLE_Y {
-                let sample_y = row as f32 + (sub_y as f32 + 0.5) / SUPERSAMPLE_Y as f32;
-
-                let mut scanline = ScanlineBuilder::new(1.0, left, top, sample_y);
-
-                for command in &self.commands {
-                    match *command {
-                        PathCommand::MoveTo(x, y) => scanline.move_to(x, y),
-                        PathCommand::LineTo(x, y) => scanline.line_to(x, y),
-                        PathCommand::QuadTo(x1, y1, x, y) => scanline.quad_to(x1, y1, x, y),
-                        PathCommand::CurveTo(x1, y1, x2, y2, x, y) => {
-                            scanline.curve_to(x1, y1, x2, y2, x, y)
-                        }
-                        PathCommand::Close => scanline.close(),
-                    }
-                }
-
-                if scanline.overflowed() {
-                    return Err(FontRasterError::OutlineTooComplex);
-                }
-
-                scanline.sort_intersections();
-
-                accumulate_scanline(width, row, coverage, scanline.intersections());
+        for command in &self.commands {
+            match *command {
+                PathCommand::MoveTo(x, y) => edges.move_to(x, y),
+                PathCommand::LineTo(x, y) => edges.line_to(x, y),
+                PathCommand::QuadTo(x1, y1, x, y) => edges.quad_to(x1, y1, x, y),
+                PathCommand::CurveTo(x1, y1, x2, y2, x, y) => edges.curve_to(x1, y1, x2, y2, x, y),
+                PathCommand::Close => edges.close(),
             }
         }
 
-        normalize_coverage(coverage);
-
-        Ok(())
+        HintedOutline {
+            bounds: Some(bounds),
+            edges: edges.finish(),
+        }
     }
 }
 
-impl OutlinePen for HintedOutline {
+impl OutlinePen for OutlineRecorder {
     fn move_to(&mut self, x: f32, y: f32) {
         self.include(x, y);
         self.commands.push(PathCommand::MoveTo(x, y));
@@ -344,6 +311,80 @@ impl OutlinePen for HintedOutline {
 
     fn close(&mut self) {
         self.commands.push(PathCommand::Close);
+    }
+}
+
+/// a hinted outline flattened into bitmap space
+struct HintedOutline {
+    /// left, top, width, height in pixels, y down
+    bounds: Option<(i32, i32, i32, i32)>,
+    /// sorted by top
+    edges: Vec<Edge>,
+}
+
+impl HintedOutline {
+    fn metrics(&self, advance: Pixels) -> Option<GlyphMetrics> {
+        let Some((left, top, width, height)) = self.bounds else {
+            return Some(GlyphMetrics::new(0, 0, px(0), px(0), advance));
+        };
+
+        Some(GlyphMetrics::new(
+            u16::try_from(width).ok()?,
+            u16::try_from(height).ok()?,
+            px(left),
+            px(top),
+            advance,
+        ))
+    }
+
+    /// fills the outline exactly like `rasterize_face` fills an unhinted one, but
+    /// each sample row only visits the edges that can cross it
+    fn rasterize(&self, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+        let Some((left, top, width, height)) = self.bounds else {
+            return Ok(());
+        };
+
+        let width = usize::try_from(width).map_err(|_| FontRasterError::InvalidGlyph)?;
+        let height = usize::try_from(height).map_err(|_| FontRasterError::InvalidGlyph)?;
+        let required = width
+            .checked_mul(height)
+            .ok_or(FontRasterError::InvalidGlyph)?;
+
+        let coverage = coverage
+            .get_mut(..required)
+            .ok_or(FontRasterError::BufferTooSmall)?;
+
+        coverage.fill(0);
+
+        for row in 0..height {
+            for sub_y in 0..SUPERSAMPLE_Y {
+                let sample_y = row as f32 + (sub_y as f32 + 0.5) / SUPERSAMPLE_Y as f32;
+
+                let mut scanline = ScanlineBuilder::new(1.0, left, top, sample_y);
+
+                for edge in &self.edges {
+                    if edge.top > sample_y {
+                        break;
+                    }
+
+                    if edge.bottom > sample_y {
+                        scanline.add_segment(edge.from, edge.to);
+                    }
+                }
+
+                if scanline.overflowed() {
+                    return Err(FontRasterError::OutlineTooComplex);
+                }
+
+                scanline.sort_intersections();
+
+                accumulate_scanline(width, row, coverage, scanline.intersections());
+            }
+        }
+
+        normalize_coverage(coverage);
+
+        Ok(())
     }
 }
 

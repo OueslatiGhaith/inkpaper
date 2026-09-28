@@ -14,13 +14,15 @@ use skrifa::{
     FontRef, MetadataProvider,
     instance::Size,
     outline::{
-        DrawSettings, Engine, GlyphStyles, HintingInstance, HintingOptions, OutlinePen,
-        SmoothMode, Target,
+        DrawSettings, Engine, GlyphStyles, HintingInstance, HintingOptions, OutlinePen, SmoothMode,
+        Target,
     },
 };
 
 const INTER: TtfFont<'static> = TtfFont::from_data(
-    FontData::new(include_bytes!("../../../../crates/app/assets/fonts/InterVariable.ttf")),
+    FontData::new(include_bytes!(
+        "../../../../crates/app/assets/fonts/InterVariable.ttf"
+    )),
     0,
 );
 
@@ -52,6 +54,8 @@ struct Totals {
     decode_and_hint: u64,
     hinted_outline: u64,
     hinted_fill: u64,
+    advance: u64,
+    skrifa_setup: u64,
     sample_rows: u64,
     commands: u64,
 }
@@ -102,7 +106,9 @@ pub(crate) fn run() {
     // SAFETY: only this function touches the buffer, and it runs once at boot
     let coverage = unsafe { &mut COVERAGE };
 
-    let glyphs = TEXT.chars().filter_map(|character| INTER.glyph_id(character));
+    let glyphs = TEXT
+        .chars()
+        .filter_map(|character| INTER.glyph_id(character));
     let font = FontRef::new(INTER.data().bytes()).expect("Inter parses");
     let outlines = font.outline_glyphs();
     let location = font.axes().location([("wght", 400.0)]);
@@ -174,6 +180,18 @@ pub(crate) fn run() {
                 );
             });
 
+            // the two things `HintedTtfFont` does per glyph besides decoding and
+            // hinting: the unhinted advance, and opening the font in skrifa
+            totals.advance += cycles(|| {
+                core::hint::black_box(INTER.glyph_advance_with_properties(PROPERTIES, glyph, size));
+            });
+
+            totals.skrifa_setup += cycles(|| {
+                if let Ok(font) = FontRef::from_index(INTER.data().bytes(), INTER.face_index()) {
+                    core::hint::black_box(font.outline_glyphs());
+                }
+            });
+
             // what the glyph cache does on a miss, in the same order
             let mut metrics = None;
             totals.hinted_outline += cycles(|| {
@@ -216,7 +234,7 @@ pub(crate) fn run() {
         let per_glyph = |total: u64| us(total / count);
 
         info!(
-            "glyph profile: {=u16}px, {=u64} glyphs, us per glyph: new instance {=u64} (once) | unhinted: metrics {=u64}, fill {=u64} | skrifa: decode {=u64} (warm {=u64}), decode+hint {=u64} | hinted: outline {=u64}, fill {=u64} | {=u64} sample rows and {=u64} commands per glyph",
+            "glyph profile: {=u16}px, {=u64} glyphs, us per glyph: new instance {=u64} (once) | unhinted: metrics {=u64}, fill {=u64} | skrifa: decode {=u64} (warm {=u64}), decode+hint {=u64} | hinted: outline {=u64} (advance {=u64}, skrifa setup {=u64}), fill {=u64} | {=u64} sample rows and {=u64} commands per glyph",
             size,
             count,
             us(instance_cycles),
@@ -226,6 +244,8 @@ pub(crate) fn run() {
             per_glyph(totals.decode_warm),
             per_glyph(totals.decode_and_hint),
             per_glyph(totals.hinted_outline),
+            per_glyph(totals.advance),
+            per_glyph(totals.skrifa_setup),
             per_glyph(totals.hinted_fill),
             totals.sample_rows / count,
             totals.commands / count,
