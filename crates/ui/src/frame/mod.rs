@@ -150,7 +150,7 @@ pub enum MountError {
     EventBindingsFull,
     EntityAccess(EntityAccessError),
     DuplicateEntityMount(EntityId),
-    #[cfg(feature = "alloc")]
+    /// heap-backed storage could not allocate
     AllocationFailed,
 }
 

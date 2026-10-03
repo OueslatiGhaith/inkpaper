@@ -45,7 +45,7 @@ pub enum GlobalSetError {
         supported: usize,
     },
     BorrowConflict,
-    #[cfg(feature = "alloc")]
+    /// heap-backed storage could not allocate
     AllocationFailed,
 }
 

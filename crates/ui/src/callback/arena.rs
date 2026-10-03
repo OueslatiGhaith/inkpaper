@@ -23,7 +23,7 @@ pub enum CallbackAllocError {
         requested: usize,
         supported: usize,
     },
-    #[cfg(feature = "alloc")]
+    /// heap-backed storage could not allocate
     AllocationFailed,
 }
 

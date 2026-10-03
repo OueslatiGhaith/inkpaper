@@ -69,7 +69,7 @@ pub enum IdentityError {
     MissingEntityScope {
         node: NodeId,
     },
-    #[cfg(feature = "alloc")]
+    /// heap-backed storage could not allocate
     AllocationFailed,
 }
 
