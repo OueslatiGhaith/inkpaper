@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[cfg(test)]
-#[path = "allocated_tests.rs"]
+#[path = "heap_tests.rs"]
 mod tests;
 
 struct Allocation {
@@ -71,12 +71,12 @@ impl Drop for Entry {
 /// closure allocations never move. Invocation copies metadata before calling user code,
 /// so callbacks may grow the slot table. Reset requires exclusive access and therefore
 /// cannot free a closure while an invocation borrows this arena
-pub(crate) struct CallbackArena<const BYTES: usize, const SLOTS: usize> {
+pub(crate) struct HeapCallbackArena<const INITIAL_SLOTS: usize> {
     entries: RefCell<Vec<Entry>>,
     generation: u32,
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Default for CallbackArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> Default for HeapCallbackArena<INITIAL_SLOTS> {
     fn default() -> Self {
         Self {
             entries: RefCell::new(Vec::new()),
@@ -85,7 +85,7 @@ impl<const BYTES: usize, const SLOTS: usize> Default for CallbackArena<BYTES, SL
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> CallbackArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> HeapCallbackArena<INITIAL_SLOTS> {
     fn lookup(&self, id: CallbackId) -> Option<(NonNull<u8>, EntityId, CallbackKind)> {
         if id.generation() != self.generation {
             return None;
@@ -153,7 +153,7 @@ impl<const BYTES: usize, const SLOTS: usize> CallbackArena<BYTES, SLOTS> {
 // SAFETY: reservations own correctly aligned storage. Only committed closures are
 // callable. Both invocation paths validate generation/kind and use the registered
 // trampoline, which enforces the target entity's borrow rules.
-unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore for CallbackArena<BYTES, SLOTS> {
+unsafe impl<const INITIAL_SLOTS: usize> CallbackStore for HeapCallbackArena<INITIAL_SLOTS> {
     fn reserve(
         &self,
         layout: Layout,
@@ -165,7 +165,11 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore for CallbackAr
         let slot = u16::try_from(entries.len()).map_err(|_| CallbackAllocError::SlotsFull)?;
 
         if entries.len() == entries.capacity() {
-            let additional = if entries.is_empty() { SLOTS.max(1) } else { 1 };
+            let additional = if entries.is_empty() {
+                INITIAL_SLOTS.max(1)
+            } else {
+                1
+            };
 
             entries
                 .try_reserve(additional)
@@ -221,7 +225,7 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore for CallbackAr
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Drop for CallbackArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> Drop for HeapCallbackArena<INITIAL_SLOTS> {
     fn drop(&mut self) {
         self.reset();
     }

@@ -12,13 +12,17 @@ use heapless::Vec;
 use crate::align_up;
 
 #[cfg(feature = "alloc")]
-mod allocated;
+mod heap;
 
 #[cfg(feature = "alloc")]
-pub(crate) use allocated::GlobalArena;
+pub(crate) use heap::HeapGlobalArena;
+
+/// the global storage selected by the `alloc` feature
 #[cfg(not(feature = "alloc"))]
 pub(crate) type GlobalArena<const BYTES: usize, const SLOTS: usize> =
     FixedGlobalArena<BYTES, SLOTS>;
+#[cfg(feature = "alloc")]
+pub(crate) type GlobalArena<const BYTES: usize, const SLOTS: usize> = HeapGlobalArena<SLOTS>;
 
 /// marker trait for application-wide immutable values
 ///

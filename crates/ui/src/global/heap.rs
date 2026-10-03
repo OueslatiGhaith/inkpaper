@@ -50,14 +50,14 @@ impl Drop for Entry {
     }
 }
 
-/// aach global has a stable allocation. SLOTS is a lazy reservation hint. BYTES does
-/// not limit heap storage. Construction does not allocate.
-pub(crate) struct GlobalArena<const BYTES: usize, const SLOTS: usize> {
+/// each global has a stable allocation. The first allocation reserves `INITIAL_SLOTS`
+/// entries. Storage is limited only by the allocator. Construction does not allocate.
+pub(crate) struct HeapGlobalArena<const INITIAL_SLOTS: usize> {
     entries: Vec<Entry>,
     bytes: usize,
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Default for GlobalArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> Default for HeapGlobalArena<INITIAL_SLOTS> {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
@@ -66,7 +66,7 @@ impl<const BYTES: usize, const SLOTS: usize> Default for GlobalArena<BYTES, SLOT
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> GlobalArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> HeapGlobalArena<INITIAL_SLOTS> {
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
@@ -109,7 +109,7 @@ impl<const BYTES: usize, const SLOTS: usize> GlobalArena<BYTES, SLOTS> {
 
         if self.entries.len() == self.entries.capacity() {
             let additional = if self.entries.is_empty() {
-                SLOTS.max(1)
+                INITIAL_SLOTS.max(1)
             } else {
                 1
             };
@@ -138,7 +138,7 @@ impl<const BYTES: usize, const SLOTS: usize> GlobalArena<BYTES, SLOTS> {
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> GlobalStore for GlobalArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> GlobalStore for HeapGlobalArena<INITIAL_SLOTS> {
     fn acquire(
         &self,
         type_id: TypeId,
@@ -173,7 +173,7 @@ impl<const BYTES: usize, const SLOTS: usize> GlobalStore for GlobalArena<BYTES, 
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Drop for GlobalArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> Drop for HeapGlobalArena<INITIAL_SLOTS> {
     fn drop(&mut self) {
         while let Some(entry) = self.entries.pop() {
             drop(entry);

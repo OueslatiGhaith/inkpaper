@@ -3,7 +3,7 @@ use std::{cell::Cell, rc::Rc, string::String};
 
 #[test]
 fn growth_preserves_addresses_during_shared_and_exclusive_borrows() {
-    let arena = EntityArena::<0, 1>::default();
+    let arena = HeapEntityArena::<1>::default();
     let entity = arena.insert(7u32).unwrap();
     let original = arena.read(entity, |value| value as *const u32).unwrap();
 
@@ -49,7 +49,7 @@ fn aligned_values_and_zsts_have_distinct_aligned_storage() {
     #[repr(align(64))]
     struct Marker;
 
-    let arena = EntityArena::<0, 0>::default();
+    let arena = HeapEntityArena::<0>::default();
     let value = arena.insert(Aligned(42)).unwrap();
 
     arena
@@ -72,7 +72,7 @@ fn aligned_values_and_zsts_have_distinct_aligned_storage() {
 
 #[test]
 fn abandoned_storage_is_released_without_dropping_an_uninitialized_value() {
-    let arena = EntityArena::<0, 0>::default();
+    let arena = HeapEntityArena::<0>::default();
     let reservation = arena
         .reserve(
             Layout::new::<String>(),
@@ -116,7 +116,7 @@ fn values_drop_once_in_reverse_reservation_order_even_after_growth() {
     let next = Rc::new(Cell::new(32));
 
     {
-        let arena = EntityArena::<0, 1>::default();
+        let arena = HeapEntityArena::<1>::default();
 
         for id in 0..32 {
             arena
@@ -136,7 +136,7 @@ fn values_drop_once_in_reverse_reservation_order_even_after_growth() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn entity_id_exhaustion_does_not_wrap() {
-    let arena = EntityArena::<0, 0>::default();
+    let arena = HeapEntityArena::<0>::default();
 
     for _ in 0..=u16::MAX {
         arena.insert(()).unwrap();

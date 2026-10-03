@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[cfg(test)]
-#[path = "allocated_tests.rs"]
+#[path = "heap_tests.rs"]
 mod tests;
 
 struct Allocation {
@@ -64,11 +64,11 @@ impl Drop for Entry {
 /// No metadata reference or RefCell guard escapes an EntityStore call.
 /// RawEntityBorrow retains a value pointer and releases its borrow by slot id.
 /// Abandonned slots remain tombstones, so escaped construction handles stay invalid
-pub(crate) struct EntityArena<const BYTES: usize, const SLOTS: usize> {
+pub(crate) struct HeapEntityArena<const INITIAL_SLOTS: usize> {
     entries: RefCell<Vec<Entry>>,
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Default for EntityArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> Default for HeapEntityArena<INITIAL_SLOTS> {
     fn default() -> Self {
         Self {
             entries: RefCell::new(Vec::new()),
@@ -76,7 +76,7 @@ impl<const BYTES: usize, const SLOTS: usize> Default for EntityArena<BYTES, SLOT
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> EntityArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> HeapEntityArena<INITIAL_SLOTS> {
     pub fn len(&self) -> usize {
         self.entries.borrow().len()
     }
@@ -137,7 +137,7 @@ impl<const BYTES: usize, const SLOTS: usize> EntityArena<BYTES, SLOTS> {
 
 // SAFETY: values never move, type/state checks precede access, and every returned pointer
 // has a tracked borrow. Reservations are initialized only through commit
-unsafe impl<const BYTES: usize, const SLOTS: usize> EntityStore for EntityArena<BYTES, SLOTS> {
+unsafe impl<const INITIAL_SLOTS: usize> EntityStore for HeapEntityArena<INITIAL_SLOTS> {
     fn reserve(
         &self,
         layout: Layout,
@@ -148,7 +148,11 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> EntityStore for EntityArena<
         let slot = u16::try_from(entries.len()).map_err(|_| EntityAllocError::SlotsFull)?;
 
         if entries.len() == entries.capacity() {
-            let additional = if entries.is_empty() { SLOTS.max(1) } else { 1 };
+            let additional = if entries.is_empty() {
+                INITIAL_SLOTS.max(1)
+            } else {
+                1
+            };
 
             entries
                 .try_reserve(additional)
@@ -251,7 +255,7 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> EntityStore for EntityArena<
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Drop for EntityArena<BYTES, SLOTS> {
+impl<const INITIAL_SLOTS: usize> Drop for HeapEntityArena<INITIAL_SLOTS> {
     fn drop(&mut self) {
         // match the fixed arena's reverse reservation order.
         while let Some(entry) = self.entries.get_mut().pop() {

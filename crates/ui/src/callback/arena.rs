@@ -153,7 +153,7 @@ impl<const N: usize> CallbackStorage<N> {
 ///    borrow for the complete callback
 /// 7. only Live callbacks are dropped.
 /// 8. each live callback is dropped exactly once.
-pub(crate) struct CallbackArena<const BYTES: usize, const SLOTS: usize> {
+pub(crate) struct FixedCallbackArena<const BYTES: usize, const SLOTS: usize> {
     storage: UnsafeCell<CallbackStorage<BYTES>>,
     entries: RefCell<Vec<CallbackMeta, SLOTS>>,
     states: [Cell<CallbackSlotState>; SLOTS],
@@ -161,7 +161,7 @@ pub(crate) struct CallbackArena<const BYTES: usize, const SLOTS: usize> {
     generation: Cell<u32>,
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Default for CallbackArena<BYTES, SLOTS> {
+impl<const BYTES: usize, const SLOTS: usize> Default for FixedCallbackArena<BYTES, SLOTS> {
     fn default() -> Self {
         Self {
             storage: UnsafeCell::new(CallbackStorage::new()),
@@ -173,7 +173,7 @@ impl<const BYTES: usize, const SLOTS: usize> Default for CallbackArena<BYTES, SL
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> CallbackArena<BYTES, SLOTS> {
+impl<const BYTES: usize, const SLOTS: usize> FixedCallbackArena<BYTES, SLOTS> {
     fn storage_ptr(&self) -> *mut u8 {
         let storage = self.storage.get();
 
@@ -308,7 +308,9 @@ impl<const BYTES: usize, const SLOTS: usize> CallbackArena<BYTES, SLOTS> {
     }
 }
 
-unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore for CallbackArena<BYTES, SLOTS> {
+unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore
+    for FixedCallbackArena<BYTES, SLOTS>
+{
     fn reserve(
         &self,
         layout: Layout,
@@ -384,7 +386,7 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore for CallbackAr
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Drop for CallbackArena<BYTES, SLOTS> {
+impl<const BYTES: usize, const SLOTS: usize> Drop for FixedCallbackArena<BYTES, SLOTS> {
     fn drop(&mut self) {
         self.drop_live_callbacks();
     }
@@ -506,7 +508,6 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::callback::CallbackArena;
     use crate::*;
 
     struct Counter {
@@ -523,7 +524,7 @@ mod tests {
     #[test]
     fn invokes_method_listener() {
         let entities = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 16>::default();
+        let callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = GlobalArena::<0, 0>::default();
 
         let root = entities.insert(Counter { value: 0 }).unwrap();
@@ -552,7 +553,7 @@ mod tests {
     #[test]
     fn invokes_capturing_listener() {
         let entities = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 16>::default();
+        let callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = GlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
@@ -584,7 +585,7 @@ mod tests {
     #[test]
     fn listener_rejects_reentrant_update_of_target_entity() {
         let entities = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 16>::default();
+        let callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = GlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
@@ -617,7 +618,7 @@ mod tests {
     #[test]
     fn listener_can_update_another_entity() {
         let entities = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 16>::default();
+        let callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = GlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let settings = entities.insert(Settings { dirty: false }).unwrap();
@@ -656,7 +657,7 @@ mod tests {
     #[test]
     fn stale_listener_is_rejected_after_reset() {
         let entities = EntityArena::<1024, 16>::default();
-        let mut callbacks = CallbackArena::<1024, 16>::default();
+        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = GlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
@@ -695,7 +696,7 @@ mod tests {
         DROPS.store(0, Ordering::SeqCst);
 
         let entities = EntityArena::<1024, 16>::default();
-        let mut callbacks = CallbackArena::<1024, 16>::default();
+        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = GlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
@@ -718,10 +719,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "alloc"))]
     fn listener_arena_reports_slot_exhaustion() {
         let entities = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 1>::default();
+        let callbacks = FixedCallbackArena::<1024, 1>::default();
         let globals = GlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
@@ -737,10 +737,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "alloc"))]
     fn listener_arena_reports_storage_exhaustion() {
         let entities = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<4, 16>::default();
+        let callbacks = FixedCallbackArena::<4, 16>::default();
         let globals = GlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);

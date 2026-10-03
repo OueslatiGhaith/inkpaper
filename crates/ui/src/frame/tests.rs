@@ -2,8 +2,9 @@ use core::{any::TypeId, cell::Cell};
 use std::string::String;
 
 use crate::{
-    callback::CallbackArena,
+    callback::{CallbackArena, CallbackStore},
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
+    entity::EntityStore,
     *,
 };
 
@@ -49,24 +50,13 @@ fn state_id<const NODES: usize, const TEXT_BYTES: usize>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_frame<
-    Root,
-    const NODES: usize,
-    const TEXT_BYTES: usize,
-    const STATES: usize,
-    const ENTITY_BYTES: usize,
-    const ENTITY_SLOTS: usize,
-    const CALLBACK_BYTES: usize,
-    const CALLBACK_SLOTS: usize,
-    const GLOBAL_BYTES: usize,
-    const GLOBAL_SLOTS: usize,
->(
+fn build_frame<Root, const NODES: usize, const TEXT_BYTES: usize, const STATES: usize>(
     frame: &mut FrameArena<NODES, TEXT_BYTES>,
     states: &mut ElementStateTable<STATES>,
     root: Entity<Root>,
-    entities: &EntityArena<ENTITY_BYTES, ENTITY_SLOTS>,
-    globals: &GlobalArena<GLOBAL_BYTES, GLOBAL_SLOTS>,
-    callbacks: &CallbackArena<CALLBACK_BYTES, CALLBACK_SLOTS>,
+    entities: &dyn EntityStore,
+    globals: &dyn GlobalStore,
+    callbacks: &dyn CallbackStore,
     notified: &Cell<bool>,
     generation: u32,
 ) -> Result<NodeId, IdentityError>

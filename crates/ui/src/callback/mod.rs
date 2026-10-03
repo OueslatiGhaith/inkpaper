@@ -1,17 +1,23 @@
 use core::marker::PhantomData;
 
-#[cfg(feature = "alloc")]
-mod allocated;
 mod arena;
+#[cfg(feature = "alloc")]
+mod heap;
 
 pub use arena::{CallbackAllocError, CanvasInvokeError, ListenerInvokeError};
 
-pub(crate) use arena::{CallbackStore, register_canvas_callback, register_listener};
-
+pub(crate) use arena::{
+    CallbackStore, FixedCallbackArena, register_canvas_callback, register_listener,
+};
 #[cfg(feature = "alloc")]
-pub(crate) use allocated::CallbackArena;
+pub(crate) use heap::HeapCallbackArena;
+
+/// the callback storage selected by the `alloc` feature
 #[cfg(not(feature = "alloc"))]
-pub(crate) use arena::CallbackArena;
+pub(crate) type CallbackArena<const BYTES: usize, const SLOTS: usize> =
+    FixedCallbackArena<BYTES, SLOTS>;
+#[cfg(feature = "alloc")]
+pub(crate) type CallbackArena<const BYTES: usize, const SLOTS: usize> = HeapCallbackArena<SLOTS>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct CallbackId {

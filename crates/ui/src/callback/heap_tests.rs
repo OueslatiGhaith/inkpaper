@@ -1,8 +1,10 @@
 use super::*;
 use crate::{
-    ActivateEvent, Context, ElementId, EntityAccessError, EntityArena, GlobalArena, PaintCx, Point,
-    Rect, ResolvedTextStyle, Size,
+    ActivateEvent, Context, ElementId, EntityAccessError, PaintCx, Point, Rect, ResolvedTextStyle,
+    Size,
     callback::{register_canvas_callback, register_listener},
+    entity::HeapEntityArena,
+    global::HeapGlobalArena,
     px, text,
 };
 use std::{cell::Cell, rc::Rc};
@@ -28,9 +30,9 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
     #[repr(align(128))]
     struct Capture(u32);
 
-    let entities = EntityArena::<0, 0>::default();
-    let callbacks = CallbackArena::<0, 1>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let entities = HeapEntityArena::<0>::default();
+    let callbacks = HeapCallbackArena::<1>::default();
+    let globals = HeapGlobalArena::<0>::default();
     let target = entities.insert(0u32).unwrap();
     let notified = Cell::new(false);
     let capture = Capture(42);
@@ -71,9 +73,9 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
 
 #[test]
 fn listener_and_canvas_validation_survive_slot_reuse() {
-    let entities = EntityArena::<0, 0>::default();
-    let mut callbacks = CallbackArena::<0, 0>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let entities = HeapEntityArena::<0>::default();
+    let mut callbacks = HeapCallbackArena::<0>::default();
+    let globals = HeapGlobalArena::<0>::default();
     let target = entities.insert(42u32).unwrap();
     let notified = Cell::new(false);
 
@@ -169,10 +171,10 @@ fn reset_releases_captures_and_reuses_slot_capacity() {
         }
     }
 
-    let entities = EntityArena::<0, 0>::default();
+    let entities = HeapEntityArena::<0>::default();
     let target = entities.insert(()).unwrap();
     let drops = Rc::new(Cell::new(0));
-    let mut callbacks = CallbackArena::<0, 1>::default();
+    let mut callbacks = HeapCallbackArena::<1>::default();
 
     for _ in 0..16 {
         let capture = Capture(drops.clone());
@@ -223,9 +225,9 @@ fn reset_releases_captures_and_reuses_slot_capacity() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn callback_id_limit_is_enforced_and_reset_recovers_capacity() {
-    let entities = EntityArena::<0, 0>::default();
+    let entities = HeapEntityArena::<0>::default();
     let target = entities.insert(()).unwrap();
-    let mut callbacks = CallbackArena::<0, 0>::default();
+    let mut callbacks = HeapCallbackArena::<0>::default();
 
     for _ in 0..=u16::MAX {
         register_listener(&callbacks, target, |_: &mut (), _: &ActivateEvent, _| {}).unwrap();
