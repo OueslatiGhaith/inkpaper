@@ -3,6 +3,7 @@ use crate::{
     EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size,
     StatefulInteractivity, Style, StylePatch, SvgSource, SvgStyle, TextStyle,
     element::state::ElementStateId, frame::storage::FrameBuffer, interaction::scroll::ScrollAxes,
+    storage::FrameStorage,
 };
 #[cfg(feature = "metrics")]
 use crate::{PerformanceMetrics, PerformanceMetricsCell};
@@ -173,17 +174,17 @@ enum NodeCache {
     SubtreePaintBounds(Rect),
 }
 
-pub(crate) struct FrameArena<const NODES: usize, const TEXT_BYTES: usize> {
-    pub(crate) nodes: FrameBuffer<Node, NODES>,
-    pub(crate) event_bindings: FrameBuffer<EventBinding, NODES>,
-    text: FrameBuffer<u8, TEXT_BYTES>,
-    node_cache: FrameBuffer<NodeCache, NODES>,
+pub(crate) struct FrameArena<F: FrameStorage> {
+    pub(crate) nodes: FrameBuffer<Node, F::Nodes<Node>>,
+    pub(crate) event_bindings: FrameBuffer<EventBinding, F::Nodes<EventBinding>>,
+    text: FrameBuffer<u8, F::Text>,
+    node_cache: FrameBuffer<NodeCache, F::Nodes<NodeCache>>,
     subtree_paint_bounds_valid: bool,
     #[cfg(feature = "metrics")]
     pub(crate) metrics: PerformanceMetricsCell,
 }
 
-impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, TEXT_BYTES> {
+impl<F: FrameStorage> Default for FrameArena<F> {
     fn default() -> Self {
         Self {
             nodes: FrameBuffer::new(),
@@ -197,7 +198,7 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Default for FrameArena<NODES, 
     }
 }
 
-impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
+impl<F: FrameStorage> FrameArena<F> {
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
@@ -222,7 +223,6 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         self.subtree_paint_bounds_valid = false;
     }
 
-    #[cfg(feature = "alloc")]
     pub(crate) fn shrink_to_fit(&mut self) {
         self.nodes.shrink_to_fit();
         self.node_cache.shrink_to_fit();

@@ -5,27 +5,26 @@ use alloc::boxed::Box;
 
 use crate::{
     ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
-    EntityArena, EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena,
-    ImageRegistryError, ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId,
-    Offset, PaintReport, Point, Render, RenderInvalidation, ResourcePainter, Size, TextMeasurer,
-    callback::{CallbackArena, ListenerInvokeError},
+    EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageRegistryError,
+    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintReport,
+    Point, Render, RenderInvalidation, ResourcePainter, RuntimeStorage, Size, TextMeasurer,
+    callback::ListenerInvokeError,
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     entity::create_entity,
-    global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
+    global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
     px,
     resources::RuntimeResources,
     runtime::root::RuntimeRoot,
+    storage::{CallbackStorage, GlobalStorage},
 };
 #[cfg(feature = "metrics")]
 use crate::{GlyphCacheMetrics, PerformanceMetrics};
 
 mod api;
-mod builder;
 mod root;
 
 pub use api::{RenderRuntimeApi, ResourceRuntimeApi, RuntimeApi};
-pub use builder::RuntimeBuilder;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameBuildError {
@@ -46,24 +45,18 @@ impl From<IdentityError> for FrameBuildError {
     }
 }
 
-pub struct Runtime<
-    const ENTITY_BYTES: usize,
-    const ENTITY_SLOTS: usize,
-    const CALLBACK_BYTES: usize,
-    const CALLBACK_SLOTS: usize,
-    const FRAME_NODES: usize,
-    const FRAME_TEXT_BYTES: usize,
-    const ELEMENT_STATES: usize,
-    const GLOBAL_BYTES: usize = 0,
-    const GLOBAL_SLOTS: usize = 0,
-    RESOURCES = (),
-> {
-    entities: EntityArena<ENTITY_BYTES, ENTITY_SLOTS>,
-    globals: GlobalArena<GLOBAL_BYTES, GLOBAL_SLOTS>,
-    callbacks: CallbackArena<CALLBACK_BYTES, CALLBACK_SLOTS>,
-    frame: FrameArena<FRAME_NODES, FRAME_TEXT_BYTES>,
-    element_states: ElementStateTable<ELEMENT_STATES>,
-    scroll_states: ScrollStateTable<ELEMENT_STATES>,
+/// the UI runtime. `S` chooses the storage behind each runtime table (see
+/// [`RuntimeStorage`]), and `RESOURCES` holds render resources such as fonts and images.
+pub struct Runtime<S, RESOURCES = ()>
+where
+    S: RuntimeStorage,
+{
+    entities: S::Entities,
+    globals: S::Globals,
+    callbacks: S::Callbacks,
+    frame: FrameArena<S::Frame>,
+    element_states: ElementStateTable<S::ElementStates>,
+    scroll_states: ScrollStateTable<S::ElementStates>,
     resources: RESOURCES,
 
     notified: Cell<bool>,
@@ -76,26 +69,16 @@ pub struct Runtime<
     pending_scroll_into_view: Option<ElementStateId>,
 }
 
-impl<
-    const EB: usize,
-    const ES: usize,
-    const CB: usize,
-    const CS: usize,
-    const FN: usize,
-    const FT: usize,
-    const ST: usize,
-    const GB: usize,
-    const GS: usize,
-    RESOURCES,
-> Default for Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>
+impl<S, RESOURCES> Default for Runtime<S, RESOURCES>
 where
+    S: RuntimeStorage,
     RESOURCES: Default,
 {
     fn default() -> Self {
         Self {
-            entities: EntityArena::default(),
-            globals: GlobalArena::default(),
-            callbacks: CallbackArena::default(),
+            entities: S::Entities::default(),
+            globals: S::Globals::default(),
+            callbacks: S::Callbacks::default(),
             frame: FrameArena::default(),
             element_states: ElementStateTable::default(),
             scroll_states: ScrollStateTable::default(),
@@ -112,18 +95,9 @@ where
     }
 }
 
-impl<
-    const EB: usize,
-    const ES: usize,
-    const CB: usize,
-    const CS: usize,
-    const FN: usize,
-    const FT: usize,
-    const ST: usize,
-    const GB: usize,
-    const GS: usize,
-    RESOURCES,
-> Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>
+impl<S, RESOURCES> Runtime<S, RESOURCES>
+where
+    S: RuntimeStorage,
 {
     pub fn create<T>(
         &self,
@@ -268,7 +242,7 @@ impl<
         self.root
     }
 
-    pub(crate) fn frame(&self) -> &FrameArena<FN, FT> {
+    pub(crate) fn frame(&self) -> &FrameArena<S::Frame> {
         &self.frame
     }
 
@@ -283,8 +257,7 @@ impl<
     /// releases spare frame capacity while preserving the current frame.
     ///
     /// call after rebuilding a smaller screen, rather than after every frame. The allocator
-    /// may retain some capacity
-    #[cfg(feature = "alloc")]
+    /// may retain some capacity. Does nothing for fixed storage
     pub fn shrink_frame_storage(&mut self) {
         self.frame.shrink_to_fit();
     }
@@ -988,28 +961,18 @@ impl<
         self.globals.used_bytes()
     }
 
-    pub const fn global_capacity(&self) -> usize {
+    pub fn global_capacity(&self) -> usize {
         self.globals.capacity()
     }
 
-    pub const fn global_byte_capacity(&self) -> usize {
+    pub fn global_byte_capacity(&self) -> usize {
         self.globals.byte_capacity()
     }
 }
 
-impl<
-    const EB: usize,
-    const ES: usize,
-    const CB: usize,
-    const CS: usize,
-    const FN: usize,
-    const FT: usize,
-    const ST: usize,
-    const GB: usize,
-    const GS: usize,
-    RESOURCES,
-> Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>
+impl<S, RESOURCES> Runtime<S, RESOURCES>
 where
+    S: RuntimeStorage,
     RESOURCES: TextMeasurer,
 {
     pub fn layout(&mut self, viewport: Size) -> Option<Size> {
@@ -1031,32 +994,14 @@ where
 
 impl<
     'resource,
-    const EB: usize,
-    const ES: usize,
-    const CB: usize,
-    const CS: usize,
-    const FN: usize,
-    const FT: usize,
-    const ST: usize,
-    const GB: usize,
-    const GS: usize,
+    S,
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
     const IMAGES: usize,
->
-    Runtime<
-        EB,
-        ES,
-        CB,
-        CS,
-        FN,
-        FT,
-        ST,
-        GB,
-        GS,
-        RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
-    >
+> Runtime<S, RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
+where
+    S: RuntimeStorage,
 {
     pub fn register_font(
         &mut self,

@@ -15,7 +15,7 @@ use embedded_graphics_simulator::{
 };
 use heapless::String;
 use inkpaper_ui::{
-    DamageRegion, FontData, FontFace, Offset, TtfFont,
+    DamageRegion, FontData, FontFace, Offset, RuntimeResources, TtfFont,
     backend::{EmbeddedGraphicsImage, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
@@ -1392,14 +1392,10 @@ fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
 fn main() {
     let runtime_font = runtime_font_from_args();
 
-    let mut runtime = RuntimeBuilder::default()
-        .entities::<16_384, 32>()
-        .callbacks::<8_192, 64>()
-        .frame::<512, 8_192>()
-        .element_states::<256>()
-        .globals::<2_048, 8>()
-        .render_resources::<3, 128, { 16 * 1024 }, 1>()
-        .build();
+    let mut runtime = Runtime::<
+        FixedStorage<16_384, 32, 8_192, 64, 512, 8_192, 256, 2_048, 8>,
+        RuntimeResources<'_, 3, 128, { 16 * 1024 }, 1>,
+    >::default();
 
     let body_font_family = runtime
         .register_font_family()

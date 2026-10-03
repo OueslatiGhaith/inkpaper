@@ -5,20 +5,19 @@ use crate::{
     callback::{CallbackArena, CallbackStore},
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity::EntityStore,
+    global::GlobalStore,
+    storage::{ElementStateStorage, FrameStorage},
     *,
 };
 
-fn node_text<const N: usize, const T: usize>(frame: &FrameArena<N, T>, id: NodeId) -> &str {
+fn node_text<F: FrameStorage>(frame: &FrameArena<F>, id: NodeId) -> &str {
     match frame.node(id).kind {
         NodeKind::Text { text, .. } => frame.text(text),
         _ => panic!("expected text node"),
     }
 }
 
-fn find_element<const NODES: usize, const TEXT: usize>(
-    frame: &FrameArena<NODES, TEXT>,
-    id: ElementId,
-) -> Option<NodeId> {
+fn find_element<F: FrameStorage>(frame: &FrameArena<F>, id: ElementId) -> Option<NodeId> {
     frame
         .nodes
         .iter()
@@ -26,8 +25,8 @@ fn find_element<const NODES: usize, const TEXT: usize>(
         .find_map(|(index, node)| (node.element_id == Some(id)).then(|| NodeId::new(index as u16)))
 }
 
-fn find_all_elements<const NODES: usize, const TEXT_BYTES: usize>(
-    frame: &FrameArena<NODES, TEXT_BYTES>,
+fn find_all_elements<F: FrameStorage>(
+    frame: &FrameArena<F>,
     id: ElementId,
 ) -> std::vec::Vec<NodeId> {
     frame
@@ -39,10 +38,7 @@ fn find_all_elements<const NODES: usize, const TEXT_BYTES: usize>(
         .collect()
 }
 
-fn state_id<const NODES: usize, const TEXT_BYTES: usize>(
-    frame: &FrameArena<NODES, TEXT_BYTES>,
-    node: NodeId,
-) -> ElementStateId {
+fn state_id<F: FrameStorage>(frame: &FrameArena<F>, node: NodeId) -> ElementStateId {
     frame
         .node(node)
         .element_state_id
@@ -50,9 +46,9 @@ fn state_id<const NODES: usize, const TEXT_BYTES: usize>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_frame<Root, const NODES: usize, const TEXT_BYTES: usize, const STATES: usize>(
-    frame: &mut FrameArena<NODES, TEXT_BYTES>,
-    states: &mut ElementStateTable<STATES>,
+fn build_frame<Root, F: FrameStorage, E: ElementStateStorage>(
+    frame: &mut FrameArena<F>,
+    states: &mut ElementStateTable<E>,
     root: Entity<Root>,
     entities: &dyn EntityStore,
     globals: &dyn GlobalStore,
@@ -80,7 +76,7 @@ where
 
 #[test]
 fn mounts_div_tree() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let root = frame.mount(div().child("A").child("B"), app).unwrap();
@@ -100,7 +96,7 @@ fn mounts_div_tree() {
 
 #[test]
 fn preserves_child_order() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
 
@@ -120,7 +116,7 @@ fn preserves_child_order() {
 
 #[test]
 fn mounts_nested_elements() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
 
@@ -152,7 +148,7 @@ fn mounts_nested_elements() {
 
 #[test]
 fn preserves_styles_when_mounting() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
 
@@ -176,7 +172,7 @@ fn preserves_styles_when_mounting() {
 
 #[test]
 fn text_is_copied_into_frame_storage() {
-    let mut frame = FrameArena::<8, 128>::default();
+    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
 
@@ -194,7 +190,7 @@ fn text_is_copied_into_frame_storage() {
 
 #[test]
 fn mounts_stateful_element_identity() {
-    let mut frame = FrameArena::<8, 128>::default();
+    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
 
@@ -213,7 +209,7 @@ fn mounts_stateful_element_identity() {
 #[cfg(not(feature = "alloc"))]
 #[test]
 fn reports_node_capacity_exhaustion() {
-    let mut frame = FrameArena::<2, 128>::default();
+    let mut frame = FrameArena::<TestFrame<2, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
 
@@ -231,7 +227,7 @@ fn reports_node_capacity_exhaustion() {
 #[cfg(not(feature = "alloc"))]
 #[test]
 fn reports_text_storage_exhaustion() {
-    let mut frame = FrameArena::<8, 4>::default();
+    let mut frame = FrameArena::<TestFrame<8, 4>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
 
@@ -244,7 +240,7 @@ fn reports_text_storage_exhaustion() {
 #[cfg(not(feature = "alloc"))]
 #[test]
 fn fixed_frame_failure_preserves_text_and_existing_event_bindings() {
-    let mut frame = FrameArena::<1, 16>::default();
+    let mut frame = FrameArena::<TestFrame<1, 16>>::default();
     let root = frame.push_div(Style::default()).unwrap();
 
     assert_eq!(
@@ -267,7 +263,7 @@ fn fixed_frame_failure_preserves_text_and_existing_event_bindings() {
 
 #[test]
 fn clear_resets_frame_storage() {
-    let mut frame = FrameArena::<8, 128>::default();
+    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
 
@@ -309,7 +305,7 @@ impl Render for Parent {
 
 #[test]
 fn mounts_entities_as_placeholders() {
-    let mut frame = FrameArena::<8, 128>::default();
+    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
 
@@ -333,7 +329,7 @@ fn mounts_entities_as_placeholders() {
 #[test]
 fn expands_nested_entities() {
     let entities = EntityArena::<2048, 16>::default();
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let callbacks = CallbackArena::<2048, 16>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
@@ -394,7 +390,7 @@ fn releases_entity_borrows_after_rendering() {
     let callbacks = CallbackArena::<2048, 16>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
@@ -426,7 +422,7 @@ fn copies_entity_text_into_frame_storage() {
     let callbacks = CallbackArena::<2048, 16>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let label = entities
@@ -470,7 +466,7 @@ fn rejects_duplicate_entity_mounts() {
     let callbacks = CallbackArena::<2048, 16>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
@@ -492,7 +488,7 @@ fn expanding_entities_twice_does_not_duplicate_nodes() {
     let callbacks = CallbackArena::<2048, 16>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
@@ -541,7 +537,7 @@ fn entity_render_mounts_click_listener() {
     let callbacks = CallbackArena::<2048, 16>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let counter = entities.insert(Counter { value: 0 }).unwrap();
@@ -563,7 +559,7 @@ fn mounted_listener_updates_owning_entity() {
     let callbacks = CallbackArena::<2048, 16>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let counter = entities.insert(Counter { value: 0 }).unwrap();
@@ -634,7 +630,7 @@ fn rendered_listener_can_update_another_entity() {
     let callbacks = CallbackArena::<2048, 16>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let status = entities.insert(Status { value: 0 }).unwrap();
@@ -672,7 +668,7 @@ fn entity_render_access_errors_become_mount_errors() {
     let callbacks = CallbackArena::<1024, 8>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let notified = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
@@ -694,7 +690,7 @@ fn expanded_entity_root_is_child_of_entity_node() {
     let callbacks = CallbackArena::<1024, 8>::default();
     let globals = GlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let notified = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
@@ -722,9 +718,9 @@ impl Render for StableApp {
 fn element_identity_is_stable_across_frames() {
     let entities = EntityArena::<2048, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<32>::default();
+    let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = GlobalArena::<0, 0>::default();
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let app = entities.insert(StableApp).unwrap();
@@ -791,9 +787,9 @@ impl Render for WrappedApp {
 fn unnamed_wrappers_do_not_affect_identity_path() {
     let entities = EntityArena::<4096, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<32>::default();
+    let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = GlobalArena::<0, 0>::default();
-    let mut frame = FrameArena::<64, 256>::default();
+    let mut frame = FrameArena::<TestFrame<64, 256>>::default();
     let notified = Cell::new(false);
 
     let plain = entities.insert(WrapperApp { _wrapped: false }).unwrap();
@@ -862,9 +858,9 @@ impl Render for NestedApp {
 fn nested_element_uses_nearest_identified_parent() {
     let entities = EntityArena::<2048, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<32>::default();
+    let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = GlobalArena::<0, 0>::default();
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let app = entities.insert(NestedApp).unwrap();
@@ -915,10 +911,10 @@ impl Render for DuplicateApp {
 fn duplicate_ids_in_same_scope_are_rejected() {
     let entities = EntityArena::<2048, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<32>::default();
+    let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let app = entities.insert(DuplicateApp).unwrap();
@@ -952,9 +948,9 @@ impl Render for SeparateScopesApp {
 fn same_local_id_is_allowed_under_different_identified_parents() {
     let entities = EntityArena::<2048, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<32>::default();
+    let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = GlobalArena::<0, 0>::default();
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let app = entities.insert(SeparateScopesApp).unwrap();
@@ -1009,9 +1005,9 @@ impl Render for WidgetsApp {
 fn separate_entities_have_separate_identity_namespaces() {
     let entities = EntityArena::<4096, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<32>::default();
+    let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = GlobalArena::<0, 0>::default();
-    let mut frame = FrameArena::<64, 256>::default();
+    let mut frame = FrameArena::<TestFrame<64, 256>>::default();
     let notified = Cell::new(false);
 
     let left = entities.insert(Widget).unwrap();
@@ -1089,9 +1085,9 @@ impl Render for ParentB {
 fn moving_entity_does_not_change_internal_element_identity() {
     let entities = EntityArena::<4096, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<32>::default();
+    let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = GlobalArena::<0, 0>::default();
-    let mut frame = FrameArena::<64, 256>::default();
+    let mut frame = FrameArena::<TestFrame<64, 256>>::default();
     let notified = Cell::new(false);
 
     let child = entities.insert(MovableChild).unwrap();
@@ -1158,9 +1154,9 @@ impl Render for WithoutButton {
 fn element_state_is_removed_when_element_disappears() {
     let entities = EntityArena::<4096, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<32>::default();
+    let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = GlobalArena::<0, 0>::default();
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let with_button = entities.insert(WithButton).unwrap();
@@ -1203,9 +1199,9 @@ fn element_state_is_removed_when_element_disappears() {
 fn reappearing_element_gets_new_generation() {
     let entities = EntityArena::<4096, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<32>::default();
+    let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = GlobalArena::<0, 0>::default();
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let notified = Cell::new(false);
 
     let with_button = entities.insert(WithButton).unwrap();
@@ -1280,10 +1276,10 @@ impl Render for TooManyStatesApp {
 fn identity_resolution_reports_state_capacity_exhaustion() {
     let entities = EntityArena::<2048, 16>::default();
     let callbacks = CallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<1>::default();
+    let mut states = ElementStateTable::<TestElementStates<1>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let notified = Cell::new(false);
 
     let app = entities.insert(TooManyStatesApp).unwrap();
@@ -1301,7 +1297,7 @@ fn identity_resolution_reports_state_capacity_exhaustion() {
 
 #[test]
 fn failed_identity_resolution_can_be_aborted() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = IdentityParent::Entity(EntityId::new(0, 0));
     let old = states.resolve(parent, ElementId::Name("old"), 1).unwrap();
@@ -1320,7 +1316,7 @@ fn failed_identity_resolution_can_be_aborted() {
 
 #[test]
 fn plain_string_mounts_without_text_style_overrides() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1332,7 +1328,7 @@ fn plain_string_mounts_without_text_style_overrides() {
 
 #[test]
 fn explicit_text_element_preserves_text_style_overrides() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1360,7 +1356,7 @@ fn explicit_text_element_preserves_text_style_overrides() {
 
 #[test]
 fn text_style_resolves_through_nested_elements() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1395,10 +1391,7 @@ fn text_style_resolves_through_nested_elements() {
     );
 }
 
-fn node_image_source<const NODES: usize, const TEXT_BYTES: usize>(
-    frame: &FrameArena<NODES, TEXT_BYTES>,
-    node: NodeId,
-) -> ImageSource {
+fn node_image_source<F: FrameStorage>(frame: &FrameArena<F>, node: NodeId) -> ImageSource {
     match frame.node(node).kind {
         NodeKind::Image { source, .. } => source,
         _ => panic!("expected image node"),
@@ -1409,7 +1402,7 @@ fn node_image_source<const NODES: usize, const TEXT_BYTES: usize>(
 fn mounts_image_leaf() {
     let source = ImageSource::new(ImageId::new(1), Size::new(px(16), px(12)));
 
-    let mut frame = FrameArena::<8, 128>::default();
+    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 

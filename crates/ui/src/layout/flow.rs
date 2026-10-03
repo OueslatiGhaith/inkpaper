@@ -1,8 +1,11 @@
 use super::*;
 
-use crate::{AlignItems, FrameArena, JustifyContent, NodeId, NodeKind, Position, count_metric};
+use crate::{
+    AlignItems, FrameArena, JustifyContent, NodeId, NodeKind, Position, count_metric,
+    storage::FrameStorage,
+};
 
-impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
+impl<F: FrameStorage> FrameArena<F> {
     fn layout_node(
         &mut self,
         node: NodeId,

@@ -15,13 +15,13 @@ use crate::align_up;
 mod heap;
 
 #[cfg(feature = "alloc")]
-pub(crate) use heap::HeapGlobalArena;
+pub use heap::HeapGlobalArena;
 
-/// the global storage selected by the `alloc` feature
-#[cfg(not(feature = "alloc"))]
+// unit tests run against the storage the `alloc` feature implies
+#[cfg(all(test, not(feature = "alloc")))]
 pub(crate) type GlobalArena<const BYTES: usize, const SLOTS: usize> =
     FixedGlobalArena<BYTES, SLOTS>;
-#[cfg(feature = "alloc")]
+#[cfg(all(test, feature = "alloc"))]
 pub(crate) type GlobalArena<const BYTES: usize, const SLOTS: usize> = HeapGlobalArena<SLOTS>;
 
 /// marker trait for application-wide immutable values
@@ -54,7 +54,7 @@ pub enum GlobalSetError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GlobalBorrowKind {
+pub enum GlobalBorrowKind {
     Shared,
     Exclusive,
 }
@@ -76,11 +76,11 @@ struct GlobalMeta {
 const GLOBAL_ARENA_ALIGNMENT: usize = 16;
 
 #[repr(C, align(16))]
-struct GlobalStorage<const N: usize> {
+struct GlobalBytes<const N: usize> {
     bytes: [MaybeUninit<u8>; N],
 }
 
-impl<const N: usize> Default for GlobalStorage<N> {
+impl<const N: usize> Default for GlobalBytes<N> {
     fn default() -> Self {
         Self {
             bytes: [MaybeUninit::uninit(); N],
@@ -88,7 +88,7 @@ impl<const N: usize> Default for GlobalStorage<N> {
     }
 }
 
-pub(crate) trait GlobalStore {
+pub trait GlobalStore {
     fn acquire(
         &self,
         type_id: TypeId,
@@ -97,9 +97,10 @@ pub(crate) trait GlobalStore {
     fn release(&self, slot: usize, kind: GlobalBorrowKind);
 }
 
-/// fixed-capacity storage for application globals
-pub(crate) struct FixedGlobalArena<const BYTES: usize, const SLOTS: usize> {
-    storage: UnsafeCell<GlobalStorage<BYTES>>,
+/// fixed-capacity storage for application globals: at most `SLOTS` globals in `BYTES`
+/// bytes. Never allocates.
+pub struct FixedGlobalArena<const BYTES: usize, const SLOTS: usize> {
+    storage: UnsafeCell<GlobalBytes<BYTES>>,
     entries: Vec<GlobalMeta, SLOTS>,
     borrows: [Cell<GlobalBorrowState>; SLOTS],
     cursor: usize,
@@ -108,7 +109,7 @@ pub(crate) struct FixedGlobalArena<const BYTES: usize, const SLOTS: usize> {
 impl<const BYTES: usize, const SLOTS: usize> Default for FixedGlobalArena<BYTES, SLOTS> {
     fn default() -> Self {
         Self {
-            storage: UnsafeCell::new(GlobalStorage::default()),
+            storage: UnsafeCell::new(GlobalBytes::default()),
             entries: Vec::new(),
             borrows: core::array::from_fn(|_| Cell::new(GlobalBorrowState::Free)),
             cursor: 0,
@@ -287,6 +288,40 @@ impl<const BYTES: usize, const SLOTS: usize> GlobalStore for FixedGlobalArena<BY
                 _ => debug_assert!(false, "released global without matching shared borrow"),
             },
         }
+    }
+}
+
+impl<const BYTES: usize, const SLOTS: usize> crate::storage::GlobalStorage
+    for FixedGlobalArena<BYTES, SLOTS>
+{
+    fn set<G>(&mut self, value: G) -> Result<(), GlobalSetError>
+    where
+        G: Global,
+    {
+        FixedGlobalArena::set(self, value)
+    }
+
+    fn contains<G>(&self) -> bool
+    where
+        G: Global,
+    {
+        FixedGlobalArena::contains::<G>(self)
+    }
+
+    fn len(&self) -> usize {
+        FixedGlobalArena::len(self)
+    }
+
+    fn used_bytes(&self) -> usize {
+        FixedGlobalArena::used_bytes(self)
+    }
+
+    fn capacity(&self) -> usize {
+        FixedGlobalArena::capacity(self)
+    }
+
+    fn byte_capacity(&self) -> usize {
+        FixedGlobalArena::byte_capacity(self)
     }
 }
 

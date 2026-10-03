@@ -474,13 +474,8 @@ fn paint_page(
     min_ink_coverage: u8,
     font: &'static dyn FontFace,
 ) -> Result<Vec<bool>> {
-    let mut runtime = RuntimeBuilder::default()
-        .entities::<4096, 16>()
-        .callbacks::<4096, 16>()
-        .frame::<64, 1024>()
-        .element_states::<32>()
-        .render_resources::<1, 256, { 256 * 1024 }, 0>()
-        .build();
+    let mut runtime =
+        Runtime::<HeapStorage, RuntimeResources<'_, 1, 256, { 256 * 1024 }, 0>>::default();
 
     let family = runtime
         .register_font_family()

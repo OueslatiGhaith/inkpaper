@@ -40,13 +40,15 @@ pub const ALL_CASES: &[(BenchScenario, &[usize])] = &[
 ];
 
 pub type BenchRuntime = Runtime<
-    4096,  // entity bytes
-    4,     // entity slots
-    4096,  // callback bytes
-    16,    // callback slots
-    2048,  // frame nodes
-    32768, // frame text bytes
-    1024,  // element states
+    FixedStorage<
+        4096,  // entity bytes
+        4,     // entity slots
+        4096,  // callback bytes
+        16,    // callback slots
+        2048,  // frame nodes
+        32768, // frame text bytes
+        1024,  // element states
+    >,
 >;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

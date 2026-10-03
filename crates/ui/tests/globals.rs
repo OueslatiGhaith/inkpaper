@@ -2,7 +2,7 @@ use std::{cell::Cell, rc::Rc};
 
 use inkpaper_ui::prelude::*;
 
-type TestRuntime = Runtime<4096, 8, 4096, 16, 64, 1024, 32, 256, 4>;
+type TestRuntime = Runtime<FixedStorage<4096, 8, 4096, 16, 64, 1024, 32, 256, 4>>;
 
 #[derive(Debug)]
 struct Theme {
@@ -209,7 +209,7 @@ fn mutating_global_requests_rebuild() {
 
 #[test]
 fn global_capacity_is_independent_from_entity_capacity() {
-    type RuntimeWithOneEntity = Runtime<1024, 1, 1024, 8, 32, 256, 8, 128, 2>;
+    type RuntimeWithOneEntity = Runtime<FixedStorage<1024, 1, 1024, 8, 32, 256, 8, 128, 2>>;
 
     struct App;
 
@@ -241,7 +241,7 @@ fn global_capacity_is_independent_from_entity_capacity() {
 #[test]
 #[cfg(not(feature = "alloc"))]
 fn global_slot_capacity_is_enforced() {
-    type OneGlobalRuntime = Runtime<1024, 4, 1024, 8, 32, 256, 8, 128, 1>;
+    type OneGlobalRuntime = Runtime<FixedStorage<1024, 4, 1024, 8, 32, 256, 8, 128, 1>>;
 
     let mut runtime = OneGlobalRuntime::default();
 
@@ -263,7 +263,7 @@ fn global_byte_capacity_is_enforced() {
 
     impl Global for LargeGlobal {}
 
-    type TinyGlobalRuntime = Runtime<1024, 4, 1024, 8, 32, 256, 8, 16, 4>;
+    type TinyGlobalRuntime = Runtime<FixedStorage<1024, 4, 1024, 8, 32, 256, 8, 16, 4>>;
 
     let mut runtime = TinyGlobalRuntime::default();
 

@@ -4,9 +4,10 @@ use crate::{
     Offset,
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     interaction::scroll::ScrollStateTable,
+    storage::{ElementStateStorage, FrameStorage},
 };
 
-impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
+impl<F: FrameStorage> FrameArena<F> {
     fn identity_parent(&self, node: NodeId) -> Option<IdentityParent> {
         let mut current = self.nodes[node.index()].parent;
 
@@ -27,9 +28,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
 
         None
     }
-    pub(crate) fn resolve_identities<const STATES: usize>(
+    pub(crate) fn resolve_identities<E: ElementStateStorage>(
         &mut self,
-        states: &mut ElementStateTable<STATES>,
+        states: &mut ElementStateTable<E>,
         frame_generation: u32,
     ) -> Result<(), IdentityError> {
         let len = self.nodes.len();
@@ -73,9 +74,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
             node.effective_style = Some(effective);
         }
     }
-    pub(crate) fn resolve_scroll_offsets<const SLOTS: usize>(
+    pub(crate) fn resolve_scroll_offsets<E: ElementStateStorage>(
         &mut self,
-        states: &ScrollStateTable<SLOTS>,
+        states: &ScrollStateTable<E>,
     ) {
         for node in self.nodes.iter_mut() {
             node.interaction.scroll_offset = node

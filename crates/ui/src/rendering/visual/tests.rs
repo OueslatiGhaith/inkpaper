@@ -24,7 +24,7 @@ impl TextMeasurer for TestTextMeasurer {
 
 #[test]
 fn visual_traversal_accumulates_nested_scroll_offsets() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -57,7 +57,7 @@ fn visual_traversal_accumulates_nested_scroll_offsets() {
 
 #[test]
 fn visual_traversal_intersects_nested_clips() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -106,7 +106,7 @@ fn visual_traversal_intersects_nested_clips() {
 
 #[test]
 fn scroll_translation_does_not_move_scroll_viewport_clip() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -247,7 +247,7 @@ impl ResourcePainter for RecordingPainter {
 
 #[test]
 fn painting_uses_carried_scroll_and_clip_context() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -288,7 +288,7 @@ fn painting_uses_carried_scroll_and_clip_context() {
 
 #[test]
 fn explicit_size_can_overflow_parent_constraints() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -320,7 +320,7 @@ fn explicit_size_can_overflow_parent_constraints() {
 
 #[test]
 fn flex_shrink_can_reduce_explicitly_oversized_items() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -349,8 +349,8 @@ fn flex_shrink_can_reduce_explicitly_oversized_items() {
 fn visual_traversal_size_does_not_scale_with_node_capacity() {
     use core::mem::size_of;
 
-    let small = size_of::<VisualTraversal<'static, 8, 128>>();
-    let large = size_of::<VisualTraversal<'static, 2048, 128>>();
+    let small = size_of::<VisualTraversal<'static, TestFrame<8, 128>>>();
+    let large = size_of::<VisualTraversal<'static, TestFrame<2048, 128>>>();
 
     assert_eq!(small, large,);
     assert!(large <= 1024, "visual traversal grew to {large} bytes",);
@@ -384,7 +384,7 @@ impl Element for DeepBranching {
 fn visual_traversal_handles_branch_depth_beyond_inline_stack() {
     const EXTRA_DEPTH: usize = 8;
 
-    let mut frame = FrameArena::<128, 128>::default();
+    let mut frame = FrameArena::<TestFrame<128, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -414,7 +414,7 @@ fn visual_traversal_handles_branch_depth_beyond_inline_stack() {
 
 #[test]
 fn visual_traversal_visits_branching_tree_in_depth_first_order() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
     let mut cx = MountCx::new(&mut frame, cx);
@@ -448,7 +448,7 @@ fn visual_traversal_visits_branching_tree_in_depth_first_order() {
 
 #[test]
 fn subtree_paint_bounds_include_unclipped_overflow() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -472,7 +472,7 @@ fn subtree_paint_bounds_include_unclipped_overflow() {
 
 #[test]
 fn clipping_bounds_the_cached_subtree_extent() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -497,7 +497,7 @@ fn clipping_bounds_the_cached_subtree_extent() {
 
 #[test]
 fn visual_traversal_can_skip_children_and_remaining_siblings() {
-    let mut frame = FrameArena::<32, 128>::default();
+    let mut frame = FrameArena::<TestFrame<32, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -537,7 +537,7 @@ fn visual_traversal_can_skip_children_and_remaining_siblings() {
 
 #[test]
 fn visual_traversal_can_skip_an_ordered_child_prefix() {
-    let mut frame = FrameArena::<16, 64>::default();
+    let mut frame = FrameArena::<TestFrame<16, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 

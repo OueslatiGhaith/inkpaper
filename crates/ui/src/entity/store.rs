@@ -4,12 +4,12 @@ use super::{Entity, EntityAccessError, EntityAllocError, EntityBorrowKind, Entit
 
 use crate::{Context, callback::CallbackStore, global::GlobalStore};
 
-pub(crate) struct RawEntityReservation {
+pub struct RawEntityReservation {
     pub(crate) id: EntityId,
     pub(crate) ptr: NonNull<u8>,
 }
 
-pub(crate) unsafe trait EntityStore {
+pub unsafe trait EntityStore {
     fn reserve(
         &self,
         layout: Layout,

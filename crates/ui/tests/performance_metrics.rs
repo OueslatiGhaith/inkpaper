@@ -4,7 +4,7 @@ use std::convert::Infallible;
 
 use inkpaper_ui::{BoxPaint, Painter, ResolvedTextStyle, TextMeasurer, prelude::*};
 
-type TestRuntime = Runtime<4096, 4, 4096, 16, 64, 512, 32>;
+type TestRuntime = Runtime<FixedStorage<4096, 4, 4096, 16, 64, 512, 32>>;
 
 struct TestPainter;
 

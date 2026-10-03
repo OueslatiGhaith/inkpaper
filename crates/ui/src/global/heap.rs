@@ -6,8 +6,8 @@ use alloc::{
 };
 
 use crate::{
-    Global, GlobalAccessError, GlobalBorrowKind, GlobalSetError, GlobalStore,
-    global::{GlobalBorrowState, drop_global},
+    Global, GlobalAccessError, GlobalSetError,
+    global::{GlobalBorrowKind, GlobalBorrowState, GlobalStore, drop_global},
 };
 
 struct Allocation {
@@ -52,7 +52,7 @@ impl Drop for Entry {
 
 /// each global has a stable allocation. The first allocation reserves `INITIAL_SLOTS`
 /// entries. Storage is limited only by the allocator. Construction does not allocate.
-pub(crate) struct HeapGlobalArena<const INITIAL_SLOTS: usize> {
+pub struct HeapGlobalArena<const INITIAL_SLOTS: usize = 0> {
     entries: Vec<Entry>,
     bytes: usize,
 }
@@ -170,6 +170,38 @@ impl<const INITIAL_SLOTS: usize> GlobalStore for HeapGlobalArena<INITIAL_SLOTS> 
             }
             _ => debug_assert!(false, "released global without matching borrow"),
         }
+    }
+}
+
+impl<const INITIAL_SLOTS: usize> crate::storage::GlobalStorage for HeapGlobalArena<INITIAL_SLOTS> {
+    fn set<G>(&mut self, value: G) -> Result<(), GlobalSetError>
+    where
+        G: Global,
+    {
+        HeapGlobalArena::set(self, value)
+    }
+
+    fn contains<G>(&self) -> bool
+    where
+        G: Global,
+    {
+        HeapGlobalArena::contains::<G>(self)
+    }
+
+    fn len(&self) -> usize {
+        HeapGlobalArena::len(self)
+    }
+
+    fn used_bytes(&self) -> usize {
+        HeapGlobalArena::used_bytes(self)
+    }
+
+    fn capacity(&self) -> usize {
+        HeapGlobalArena::capacity(self)
+    }
+
+    fn byte_capacity(&self) -> usize {
+        HeapGlobalArena::byte_capacity(self)
     }
 }
 

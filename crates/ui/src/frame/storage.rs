@@ -1,31 +1,36 @@
-use core::ops::{Deref, DerefMut};
-
-use crate::{
-    MountError,
-    storage::{DefaultVec, VecStorage},
+use core::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
 };
 
-pub(crate) struct FrameBuffer<T, const INITIAL: usize> {
-    values: DefaultVec<T, INITIAL>,
+use crate::{MountError, storage::VecStorage};
+
+pub(crate) struct FrameBuffer<T, S> {
+    values: S,
+    marker: PhantomData<fn() -> T>,
 }
 
-impl<T, const INITIAL: usize> FrameBuffer<T, INITIAL> {
+impl<T, S> FrameBuffer<T, S>
+where
+    S: VecStorage<T>,
+{
     pub(super) fn new() -> Self {
         Self {
-            values: DefaultVec::default(),
+            values: S::default(),
+            marker: PhantomData,
         }
     }
 
     pub(super) fn capacity(&self) -> usize {
-        VecStorage::capacity(&self.values)
+        self.values.capacity()
     }
 
     pub(super) fn clear(&mut self) {
-        VecStorage::clear(&mut self.values);
+        self.values.clear();
     }
 
     pub(super) fn truncate(&mut self, len: usize) {
-        VecStorage::truncate(&mut self.values, len);
+        self.values.truncate(len);
     }
 
     pub(super) fn reserve(
@@ -57,13 +62,15 @@ impl<T, const INITIAL: usize> FrameBuffer<T, INITIAL> {
             .map_err(|error| error.or(full, MountError::AllocationFailed))
     }
 
-    #[cfg(feature = "alloc")]
     pub(super) fn shrink_to_fit(&mut self) {
         self.values.shrink_to_fit();
     }
 }
 
-impl<T, const INITIAL: usize> Deref for FrameBuffer<T, INITIAL> {
+impl<T, S> Deref for FrameBuffer<T, S>
+where
+    S: VecStorage<T>,
+{
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -71,7 +78,10 @@ impl<T, const INITIAL: usize> Deref for FrameBuffer<T, INITIAL> {
     }
 }
 
-impl<T, const INITIAL: usize> DerefMut for FrameBuffer<T, INITIAL> {
+impl<T, S> DerefMut for FrameBuffer<T, S>
+where
+    S: VecStorage<T>,
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.values
     }

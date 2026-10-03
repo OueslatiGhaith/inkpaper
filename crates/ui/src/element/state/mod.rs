@@ -1,6 +1,6 @@
 use crate::{
     ElementId, EntityId, NodeId,
-    storage::{DefaultVec, VecStorage},
+    storage::{ElementStateStorage, VecStorage},
 };
 
 #[cfg(all(test, feature = "alloc"))]
@@ -76,19 +76,19 @@ pub enum IdentityError {
     AllocationFailed,
 }
 
-pub(crate) struct ElementStateTable<const SLOTS: usize> {
-    slots: DefaultVec<ElementStateSlot, SLOTS>,
+pub(crate) struct ElementStateTable<E: ElementStateStorage> {
+    slots: E::Slots<ElementStateSlot>,
 }
 
-impl<const SLOTS: usize> Default for ElementStateTable<SLOTS> {
+impl<E: ElementStateStorage> Default for ElementStateTable<E> {
     fn default() -> Self {
         Self {
-            slots: DefaultVec::default(),
+            slots: E::Slots::default(),
         }
     }
 }
 
-impl<const SLOTS: usize> ElementStateTable<SLOTS> {
+impl<E: ElementStateStorage> ElementStateTable<E> {
     pub(crate) fn resolve(
         &mut self,
         parent: IdentityParent,

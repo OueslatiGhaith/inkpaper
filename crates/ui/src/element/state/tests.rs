@@ -9,7 +9,7 @@ fn entity_parent(slot: u16) -> IdentityParent {
 
 #[test]
 fn resolves_new_element_identity() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let id = states
         .resolve(entity_parent(0), ElementId::Name("button"), 1)
@@ -21,7 +21,7 @@ fn resolves_new_element_identity() {
 
 #[test]
 fn identity_is_stable_across_frames() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
 
@@ -41,7 +41,7 @@ fn identity_is_stable_across_frames() {
 
 #[test]
 fn duplicate_identity_in_same_frame_is_rejected() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
 
@@ -61,7 +61,7 @@ fn duplicate_identity_in_same_frame_is_rejected() {
 
 #[test]
 fn same_local_id_is_allowed_under_different_entities() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let first = states
         .resolve(entity_parent(0), ElementId::Name("button"), 1)
@@ -77,7 +77,7 @@ fn same_local_id_is_allowed_under_different_entities() {
 
 #[test]
 fn same_local_id_is_allowed_under_different_element_parents() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let root = entity_parent(0);
     let left = states.resolve(root, ElementId::Name("left"), 1).unwrap();
@@ -95,7 +95,7 @@ fn same_local_id_is_allowed_under_different_element_parents() {
 
 #[test]
 fn nested_identity_uses_parent_element_state() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let root = entity_parent(0);
     let panel = states.resolve(root, ElementId::Name("panel"), 1).unwrap();
@@ -114,7 +114,7 @@ fn nested_identity_uses_parent_element_state() {
 
 #[test]
 fn sweep_removes_elements_not_seen_in_current_frame() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
     let button = states
@@ -133,7 +133,7 @@ fn sweep_removes_elements_not_seen_in_current_frame() {
 
 #[test]
 fn reappearing_element_gets_new_generation() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
 
@@ -162,7 +162,7 @@ fn reappearing_element_gets_new_generation() {
 
 #[test]
 fn existing_entry_tracks_previous_seen_frame() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
     let id = states
@@ -183,7 +183,7 @@ fn existing_entry_tracks_previous_seen_frame() {
 
 #[test]
 fn newly_created_entry_records_creation_frame() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let id = states
         .resolve(entity_parent(0), ElementId::Name("button"), 42)
@@ -198,7 +198,7 @@ fn newly_created_entry_records_creation_frame() {
 
 #[test]
 fn abort_removes_elements_created_during_failed_frame() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
     let existing = states
@@ -222,7 +222,7 @@ fn abort_removes_elements_created_during_failed_frame() {
 
 #[test]
 fn abort_restores_existing_entry_last_seen_frame() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
     let id = states
@@ -251,7 +251,7 @@ fn abort_restores_existing_entry_last_seen_frame() {
 
 #[test]
 fn aborted_existing_identity_remains_stable_next_frame() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
 
@@ -280,7 +280,7 @@ fn aborted_existing_identity_remains_stable_next_frame() {
 
 #[test]
 fn failed_frame_can_remove_new_and_restore_existing_entries_together() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
     let old = states.resolve(parent, ElementId::Name("old"), 1).unwrap();
@@ -310,7 +310,7 @@ fn failed_frame_can_remove_new_and_restore_existing_entries_together() {
 
 #[test]
 fn clearing_table_invalidates_existing_ids() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let id = states
         .resolve(entity_parent(0), ElementId::Name("button"), 1)
@@ -327,7 +327,7 @@ fn clearing_table_invalidates_existing_ids() {
 
 #[test]
 fn clear_changes_generation_when_slot_is_reused() {
-    let mut states = ElementStateTable::<8>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
     let parent = entity_parent(0);
     let old = states
@@ -347,7 +347,7 @@ fn clear_changes_generation_when_slot_is_reused() {
 #[cfg(not(feature = "alloc"))]
 #[test]
 fn reports_state_capacity_exhaustion() {
-    let mut states = ElementStateTable::<1>::default();
+    let mut states = ElementStateTable::<TestElementStates<1>>::default();
 
     let parent = entity_parent(0);
     states.resolve(parent, ElementId::Name("first"), 1).unwrap();

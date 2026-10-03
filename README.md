@@ -59,7 +59,8 @@ ideas around element composition, app state, contexts, and UI construction, adap
 `no_std` and memory constrained targets.
 
 The framework is designed to run in `no_std`, and can be used without heap allocation.
-Allocation is optional, and can be enabled with the `alloc` feature. 
+Each runtime chooses its storage through `RuntimeStorage`: fixed-capacity tables that never
+allocate, or, with the `alloc` feature, heap tables that grow as needed.
 
 Application code builds UI trees using higher-level elements, while layout, interaction,
 and rendering are handled by the framework:

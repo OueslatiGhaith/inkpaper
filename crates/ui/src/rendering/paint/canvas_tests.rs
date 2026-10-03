@@ -92,7 +92,7 @@ impl ResourcePainter for Recorder {
     }
 }
 
-type TestRuntime = Runtime<1024, 4, 1024, 8, 16, 64, 8>;
+type TestRuntime = Runtime<TestStorage<1024, 4, 1024, 8, 16, 64, 8>>;
 
 fn rect(x: i32, y: i32, width: i32, height: i32) -> Rect {
     Rect::new(Point::new(px(x), px(y)), Size::new(px(width), px(height)))
@@ -459,7 +459,7 @@ fn static_canvas_paints_text_without_runtime_callback_context() {
         paint.draw_text(paint.bounds(), text("static"));
     }
 
-    let mut frame = FrameArena::<4, 0>::default();
+    let mut frame = FrameArena::<TestFrame<4, 0>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let root = frame
         .mount(

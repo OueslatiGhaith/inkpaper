@@ -5,15 +5,16 @@ mod store;
 
 pub use arena::{EntityAccessError, EntityAllocError};
 
-pub(crate) use arena::{EntityBorrowKind, FixedEntityArena, align_up};
+pub use arena::FixedEntityArena;
+pub(crate) use arena::{EntityBorrowKind, align_up};
 #[cfg(feature = "alloc")]
-pub(crate) use heap::HeapEntityArena;
+pub use heap::HeapEntityArena;
 
-/// the entity storage selected by the `alloc` feature
-#[cfg(not(feature = "alloc"))]
+// unit tests run against the storage the `alloc` feature implies
+#[cfg(all(test, not(feature = "alloc")))]
 pub(crate) type EntityArena<const BYTES: usize, const SLOTS: usize> =
     FixedEntityArena<BYTES, SLOTS>;
-#[cfg(feature = "alloc")]
+#[cfg(all(test, feature = "alloc"))]
 pub(crate) type EntityArena<const BYTES: usize, const SLOTS: usize> = HeapEntityArena<SLOTS>;
 
 pub(crate) use store::{

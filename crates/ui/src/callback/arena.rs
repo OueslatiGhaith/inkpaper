@@ -71,7 +71,7 @@ type CanvasInvokeFn = unsafe fn(
 ) -> Result<(), CanvasInvokeError>;
 
 #[derive(Clone, Copy)]
-pub(crate) enum CallbackKind {
+pub enum CallbackKind {
     Listener {
         event_type: TypeId,
         invoke_fn: ListenerInvokeFn,
@@ -98,7 +98,7 @@ enum CallbackSlotState {
     Abandonned,
 }
 
-pub(crate) struct RawCallbackReservation {
+pub struct RawCallbackReservation {
     pub(crate) id: CallbackId,
     pub(crate) ptr: NonNull<u8>,
 }
@@ -107,7 +107,7 @@ pub(crate) struct RawCallbackReservation {
 ///
 /// the reserved storage for `callback` must contain a valid initialized
 /// callback of the type registered during `reserve`.
-pub(crate) unsafe trait CallbackStore {
+pub unsafe trait CallbackStore {
     fn reserve(
         &self,
         layout: Layout,
@@ -129,11 +129,11 @@ pub(crate) unsafe trait CallbackStore {
 const CALLBACK_ARENA_ALIGNMENT: usize = 16;
 
 #[repr(C, align(16))]
-struct CallbackStorage<const N: usize> {
+struct CallbackBytes<const N: usize> {
     bytes: [MaybeUninit<u8>; N],
 }
 
-impl<const N: usize> CallbackStorage<N> {
+impl<const N: usize> CallbackBytes<N> {
     const fn new() -> Self {
         Self {
             bytes: [MaybeUninit::uninit(); N],
@@ -141,6 +141,9 @@ impl<const N: usize> CallbackStorage<N> {
     }
 }
 
+/// fixed-capacity callback storage: at most `SLOTS` callbacks in `BYTES` bytes per frame.
+/// Never allocates.
+///
 /// SAFETY INVARIANTS:
 ///
 /// 1. every Live [`CallbackMeta`] refers to one initialized callback F.
@@ -153,8 +156,8 @@ impl<const N: usize> CallbackStorage<N> {
 ///    borrow for the complete callback
 /// 7. only Live callbacks are dropped.
 /// 8. each live callback is dropped exactly once.
-pub(crate) struct FixedCallbackArena<const BYTES: usize, const SLOTS: usize> {
-    storage: UnsafeCell<CallbackStorage<BYTES>>,
+pub struct FixedCallbackArena<const BYTES: usize, const SLOTS: usize> {
+    storage: UnsafeCell<CallbackBytes<BYTES>>,
     entries: RefCell<Vec<CallbackMeta, SLOTS>>,
     states: [Cell<CallbackSlotState>; SLOTS],
     cursor: Cell<usize>,
@@ -164,7 +167,7 @@ pub(crate) struct FixedCallbackArena<const BYTES: usize, const SLOTS: usize> {
 impl<const BYTES: usize, const SLOTS: usize> Default for FixedCallbackArena<BYTES, SLOTS> {
     fn default() -> Self {
         Self {
-            storage: UnsafeCell::new(CallbackStorage::new()),
+            storage: UnsafeCell::new(CallbackBytes::new()),
             entries: RefCell::new(Vec::new()),
             states: core::array::from_fn(|_| Cell::new(CallbackSlotState::Vacant)),
             cursor: Cell::new(0),
@@ -184,7 +187,7 @@ impl<const BYTES: usize, const SLOTS: usize> FixedCallbackArena<BYTES, SLOTS> {
         }
     }
 
-    pub fn invoke_listener<E>(
+    pub(crate) fn invoke_listener<E>(
         &self,
         listener: Listener<E>,
         event: &E,
@@ -264,7 +267,7 @@ impl<const BYTES: usize, const SLOTS: usize> FixedCallbackArena<BYTES, SLOTS> {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.drop_live_callbacks();
 
         self.entries.get_mut().clear();
@@ -383,6 +386,28 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore
         entities: &dyn EntityStore,
     ) -> Result<(), CanvasInvokeError> {
         self.invoke_canvas_callback(callback, paint, entities)
+    }
+}
+
+impl<const BYTES: usize, const SLOTS: usize> crate::storage::CallbackStorage
+    for FixedCallbackArena<BYTES, SLOTS>
+{
+    fn reset(&mut self) {
+        FixedCallbackArena::reset(self);
+    }
+
+    fn invoke_listener<E>(
+        &self,
+        listener: Listener<E>,
+        event: &E,
+        entities: &dyn EntityStore,
+        globals: &dyn GlobalStore,
+        notified: &Cell<bool>,
+    ) -> Result<(), ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        FixedCallbackArena::invoke_listener(self, listener, event, entities, globals, notified)
     }
 }
 

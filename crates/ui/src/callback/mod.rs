@@ -6,21 +6,20 @@ mod heap;
 
 pub use arena::{CallbackAllocError, CanvasInvokeError, ListenerInvokeError};
 
-pub(crate) use arena::{
-    CallbackStore, FixedCallbackArena, register_canvas_callback, register_listener,
-};
+pub use arena::FixedCallbackArena;
+pub(crate) use arena::{CallbackStore, register_canvas_callback, register_listener};
 #[cfg(feature = "alloc")]
-pub(crate) use heap::HeapCallbackArena;
+pub use heap::HeapCallbackArena;
 
-/// the callback storage selected by the `alloc` feature
-#[cfg(not(feature = "alloc"))]
+// unit tests run against the storage the `alloc` feature implies
+#[cfg(all(test, not(feature = "alloc")))]
 pub(crate) type CallbackArena<const BYTES: usize, const SLOTS: usize> =
     FixedCallbackArena<BYTES, SLOTS>;
-#[cfg(feature = "alloc")]
+#[cfg(all(test, feature = "alloc"))]
 pub(crate) type CallbackArena<const BYTES: usize, const SLOTS: usize> = HeapCallbackArena<SLOTS>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct CallbackId {
+pub struct CallbackId {
     slot: u16,
     generation: u32,
 }

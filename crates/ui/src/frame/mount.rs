@@ -11,9 +11,10 @@ use crate::{
     entity::EntityStore,
     frame::NodeCache,
     global::GlobalStore,
+    storage::FrameStorage,
 };
 
-impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
+impl<F: FrameStorage> FrameArena<F> {
     fn push_node(&mut self, kind: NodeKind) -> Result<NodeId, MountError> {
         let index = u16::try_from(self.nodes.len()).map_err(|_| MountError::NodesFull)?;
         self.nodes.reserve(1, MountError::NodesFull)?;
@@ -178,7 +179,7 @@ pub(crate) trait FrameStore {
     ) -> Result<(), MountError>;
 }
 
-impl<const NODES: usize, const TEXT_BYTES: usize> FrameStore for FrameArena<NODES, TEXT_BYTES> {
+impl<F: FrameStorage> FrameStore for FrameArena<F> {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError> {
         self.push_node(NodeKind::Div { style })
     }

@@ -1,4 +1,5 @@
 use inkpaper_ui::{
+    HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapFrame, HeapGlobalArena,
     RuntimeResources,
     backend::{EInkError, EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
     prelude::*,
@@ -18,18 +19,12 @@ use crate::firmware::{
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
 const DISPLAY_BOUNDS: Rect = Rect::new(Point::ZERO, DISPLAY_SIZE);
 
-const UI_ENTITY_BYTES: usize = 4_096;
+// initial reservations. The runtime tables live on the heap and grow past these
 const UI_ENTITY_SLOTS: usize = 8;
-
-const UI_CALLBACK_BYTES: usize = 2_048;
 const UI_CALLBACK_SLOTS: usize = 16;
-
 const UI_FRAME_NODES: usize = 96;
 const UI_FRAME_TEXT_BYTES: usize = 2_048;
-
 const UI_ELEMENT_STATES: usize = 32;
-
-const UI_GLOBAL_BYTES: usize = 256;
 const UI_GLOBAL_SLOTS: usize = 4;
 
 const UI_FONT_SLOTS: usize = 2;
@@ -38,16 +33,18 @@ const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
 
 const UI_IMAGE_SLOTS: usize = 32;
 
+pub struct UiStorage;
+
+impl RuntimeStorage for UiStorage {
+    type Entities = HeapEntityArena<UI_ENTITY_SLOTS>;
+    type Callbacks = HeapCallbackArena<UI_CALLBACK_SLOTS>;
+    type Globals = HeapGlobalArena<UI_GLOBAL_SLOTS>;
+    type Frame = HeapFrame<UI_FRAME_NODES, UI_FRAME_TEXT_BYTES>;
+    type ElementStates = HeapElementStates<UI_ELEMENT_STATES>;
+}
+
 pub type UiRuntime = Runtime<
-    UI_ENTITY_BYTES,
-    UI_ENTITY_SLOTS,
-    UI_CALLBACK_BYTES,
-    UI_CALLBACK_SLOTS,
-    UI_FRAME_NODES,
-    UI_FRAME_TEXT_BYTES,
-    UI_ELEMENT_STATES,
-    UI_GLOBAL_BYTES,
-    UI_GLOBAL_SLOTS,
+    UiStorage,
     RuntimeResources<
         'static,
         UI_FONT_SLOTS,

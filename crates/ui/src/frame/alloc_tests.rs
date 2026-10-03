@@ -5,7 +5,7 @@ use crate::{callback::CallbackId, *};
 
 #[test]
 fn growing_frame_preserves_text_links_bindings_and_caches() {
-    let mut frame = FrameArena::<1, 1>::default();
+    let mut frame = FrameArena::<HeapFrame<1, 1>>::default();
     let root = frame.push_div(Style::default()).unwrap();
     let event = TypeId::of::<ActivateEvent>();
     let mut previous = None;
@@ -52,7 +52,7 @@ fn growing_frame_preserves_text_links_bindings_and_caches() {
 
 #[test]
 fn clear_reuses_capacity_and_explicit_shrink_preserves_live_text() {
-    let mut frame = FrameArena::<0, 0>::default();
+    let mut frame = FrameArena::<HeapFrame<0, 0>>::default();
     for _ in 0..128 {
         frame.push_text("reusable", TextStyle::default()).unwrap();
     }
@@ -107,7 +107,7 @@ fn clear_reuses_capacity_and_explicit_shrink_preserves_live_text() {
 
 #[test]
 fn reservation_failure_keeps_nodes_caches_and_text_consistent() {
-    let mut nodes = FrameArena::<{ usize::MAX }, 0>::default();
+    let mut nodes = FrameArena::<HeapFrame<{ usize::MAX }, 0>>::default();
 
     assert_eq!(
         nodes.push_text("rollback", TextStyle::default()),
@@ -117,7 +117,7 @@ fn reservation_failure_keeps_nodes_caches_and_text_consistent() {
     assert_eq!(nodes.text_bytes_used(), 0);
     assert_eq!(nodes.node_cache.len(), 0);
 
-    let mut text = FrameArena::<0, { usize::MAX }>::default();
+    let mut text = FrameArena::<HeapFrame<0, { usize::MAX }>>::default();
     let root = text.push_div(Style::default()).unwrap();
 
     assert_eq!(
@@ -132,7 +132,7 @@ fn reservation_failure_keeps_nodes_caches_and_text_consistent() {
 
 #[test]
 fn growing_storage_respects_node_and_binding_id_limits() {
-    let mut frame = FrameArena::<0, 0>::default();
+    let mut frame = FrameArena::<HeapFrame<0, 0>>::default();
     let root = frame.push_div(Style::default()).unwrap();
 
     for _ in 1..=u16::MAX {

@@ -1,6 +1,7 @@
 use embedded_graphics::{mono_font::ascii::FONT_6X10, pixelcolor::Rgb888, prelude::Size as EgSize};
 use embedded_graphics_simulator::SimulatorDisplay;
 use inkpaper_ui::{
+    RuntimeResources,
     backend::{EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
@@ -31,13 +32,10 @@ static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 
 #[test]
 fn full_runtime_can_render_to_simulator_display() {
-    let mut runtime = RuntimeBuilder::default()
-        .entities::<4096, 16>()
-        .callbacks::<4096, 16>()
-        .frame::<64, 1024>()
-        .element_states::<32>()
-        .render_resources::<1, 64, 4096, 0>()
-        .build();
+    let mut runtime = Runtime::<
+        FixedStorage<4096, 16, 4096, 16, 64, 1024, 32>,
+        RuntimeResources<'_, 1, 64, 4096, 0>,
+    >::default();
 
     assert_eq!(
         runtime.register_font(&TEST_FONT_FACE).unwrap(),

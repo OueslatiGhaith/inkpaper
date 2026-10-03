@@ -1,7 +1,7 @@
 use crate::{
     Axis, CanvasPainter, Color, DamageRegion, FrameArena, ImageColorMode, ImagePaint, ImageSource,
     NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, callback::CallbackStore,
-    count_metric, entity::EntityStore, flow_axis, visual::VisualNode,
+    count_metric, entity::EntityStore, flow_axis, storage::FrameStorage, visual::VisualNode,
 };
 
 mod canvas;
@@ -164,7 +164,7 @@ struct PaintRuntime<'a> {
     callbacks: &'a dyn CallbackStore,
 }
 
-impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
+impl<F: FrameStorage> FrameArena<F> {
     #[allow(clippy::too_many_arguments)]
     fn paint_node<R: ?Sized, P>(
         &self,

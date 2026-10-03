@@ -1,5 +1,7 @@
 use inkpaper_ui::prelude::*;
 
+type TestRuntime = Runtime<FixedStorage<1024, 4, 1024, 8, 32, 256, 16>>;
+
 struct TestApp {
     show_extra: bool,
 }
@@ -13,34 +15,19 @@ impl Render for TestApp {
 }
 
 fn runtime() -> impl RuntimeApi {
-    RuntimeBuilder::default()
-        .entities::<1024, 4>()
-        .callbacks::<1024, 8>()
-        .frame::<32, 256>()
-        .element_states::<16>()
-        .build()
+    TestRuntime::default()
 }
 
 #[test]
 fn rebuild_without_root_returns_error() {
-    let mut runtime = RuntimeBuilder::default()
-        .entities::<1024, 4>()
-        .callbacks::<1024, 8>()
-        .frame::<32, 256>()
-        .element_states::<16>()
-        .build();
+    let mut runtime = TestRuntime::default();
 
     assert_eq!(runtime.rebuild(), Err(FrameBuildError::RootNotSet),);
 }
 
 #[test]
 fn create_root_registers_entity_for_rebuild() {
-    let mut runtime = RuntimeBuilder::default()
-        .entities::<1024, 4>()
-        .callbacks::<1024, 8>()
-        .frame::<32, 256>()
-        .element_states::<16>()
-        .build();
+    let mut runtime = TestRuntime::default();
 
     runtime
         .create_root(|_| TestApp { show_extra: false })
@@ -57,12 +44,7 @@ fn create_root_registers_entity_for_rebuild() {
 
 #[test]
 fn rebuild_reuses_registered_root_entity() {
-    let mut runtime = RuntimeBuilder::default()
-        .entities::<1024, 4>()
-        .callbacks::<1024, 8>()
-        .frame::<32, 256>()
-        .element_states::<16>()
-        .build();
+    let mut runtime = TestRuntime::default();
 
     let app = runtime
         .create_root(|_| TestApp { show_extra: false })

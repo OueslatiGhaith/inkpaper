@@ -9,6 +9,32 @@ use std::{
     rc::Rc,
 };
 
+/// heap storage with the initial reservation of each table
+struct Heap<
+    const ENTITIES: usize,
+    const CALLBACKS: usize,
+    const NODES: usize,
+    const TEXT_BYTES: usize,
+    const STATES: usize,
+    const GLOBALS: usize = 0,
+>;
+
+impl<
+    const ENTITIES: usize,
+    const CALLBACKS: usize,
+    const NODES: usize,
+    const TEXT_BYTES: usize,
+    const STATES: usize,
+    const GLOBALS: usize,
+> RuntimeStorage for Heap<ENTITIES, CALLBACKS, NODES, TEXT_BYTES, STATES, GLOBALS>
+{
+    type Entities = HeapEntityArena<ENTITIES>;
+    type Callbacks = HeapCallbackArena<CALLBACKS>;
+    type Globals = HeapGlobalArena<GLOBALS>;
+    type Frame = HeapFrame<NODES, TEXT_BYTES>;
+    type ElementStates = HeapElementStates<STATES>;
+}
+
 std::thread_local! {
     static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
     static FAIL_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
@@ -151,12 +177,7 @@ impl ResourcePainter for TextCounter {
 
 #[test]
 fn dynamic_runtime_allocates_on_growth_and_reuses_storage_for_rebuild_layout_and_paint() {
-    let mut runtime = RuntimeBuilder::default()
-        .entities::<256, 4>()
-        .callbacks::<256, 4>()
-        .frame::<1, 1>()
-        .element_states::<8>()
-        .build();
+    let mut runtime = Runtime::<Heap<4, 4, 1, 1, 8>>::default();
 
     let screen = runtime.create_root(|_| Screen).unwrap();
 
@@ -220,7 +241,7 @@ impl Render for StatefulScreen {
     }
 }
 
-type StateRuntime = Runtime<256, 4, 256, 4, 128, 128, 1>;
+type StateRuntime = Runtime<Heap<4, 4, 128, 128, 1>>;
 
 fn state_runtime() -> (StateRuntime, Entity<StatefulScreen>) {
     let mut runtime = StateRuntime::default();
@@ -352,7 +373,7 @@ fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
 
 #[test]
 fn entity_allocation_failures_do_not_run_constructors_and_allow_retry() {
-    type SmallRuntime = Runtime<0, 0, 0, 0, 0, 0, 0>;
+    type SmallRuntime = Runtime<HeapStorage>;
 
     let expected = SmallRuntime::default()
         .create(|_| 7u32)
@@ -382,7 +403,7 @@ fn entity_allocation_failures_do_not_run_constructors_and_allow_retry() {
 
 #[test]
 fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
-    let runtime = Runtime::<0, 1, 0, 0, 0, 0, 0>::default();
+    let runtime = Runtime::<Heap<1, 0, 0, 0, 0>>::default();
 
     let parent = runtime
         .create(|cx| {
@@ -449,7 +470,7 @@ fn callback_allocation_failures_drop_captures_and_allow_listener_and_canvas_retr
 
     for canvas in [false, true] {
         for after in 0..2 {
-            let runtime = Runtime::<0, 0, 0, 0, 0, 0, 0>::default();
+            let runtime = Runtime::<HeapStorage>::default();
             let entity = runtime.create(|_| ()).unwrap();
             let drops = Rc::new(Cell::new(0));
             let capture = Capture(drops.clone());
@@ -511,13 +532,7 @@ fn globals_grow_without_moving_values_and_support_aligned_zsts() {
     struct Empty;
     impl Global for Empty {}
 
-    let mut runtime = RuntimeBuilder::default()
-        .entities::<0, 0>()
-        .callbacks::<0, 0>()
-        .frame::<0, 0>()
-        .element_states::<0>()
-        .globals::<1, 1>()
-        .build();
+    let mut runtime = Runtime::<Heap<0, 0, 0, 0, 0, 1>>::default();
 
     assert_eq!(runtime.global_capacity(), 0);
     assert_eq!(runtime.global_byte_capacity(), 0);
@@ -567,7 +582,7 @@ fn global_allocation_failures_drop_inputs_and_allow_retry() {
 
     // Fail the slot allocation, then the payload allocation.
     for after in 0..2 {
-        let mut runtime = Runtime::<0, 0, 0, 0, 0, 0, 0>::default();
+        let mut runtime = Runtime::<HeapStorage>::default();
         let drops = Rc::new(Cell::new(0));
         let value = Value(drops.clone());
 
@@ -601,7 +616,7 @@ fn global_access_and_replacement_do_not_allocate() {
     struct Value(u32);
     impl Global for Value {}
 
-    let mut runtime = Runtime::<0, 0, 0, 0, 0, 0, 0>::default();
+    let mut runtime = Runtime::<HeapStorage>::default();
     runtime.set_global(Value(1)).unwrap();
     let bytes = runtime.global_bytes_used();
 
@@ -634,7 +649,7 @@ fn global_replacement_survives_a_panicking_destructor() {
     }
 
     let drops = Rc::new(Cell::new(0));
-    let mut runtime = Runtime::<0, 0, 0, 0, 0, 0, 0>::default();
+    let mut runtime = Runtime::<HeapStorage>::default();
 
     runtime
         .set_global(Value {

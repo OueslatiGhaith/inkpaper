@@ -3,13 +3,15 @@
 use inkpaper_ui::prelude::*;
 
 type TestRuntime = Runtime<
-    4096, // entity bytes
-    1,    // entity slots
-    4096, // callback bytes
-    16,   // callback slots
-    64,   // frame nodes
-    1024, // frame text bytes
-    32,   // element states
+    FixedStorage<
+        4096, // entity bytes
+        1,    // entity slots
+        4096, // callback bytes
+        16,   // callback slots
+        64,   // frame nodes
+        1024, // frame text bytes
+        32,   // element states
+    >,
 >;
 
 struct Static {

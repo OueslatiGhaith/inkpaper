@@ -6,6 +6,7 @@ use crate::{
     element::state::ElementStateId,
     interaction::scroll::{ScrollAxes, ScrollStateTable},
     px,
+    storage::{ElementStateStorage, FrameStorage},
 };
 
 #[cfg(test)]
@@ -72,7 +73,7 @@ fn scroll_axis_into_view(
     (current + delta).clamp(px(0), maximum)
 }
 
-impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
+impl<F: FrameStorage> FrameArena<F> {
     pub(crate) fn hit_test_event(
         &self,
         root: NodeId,
@@ -278,9 +279,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
     /// scroll containers seen for the first time start at their requested child.
     /// must run after layout and before `clamp_scroll_offset`, which marks every
     /// container's offset as initialized
-    pub(crate) fn apply_initial_scroll_offsets<const SLOTS: usize>(
+    pub(crate) fn apply_initial_scroll_offsets<E: ElementStateStorage>(
         &mut self,
-        states: &mut ScrollStateTable<SLOTS>,
+        states: &mut ScrollStateTable<E>,
     ) {
         for index in 0..self.nodes.len() {
             let node_id = NodeId::new(index as u16);
@@ -323,9 +324,9 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         }
     }
 
-    pub(crate) fn clamp_scroll_offset<const SLOTS: usize>(
+    pub(crate) fn clamp_scroll_offset<E: ElementStateStorage>(
         &mut self,
-        states: &mut ScrollStateTable<SLOTS>,
+        states: &mut ScrollStateTable<E>,
     ) {
         for index in 0..self.nodes.len() {
             let node_id = NodeId::new(index as u16);
@@ -467,11 +468,11 @@ impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> 
         visual_bounds.inset(border)
     }
 
-    pub(crate) fn scroll_element_into_view<const SLOTS: usize>(
+    pub(crate) fn scroll_element_into_view<E: ElementStateStorage>(
         &mut self,
         root: NodeId,
         element: ElementStateId,
-        states: &mut ScrollStateTable<SLOTS>,
+        states: &mut ScrollStateTable<E>,
     ) -> DamageRegion {
         let Some(target_node) = self.node_for_element(root, element) else {
             return DamageRegion::none();

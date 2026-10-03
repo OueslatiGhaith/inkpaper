@@ -1,6 +1,8 @@
 use heapless::Vec;
 
-use crate::{DamageRegion, FrameArena, NodeId, Offset, Point, Rect, count_metric, px};
+use crate::{
+    DamageRegion, FrameArena, NodeId, Offset, Point, Rect, count_metric, px, storage::FrameStorage,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClipRegion {
@@ -128,8 +130,8 @@ struct VisualContinuation {
     depth: u16,
 }
 
-pub(crate) struct VisualTraversal<'a, const NODES: usize, const TEXT_BYTES: usize> {
-    frame: &'a FrameArena<NODES, TEXT_BYTES>,
+pub(crate) struct VisualTraversal<'a, F: FrameStorage> {
+    frame: &'a FrameArena<F>,
     root: NodeId,
     current: Option<(NodeId, VisualContext)>,
     pending_advance: Option<(NodeId, VisualContext)>,
@@ -139,8 +141,8 @@ pub(crate) struct VisualTraversal<'a, const NODES: usize, const TEXT_BYTES: usiz
     depth: u16,
 }
 
-impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES, TEXT_BYTES> {
-    pub(crate) fn new(frame: &'a FrameArena<NODES, TEXT_BYTES>, root: NodeId) -> Self {
+impl<'a, F: FrameStorage> VisualTraversal<'a, F> {
+    pub(crate) fn new(frame: &'a FrameArena<F>, root: NodeId) -> Self {
         count_metric!(frame, visual_traversal_passes);
 
         Self {
@@ -370,9 +372,7 @@ impl<'a, const NODES: usize, const TEXT_BYTES: usize> VisualTraversal<'a, NODES,
     }
 }
 
-impl<const NODES: usize, const TEXT_BYTES: usize> Iterator
-    for VisualTraversal<'_, NODES, TEXT_BYTES>
-{
+impl<F: FrameStorage> Iterator for VisualTraversal<'_, F> {
     type Item = VisualNode;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -397,8 +397,8 @@ impl<const NODES: usize, const TEXT_BYTES: usize> Iterator
     }
 }
 
-impl<const NODES: usize, const TEXT_BYTES: usize> FrameArena<NODES, TEXT_BYTES> {
-    pub(crate) fn visual_nodes(&self, root: NodeId) -> VisualTraversal<'_, NODES, TEXT_BYTES> {
+impl<F: FrameStorage> FrameArena<F> {
+    pub(crate) fn visual_nodes(&self, root: NodeId) -> VisualTraversal<'_, F> {
         VisualTraversal::new(self, root)
     }
 

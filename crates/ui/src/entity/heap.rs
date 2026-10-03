@@ -60,11 +60,13 @@ impl Drop for Entry {
     }
 }
 
-/// values have independend allocations. Only metadata moves when the slot table grows.
+/// heap entity storage. The first allocation reserves `INITIAL_SLOTS` entries.
+///
+/// values have independent allocations. Only metadata moves when the slot table grows.
 /// No metadata reference or RefCell guard escapes an EntityStore call.
 /// RawEntityBorrow retains a value pointer and releases its borrow by slot id.
 /// Abandonned slots remain tombstones, so escaped construction handles stay invalid
-pub(crate) struct HeapEntityArena<const INITIAL_SLOTS: usize> {
+pub struct HeapEntityArena<const INITIAL_SLOTS: usize = 0> {
     entries: RefCell<Vec<Entry>>,
 }
 
@@ -77,11 +79,11 @@ impl<const INITIAL_SLOTS: usize> Default for HeapEntityArena<INITIAL_SLOTS> {
 }
 
 impl<const INITIAL_SLOTS: usize> HeapEntityArena<INITIAL_SLOTS> {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.entries.borrow().len()
     }
 
-    pub fn used_bytes(&self) -> usize {
+    pub(crate) fn used_bytes(&self) -> usize {
         self.entries
             .borrow()
             .iter()
@@ -90,7 +92,7 @@ impl<const INITIAL_SLOTS: usize> HeapEntityArena<INITIAL_SLOTS> {
             .sum()
     }
 
-    pub fn insert<T: 'static>(&self, value: T) -> Result<Entity<T>, EntityAllocError> {
+    pub(crate) fn insert<T: 'static>(&self, value: T) -> Result<Entity<T>, EntityAllocError> {
         let reservation = self.reserve(Layout::new::<T>(), TypeId::of::<T>(), drop_value::<T>)?;
 
         // SAFETY: reserve provided suitably sized/aligned storage for T
@@ -102,7 +104,7 @@ impl<const INITIAL_SLOTS: usize> HeapEntityArena<INITIAL_SLOTS> {
         Ok(Entity::from_id(reservation.id))
     }
 
-    pub fn read<T: 'static, R>(
+    pub(crate) fn read<T: 'static, R>(
         &self,
         entity: Entity<T>,
         f: impl FnOnce(&T) -> R,
@@ -118,7 +120,7 @@ impl<const INITIAL_SLOTS: usize> HeapEntityArena<INITIAL_SLOTS> {
         Ok(f(unsafe { &*borrow.ptr().cast::<T>().as_ptr() }))
     }
 
-    pub fn update<T: 'static, R>(
+    pub(crate) fn update<T: 'static, R>(
         &self,
         entity: Entity<T>,
         f: impl FnOnce(&mut T) -> R,
@@ -254,6 +256,8 @@ unsafe impl<const INITIAL_SLOTS: usize> EntityStore for HeapEntityArena<INITIAL_
         };
     }
 }
+
+impl<const INITIAL_SLOTS: usize> crate::storage::EntityStorage for HeapEntityArena<INITIAL_SLOTS> {}
 
 impl<const INITIAL_SLOTS: usize> Drop for HeapEntityArena<INITIAL_SLOTS> {
     fn drop(&mut self) {

@@ -1,11 +1,11 @@
 use super::*;
-use crate::{Offset, interaction::scroll::ScrollStateTable, px};
+use crate::{HeapElementStates, Offset, interaction::scroll::ScrollStateTable, px};
 
 #[test]
 fn growing_tables_preserve_offsets_and_reused_slots_reset_them() {
     let parent = IdentityParent::Entity(EntityId::new(0, 0));
-    let mut states = ElementStateTable::<1>::default();
-    let mut scroll = ScrollStateTable::<1>::default();
+    let mut states = ElementStateTable::<HeapElementStates<1>>::default();
+    let mut scroll = ScrollStateTable::<HeapElementStates<1>>::default();
 
     let old = states.resolve(parent, ElementId::Value(0), 1).unwrap();
     scroll.prepare(states.slot_count()).unwrap();
@@ -41,8 +41,8 @@ fn growing_tables_preserve_offsets_and_reused_slots_reset_them() {
 #[test]
 fn failed_scroll_reservation_can_abort_new_identities_without_losing_old_state() {
     let parent = IdentityParent::Entity(EntityId::new(0, 0));
-    let mut states = ElementStateTable::<0>::default();
-    let mut scroll = ScrollStateTable::<0>::default();
+    let mut states = ElementStateTable::<HeapElementStates<0>>::default();
+    let mut scroll = ScrollStateTable::<HeapElementStates<0>>::default();
 
     let old = states.resolve(parent, ElementId::Value(0), 1).unwrap();
     states.sweep(1);
@@ -77,7 +77,7 @@ fn failed_scroll_reservation_can_abort_new_identities_without_losing_old_state()
 #[test]
 fn identity_allocation_failure_and_id_exhaustion_are_distinct() {
     let parent = IdentityParent::Entity(EntityId::new(0, 0));
-    let mut impossible = ElementStateTable::<{ usize::MAX }>::default();
+    let mut impossible = ElementStateTable::<HeapElementStates<{ usize::MAX }>>::default();
 
     assert_eq!(
         impossible.resolve(parent, ElementId::Value(0), 1),
@@ -85,7 +85,7 @@ fn identity_allocation_failure_and_id_exhaustion_are_distinct() {
     );
     assert_eq!(impossible.slot_count(), 0);
 
-    let mut full = ElementStateTable::<0>::default();
+    let mut full = ElementStateTable::<HeapElementStates<0>>::default();
     full.resolve(parent, ElementId::Value(0), 1).unwrap();
     full.slots
         .try_resize(usize::from(u16::MAX) + 1, full.slots[0])

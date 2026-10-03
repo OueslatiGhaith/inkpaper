@@ -4,8 +4,8 @@ use alloc::boxed::Box;
 use crate::{
     Context, DamageRegion, ElementId, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
     FontRegistryError, FrameBuildError, ImageRegistryError, ImageResource, ImageSource, Offset,
-    PaintReport, Point, RenderInvalidation, ResourcePainter, Runtime, RuntimeResources, Size,
-    TextMeasurer, callback::ListenerInvokeError,
+    PaintReport, Point, RenderInvalidation, ResourcePainter, Runtime, RuntimeResources,
+    RuntimeStorage, Size, TextMeasurer, callback::ListenerInvokeError,
 };
 
 /// application-facing runtime operations.
@@ -93,18 +93,9 @@ pub trait RenderRuntimeApi {
         P: ResourcePainter<Self::Resources>;
 }
 
-impl<
-    const EB: usize,
-    const ES: usize,
-    const CB: usize,
-    const CS: usize,
-    const FN: usize,
-    const FT: usize,
-    const ST: usize,
-    const GB: usize,
-    const GS: usize,
-    RESOURCES,
-> RuntimeApi for Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>
+impl<S, RESOURCES> RuntimeApi for Runtime<S, RESOURCES>
+where
+    S: RuntimeStorage,
 {
     fn update<T, R, F>(&self, entity: Entity<T>, update: F) -> Result<R, EntityAccessError>
     where
@@ -164,32 +155,15 @@ impl<
 
 impl<
     'resource,
-    const EB: usize,
-    const ES: usize,
-    const CB: usize,
-    const CS: usize,
-    const FN: usize,
-    const FT: usize,
-    const ST: usize,
-    const GB: usize,
-    const GS: usize,
+    S,
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
     const IMAGES: usize,
 > ResourceRuntimeApi<'resource>
-    for Runtime<
-        EB,
-        ES,
-        CB,
-        CS,
-        FN,
-        FT,
-        ST,
-        GB,
-        GS,
-        RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
-    >
+    for Runtime<S, RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
+where
+    S: RuntimeStorage,
 {
     fn register_font_family(&mut self) -> Result<FontFamilyId, FontRegistryError> {
         self.register_font_family()
@@ -224,19 +198,9 @@ impl<
     }
 }
 
-impl<
-    const EB: usize,
-    const ES: usize,
-    const CB: usize,
-    const CS: usize,
-    const FN: usize,
-    const FT: usize,
-    const ST: usize,
-    const GB: usize,
-    const GS: usize,
-    RESOURCES,
-> RenderRuntimeApi for Runtime<EB, ES, CB, CS, FN, FT, ST, GB, GS, RESOURCES>
+impl<S, RESOURCES> RenderRuntimeApi for Runtime<S, RESOURCES>
 where
+    S: RuntimeStorage,
     RESOURCES: TextMeasurer,
 {
     type Resources = RESOURCES;

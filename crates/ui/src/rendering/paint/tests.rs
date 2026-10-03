@@ -218,7 +218,7 @@ fn draw_test_canvas(paint: &mut PaintCx<'_>) {
 
 #[test]
 fn frame_paints_backend_independent_commands_in_tree_order() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -278,7 +278,7 @@ fn frame_paints_backend_independent_commands_in_tree_order() {
 
 #[test]
 fn frame_converts_style_to_box_paint() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -318,7 +318,7 @@ fn frame_converts_style_to_box_paint() {
 
 #[test]
 fn overflow_hidden_clips_descendant_painting() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -357,7 +357,7 @@ fn overflow_hidden_clips_descendant_painting() {
 
 #[test]
 fn overflow_hidden_clips_children_inside_parent_border() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -400,7 +400,7 @@ fn overflow_hidden_clips_children_inside_parent_border() {
 
 #[test]
 fn painting_receives_resolved_text_style() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -440,7 +440,7 @@ fn painting_receives_resolved_text_style() {
 fn frame_emits_image_paint_command() {
     let source = ImageSource::new(ImageId::new(0), Size::new(px(20), px(12)));
 
-    let mut frame = FrameArena::<8, 128>::default();
+    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
 
     let globals = GlobalArena::<0, 0>::default();
 
@@ -492,7 +492,7 @@ fn frame_emits_image_paint_command() {
 
 #[test]
 fn canvas_callback_draws_in_local_coordinates() {
-    let mut frame = FrameArena::<8, 128>::default();
+    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -536,7 +536,7 @@ fn canvas_callback_draws_in_local_coordinates() {
     );
 }
 
-type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
+type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 64, 512, 32>>;
 
 #[test]
 fn entity_canvas_can_draw_from_entity_state() {
@@ -635,7 +635,7 @@ fn entity_canvas_callback_can_capture_render_data() {
 
 #[test]
 fn partial_damage_skips_non_intersecting_nodes() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -691,7 +691,7 @@ fn partial_damage_skips_non_intersecting_nodes() {
 
 #[test]
 fn disjoint_damage_rectangles_produce_disjoint_paint_clips() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -737,7 +737,7 @@ fn disjoint_damage_rectangles_produce_disjoint_paint_clips() {
 
 #[test]
 fn partial_damage_respects_existing_visual_clip() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -770,7 +770,7 @@ fn partial_damage_respects_existing_visual_clip() {
 #[cfg(feature = "metrics")]
 #[test]
 fn empty_damage_performs_no_visual_work() {
-    let mut frame = FrameArena::<8, 64>::default();
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -876,7 +876,7 @@ fn damage_paint_prunes_subtree_when_inherited_clip_misses_damage() {
 #[cfg(feature = "metrics")]
 #[test]
 fn damage_paint_prunes_off_damage_child_subtrees_by_extent() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -931,7 +931,7 @@ fn damage_paint_prunes_off_damage_child_subtrees_by_extent() {
 #[cfg(feature = "metrics")]
 #[test]
 fn partial_paint_before_layout_does_not_use_stale_subtree_bounds() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -981,7 +981,7 @@ fn partial_paint_before_layout_does_not_use_stale_subtree_bounds() {
 #[cfg(feature = "metrics")]
 #[test]
 fn damage_paint_prunes_ordered_vertical_sibling_tail() {
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1046,7 +1046,7 @@ fn damage_paint_prunes_ordered_vertical_sibling_tail() {
 #[cfg(feature = "metrics")]
 #[test]
 fn damage_paint_prunes_ordered_horizontal_leaf_sibling_tail() {
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1109,7 +1109,7 @@ fn damage_paint_prunes_ordered_horizontal_leaf_sibling_tail() {
 #[cfg(feature = "metrics")]
 #[test]
 fn damage_paint_binary_searches_ordered_sibling_prefix() {
-    let mut frame = FrameArena::<64, 512>::default();
+    let mut frame = FrameArena::<TestFrame<64, 512>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1158,7 +1158,7 @@ fn damage_paint_binary_searches_ordered_sibling_prefix() {
 #[cfg(feature = "metrics")]
 #[test]
 fn ordered_prefix_search_preserves_earlier_overflowing_subtree() {
-    let mut frame = FrameArena::<32, 256>::default();
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1215,7 +1215,7 @@ fn ordered_prefix_search_preserves_earlier_overflowing_subtree() {
 
 #[test]
 fn partial_damage_keeps_relative_sibling_shifted_back_into_damage() {
-    let mut frame = FrameArena::<32, 128>::default();
+    let mut frame = FrameArena::<TestFrame<32, 128>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1277,7 +1277,7 @@ fn paint_report_records_painted_content_classes() {
     let monochrome = ImageSource::new(ImageId::new(0), Size::new(px(16), px(12)));
     let grayscale = ImageSource::new(ImageId::new(1), Size::new(px(16), px(12)));
 
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
 
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
@@ -1316,7 +1316,7 @@ fn paint_report_records_painted_content_classes() {
 fn partial_paint_report_only_records_content_inside_damage() {
     let source = ImageSource::new(ImageId::new(0), Size::new(px(20), px(12)));
 
-    let mut frame = FrameArena::<16, 128>::default();
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
 
     let globals = GlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
@@ -1355,7 +1355,7 @@ fn partial_paint_report_only_records_content_inside_damage() {
 #[cfg(feature = "alloc")]
 #[test]
 fn grown_frame_lays_out_and_paints_after_storage_reuse_and_shrink() {
-    let mut frame = FrameArena::<1, 1>::default();
+    let mut frame = FrameArena::<TestFrame<1, 1>>::default();
     let globals = GlobalArena::<0, 0>::default();
     let mut painter = RecordingPainter::default();
 

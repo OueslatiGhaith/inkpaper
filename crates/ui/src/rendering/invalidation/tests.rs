@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::*;
 
-type TestRuntime = Runtime<4096, 16, 4096, 32, 64, 512, 32>;
+type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 64, 512, 32>>;
 
 struct TestTextMeasurer;
 impl TextMeasurer for TestTextMeasurer {

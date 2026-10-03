@@ -6,13 +6,15 @@ use inkpaper_ui::{BoxPaint, Painter, ResolvedTextStyle, TextMeasurer, prelude::*
 const VIEWPORT: Size = Size::new(px(320), px(240));
 
 type BenchRuntime = Runtime<
-    4096,  // entity bytes
-    4,     // entity slots
-    4096,  // callback bytes
-    16,    // callback slots
-    2048,  // frame nodes
-    32768, // frame text bytes
-    1024,  // element states
+    FixedStorage<
+        4096,  // entity bytes
+        4,     // entity slots
+        4096,  // callback bytes
+        16,    // callback slots
+        2048,  // frame nodes
+        32768, // frame text bytes
+        1024,  // element states
+    >,
 >;
 
 #[derive(Default)]

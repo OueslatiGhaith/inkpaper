@@ -43,11 +43,11 @@ enum EntitySlotState {
 const ENTITY_ARENA_ALIGNMENT: usize = 16;
 
 #[repr(C, align(16))]
-struct EntityStorage<const N: usize> {
+struct EntityBytes<const N: usize> {
     bytes: [MaybeUninit<u8>; N],
 }
 
-impl<const N: usize> EntityStorage<N> {
+impl<const N: usize> EntityBytes<N> {
     fn new() -> Self {
         Self {
             bytes: [MaybeUninit::uninit(); N],
@@ -64,7 +64,7 @@ struct EntityMeta {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EntityBorrowKind {
+pub enum EntityBorrowKind {
     Shared,
     Exclusive,
 }
@@ -76,6 +76,9 @@ pub(crate) fn align_up(value: usize, alignment: usize) -> Option<usize> {
     value.checked_add(mask).map(|v| v & !mask)
 }
 
+/// fixed-capacity entity storage: at most `SLOTS` entities in `BYTES` bytes. Never
+/// allocates.
+///
 /// SAFETY INVARIANTS:
 ///
 /// 1. every [`EntityMeta`] refers to exactly one live value in `storage`
@@ -88,8 +91,8 @@ pub(crate) fn align_up(value: usize, alignment: usize) -> Option<usize> {
 /// 8. no reference to the whole storage buffer is created while references to stored objects
 ///    may exist
 /// 9. each inserted value is dropped once when the arena is dropped
-pub(crate) struct FixedEntityArena<const BYTES: usize, const SLOTS: usize> {
-    storage: UnsafeCell<EntityStorage<BYTES>>,
+pub struct FixedEntityArena<const BYTES: usize, const SLOTS: usize> {
+    storage: UnsafeCell<EntityBytes<BYTES>>,
     entries: RefCell<Vec<EntityMeta, SLOTS>>,
     borrows: [Cell<BorrowState>; SLOTS],
     states: [Cell<EntitySlotState>; SLOTS],
@@ -99,7 +102,7 @@ pub(crate) struct FixedEntityArena<const BYTES: usize, const SLOTS: usize> {
 impl<const BYTES: usize, const SLOTS: usize> Default for FixedEntityArena<BYTES, SLOTS> {
     fn default() -> Self {
         Self {
-            storage: UnsafeCell::new(EntityStorage::new()),
+            storage: UnsafeCell::new(EntityBytes::new()),
             entries: RefCell::new(Vec::new()),
             borrows: core::array::from_fn(|_| Cell::new(BorrowState::Free)),
             states: core::array::from_fn(|_| Cell::new(EntitySlotState::Vacant)),
@@ -109,23 +112,23 @@ impl<const BYTES: usize, const SLOTS: usize> Default for FixedEntityArena<BYTES,
 }
 
 impl<const BYTES: usize, const SLOTS: usize> FixedEntityArena<BYTES, SLOTS> {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.entries.borrow().len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub const fn capacity(&self) -> usize {
+    pub(crate) const fn capacity(&self) -> usize {
         SLOTS
     }
 
-    pub fn used_bytes(&self) -> usize {
+    pub(crate) fn used_bytes(&self) -> usize {
         self.cursor.get()
     }
 
-    pub const fn byte_capacity(&self) -> usize {
+    pub(crate) const fn byte_capacity(&self) -> usize {
         BYTES
     }
 
@@ -139,7 +142,7 @@ impl<const BYTES: usize, const SLOTS: usize> FixedEntityArena<BYTES, SLOTS> {
         }
     }
 
-    pub fn insert<T>(&self, value: T) -> Result<Entity<T>, EntityAllocError>
+    pub(crate) fn insert<T>(&self, value: T) -> Result<Entity<T>, EntityAllocError>
     where
         T: 'static,
     {
@@ -223,7 +226,7 @@ impl<const BYTES: usize, const SLOTS: usize> FixedEntityArena<BYTES, SLOTS> {
         }
     }
 
-    pub fn read<T, R>(
+    pub(crate) fn read<T, R>(
         &self,
         entity: Entity<T>,
         f: impl FnOnce(&T) -> R,
@@ -243,7 +246,7 @@ impl<const BYTES: usize, const SLOTS: usize> FixedEntityArena<BYTES, SLOTS> {
         Ok(f(value))
     }
 
-    pub fn update<T, R>(
+    pub(crate) fn update<T, R>(
         &self,
         entity: Entity<T>,
         f: impl FnOnce(&mut T) -> R,
@@ -377,6 +380,11 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> EntityStore for FixedEntityA
             },
         }
     }
+}
+
+impl<const BYTES: usize, const SLOTS: usize> crate::storage::EntityStorage
+    for FixedEntityArena<BYTES, SLOTS>
+{
 }
 
 impl<const BYTES: usize, const SLOTS: usize> Drop for FixedEntityArena<BYTES, SLOTS> {

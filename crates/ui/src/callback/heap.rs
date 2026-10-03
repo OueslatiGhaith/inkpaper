@@ -11,13 +11,13 @@ use alloc::{
 };
 
 use crate::{
-    CallbackAllocError, CanvasPainter, EntityId, GlobalStore, Listener, ListenerInvokeError,
-    PaintCx, Rect,
+    CallbackAllocError, CanvasPainter, EntityId, Listener, ListenerInvokeError, PaintCx, Rect,
     callback::{
         CallbackId, CallbackStore,
         arena::{CallbackKind, CanvasInvokeError, RawCallbackReservation},
     },
     entity::EntityStore,
+    global::GlobalStore,
 };
 
 #[cfg(test)]
@@ -68,10 +68,12 @@ impl Drop for Entry {
     }
 }
 
+/// heap callback storage. The first allocation reserves `INITIAL_SLOTS` callbacks.
+///
 /// closure allocations never move. Invocation copies metadata before calling user code,
 /// so callbacks may grow the slot table. Reset requires exclusive access and therefore
 /// cannot free a closure while an invocation borrows this arena
-pub(crate) struct HeapCallbackArena<const INITIAL_SLOTS: usize> {
+pub struct HeapCallbackArena<const INITIAL_SLOTS: usize = 0> {
     entries: RefCell<Vec<Entry>>,
     generation: u32,
 }
@@ -101,7 +103,7 @@ impl<const INITIAL_SLOTS: usize> HeapCallbackArena<INITIAL_SLOTS> {
         Some((entry.allocation.ptr, entry.target, entry.kind))
     }
 
-    pub fn invoke_listener<E: 'static>(
+    pub(crate) fn invoke_listener<E: 'static>(
         &self,
         listener: Listener<E>,
         event: &E,
@@ -140,7 +142,7 @@ impl<const INITIAL_SLOTS: usize> HeapCallbackArena<INITIAL_SLOTS> {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         // invalidate handles before dropping captures, including if a drop unwinds.
         self.generation = self.generation.wrapping_add(1);
 
@@ -222,6 +224,28 @@ unsafe impl<const INITIAL_SLOTS: usize> CallbackStore for HeapCallbackArena<INIT
         // SAFETY: lookup validated the live closure. Its canvas trampoline acquires
         // a shared borrow of the target. Reset cannot run during this &self borrow.
         unsafe { invoke_fn(ptr.as_ptr(), target, paint, entities) }
+    }
+}
+
+impl<const INITIAL_SLOTS: usize> crate::storage::CallbackStorage
+    for HeapCallbackArena<INITIAL_SLOTS>
+{
+    fn reset(&mut self) {
+        HeapCallbackArena::reset(self);
+    }
+
+    fn invoke_listener<E>(
+        &self,
+        listener: Listener<E>,
+        event: &E,
+        entities: &dyn EntityStore,
+        globals: &dyn GlobalStore,
+        notified: &Cell<bool>,
+    ) -> Result<(), ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        HeapCallbackArena::invoke_listener(self, listener, event, entities, globals, notified)
     }
 }
 
