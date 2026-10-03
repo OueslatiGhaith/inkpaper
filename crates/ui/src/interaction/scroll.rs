@@ -1,6 +1,7 @@
 use crate::{
     Offset,
     element::state::{ElementStateId, IdentityError},
+    storage::{DefaultVec, VecStorage},
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -42,19 +43,13 @@ impl ScrollSlot {
 }
 
 pub(crate) struct ScrollStateTable<const SLOTS: usize> {
-    #[cfg(not(feature = "alloc"))]
-    slots: [ScrollSlot; SLOTS],
-    #[cfg(feature = "alloc")]
-    slots: alloc::vec::Vec<ScrollSlot>,
+    slots: DefaultVec<ScrollSlot, SLOTS>,
 }
 
 impl<const SLOTS: usize> Default for ScrollStateTable<SLOTS> {
     fn default() -> Self {
         Self {
-            #[cfg(not(feature = "alloc"))]
-            slots: [ScrollSlot::EMPTY; SLOTS],
-            #[cfg(feature = "alloc")]
-            slots: alloc::vec::Vec::new(),
+            slots: DefaultVec::default(),
         }
     }
 }
@@ -63,23 +58,12 @@ impl<const SLOTS: usize> ScrollStateTable<SLOTS> {
     /// prepare every identity slot before publishing the frame. Input and layout
     /// can then update offsets without allocating.
     pub(crate) fn prepare(&mut self, slots: usize) -> Result<(), IdentityError> {
-        #[cfg(not(feature = "alloc"))]
-        if slots > SLOTS {
-            return Err(IdentityError::StatesFull);
-        }
-
-        #[cfg(feature = "alloc")]
         if slots > self.slots.len() {
-            let target = if self.slots.capacity() == 0 {
-                slots.max(SLOTS)
-            } else {
-                slots
-            };
-
             self.slots
-                .try_reserve(target - self.slots.len())
-                .map_err(|_| IdentityError::AllocationFailed)?;
-            self.slots.resize(slots, ScrollSlot::EMPTY);
+                .try_resize(slots, ScrollSlot::EMPTY)
+                .map_err(|error| {
+                    error.or(IdentityError::StatesFull, IdentityError::AllocationFailed)
+                })?;
         }
 
         Ok(())

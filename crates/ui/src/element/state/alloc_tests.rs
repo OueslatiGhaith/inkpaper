@@ -87,7 +87,9 @@ fn identity_allocation_failure_and_id_exhaustion_are_distinct() {
 
     let mut full = ElementStateTable::<0>::default();
     full.resolve(parent, ElementId::Value(0), 1).unwrap();
-    full.slots.resize(usize::from(u16::MAX) + 1, full.slots[0]);
+    full.slots
+        .try_resize(usize::from(u16::MAX) + 1, full.slots[0])
+        .unwrap();
 
     assert_eq!(
         full.resolve(parent, ElementId::Value(1), 1),

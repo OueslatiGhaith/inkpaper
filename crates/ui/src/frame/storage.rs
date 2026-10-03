@@ -1,34 +1,31 @@
 use core::ops::{Deref, DerefMut};
 
-use crate::MountError;
+use crate::{
+    MountError,
+    storage::{DefaultVec, VecStorage},
+};
 
 pub(crate) struct FrameBuffer<T, const INITIAL: usize> {
-    #[cfg(feature = "alloc")]
-    values: alloc::vec::Vec<T>,
-    #[cfg(not(feature = "alloc"))]
-    values: heapless::Vec<T, INITIAL>,
+    values: DefaultVec<T, INITIAL>,
 }
 
 impl<T, const INITIAL: usize> FrameBuffer<T, INITIAL> {
-    pub(super) const fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            #[cfg(feature = "alloc")]
-            values: alloc::vec::Vec::new(),
-            #[cfg(not(feature = "alloc"))]
-            values: heapless::Vec::new(),
+            values: DefaultVec::default(),
         }
     }
 
     pub(super) fn capacity(&self) -> usize {
-        self.values.capacity()
+        VecStorage::capacity(&self.values)
     }
 
     pub(super) fn clear(&mut self) {
-        self.values.clear();
+        VecStorage::clear(&mut self.values);
     }
 
     pub(super) fn truncate(&mut self, len: usize) {
-        self.values.truncate(len);
+        VecStorage::truncate(&mut self.values, len);
     }
 
     pub(super) fn reserve(
@@ -36,39 +33,15 @@ impl<T, const INITIAL: usize> FrameBuffer<T, INITIAL> {
         additional: usize,
         full: MountError,
     ) -> Result<(), MountError> {
-        let required = self.len().checked_add(additional).ok_or(full)?;
-
-        #[cfg(not(feature = "alloc"))]
-        if required > INITIAL {
-            return Err(full);
-        }
-
-        #[cfg(feature = "alloc")]
-        if required > self.capacity() {
-            let target = if self.capacity() == 0 {
-                required.max(INITIAL)
-            } else {
-                required
-            };
-
-            self.values
-                .try_reserve(target - self.len())
-                .map_err(|_| MountError::AllocationFailed)?;
-        }
-
-        Ok(())
+        self.values
+            .try_reserve(additional)
+            .map_err(|error| error.or(full, MountError::AllocationFailed))
     }
 
     pub(super) fn push(&mut self, value: T, full: MountError) -> Result<(), MountError> {
-        self.reserve(1, full)?;
-
-        #[cfg(feature = "alloc")]
-        self.values.push(value);
-
-        #[cfg(not(feature = "alloc"))]
-        self.values.push(value).map_err(|_| full)?;
-
-        Ok(())
+        self.values
+            .try_push(value)
+            .map_err(|error| error.or(full, MountError::AllocationFailed))
     }
 
     pub(super) fn extend_from_slice(
@@ -79,15 +52,9 @@ impl<T, const INITIAL: usize> FrameBuffer<T, INITIAL> {
     where
         T: Copy,
     {
-        self.reserve(values.len(), full)?;
-
-        #[cfg(feature = "alloc")]
-        self.values.extend_from_slice(values);
-
-        #[cfg(not(feature = "alloc"))]
-        self.values.extend_from_slice(values).map_err(|_| full)?;
-
-        Ok(())
+        self.values
+            .try_extend_from_slice(values)
+            .map_err(|error| error.or(full, MountError::AllocationFailed))
     }
 
     #[cfg(feature = "alloc")]
@@ -100,12 +67,12 @@ impl<T, const INITIAL: usize> Deref for FrameBuffer<T, INITIAL> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
-        self.values.as_slice()
+        &self.values
     }
 }
 
 impl<T, const INITIAL: usize> DerefMut for FrameBuffer<T, INITIAL> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.values.as_mut_slice()
+        &mut self.values
     }
 }

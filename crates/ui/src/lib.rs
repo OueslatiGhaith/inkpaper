@@ -25,6 +25,7 @@ mod metrics;
 mod rendering;
 mod resources;
 mod runtime;
+mod storage;
 mod style;
 mod svg_source;
 mod text_layout;
