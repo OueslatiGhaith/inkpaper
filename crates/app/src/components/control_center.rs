@@ -3,7 +3,7 @@ use alloc::{format, string::String};
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, ClockStatus, FrontlightSetting,
+    BatteryStatus, ClockStatus, FrontlightState,
     components::{
         drawer_handle::{DrawerHandle, DrawerHandleProps},
         slider::{Slider, SliderProps},
@@ -18,14 +18,11 @@ pub(crate) struct ControlCenter<'a> {
     battery: Option<BatteryStatus>,
     clock: Option<ClockStatus>,
     reader_title: Option<&'a str>,
-    setting: FrontlightSetting,
+    panel: Entity<FrontlightPanel>,
 }
 
 impl RenderOnce for ControlCenter<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let brightness_label = format!("Brightness  {}%", self.setting.brightness());
-        let warmth_label = format!("Warmth  {}%", self.setting.warmth());
-
         let header_title = if let Some(title) = self.reader_title {
             if title.is_empty() {
                 String::from("Frontlight")
@@ -52,12 +49,6 @@ impl RenderOnce for ControlCenter<'_> {
         let battery_low = battery_percent.is_some_and(|percent| percent > 10);
         let battery_mid = battery_percent.is_some_and(|percent| percent > 40);
         let battery_high = battery_percent.is_some_and(|percent| percent > 70);
-
-        let lightbulb = if self.setting.is_on() {
-            LIGHTBULB
-        } else {
-            LIGHTBULB_OFF
-        };
 
         rsx! {
             <div class="absolute left-0 top-0 w-[480px] h-[800px]">
@@ -107,52 +98,7 @@ impl RenderOnce for ControlCenter<'_> {
                         <div class="absolute left-0 bottom-0 w-full h-[3px] bg-black" />
                     </div>
 
-                    <div class="absolute left-8 top-[105px] w-[416px] flex flex-col">
-                        // Brightness row: 56 px.
-                        <div class="w-full h-14 flex items-center justify-between">
-                            <text class="text-base no-wrap">
-                                {brightness_label}
-                            </text>
-
-                            <div class="w-14 h-14 flex items-center justify-center">
-                                {
-                                    svg(lightbulb)
-                                        .size(Size::new(px(28), px(28)))
-                                        .text_color(Color::BLACK)
-                                }
-                            </div>
-                        </div>
-
-                        <div class="h-1" />
-
-                        <Slider
-                            id="control-center-brightness"
-                            value={self.setting.brightness()}
-                            on_decrease={None}
-                            on_increase={None}
-                        />
-
-                        <div class="h-4" />
-
-                        // Warmth uses one body-text line, then spaceSm.
-                        <div class="w-full h-6 flex items-center">
-                            <text class="text-base no-wrap">
-                                {warmth_label}
-                            </text>
-                        </div>
-
-                        <div class="h-1" />
-
-                        <Slider
-                            id="control-center-warmth"
-                            value={self.setting.warmth()}
-                            on_decrease={None}
-                            on_increase={None}
-                        />
-
-                        // takeTop(..., spaceLg) + final screen.spacer(spaceLg).
-                        <div class="h-8" />
-                    </div>
+                    {self.panel}
 
                     <div class="absolute left-0 bottom-0 w-full h-[2px] bg-black" />
 
@@ -160,6 +106,85 @@ impl RenderOnce for ControlCenter<'_> {
                         <DrawerHandle />
                     </div>
                 </div>
+            </div>
+        }
+    }
+}
+
+/// the frontlight controls of the control center. As its own entity, dragging a slider
+/// renders and paints only these controls, not the screen under the control center
+pub(crate) struct FrontlightPanel {
+    frontlight: Entity<FrontlightState>,
+}
+
+impl FrontlightPanel {
+    pub(crate) const fn new(frontlight: Entity<FrontlightState>) -> Self {
+        Self { frontlight }
+    }
+}
+
+impl Render for FrontlightPanel {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let setting = self
+            .frontlight
+            .read(cx, |frontlight| frontlight.setting())
+            .unwrap_or_default();
+
+        let brightness_label = format!("Brightness  {}%", setting.brightness());
+        let warmth_label = format!("Warmth  {}%", setting.warmth());
+
+        let lightbulb = if setting.is_on() {
+            LIGHTBULB
+        } else {
+            LIGHTBULB_OFF
+        };
+
+        rsx! {
+            <div class="absolute left-8 top-[105px] w-[416px] flex flex-col">
+                // Brightness row: 56 px.
+                <div class="w-full h-14 flex items-center justify-between">
+                    <text class="text-base no-wrap">
+                        {brightness_label}
+                    </text>
+
+                    <div class="w-14 h-14 flex items-center justify-center">
+                        {
+                            svg(lightbulb)
+                                .size(Size::new(px(28), px(28)))
+                                .text_color(Color::BLACK)
+                        }
+                    </div>
+                </div>
+
+                <div class="h-1" />
+
+                <Slider
+                    id="control-center-brightness"
+                    value={setting.brightness()}
+                    on_decrease={None}
+                    on_increase={None}
+                />
+
+                <div class="h-4" />
+
+                // Warmth uses one body-text line, then spaceSm.
+                <div class="w-full h-6 flex items-center">
+                    <text class="text-base no-wrap">
+                        {warmth_label}
+                    </text>
+                </div>
+
+                <div class="h-1" />
+
+                <Slider
+                    id="control-center-warmth"
+                    value={setting.warmth()}
+                    on_decrease={None}
+                    on_increase={None}
+                />
+
+                // takeTop(..., spaceLg) + final screen.spacer(spaceLg).
+                <div class="h-8" />
             </div>
         }
     }

@@ -248,4 +248,26 @@ mod tests {
 
         assert!(display == before);
     }
+
+    fn point(x: i32, y: i32) -> Point {
+        Point::new(px(x), px(y))
+    }
+
+    fn drag(
+        runtime: &mut runtime::SimulatorRuntime<'static>,
+        app: Entity<InkPaperApp>,
+        from: Point,
+        to: Point,
+    ) {
+        send_input(runtime, app, AppInputEvent::PointerDown(from));
+        send_input(
+            runtime,
+            app,
+            AppInputEvent::PointerDrag {
+                origin: from,
+                previous: from,
+                position: to,
+            },
+        );
+    }
 }

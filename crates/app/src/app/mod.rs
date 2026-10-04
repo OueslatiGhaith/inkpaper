@@ -3,7 +3,7 @@ use inkpaper_ui::{FontRegistryError, prelude::*};
 use crate::{
     ClockState, FileTransferState, FrontlightState,
     browser::BrowserState,
-    components::control_center::{ControlCenter, ControlCenterProps},
+    components::control_center::{ControlCenter, ControlCenterProps, FrontlightPanel},
     components::header::BatteryIndicator,
     control_center::ControlCenterState,
     reader::ReaderState,
@@ -93,7 +93,9 @@ pub struct InkPaperApp {
     pub(crate) reader_battery_icon: Entity<ReaderBatteryIcon>,
     pub(crate) clock: ClockState,
     pub(crate) wifi: WifiState,
-    frontlight: FrontlightState,
+    frontlight: Entity<FrontlightState>,
+    /// the frontlight controls of the control center
+    frontlight_panel: Entity<FrontlightPanel>,
     control_center: ControlCenterState,
     /// set once a long press took the current touch
     pointer_captured: bool,
@@ -106,6 +108,8 @@ impl InkPaperApp {
         let rtc = cx.new(|_| RtcState::default()).unwrap();
         let battery_indicator = cx.new(|_| BatteryIndicator::new(battery)).unwrap();
         let reader_battery_icon = cx.new(|_| ReaderBatteryIcon::default()).unwrap();
+        let frontlight = cx.new(|_| FrontlightState::default()).unwrap();
+        let frontlight_panel = cx.new(|_| FrontlightPanel::new(frontlight)).unwrap();
 
         Self {
             navigation: NavigationStack::default(),
@@ -119,7 +123,8 @@ impl InkPaperApp {
             reader_battery_icon,
             clock: ClockState::default(),
             wifi: WifiState::default(),
-            frontlight: FrontlightState::default(),
+            frontlight,
+            frontlight_panel,
             control_center: ControlCenterState::default(),
             pointer_captured: false,
             file_transfer: FileTransferState::default(),
@@ -148,7 +153,6 @@ impl Render for InkPaperApp {
         } else {
             (None, None)
         };
-        let frontlight = self.frontlight.setting();
 
         let reader_title = if self.screen() == Screen::Reader {
             Some(self.reader.title())
@@ -169,7 +173,7 @@ impl Render for InkPaperApp {
                         battery={battery}
                         clock={clock}
                         reader_title={reader_title}
-                        setting={frontlight}
+                        panel={self.frontlight_panel}
                     />
                 {/if}
             </div>

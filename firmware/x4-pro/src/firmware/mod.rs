@@ -258,7 +258,7 @@ async fn main(spawner: Spawner) -> ! {
     info!("initial display complete");
 
     if runtime
-        .update(app, |app, _| app.request_frontlight_apply())
+        .update(app, |app, cx| app.request_frontlight_apply(cx))
         .is_err()
     {
         warn!("failed to request initial frontlight state");

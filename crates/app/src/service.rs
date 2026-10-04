@@ -167,7 +167,8 @@ where
         self.ensure_initialized(runtime, app).await?;
 
         loop {
-            let frontlight_request = runtime.update(app, |app, _| app.take_frontlight_request())?;
+            let frontlight_request =
+                runtime.update(app, |app, cx| app.take_frontlight_request(cx))?;
 
             if let Some(setting) = frontlight_request {
                 let _ = self.platform.set_frontlight(setting).await;
@@ -175,7 +176,7 @@ where
             }
 
             let frontlight_preferences_request =
-                runtime.update(app, |app, _| app.take_frontlight_preferences_request())?;
+                runtime.update(app, |app, cx| app.take_frontlight_preferences_request(cx))?;
 
             if let Some(request) = frontlight_preferences_request {
                 self.service_frontlight_preferences_request(request).await;

@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     BatteryStatus, ClockPreferences, ClockStatus, ClockSyncFailure, FrontlightPreferences,
-    FrontlightPreferencesRequest, FrontlightSetting, UtcOffset, WifiJoinPlan,
+    FrontlightPreferencesRequest, FrontlightSetting, FrontlightState, UtcOffset, WifiJoinPlan,
 };
 
 impl InkPaperApp {
@@ -145,23 +145,75 @@ impl InkPaperApp {
         preferences: FrontlightPreferences,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.frontlight.apply_preferences(preferences) {
-            cx.notify();
-        }
+        self.change_frontlight(cx, |frontlight| frontlight.apply_preferences(preferences));
     }
 
-    pub fn request_frontlight_apply(&mut self) {
-        self.frontlight.request_apply();
+    /// changes the frontlight. When `change` reports a new setting, the control center's
+    /// panel renders again. Nothing else shows the setting.
+    pub(crate) fn change_frontlight(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        change: impl FnOnce(&mut FrontlightState) -> bool,
+    ) -> bool {
+        self.frontlight
+            .update(cx, |frontlight, cx| {
+                let changed = change(frontlight);
+                if changed {
+                    cx.notify();
+                }
+
+                changed
+            })
+            .unwrap_or(false)
     }
 
-    pub(crate) fn take_frontlight_request(&mut self) -> Option<FrontlightSetting> {
-        self.frontlight.take_request()
+    /// reads or changes the frontlight's requests, which nothing shows
+    fn frontlight_requests<R>(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        f: impl FnOnce(&mut FrontlightState) -> R,
+    ) -> Option<R> {
+        self.frontlight
+            .update(cx, |frontlight, _| f(frontlight))
+            .ok()
+    }
+
+    pub fn request_frontlight_apply(&mut self, cx: &mut Context<'_, Self>) {
+        self.frontlight_requests(cx, FrontlightState::request_apply);
+    }
+
+    pub(crate) fn take_frontlight_request(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<FrontlightSetting> {
+        self.frontlight_requests(cx, FrontlightState::take_request)
+            .flatten()
     }
 
     pub(crate) fn take_frontlight_preferences_request(
         &mut self,
+        cx: &mut Context<'_, Self>,
     ) -> Option<FrontlightPreferencesRequest> {
-        self.frontlight.take_preferences_request()
+        self.frontlight_requests(cx, FrontlightState::take_preferences_request)
+            .flatten()
+    }
+
+    /// closes the control center, saving the frontlight it may have changed. Returns
+    /// whether it was open
+    pub(crate) fn close_control_center(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        if !self.control_center.close() {
+            return false;
+        }
+
+        self.request_frontlight_persist(cx);
+        cx.notify();
+
+        true
+    }
+
+    /// saves the frontlight once the control center closes
+    pub(super) fn request_frontlight_persist(&mut self, cx: &mut Context<'_, Self>) {
+        self.frontlight_requests(cx, FrontlightState::request_persist);
     }
 
     /// Whether the device may enter deep sleep on its own after inactivity.
@@ -173,9 +225,7 @@ impl InkPaperApp {
     }
 
     pub fn prepare_for_sleep(&mut self, cx: &mut Context<'_, Self>) {
-        if self.control_center.close() {
-            self.frontlight.request_persist();
-        }
+        self.close_control_center(cx);
 
         if self.sleeping {
             return;

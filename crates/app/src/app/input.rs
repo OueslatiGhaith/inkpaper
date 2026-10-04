@@ -102,9 +102,7 @@ impl InkPaperApp {
                     SideButton::Next => 5,
                 };
 
-                if self.frontlight.adjust_brightness(delta) {
-                    cx.notify();
-                }
+                self.change_frontlight(cx, |frontlight| frontlight.adjust_brightness(delta));
             }
 
             InputTarget::Screen => self.screen().route().side_button(self, button, cx),
@@ -116,9 +114,7 @@ impl InkPaperApp {
             InputTarget::Blocked => {}
 
             InputTarget::ControlCenter => {
-                self.control_center.close();
-                self.frontlight.request_persist();
-                cx.notify();
+                self.close_control_center(cx);
             }
 
             InputTarget::Screen => self.navigate_home(cx),
@@ -231,40 +227,31 @@ impl InkPaperApp {
             }
 
             ControlCenterPointerResult::Closed => {
-                self.frontlight.request_persist();
+                self.request_frontlight_persist(cx);
                 cx.notify();
                 PointerAction::Capture
             }
 
             ControlCenterPointerResult::Slider { slider, value } => {
-                let changed = match slider {
-                    ControlCenterSlider::Brightness => self.frontlight.set_brightness(value),
-                    ControlCenterSlider::Warmth => self.frontlight.set_warmth(value),
-                };
-
-                if changed {
-                    cx.notify();
-                }
+                // only the control center's panel shows the setting
+                self.change_frontlight(cx, |frontlight| match slider {
+                    ControlCenterSlider::Brightness => frontlight.set_brightness(value),
+                    ControlCenterSlider::Warmth => frontlight.set_warmth(value),
+                });
 
                 PointerAction::Capture
             }
 
             ControlCenterPointerResult::Action(action) => {
-                let changed = match action {
+                self.change_frontlight(cx, |frontlight| match action {
                     ControlCenterAction::AdjustBrightness(delta) => {
-                        self.frontlight.adjust_brightness(delta)
+                        frontlight.adjust_brightness(delta)
                     }
 
-                    ControlCenterAction::AdjustWarmth(delta) => {
-                        self.frontlight.adjust_warmth(delta)
-                    }
+                    ControlCenterAction::AdjustWarmth(delta) => frontlight.adjust_warmth(delta),
 
-                    ControlCenterAction::ToggleFrontlight => self.frontlight.toggle(),
-                };
-
-                if changed {
-                    cx.notify();
-                }
+                    ControlCenterAction::ToggleFrontlight => frontlight.toggle(),
+                });
 
                 PointerAction::Capture
             }
