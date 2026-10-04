@@ -593,6 +593,66 @@ fn identities_resolve_in_tree_order_when_children_precede_parents() {
 }
 
 #[test]
+fn resolving_one_entity_subtree_leaves_other_entities_untouched() {
+    let entities = TestEntityArena::<1024, 4>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
+    let mut frame = FrameArena::<TestFrame<8, 0>>::default();
+
+    let rerendered = entities.insert(Child).unwrap();
+    let clean = entities.insert(Child).unwrap();
+
+    let root = frame.push_div(Style::default()).unwrap();
+    let rerendered_node = frame
+        .push_entity(rerendered.entity_id(), render_entity::<Child>)
+        .unwrap();
+    let kept = frame.push_div(Style::default()).unwrap();
+    frame.identify(kept, ElementId::Name("kept"));
+    let removed = frame.push_div(Style::default()).unwrap();
+    frame.identify(removed, ElementId::Name("removed"));
+    frame.append_child(rerendered_node, kept);
+    frame.append_child(rerendered_node, removed);
+    let clean_node = frame
+        .push_entity(clean.entity_id(), render_entity::<Child>)
+        .unwrap();
+    let panel = frame.push_div(Style::default()).unwrap();
+    frame.identify(panel, ElementId::Name("panel"));
+    let item = frame.push_div(Style::default()).unwrap();
+    frame.identify(item, ElementId::Name("item"));
+    frame.append_child(panel, item);
+    frame.append_child(clean_node, panel);
+    frame.append_child(root, rerendered_node);
+    frame.append_child(root, clean_node);
+
+    frame.resolve_identities(root, &mut states, 1).unwrap();
+    states.sweep(1);
+
+    let kept_state = state_id(&frame, kept);
+    let removed_state = state_id(&frame, removed);
+    let panel_state = state_id(&frame, panel);
+    let item_state = state_id(&frame, item);
+
+    // nested elements belong to the nearest entity above them
+    assert_eq!(states.entry(item_state).unwrap().scope, clean.entity_id());
+
+    // the re-rendered entity no longer shows "removed"
+    frame.node_mut(removed).element_id = None;
+    frame
+        .resolve_identities(rerendered_node, &mut states, 2)
+        .unwrap();
+    states.sweep_scopes(2, |entity| entity == rerendered.entity_id());
+
+    assert_eq!(state_id(&frame, kept), kept_state);
+    assert!(!states.contains(removed_state));
+    for state in [panel_state, item_state] {
+        let entry = states.entry(state).unwrap();
+
+        // the clean entity's states were neither resolved nor swept
+        assert_eq!(entry.last_seen_frame, 1);
+        assert_eq!(entry.scope, clean.entity_id());
+    }
+}
+
+#[test]
 fn expanding_entities_twice_does_not_duplicate_nodes() {
     let entities = TestEntityArena::<2048, 16>::default();
     let callbacks = TestCallbackArena::<2048, 16>::default();

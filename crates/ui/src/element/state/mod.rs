@@ -43,6 +43,9 @@ pub(crate) struct ElementStateKey {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ElementStateEntry {
     pub(crate) key: ElementStateKey,
+    /// the nearest entity above the element. Its state is swept when that entity renders
+    /// again
+    pub(crate) scope: EntityId,
     pub(crate) created_frame: u32,
     pub(crate) previous_seen_frame: u32,
     pub(crate) last_seen_frame: u32,
@@ -72,6 +75,8 @@ pub enum IdentityError {
     MissingEntityScope {
         node: NodeId,
     },
+    /// the parent element's identity was not resolved in this frame
+    MissingParentState,
     /// heap-backed storage could not allocate
     AllocationFailed,
 }
@@ -96,6 +101,14 @@ impl<E: ElementStateStorage> ElementStateTable<E> {
         frame: u32,
     ) -> Result<ElementStateId, IdentityError> {
         let key = ElementStateKey { parent, local };
+        let scope = match parent {
+            IdentityParent::Entity(entity) => entity,
+            IdentityParent::Element(parent) => {
+                self.entry(parent)
+                    .ok_or(IdentityError::MissingParentState)?
+                    .scope
+            }
+        };
 
         // first look for an existing identity
         for (index, slot) in self.slots.iter_mut().enumerate() {
@@ -138,6 +151,7 @@ impl<E: ElementStateStorage> ElementStateTable<E> {
 
         slot.entry = Some(ElementStateEntry {
             key,
+            scope,
             created_frame: frame,
             previous_seen_frame: frame,
             last_seen_frame: frame,
@@ -151,10 +165,22 @@ impl<E: ElementStateStorage> ElementStateTable<E> {
         self.slots.len()
     }
 
+    /// removes the states not seen in `current_frame`
     pub(crate) fn sweep(&mut self, current_frame: u32) {
+        self.sweep_scopes(current_frame, |_| true);
+    }
+
+    /// removes the states not seen in `current_frame` whose scope matches `rendered`.
+    /// States of entities that didn't render this frame stay, since their elements
+    /// weren't resolved again
+    pub(crate) fn sweep_scopes(
+        &mut self,
+        current_frame: u32,
+        mut rendered: impl FnMut(EntityId) -> bool,
+    ) {
         for slot in self.slots.iter_mut() {
             let should_remove = match slot.entry {
-                Some(entry) => entry.last_seen_frame != current_frame,
+                Some(entry) => entry.last_seen_frame != current_frame && rendered(entry.scope),
                 None => false,
             };
 

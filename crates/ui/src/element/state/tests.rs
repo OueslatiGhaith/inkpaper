@@ -132,6 +132,72 @@ fn sweep_removes_elements_not_seen_in_current_frame() {
 }
 
 #[test]
+fn nested_elements_inherit_the_entity_scope() {
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
+
+    let panel = states
+        .resolve(entity_parent(3), ElementId::Name("panel"), 1)
+        .unwrap();
+    let button = states
+        .resolve(IdentityParent::Element(panel), ElementId::Name("button"), 1)
+        .unwrap();
+
+    assert_eq!(states.entry(button).unwrap().scope, EntityId::new(3, 0));
+}
+
+#[test]
+fn element_parent_must_be_resolved() {
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
+
+    let panel = states
+        .resolve(entity_parent(0), ElementId::Name("panel"), 1)
+        .unwrap();
+    states.sweep(2);
+
+    let result = states.resolve(IdentityParent::Element(panel), ElementId::Name("button"), 2);
+
+    assert_eq!(result, Err(IdentityError::MissingParentState));
+}
+
+#[test]
+fn scoped_sweep_keeps_states_of_entities_that_did_not_render() {
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
+
+    let rendered = entity_parent(0);
+    let kept = states
+        .resolve(rendered, ElementId::Name("kept"), 1)
+        .unwrap();
+    let removed = states
+        .resolve(rendered, ElementId::Name("removed"), 1)
+        .unwrap();
+    let clean = states
+        .resolve(entity_parent(1), ElementId::Name("clean"), 1)
+        .unwrap();
+    let nested = states
+        .resolve(IdentityParent::Element(clean), ElementId::Name("nested"), 1)
+        .unwrap();
+    states.sweep(1);
+
+    // frame 2 renders only entity 0, and it no longer shows "removed"
+    states
+        .resolve(rendered, ElementId::Name("kept"), 2)
+        .unwrap();
+    states.sweep_scopes(2, |entity| entity == EntityId::new(0, 0));
+
+    assert!(states.contains(kept));
+    assert!(!states.contains(removed));
+    assert!(states.contains(clean));
+    assert!(states.contains(nested));
+
+    // a full sweep removes what wasn't seen
+    states.sweep(2);
+
+    assert!(states.contains(kept));
+    assert!(!states.contains(clean));
+    assert!(!states.contains(nested));
+}
+
+#[test]
 fn reappearing_element_gets_new_generation() {
     let mut states = ElementStateTable::<TestElementStates<8>>::default();
 

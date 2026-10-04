@@ -28,7 +28,8 @@ impl<F: FrameStorage> FrameArena<F> {
 
         None
     }
-    /// resolves the identities of the tree under `root`.
+    /// resolves the identities of the subtree under `root`, which may be the frame's
+    /// root or an entity node.
     ///
     /// walks in tree order rather than arena order, so each node's identity scope is
     /// resolved before the node itself wherever its subtree sits in the arena
@@ -51,7 +52,7 @@ impl<F: FrameStorage> FrameArena<F> {
                 self.node_mut(node_id).element_state_id = Some(state_id);
             }
 
-            current = self.next_depth_first_node(node_id);
+            current = self.next_depth_first_node_within(node_id, root);
         }
 
         Ok(())

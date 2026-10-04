@@ -330,6 +330,28 @@ impl<F: FrameStorage> FrameArena<F> {
         }
     }
 
+    /// the node after `current` in tree order, without leaving the subtree under `root`
+    pub(crate) fn next_depth_first_node_within(
+        &self,
+        current: NodeId,
+        root: NodeId,
+    ) -> Option<NodeId> {
+        if let Some(child) = self.node(current).first_child {
+            return Some(child);
+        }
+
+        let mut node = current;
+        while node != root {
+            if let Some(sibling) = self.node(node).next_sibling {
+                return Some(sibling);
+            }
+
+            node = self.node(node).parent?;
+        }
+
+        None
+    }
+
     #[cfg(feature = "metrics")]
     pub(crate) fn reset_performance_metrics(&self) {
         self.metrics.reset();
