@@ -39,12 +39,7 @@ impl<F: FrameStorage> FrameArena<F> {
     }
     pub(super) fn node_margin(&self, node: NodeId) -> Edges<Pixels> {
         match self.node(node).kind {
-            NodeKind::Div { .. } => {
-                self.node(node)
-                    .style()
-                    .expect("div node must have style")
-                    .margin
-            }
+            NodeKind::Div { .. } => self.style(node).expect("div node must have style").margin,
             NodeKind::Text { .. }
             | NodeKind::Image { .. }
             | NodeKind::Svg { .. }
@@ -57,7 +52,7 @@ impl<F: FrameStorage> FrameArena<F> {
     }
     pub(super) fn node_flex_style(&self, node: NodeId) -> Option<Style> {
         match self.node(node).kind {
-            NodeKind::Div { .. } => self.node(node).style(),
+            NodeKind::Div { .. } => self.style(node),
             NodeKind::Text { .. }
             | NodeKind::Image { .. }
             | NodeKind::Svg { .. }

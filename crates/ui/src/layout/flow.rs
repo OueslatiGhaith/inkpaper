@@ -402,7 +402,7 @@ impl<F: FrameStorage> FrameArena<F> {
         count_metric!(self, nodes_laid_out);
 
         let direct_style = match self.node(node).kind {
-            NodeKind::Div { .. } => self.node(node).style(),
+            NodeKind::Div { .. } => self.style(node),
             NodeKind::Text { .. }
             | NodeKind::Image { .. }
             | NodeKind::Svg { .. }
@@ -448,7 +448,7 @@ impl<F: FrameStorage> FrameArena<F> {
                 }
             }
             NodeKind::Div { .. } => {
-                let style = self.node(node).style().expect("div node must have style");
+                let style = self.style(node).expect("div node must have style");
 
                 // a positioned node establishes the containing block for absolute
                 // descendants at its final, visually shifted position.
@@ -492,7 +492,7 @@ impl<F: FrameStorage> FrameArena<F> {
     }
     pub(crate) fn max_scroll_offset(&self, node: NodeId) -> Offset {
         let viewport = self.children_clip_layout_bounds(node);
-        let style = self.node(node).style();
+        let style = self.style(node);
 
         let mut right = viewport.right();
         let mut bottom = viewport.bottom();

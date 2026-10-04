@@ -421,13 +421,12 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     pub(crate) fn node_clips_children(&self, node: NodeId) -> bool {
-        let node = self.node(node);
-        let style_clips = node
-            .style()
+        let style_clips = self
+            .style(node)
             .map(|style| style.clip_children)
             .unwrap_or(false);
 
-        style_clips || node.interaction.scroll_axes.any()
+        style_clips || self.node(node).interaction.scroll_axes.any()
     }
 
     fn children_clip_bounds(&self, node: NodeId, context: VisualContext) -> Rect {
@@ -437,8 +436,7 @@ impl<F: FrameStorage> FrameArena<F> {
     pub(crate) fn children_clip_layout_bounds(&self, node: NodeId) -> Rect {
         let bounds = self.node(node).layout.bounds;
         let border = self
-            .node(node)
-            .style()
+            .style(node)
             .map(|style| style.border_width.non_negative())
             .unwrap_or(px(0));
 

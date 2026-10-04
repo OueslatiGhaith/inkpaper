@@ -217,23 +217,13 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     pub(crate) fn focused_style_invalidation(&self, element: ElementStateId) -> Invalidation {
-        for node in self.nodes.iter() {
-            if node.element_state_id == Some(element) {
-                return node.interaction.focused_style.invalidation();
-            }
-        }
-
-        Invalidation::None
+        self.interaction_styles_for_element(element)
+            .map_or(Invalidation::None, |styles| styles.focused.invalidation())
     }
 
     pub(crate) fn pressed_style_invalidation(&self, element: ElementStateId) -> Invalidation {
-        for node in self.nodes.iter() {
-            if node.element_state_id == Some(element) {
-                return node.interaction.pressed_style.invalidation();
-            }
-        }
-
-        Invalidation::None
+        self.interaction_styles_for_element(element)
+            .map_or(Invalidation::None, |styles| styles.pressed.invalidation())
     }
 
     pub(crate) fn hit_test_scroll(&self, root: NodeId, position: Point) -> Option<ScrollTarget> {
@@ -460,8 +450,7 @@ impl<F: FrameStorage> FrameArena<F> {
 
     fn scroll_viewport_bounds(&self, node: NodeId, visual_bounds: Rect) -> Rect {
         let border = self
-            .node(node)
-            .style()
+            .style(node)
             .map(|s| s.border_width.non_negative())
             .unwrap_or_default();
 

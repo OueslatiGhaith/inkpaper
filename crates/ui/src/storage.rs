@@ -47,6 +47,9 @@ pub trait RuntimeStorage {
 
 /// fixed-capacity storage for every runtime table, with the capacities in the order the
 /// tables appear in [`RuntimeStorage`]. Never allocates.
+///
+/// nodes with focused or pressed styles get [`FixedFrame`]'s default capacity. Implement
+/// [`RuntimeStorage`] directly to choose another.
 pub struct FixedStorage<
     const ENTITY_BYTES: usize,
     const ENTITY_SLOTS: usize,
@@ -146,14 +149,24 @@ pub trait FrameStorage {
     /// sized by node count: nodes, event bindings and node caches
     type Nodes<T>: VecStorage<T>;
     type Text: VecStorage<u8>;
+    /// sized by the number of nodes with focused or pressed styles
+    type InteractionStyles<T>: VecStorage<T>;
 }
 
-/// fixed storage for at most `NODES` frame nodes and `TEXT_BYTES` bytes of text
-pub struct FixedFrame<const NODES: usize, const TEXT_BYTES: usize>;
+/// fixed storage for at most `NODES` frame nodes, `TEXT_BYTES` bytes of text and
+/// `INTERACTION_STYLES` nodes with focused or pressed styles
+pub struct FixedFrame<
+    const NODES: usize,
+    const TEXT_BYTES: usize,
+    const INTERACTION_STYLES: usize = 32,
+>;
 
-impl<const NODES: usize, const TEXT_BYTES: usize> FrameStorage for FixedFrame<NODES, TEXT_BYTES> {
+impl<const NODES: usize, const TEXT_BYTES: usize, const INTERACTION_STYLES: usize> FrameStorage
+    for FixedFrame<NODES, TEXT_BYTES, INTERACTION_STYLES>
+{
     type Nodes<T> = heapless::Vec<T, NODES>;
     type Text = heapless::Vec<u8, TEXT_BYTES>;
+    type InteractionStyles<T> = heapless::Vec<T, INTERACTION_STYLES>;
 }
 
 /// heap storage for frame nodes and text. The first allocations reserve the initial
@@ -167,6 +180,7 @@ impl<const INITIAL_NODES: usize, const INITIAL_TEXT_BYTES: usize> FrameStorage
 {
     type Nodes<T> = HeapVec<T, INITIAL_NODES>;
     type Text = HeapVec<u8, INITIAL_TEXT_BYTES>;
+    type InteractionStyles<T> = HeapVec<T, 0>;
 }
 
 /// storage for element identities and the state kept for them, such as scroll offsets

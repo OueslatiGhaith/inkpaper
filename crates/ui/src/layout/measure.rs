@@ -49,7 +49,7 @@ impl<F: FrameStorage> FrameArena<F> {
                 None => Size::ZERO,
             },
             NodeKind::Div { .. } => {
-                let style = self.node(node).style().expect("div node must have style");
+                let style = self.style(node).expect("div node must have style");
                 self.measure_div(node, style, available, text_measurer)
             }
         };

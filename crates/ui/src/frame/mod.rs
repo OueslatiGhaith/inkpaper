@@ -1,9 +1,8 @@
 use crate::{
     CanvasDraw, CanvasStyle, ElementId, EntityAccessError, EntityId, EntityRenderFn, EventBinding,
-    EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size,
-    StatefulInteractivity, Style, StylePatch, SvgSource, SvgStyle, TextStyle,
-    element::state::ElementStateId, frame::storage::FrameBuffer, interaction::scroll::ScrollAxes,
-    storage::FrameStorage,
+    EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size, Style,
+    StylePatch, SvgSource, SvgStyle, TextStyle, element::state::ElementStateId,
+    frame::storage::FrameBuffer, interaction::scroll::ScrollAxes, storage::FrameStorage,
 };
 #[cfg(feature = "metrics")]
 use crate::{PerformanceMetrics, PerformanceMetricsCell};
@@ -82,7 +81,6 @@ pub(crate) struct Node {
     pub(crate) element_state_id: Option<ElementStateId>,
     pub(crate) interaction: NodeInteraction,
     pub(crate) layout: NodeLayout,
-    pub(crate) effective_style: Option<Style>,
     pub(crate) text_style: TextStyle,
     pub(crate) effective_text_style: ResolvedTextStyle,
     pub(crate) first_event_binding: Option<EventBindingId>,
@@ -101,21 +99,10 @@ impl Node {
             element_state_id: None,
             interaction: NodeInteraction::default(),
             layout: NodeLayout::default(),
-            effective_style: match kind {
-                NodeKind::Div { style } => Some(style),
-                _ => None,
-            },
             text_style: TextStyle::default(),
             effective_text_style: ResolvedTextStyle::default(),
             first_event_binding: None,
             last_event_binding: None,
-        }
-    }
-
-    pub(crate) fn style(&self) -> Option<Style> {
-        match self.kind {
-            NodeKind::Div { style } => Some(self.effective_style.unwrap_or(style)),
-            _ => None,
         }
     }
 }
@@ -123,23 +110,30 @@ impl Node {
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NodeInteraction {
     pub(crate) focusable: bool,
-    pub(crate) focused_style: StylePatch,
-    pub(crate) pressed_style: StylePatch,
+    /// index into the frame's interaction styles, for nodes with focused or pressed styles
+    pub(crate) styles: Option<u16>,
     pub(crate) scroll_axes: ScrollAxes,
     pub(crate) scroll_offset: Offset,
     pub(crate) initial_scroll_child: Option<usize>,
 }
 
-impl NodeInteraction {
-    fn apply(&mut self, interaction: StatefulInteractivity) {
-        self.focusable |= interaction.focusable;
-        self.focused_style = self.focused_style.merge(interaction.focused_style);
-        self.pressed_style = self.pressed_style.merge(interaction.pressed_style);
-        if interaction.scroll_axes.any() {
-            self.scroll_axes = interaction.scroll_axes;
-        }
-        if interaction.initial_scroll_child.is_some() {
-            self.initial_scroll_child = interaction.initial_scroll_child;
+/// the focused and pressed styles of one node. Few nodes have them, so the frame keeps
+/// them in their own table instead of in every [`Node`]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InteractionStyles {
+    pub(crate) focused: StylePatch,
+    pub(crate) pressed: StylePatch,
+}
+
+impl InteractionStyles {
+    fn is_empty(self) -> bool {
+        self == Self::default()
+    }
+
+    fn merge(self, later: Self) -> Self {
+        Self {
+            focused: self.focused.merge(later.focused),
+            pressed: self.pressed.merge(later.pressed),
         }
     }
 }
@@ -149,6 +143,8 @@ pub enum MountError {
     NodesFull,
     TextStorageFull,
     EventBindingsFull,
+    /// too many nodes have focused or pressed styles
+    InteractionStylesFull,
     EntityAccess(EntityAccessError),
     DuplicateEntityMount(EntityId),
     /// heap-backed storage could not allocate
@@ -179,6 +175,10 @@ pub(crate) struct FrameArena<F: FrameStorage> {
     pub(crate) event_bindings: FrameBuffer<EventBinding, F::Nodes<EventBinding>>,
     text: FrameBuffer<u8, F::Text>,
     node_cache: FrameBuffer<NodeCache, F::Nodes<NodeCache>>,
+    interaction_styles: FrameBuffer<InteractionStyles, F::InteractionStyles<InteractionStyles>>,
+    /// the elements whose interaction styles apply
+    focused: Option<ElementStateId>,
+    pressed: Option<ElementStateId>,
     subtree_paint_bounds_valid: bool,
     #[cfg(feature = "metrics")]
     pub(crate) metrics: PerformanceMetricsCell,
@@ -191,6 +191,9 @@ impl<F: FrameStorage> Default for FrameArena<F> {
             event_bindings: FrameBuffer::new(),
             text: FrameBuffer::new(),
             node_cache: FrameBuffer::new(),
+            interaction_styles: FrameBuffer::new(),
+            focused: None,
+            pressed: None,
             subtree_paint_bounds_valid: false,
             #[cfg(feature = "metrics")]
             metrics: PerformanceMetricsCell::default(),
@@ -220,6 +223,9 @@ impl<F: FrameStorage> FrameArena<F> {
         self.text.clear();
         self.event_bindings.clear();
         self.node_cache.clear();
+        self.interaction_styles.clear();
+        self.focused = None;
+        self.pressed = None;
         self.subtree_paint_bounds_valid = false;
     }
 
@@ -228,6 +234,7 @@ impl<F: FrameStorage> FrameArena<F> {
         self.node_cache.shrink_to_fit();
         self.event_bindings.shrink_to_fit();
         self.text.shrink_to_fit();
+        self.interaction_styles.shrink_to_fit();
     }
 
     pub(crate) fn node(&self, id: NodeId) -> &Node {
@@ -236,6 +243,43 @@ impl<F: FrameStorage> FrameArena<F> {
 
     pub(crate) fn node_mut(&mut self, id: NodeId) -> &mut Node {
         &mut self.nodes[id.index()]
+    }
+
+    /// a div's style, with its focused and pressed styles applied while its element is
+    /// focused or pressed. `None` for other nodes
+    pub(crate) fn style(&self, id: NodeId) -> Option<Style> {
+        let node = self.node(id);
+        let NodeKind::Div { style } = node.kind else {
+            return None;
+        };
+        let (Some(index), Some(element)) = (node.interaction.styles, node.element_state_id) else {
+            return Some(style);
+        };
+
+        let styles = &self.interaction_styles[usize::from(index)];
+        let mut style = style;
+        if self.focused == Some(element) {
+            style = styles.focused.apply(style);
+        }
+        if self.pressed == Some(element) {
+            style = styles.pressed.apply(style);
+        }
+
+        Some(style)
+    }
+
+    pub(crate) fn interaction_styles_for_element(
+        &self,
+        element: ElementStateId,
+    ) -> Option<&InteractionStyles> {
+        let node = self
+            .nodes
+            .iter()
+            .find(|node| node.element_state_id == Some(element))?;
+
+        node.interaction
+            .styles
+            .map(|index| &self.interaction_styles[usize::from(index)])
     }
 
     pub(crate) fn text(&self, range: TextRange) -> &str {

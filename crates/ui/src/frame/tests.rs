@@ -262,6 +262,59 @@ fn fixed_frame_failure_preserves_text_and_existing_event_bindings() {
 }
 
 #[test]
+fn only_nodes_with_interaction_styles_take_table_entries() {
+    let mut frame = FrameArena::<TestFrame<8, 0>>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
+    let app = AppContext::from_globals(&globals);
+
+    frame
+        .mount(
+            div()
+                .child(div().id("plain").focusable())
+                .child(
+                    div()
+                        .id("focused")
+                        .when_focused(|style| style.bg(Color::RED)),
+                )
+                .child(
+                    div()
+                        .id("both")
+                        .when_focused(|style| style.bg(Color::RED))
+                        .when_pressed(|style| style.bg(Color::GREEN)),
+                ),
+            app,
+        )
+        .unwrap();
+
+    // one entry per styled node, holding both its focused and pressed styles
+    assert_eq!(frame.interaction_styles.len(), 2);
+
+    let plain = find_element(&frame, ElementId::Name("plain")).unwrap();
+    assert_eq!(frame.node(plain).interaction.styles, None);
+}
+
+#[cfg(not(feature = "alloc"))]
+#[test]
+fn fixed_frame_reports_full_interaction_styles() {
+    let mut frame = FrameArena::<FixedFrame<8, 0, 1>>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
+    let app = AppContext::from_globals(&globals);
+
+    let result = frame.mount(
+        div()
+            .child(div().id("first").when_focused(|style| style.bg(Color::RED)))
+            .child(
+                div()
+                    .id("second")
+                    .when_pressed(|style| style.bg(Color::RED)),
+            ),
+        app,
+    );
+
+    assert_eq!(result, Err(MountError::InteractionStylesFull));
+}
+
+#[test]
 fn clear_resets_frame_storage() {
     let mut frame = FrameArena::<TestFrame<8, 128>>::default();
     let globals = TestGlobalArena::<0, 0>::default();

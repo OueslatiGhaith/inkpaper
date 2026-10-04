@@ -1,6 +1,6 @@
 use core::{any::TypeId, cell::Cell};
 
-use super::{FrameArena, MountError, NodeId, NodeKind, TextRange};
+use super::{FrameArena, InteractionStyles, MountError, NodeId, NodeKind, TextRange};
 
 use crate::{
     AppContext, CanvasDraw, CanvasStyle, Element, ElementId, EntityId, EntityRenderFn,
@@ -169,7 +169,11 @@ pub(crate) trait FrameStore {
 
     fn identify(&mut self, node: NodeId, id: ElementId);
 
-    fn apply_interactivity(&mut self, node: NodeId, interactivity: StatefulInteractivity);
+    fn apply_interactivity(
+        &mut self,
+        node: NodeId,
+        interactivity: StatefulInteractivity,
+    ) -> Result<(), MountError>;
 
     fn bind_event(
         &mut self,
@@ -273,8 +277,42 @@ impl<F: FrameStorage> FrameStore for FrameArena<F> {
         self.nodes[node.index()].element_id = Some(id);
     }
 
-    fn apply_interactivity(&mut self, node: NodeId, interactivity: StatefulInteractivity) {
-        self.nodes[node.index()].interaction.apply(interactivity);
+    fn apply_interactivity(
+        &mut self,
+        node: NodeId,
+        interactivity: StatefulInteractivity,
+    ) -> Result<(), MountError> {
+        let styles = InteractionStyles {
+            focused: interactivity.focused_style,
+            pressed: interactivity.pressed_style,
+        };
+
+        if !styles.is_empty() {
+            match self.nodes[node.index()].interaction.styles {
+                Some(index) => {
+                    let existing = &mut self.interaction_styles[usize::from(index)];
+                    *existing = existing.merge(styles);
+                }
+                None => {
+                    let index = u16::try_from(self.interaction_styles.len())
+                        .map_err(|_| MountError::InteractionStylesFull)?;
+                    self.interaction_styles
+                        .push(styles, MountError::InteractionStylesFull)?;
+                    self.nodes[node.index()].interaction.styles = Some(index);
+                }
+            }
+        }
+
+        let interaction = &mut self.nodes[node.index()].interaction;
+        interaction.focusable |= interactivity.focusable;
+        if interactivity.scroll_axes.any() {
+            interaction.scroll_axes = interactivity.scroll_axes;
+        }
+        if interactivity.initial_scroll_child.is_some() {
+            interaction.initial_scroll_child = interactivity.initial_scroll_child;
+        }
+
+        Ok(())
     }
 
     fn bind_event(
@@ -356,8 +394,8 @@ impl MountCx<'_> {
         &mut self,
         node: NodeId,
         interactivity: StatefulInteractivity,
-    ) {
-        self.frame.apply_interactivity(node, interactivity);
+    ) -> Result<(), MountError> {
+        self.frame.apply_interactivity(node, interactivity)
     }
 
     pub(crate) fn bind_event(

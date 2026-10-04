@@ -182,7 +182,7 @@ impl<F: FrameStorage> FrameArena<F> {
         let node = self.node(node_id);
         match node.kind {
             NodeKind::Div { .. } => {
-                let style = node.style().expect("div node must have style");
+                let style = self.style(node_id).expect("div node must have style");
 
                 let border = match (style.border_width.is_positive(), style.border_color) {
                     (true, Some(color)) => Some(BorderPaint {
@@ -390,7 +390,7 @@ impl<F: FrameStorage> FrameArena<F> {
         damage_bounds: Rect,
     ) -> Option<NodeId> {
         let parent = visual.node();
-        let style = self.node(parent).style()?;
+        let style = self.style(parent)?;
         let first = self.node(parent).first_child?;
         let last = self.node(parent).last_child?;
         if first == last {
@@ -628,7 +628,7 @@ impl<F: FrameStorage> FrameArena<F> {
         let Some(parent) = self.node(node).parent else {
             return false;
         };
-        let Some(style) = self.node(parent).style() else {
+        let Some(style) = self.style(parent) else {
             return false;
         };
 
@@ -640,8 +640,8 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     fn has_non_monotonic_positioning(&self) -> bool {
-        self.nodes.iter().any(|node| {
-            let Some(style) = node.style() else {
+        (0..self.nodes.len()).any(|index| {
+            let Some(style) = self.style(NodeId::new(index as u16)) else {
                 return false;
             };
 

@@ -501,7 +501,7 @@ where
 
     fn refresh_interaction_styles(&mut self) {
         self.frame
-            .resolve_interaction_styles(self.focused, self.activation.pressed());
+            .set_interaction_state(self.focused, self.activation.pressed());
 
         if let Some(root) = self.root {
             self.frame.resolve_text_styles(root);

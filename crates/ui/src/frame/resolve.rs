@@ -52,27 +52,15 @@ impl<F: FrameStorage> FrameArena<F> {
 
         Ok(())
     }
-    pub(crate) fn resolve_interaction_styles(
+
+    /// sets the elements whose focused and pressed styles [`Self::style`] applies
+    pub(crate) fn set_interaction_state(
         &mut self,
         focused: Option<ElementStateId>,
         pressed: Option<ElementStateId>,
     ) {
-        for node in self.nodes.iter_mut() {
-            let NodeKind::Div { style: base } = node.kind else {
-                node.effective_style = None;
-                continue;
-            };
-
-            let mut effective = base;
-            if node.element_state_id == focused {
-                effective = node.interaction.focused_style.apply(effective);
-            }
-            if node.element_state_id == pressed {
-                effective = node.interaction.pressed_style.apply(effective);
-            }
-
-            node.effective_style = Some(effective);
-        }
+        self.focused = focused;
+        self.pressed = pressed;
     }
     pub(crate) fn resolve_scroll_offsets<E: ElementStateStorage>(
         &mut self,
@@ -96,8 +84,7 @@ impl<F: FrameStorage> FrameArena<F> {
 
             let resolved = match self.node(node_id).kind {
                 NodeKind::Div { .. } => self
-                    .node(node_id)
-                    .style()
+                    .style(node_id)
                     .expect("div node must have style")
                     .text
                     .resolve(inherited),
