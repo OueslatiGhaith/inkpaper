@@ -5,7 +5,9 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     SavedNetworks, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError,
-    input::LongPressEvent, keyboard::Key, screens::wifi_networks::WifiMenuItem,
+    input::LongPressEvent,
+    keyboard::Key,
+    screens::{wifi_networks::WifiMenuItem, wifi_password::keyboard_look},
 };
 
 impl InkPaperApp {
@@ -181,13 +183,32 @@ impl InkPaperApp {
             return;
         };
 
-        if self
-            .wifi
-            .password_entry_mut()
-            .is_some_and(|entry| entry.press(key))
-        {
-            cx.notify();
+        let Some(entry) = self.wifi.password_entry_mut() else {
+            return;
+        };
+
+        let look = keyboard_look(entry);
+        if !entry.press(key) {
+            return;
         }
+
+        // a key changes the field. The keyboard renders again only when it looks
+        // different, such as after Shift
+        let keyboard_changed = keyboard_look(entry) != look;
+        self.refresh_password_field(cx);
+        if keyboard_changed {
+            self.refresh_password_keyboard(cx);
+        }
+    }
+
+    /// renders the password field again, for changes nothing else shows
+    pub(crate) fn refresh_password_field(&self, cx: &mut Context<'_, Self>) {
+        self.password_field.update(cx, |_, cx| cx.notify()).ok();
+    }
+
+    /// renders the password keyboard again, for changes nothing else shows
+    pub(crate) fn refresh_password_keyboard(&self, cx: &mut Context<'_, Self>) {
+        self.password_keyboard.update(cx, |_, cx| cx.notify()).ok();
     }
 
     pub(crate) fn take_wifi_join_request(&mut self) -> Option<WifiCredentials> {
@@ -220,7 +241,7 @@ impl InkPaperApp {
     ) {
         if let Some(entry) = self.wifi.password_entry_mut() {
             entry.toggle_shown();
-            cx.notify();
+            self.refresh_password_field(cx);
         }
     }
 }

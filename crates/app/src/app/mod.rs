@@ -12,6 +12,10 @@ use crate::{
     reader::ReaderState,
     reading_history::ReadingHistoryState,
     screens::{
+        clock_settings::TimezoneView,
+        wifi_password::{PasswordFieldView, PasswordKeyboardView},
+    },
+    screens::{
         reader::ReaderBatteryIcon,
         sleep::{SleepScreen, SleepScreenProps},
     },
@@ -101,6 +105,11 @@ pub struct InkPaperApp {
     frontlight_panel: Entity<FrontlightPanel>,
     /// the reader's drawer
     pub(crate) reader_menu: Entity<ReaderMenuView>,
+    /// the Wi-Fi password field and its keyboard
+    pub(crate) password_field: Entity<PasswordFieldView>,
+    pub(crate) password_keyboard: Entity<PasswordKeyboardView>,
+    /// the local time and timezone slider of the clock settings
+    pub(crate) timezone: Entity<TimezoneView>,
     control_center: ControlCenterState,
     /// set once a long press took the current touch
     pointer_captured: bool,
@@ -117,6 +126,9 @@ impl InkPaperApp {
         let frontlight_panel = cx.new(|_| FrontlightPanel::new(frontlight)).unwrap();
         let app = cx.entity();
         let reader_menu = cx.new(|_| ReaderMenuView::new(app)).unwrap();
+        let password_field = cx.new(|_| PasswordFieldView::new(app)).unwrap();
+        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app)).unwrap();
+        let timezone = cx.new(|_| TimezoneView::new(app)).unwrap();
 
         Self {
             navigation: NavigationStack::default(),
@@ -133,6 +145,9 @@ impl InkPaperApp {
             frontlight,
             frontlight_panel,
             reader_menu,
+            password_field,
+            password_keyboard,
+            timezone,
             control_center: ControlCenterState::default(),
             pointer_captured: false,
             file_transfer: FileTransferState::default(),

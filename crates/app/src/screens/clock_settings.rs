@@ -2,7 +2,7 @@ use alloc::{format, string::String};
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    ClockStatus, ClockSyncStatus, InkPaperApp, UtcOffset,
+    ClockSyncStatus, InkPaperApp, UtcOffset,
     app::{Entry, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
@@ -22,33 +22,15 @@ const TIMEZONE_SLIDER_TOP: i32 = 186 + 24 + 4;
 pub(crate) struct ClockSettingsScreen<'a> {
     network: Option<&'a str>,
     battery: Entity<BatteryIndicator>,
-    clock: Option<ClockStatus>,
-    utc_offset: UtcOffset,
+    timezone: Entity<TimezoneView>,
     sync: ClockSyncStatus,
     on_back: Listener<ActivateEvent>,
-    on_decrease_utc_offset: Listener<ActivateEvent>,
-    on_increase_utc_offset: Listener<ActivateEvent>,
     on_sync: Listener<ActivateEvent>,
     on_wifi: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for ClockSettingsScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let (time, date) = match self.clock {
-            None => (String::from("--:--"), String::from("Time not set")),
-            Some(clock) => (
-                format!("{:02}:{:02}", clock.hour(), clock.minute()),
-                format!(
-                    "{:02}/{:02}/{:04}",
-                    clock.day(),
-                    clock.month(),
-                    clock.year()
-                ),
-            ),
-        };
-
-        let timezone_label = format!("Timezone  {}", self.utc_offset.label());
-
         let status = match self.sync {
             ClockSyncStatus::Idle => String::from("Gets the time over WiFi"),
             ClockSyncStatus::Syncing => String::from("Syncing..."),
@@ -69,33 +51,7 @@ impl RenderOnce for ClockSettingsScreen<'_> {
                     />
                 </div>
 
-                <div class="absolute left-7 top-[98px] w-[424px] h-16 flex flex-col justify-center">
-                    <text class="font-bold text-2xl no-wrap">
-                        {time}
-                    </text>
-
-                    <text class="text-xl no-wrap">
-                        {date}
-                    </text>
-                </div>
-
-                // inset like the reader menu's font size slider
-                <div class="absolute left-8 top-[186px] w-[416px] flex flex-col">
-                    <div class="w-full h-6 flex items-center">
-                        <text class="text-base no-wrap">
-                            {timezone_label}
-                        </text>
-                    </div>
-
-                    <div class="h-1" />
-
-                    <Slider
-                        id="clock-timezone"
-                        value={self.utc_offset.slider_value()}
-                        on_decrease={Some(self.on_decrease_utc_offset)}
-                        on_increase={Some(self.on_increase_utc_offset)}
-                    />
-                </div>
+                {self.timezone}
 
                 <div class="absolute left-0 top-[286px] w-[480px] flex flex-col">
                     <SettingsValueRow
@@ -120,6 +76,84 @@ impl RenderOnce for ClockSettingsScreen<'_> {
                     <text class="text-base wrap max-lines-2 text-ellipsis">
                         {status}
                     </text>
+                </div>
+            </div>
+        }
+    }
+}
+
+/// the local time and the timezone slider, which shifts it. As their own entity,
+/// dragging the slider or a minute passing renders and paints only these. The app
+/// renders it again through [`InkPaperApp::refresh_timezone`].
+pub(crate) struct TimezoneView {
+    app: Entity<InkPaperApp>,
+}
+
+impl TimezoneView {
+    pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
+        Self { app }
+    }
+}
+
+impl Render for TimezoneView {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        // the listeners target the app, so its handlers can render this view again
+        let (clock, utc_offset, on_decrease, on_increase) = self
+            .app
+            .update(cx, |app, cx| {
+                (
+                    app.local_clock(cx),
+                    app.clock.utc_offset(),
+                    cx.listener(InkPaperApp::activate_decrease_utc_offset),
+                    cx.listener(InkPaperApp::activate_increase_utc_offset),
+                )
+            })
+            .expect("the app outlives its clock settings");
+
+        let (time, date) = match clock {
+            None => (String::from("--:--"), String::from("Time not set")),
+            Some(clock) => (
+                format!("{:02}:{:02}", clock.hour(), clock.minute()),
+                format!(
+                    "{:02}/{:02}/{:04}",
+                    clock.day(),
+                    clock.month(),
+                    clock.year()
+                ),
+            ),
+        };
+
+        let timezone_label = format!("Timezone  {}", utc_offset.label());
+
+        rsx! {
+            // the time 98 px down, the timezone block 88 px under it
+            <div class="absolute left-0 top-[98px] w-[480px] h-[184px]">
+                <div class="absolute left-7 top-0 w-[424px] h-16 flex flex-col justify-center">
+                    <text class="font-bold text-2xl no-wrap">
+                        {time}
+                    </text>
+
+                    <text class="text-xl no-wrap">
+                        {date}
+                    </text>
+                </div>
+
+                // inset like the reader menu's font size slider
+                <div class="absolute left-8 top-[88px] w-[416px] flex flex-col">
+                    <div class="w-full h-6 flex items-center">
+                        <text class="text-base no-wrap">
+                            {timezone_label}
+                        </text>
+                    </div>
+
+                    <div class="h-1" />
+
+                    <Slider
+                        id="clock-timezone"
+                        value={utc_offset.slider_value()}
+                        on_decrease={Some(on_decrease)}
+                        on_increase={Some(on_increase)}
+                    />
                 </div>
             </div>
         }
@@ -184,12 +218,9 @@ impl ScreenView for ClockSettingsRoute {
         ClockSettingsScreen::from(ClockSettingsScreenProps {
             network: app.wifi.saved().connected().map(|network| network.ssid()),
             battery: app.battery_indicator,
-            clock: app.local_clock(cx),
-            utc_offset: app.clock.utc_offset(),
+            timezone: app.timezone,
             sync: app.clock.sync_status(),
             on_back: cx.listener(InkPaperApp::activate_back),
-            on_decrease_utc_offset: cx.listener(InkPaperApp::activate_decrease_utc_offset),
-            on_increase_utc_offset: cx.listener(InkPaperApp::activate_increase_utc_offset),
             on_sync: cx.listener(InkPaperApp::activate_sync_clock),
             on_wifi: cx.listener(InkPaperApp::show_wifi_networks),
         })

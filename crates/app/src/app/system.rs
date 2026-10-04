@@ -60,14 +60,20 @@ impl InkPaperApp {
     /// Shows a timezone while its slider is dragged; release saves it.
     pub(crate) fn preview_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
         if self.clock.preview_utc_offset(offset) {
-            cx.notify();
+            self.refresh_timezone(cx);
         }
     }
 
     pub(crate) fn set_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
         if self.clock.set_utc_offset(offset) {
-            cx.notify();
+            self.refresh_timezone(cx);
         }
+    }
+
+    /// renders the clock settings' time and timezone again. Only they show the
+    /// timezone while it changes; other screens render again on the way back
+    pub(crate) fn refresh_timezone(&self, cx: &mut Context<'_, Self>) {
+        self.timezone.update(cx, |_, cx| cx.notify()).ok();
     }
 
     /// Saves a timezone left by a drag. Returns whether there was one.
