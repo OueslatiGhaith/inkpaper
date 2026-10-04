@@ -5,7 +5,7 @@ mod arena;
 #[cfg(feature = "alloc")]
 pub use arena::HeapCallbackArena;
 pub use arena::{CallbackAllocError, CanvasInvokeError, FixedCallbackArena, ListenerInvokeError};
-pub(crate) use arena::{CallbackStore, register_canvas_callback, register_listener};
+pub(crate) use arena::{CallbackMark, CallbackStore, register_canvas_callback, register_listener};
 
 // unit tests run against the storage the `alloc` feature implies
 #[cfg(all(test, not(feature = "alloc")))]

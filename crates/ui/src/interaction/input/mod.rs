@@ -276,6 +276,9 @@ impl<F: FrameStorage> FrameArena<F> {
         for index in 0..self.nodes.len() {
             let node_id = NodeId::new(index as u16);
             let node = self.node(node_id);
+            if node.detached {
+                continue;
+            }
             let axes = node.interaction.scroll_axes;
             let (Some(child_index), Some(element)) =
                 (node.interaction.initial_scroll_child, node.element_state_id)
@@ -321,6 +324,9 @@ impl<F: FrameStorage> FrameArena<F> {
         for index in 0..self.nodes.len() {
             let node_id = NodeId::new(index as u16);
             let node = self.node(node_id);
+            if node.detached {
+                continue;
+            }
             let axes = node.interaction.scroll_axes;
             if !axes.any() {
                 continue;

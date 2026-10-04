@@ -81,6 +81,11 @@ struct CallbackMeta {
     kind: CallbackKind,
 }
 
+/// the callbacks registered so far. Slot numbers grow until the arena resets, so later
+/// callbacks have larger slots
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallbackMark(usize);
+
 pub struct RawCallbackReservation {
     pub(crate) id: CallbackId,
     pub(crate) ptr: NonNull<u8>,
@@ -219,10 +224,16 @@ impl<S: SlotStorage> CallbackArena<S> {
         self.slots.clear();
     }
 
-    /// drops the callbacks `owner` registered, so it can render again. Other callbacks
-    /// stay callable. Returns how many callbacks were released.
-    pub(crate) fn release_owner(&mut self, owner: EntityId) -> usize {
-        self.slots.remove_where(|meta| meta.owner == owner)
+    /// a mark that [`Self::release_owner`] can keep the callbacks registered after
+    pub(crate) fn mark(&self) -> CallbackMark {
+        CallbackMark(self.slots.len())
+    }
+
+    /// drops the callbacks `owner` registered before `mark`, such as during its previous
+    /// render. Other callbacks stay callable. Returns how many callbacks were released.
+    pub(crate) fn release_owner(&mut self, owner: EntityId, mark: CallbackMark) -> usize {
+        self.slots
+            .remove_where(|slot, meta| slot < mark.0 && meta.owner == owner)
     }
 }
 
@@ -283,8 +294,12 @@ impl<S: SlotStorage> crate::storage::CallbackStorage for CallbackArena<S> {
         CallbackArena::reset(self);
     }
 
-    fn release_owner(&mut self, owner: EntityId) -> usize {
-        CallbackArena::release_owner(self, owner)
+    fn mark(&self) -> CallbackMark {
+        CallbackArena::mark(self)
+    }
+
+    fn release_owner(&mut self, owner: EntityId, mark: CallbackMark) -> usize {
+        CallbackArena::release_owner(self, owner, mark)
     }
 
     fn invoke_listener<E>(
@@ -675,7 +690,10 @@ mod tests {
             )
         };
 
-        assert_eq!(callbacks.release_owner(released.entity_id()), 1);
+        assert_eq!(
+            callbacks.release_owner(released.entity_id(), callbacks.mark()),
+            1
+        );
         // the capture is dropped right away, not when the arena resets
         assert_eq!(RELEASE_DROPS.load(Ordering::SeqCst), 1);
 
@@ -702,6 +720,32 @@ mod tests {
 
         callbacks.reset();
         assert_eq!(RELEASE_DROPS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn releasing_an_owner_keeps_its_callbacks_registered_after_the_mark() {
+        let entities = TestEntityArena::<1024, 16>::default();
+        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
+        let counter = entities.insert(Counter { value: 0 }).unwrap();
+        let all_dirty = Cell::new(false);
+        let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty);
+
+        let previous = Context::new_in(counter, runtime).listener(Counter::increment);
+        // the entity renders again after the mark
+        let mark = callbacks.mark();
+        let current = Context::new_in(counter, runtime).listener(Counter::increment);
+
+        assert_eq!(callbacks.release_owner(counter.entity_id(), mark), 1);
+
+        let event = ActivateEvent::new(ElementId::Name("test"));
+        let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty);
+
+        assert!(matches!(
+            callbacks.invoke_listener(previous, &event, runtime),
+            Err(ListenerInvokeError::InvalidListener)
+        ));
+        callbacks.invoke_listener(current, &event, runtime).unwrap();
     }
 
     #[test]
@@ -735,8 +779,14 @@ mod tests {
 
         // the child releases only the callback it registered itself. The parent releases
         // the listener and the canvas
-        assert_eq!(callbacks.release_owner(child.entity_id()), 1);
-        assert_eq!(callbacks.release_owner(parent.entity_id()), 2);
+        assert_eq!(
+            callbacks.release_owner(child.entity_id(), callbacks.mark()),
+            1
+        );
+        assert_eq!(
+            callbacks.release_owner(parent.entity_id(), callbacks.mark()),
+            2
+        );
 
         let event = ActivateEvent::new(ElementId::Name("test"));
         let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty);

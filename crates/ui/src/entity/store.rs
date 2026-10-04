@@ -37,11 +37,29 @@ pub unsafe trait EntityStore {
     /// records that the entity changed and needs to render again. Ignores invalid ids
     fn mark_dirty(&self, entity: EntityId);
 
+    /// whether the entity was notified since the invalidation was last taken
     fn is_dirty(&self, entity: EntityId) -> bool;
 
     /// whether any entity is dirty
     fn has_dirty(&self) -> bool;
 
+    /// moves the dirty entities to pending. They render in the next rebuild, but no
+    /// longer count as a new invalidation
+    fn take_dirty(&self);
+
+    /// whether the entity is dirty or pending, so a rebuild must render it again
+    fn needs_render(&self, entity: EntityId) -> bool;
+
+    /// whether any entity is dirty or pending
+    fn has_pending_render(&self) -> bool;
+
+    /// clears the entity's dirty and pending state, just before it renders
+    fn mark_rendered(&self, entity: EntityId);
+
+    /// forgets pending entities that a rebuild didn't render, because they aren't mounted
+    fn clear_pending(&self);
+
+    /// clears every dirty and pending entity
     fn clear_dirty(&self);
 }
 

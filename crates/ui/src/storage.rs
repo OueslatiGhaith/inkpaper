@@ -8,7 +8,9 @@ use core::ops::{Deref, DerefMut};
 
 use crate::{
     EntityId, FixedCallbackArena, FixedEntityArena, FixedGlobalArena, Global, GlobalSetError,
-    Listener, ListenerInvokeError, RuntimeCx, callback::CallbackStore, entity::EntityStore,
+    Listener, ListenerInvokeError, RuntimeCx,
+    callback::{CallbackMark, CallbackStore},
+    entity::EntityStore,
     global::GlobalStore,
 };
 #[cfg(feature = "alloc")]
@@ -111,9 +113,12 @@ pub trait EntityStorage: EntityStore + Default {}
 pub trait CallbackStorage: CallbackStore + Default {
     fn reset(&mut self);
 
-    /// drops the callbacks `owner` registered, keeping every other callback callable.
-    /// Returns how many callbacks were released.
-    fn release_owner(&mut self, owner: EntityId) -> usize;
+    /// marks the callbacks registered so far
+    fn mark(&self) -> CallbackMark;
+
+    /// drops the callbacks `owner` registered before `mark`, keeping every other
+    /// callback callable. Returns how many callbacks were released.
+    fn release_owner(&mut self, owner: EntityId, mark: CallbackMark) -> usize;
 
     fn invoke_listener<E>(
         &self,

@@ -287,7 +287,10 @@ fn releasing_an_owner_frees_its_memory() {
     .unwrap();
     assert!(callbacks.slots.used_bytes() > used);
 
-    assert_eq!(callbacks.release_owner(released.entity_id()), 1);
+    assert_eq!(
+        callbacks.release_owner(released.entity_id(), callbacks.mark()),
+        1
+    );
     assert_eq!(callbacks.slots.used_bytes(), used);
     // the slot stays taken until reset
     assert_eq!(callbacks.slots.len(), 2);

@@ -405,15 +405,16 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
         }
     }
 
-    /// drops the live values whose metadata matches `predicate`, in reverse reservation
-    /// order, and releases their memory if the memory can. Their slot numbers stay
-    /// taken, so handles to them become invalid. Returns how many values were removed.
-    pub(crate) fn remove_where(&mut self, mut predicate: impl FnMut(&M) -> bool) -> usize {
+    /// drops the live values whose slot number and metadata match `predicate`, in
+    /// reverse reservation order, and releases their memory if the memory can. Their
+    /// slot numbers stay taken, so handles to them become invalid. Returns how many
+    /// values were removed.
+    pub(crate) fn remove_where(&mut self, mut predicate: impl FnMut(usize, &M) -> bool) -> usize {
         let slots = self.slots.get_mut();
         let mut removed = 0;
 
-        for slot in slots.iter_mut().rev() {
-            if slot.state != SlotState::Live || !predicate(&slot.meta) {
+        for (index, slot) in slots.iter_mut().enumerate().rev() {
+            if slot.state != SlotState::Live || !predicate(index, &slot.meta) {
                 continue;
             }
 

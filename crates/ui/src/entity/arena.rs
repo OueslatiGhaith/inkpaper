@@ -55,8 +55,10 @@ pub type HeapEntityArena<const INITIAL_SLOTS: usize = 0> = EntityArena<HeapSlots
 #[derive(Debug, Clone, Copy)]
 struct EntityMeta {
     type_id: TypeId,
-    /// set by `notify` until the runtime renders again
+    /// set by `notify` until the runtime takes the invalidation or renders the entity
     dirty: bool,
+    /// notified before the runtime took the invalidation, and not rendered since
+    pending: bool,
 }
 
 /// entity state, stored by [`SlotTable`].
@@ -150,6 +152,7 @@ unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
         let meta = EntityMeta {
             type_id,
             dirty: false,
+            pending: false,
         };
         let (slot, ptr) = self.slots.reserve(layout, meta, drop_fn)?;
 
@@ -224,8 +227,45 @@ unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
         self.slots.position(|meta| meta.dirty).is_some()
     }
 
+    fn take_dirty(&self) {
+        self.slots.for_each_meta_mut(|meta| {
+            meta.pending |= meta.dirty;
+            meta.dirty = false;
+        });
+    }
+
+    fn needs_render(&self, entity: EntityId) -> bool {
+        entity.generation() == 0
+            && self
+                .slots
+                .meta(usize::from(entity.slot()))
+                .is_some_and(|meta| meta.dirty || meta.pending)
+    }
+
+    fn has_pending_render(&self) -> bool {
+        self.slots
+            .position(|meta| meta.dirty || meta.pending)
+            .is_some()
+    }
+
+    fn mark_rendered(&self, entity: EntityId) {
+        if entity.generation() == 0 {
+            self.slots.update_meta(usize::from(entity.slot()), |meta| {
+                meta.dirty = false;
+                meta.pending = false;
+            });
+        }
+    }
+
+    fn clear_pending(&self) {
+        self.slots.for_each_meta_mut(|meta| meta.pending = false);
+    }
+
     fn clear_dirty(&self) {
-        self.slots.for_each_meta_mut(|meta| meta.dirty = false);
+        self.slots.for_each_meta_mut(|meta| {
+            meta.dirty = false;
+            meta.pending = false;
+        });
     }
 }
 

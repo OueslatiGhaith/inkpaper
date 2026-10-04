@@ -36,34 +36,8 @@ impl<F: FrameStorage> FrameArena<F> {
         element.mount(&mut cx)
     }
     pub(crate) fn expand_entities(&mut self, runtime: RuntimeCx<'_>) -> Result<(), MountError> {
-        let mut index = 0;
-
-        while index < self.nodes.len() {
-            let pending = match self.nodes[index].kind {
-                NodeKind::Entity {
-                    entity,
-                    render,
-                    expanded: false,
-                } => Some((entity, render)),
-                _ => None,
-            };
-
-            if let Some((entity, render)) = pending {
-                count_metric!(self, entity_render_calls);
-                let entity_node = NodeId::new(index as u16);
-                let root = render(entity, runtime, self)?;
-                self.append_child(entity_node, root);
-
-                match &mut self.nodes[index].kind {
-                    NodeKind::Entity { expanded, .. } => *expanded = true,
-                    _ => unreachable!(),
-                }
-            }
-
-            index += 1;
-        }
-
-        Ok(())
+        self.stale_entities.clear();
+        self.expand_entities_from(0, runtime)
     }
     pub(crate) fn mount_and_expand<E>(
         &mut self,

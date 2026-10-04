@@ -10,7 +10,7 @@ use crate::{
     Point, Render, RenderInvalidation, ResourcePainter, RuntimeStorage, Size, TextMeasurer,
     callback::ListenerInvokeError,
     element::state::{ElementStateId, ElementStateTable, IdentityError},
-    entity::create_entity,
+    entity::{EntityStore, create_entity},
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
     px,
@@ -64,6 +64,10 @@ where
     /// every entity needs to render again. Entities changed one at a time are marked
     /// in `entities`
     all_dirty: Cell<bool>,
+    /// `all_dirty` was taken, and the next rebuild must render every entity
+    full_rebuild_pending: Cell<bool>,
+    /// whether a rebuild renders only the entities that need it
+    partial_rebuilds: bool,
     visual_invalidation: Cell<RenderInvalidation>,
     frame_generation: u32,
     root_entity: Option<RuntimeRoot>,
@@ -88,6 +92,8 @@ where
             scroll_states: ScrollStateTable::default(),
             resources: RESOURCES::default(),
             all_dirty: Cell::new(false),
+            full_rebuild_pending: Cell::new(false),
+            partial_rebuilds: false,
             visual_invalidation: Cell::new(RenderInvalidation::none()),
             frame_generation: 0,
             root_entity: None,
@@ -174,7 +180,88 @@ where
         self.frame_generation
     }
 
+    /// lets [`Self::rebuild`] render only the entities that were notified, keeping the
+    /// rest of the frame. Off by default.
+    ///
+    /// an entity renders again only when it notifies, or when a global changes. A render
+    /// that reads another entity doesn't render again when that entity changes, so the
+    /// reading entity must be notified too
+    pub fn set_partial_rebuilds(&mut self, enabled: bool) {
+        self.partial_rebuilds = enabled;
+    }
+
+    /// renders the frame again. With partial rebuilds on, only the entities that need
+    /// to render do, unless every entity needs to or the frame holds too many detached
+    /// nodes. A partial rebuild that fails falls back to a full one
     pub fn rebuild(&mut self) -> Result<(), FrameBuildError> {
+        if self.can_rebuild_partially() && self.rebuild_partially().is_ok() {
+            return Ok(());
+        }
+
+        self.rebuild_fully()
+    }
+
+    fn can_rebuild_partially(&self) -> bool {
+        self.partial_rebuilds
+            && self.root.is_some()
+            && !self.all_dirty.get()
+            && !self.full_rebuild_pending.get()
+            && self.entities.has_pending_render()
+            // detached nodes are only reclaimed by a full rebuild
+            && self.frame.detached_node_count() <= self.frame.node_count() / 2
+            // element state ids would alias once the frame generation wraps
+            && self.frame_generation < u32::MAX
+    }
+
+    fn rebuild_partially(&mut self) -> Result<(), FrameBuildError> {
+        let root = self.root.ok_or(FrameBuildError::RootNotSet)?;
+        let callbacks = self.callbacks.mark();
+
+        self.visual_invalidation.set(RenderInvalidation::none());
+        let generation = self.next_frame_generation();
+
+        let runtime = RuntimeCx::new(
+            &self.entities,
+            &self.globals,
+            &self.callbacks,
+            &self.all_dirty,
+        );
+        let result = self
+            .frame
+            .rerender(root, runtime)
+            .map_err(FrameBuildError::from)
+            .and_then(|()| {
+                self.frame
+                    .resolve_rerendered_identities(&mut self.element_states, generation)?;
+                self.scroll_states
+                    .prepare(self.element_states.slot_count())?;
+
+                Ok(())
+            });
+
+        // entities that need to render but aren't mounted render when they are
+        self.entities.clear_pending();
+
+        if let Err(error) = result {
+            self.element_states.abort_frame(generation);
+
+            return Err(error);
+        }
+
+        let stale = self.frame.stale_entities();
+        for &entity in stale {
+            self.callbacks.release_owner(entity, callbacks);
+        }
+        self.element_states
+            .sweep_scopes(generation, |entity| stale.contains(&entity));
+        self.reconcile_interaction_state();
+        self.refresh_interaction_styles();
+        self.frame.resolve_scroll_offsets(&self.scroll_states);
+
+        Ok(())
+    }
+
+    fn rebuild_fully(&mut self) -> Result<(), FrameBuildError> {
         let root_entity = self.root_entity.ok_or(FrameBuildError::RootNotSet)?;
 
         self.root = None;
@@ -185,6 +272,7 @@ where
         // consume the previous dirty request.
         // if render/event logic calls notify during this build, it becomes dirty again
         self.runtime_cx().clear_dirty();
+        self.full_rebuild_pending.set(false);
         self.visual_invalidation.set(RenderInvalidation::none());
         let generation = self.next_frame_generation();
 
@@ -479,7 +567,11 @@ where
 
         let runtime = self.runtime_cx();
         let application = if runtime.is_dirty() {
-            runtime.clear_dirty();
+            // the next rebuild renders the taken entities
+            if self.all_dirty.replace(false) {
+                self.full_rebuild_pending.set(true);
+            }
+            self.entities.take_dirty();
             RenderInvalidation::full(Invalidation::Rebuild)
         } else {
             RenderInvalidation::none()
@@ -1067,6 +1159,9 @@ where
         self.resources.glyph_cache_metrics()
     }
 }
+
+#[cfg(test)]
+mod partial_tests;
 
 #[cfg(test)]
 mod tests {

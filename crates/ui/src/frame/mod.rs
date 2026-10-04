@@ -8,6 +8,7 @@ use crate::{
 use crate::{PerformanceMetrics, PerformanceMetricsCell};
 
 mod mount;
+mod rerender;
 mod resolve;
 mod storage;
 
@@ -85,6 +86,9 @@ pub(crate) struct Node {
     pub(crate) effective_text_style: ResolvedTextStyle,
     pub(crate) first_event_binding: Option<EventBindingId>,
     pub(crate) last_event_binding: Option<EventBindingId>,
+    /// left behind by a partial rebuild. Detached nodes keep their links, but are no
+    /// longer in the tree, so passes over the whole arena skip them
+    pub(crate) detached: bool,
 }
 
 impl Node {
@@ -103,6 +107,7 @@ impl Node {
             effective_text_style: ResolvedTextStyle::default(),
             first_event_binding: None,
             last_event_binding: None,
+            detached: false,
         }
     }
 }
@@ -178,6 +183,14 @@ pub(crate) struct FrameArena<F: FrameStorage> {
     pub(crate) nodes: FrameBuffer<Node, F::Nodes<Node>>,
     /// the node of each mounted entity, sorted by entity id
     entity_nodes: FrameBuffer<(EntityId, NodeId), F::Nodes<(EntityId, NodeId)>>,
+    /// during a partial rebuild, the entity nodes cut from the tree that may be mounted
+    /// again
+    detached_entities: FrameBuffer<(EntityId, NodeId), F::Nodes<(EntityId, NodeId)>>,
+    /// the entities that rendered or left the frame in the last rebuild
+    stale_entities: FrameBuffer<EntityId, F::Nodes<EntityId>>,
+    /// the entity nodes a partial rebuild rendered again, none inside another
+    rerendered_nodes: FrameBuffer<NodeId, F::Nodes<NodeId>>,
+    detached_nodes: usize,
     pub(crate) event_bindings: FrameBuffer<EventBinding, F::Nodes<EventBinding>>,
     text: FrameBuffer<u8, F::Text>,
     node_cache: FrameBuffer<NodeCache, F::Nodes<NodeCache>>,
@@ -195,6 +208,10 @@ impl<F: FrameStorage> Default for FrameArena<F> {
         Self {
             nodes: FrameBuffer::new(),
             entity_nodes: FrameBuffer::new(),
+            detached_entities: FrameBuffer::new(),
+            stale_entities: FrameBuffer::new(),
+            rerendered_nodes: FrameBuffer::new(),
+            detached_nodes: 0,
             event_bindings: FrameBuffer::new(),
             text: FrameBuffer::new(),
             node_cache: FrameBuffer::new(),
@@ -228,6 +245,10 @@ impl<F: FrameStorage> FrameArena<F> {
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.entity_nodes.clear();
+        self.detached_entities.clear();
+        self.stale_entities.clear();
+        self.rerendered_nodes.clear();
+        self.detached_nodes = 0;
         self.text.clear();
         self.event_bindings.clear();
         self.node_cache.clear();
@@ -240,6 +261,9 @@ impl<F: FrameStorage> FrameArena<F> {
     pub(crate) fn shrink_to_fit(&mut self) {
         self.nodes.shrink_to_fit();
         self.entity_nodes.shrink_to_fit();
+        self.detached_entities.shrink_to_fit();
+        self.stale_entities.shrink_to_fit();
+        self.rerendered_nodes.shrink_to_fit();
         self.node_cache.shrink_to_fit();
         self.event_bindings.shrink_to_fit();
         self.text.shrink_to_fit();
@@ -296,7 +320,7 @@ impl<F: FrameStorage> FrameArena<F> {
         let node = self
             .nodes
             .iter()
-            .find(|node| node.element_state_id == Some(element))?;
+            .find(|node| !node.detached && node.element_state_id == Some(element))?;
 
         node.interaction
             .styles
@@ -340,6 +364,16 @@ impl<F: FrameStorage> FrameArena<F> {
             return Some(child);
         }
 
+        self.next_node_after_subtree_within(current, root)
+    }
+
+    /// the node after `current`'s subtree in tree order, without leaving the subtree
+    /// under `root`
+    pub(crate) fn next_node_after_subtree_within(
+        &self,
+        current: NodeId,
+        root: NodeId,
+    ) -> Option<NodeId> {
         let mut node = current;
         while node != root {
             if let Some(sibling) = self.node(node).next_sibling {

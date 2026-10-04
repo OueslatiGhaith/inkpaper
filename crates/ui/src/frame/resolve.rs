@@ -71,7 +71,7 @@ impl<F: FrameStorage> FrameArena<F> {
         &mut self,
         states: &ScrollStateTable<E>,
     ) {
-        for node in self.nodes.iter_mut() {
+        for node in self.nodes.iter_mut().filter(|node| !node.detached) {
             node.interaction.scroll_offset = node
                 .element_state_id
                 .map(|id| states.offset(id))
