@@ -18,7 +18,10 @@ pub(crate) use store::{
 
 use core::{any::TypeId, marker::PhantomData};
 
-use crate::{BorrowKind, Context, Element, MountCx, MountError, NodeId, Render, render_entity};
+use crate::{
+    BorrowKind, Context, Element, MountCx, MountError, NodeId, Render, render_entity,
+    runtime::Source,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -69,6 +72,8 @@ impl<T: 'static> Entity<T> {
     where
         C: 'static,
     {
+        cx.runtime.record_read(Source::Entity(self.id));
+
         let borrow = RawEntityBorrow::acquire(
             cx.runtime.entities,
             self.id,
@@ -89,6 +94,8 @@ impl<T: 'static> Entity<T> {
     where
         C: 'static,
     {
+        cx.runtime.record_read(Source::Entity(self.id));
+
         let borrow = RawEntityBorrow::acquire(
             cx.runtime.entities,
             self.id,

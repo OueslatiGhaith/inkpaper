@@ -16,17 +16,22 @@ use crate::{
     px,
     resources::RuntimeResources,
     runtime::root::RuntimeRoot,
-    storage::{CallbackStorage, GlobalStorage},
+    storage::{CallbackStorage, FrameStorage, GlobalStorage},
 };
 #[cfg(feature = "metrics")]
 use crate::{GlyphCacheMetrics, PerformanceMetrics};
 
 mod api;
 mod cx;
+mod dependencies;
 mod root;
 
 pub use api::{RenderRuntimeApi, ResourceRuntimeApi, RuntimeApi};
 pub(crate) use cx::RuntimeCx;
+#[cfg(test)]
+pub(crate) use dependencies::NoDependencies;
+use dependencies::{Dependencies, Dependency};
+pub(crate) use dependencies::{DependencyStore, Source};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameBuildError {
@@ -68,6 +73,8 @@ where
     full_rebuild_pending: Cell<bool>,
     /// whether a rebuild renders only the entities that need it
     partial_rebuilds: bool,
+    /// what each entity read during its last render. Shares the frame's node capacity
+    dependencies: Dependencies<<S::Frame as FrameStorage>::Nodes<Dependency>>,
     /// the damage of the last rebuild, once the layout after it ran
     rebuild_damage: Option<DamageRegion>,
     /// the visual damage taken along with a rebuild, which its damage includes
@@ -98,6 +105,7 @@ where
             all_dirty: Cell::new(false),
             full_rebuild_pending: Cell::new(false),
             partial_rebuilds: false,
+            dependencies: Dependencies::default(),
             rebuild_damage: None,
             taken_visual_damage: Cell::new(DamageRegion::none()),
             visual_invalidation: Cell::new(RenderInvalidation::none()),
@@ -169,6 +177,7 @@ where
             &self.callbacks,
             &self.all_dirty,
         )
+        .with_dependencies(&self.dependencies)
     }
 
     fn next_frame_generation(&mut self) -> u32 {
@@ -232,7 +241,8 @@ where
             &self.globals,
             &self.callbacks,
             &self.all_dirty,
-        );
+        )
+        .with_dependencies(&self.dependencies);
         let result = self
             .frame
             .rerender(root, runtime)
@@ -280,6 +290,8 @@ where
         // if render/event logic calls notify during this build, it becomes dirty again
         self.runtime_cx().clear_dirty();
         self.full_rebuild_pending.set(false);
+        // every render records its reads again
+        self.dependencies.clear();
         self.rebuild_damage = None;
         self.taken_visual_damage.set(DamageRegion::none());
         self.visual_invalidation.set(RenderInvalidation::none());
@@ -325,7 +337,8 @@ where
             &self.globals,
             &self.callbacks,
             &self.all_dirty,
-        );
+        )
+        .with_dependencies(&self.dependencies);
         let root_node = self.frame.mount_and_expand(root, runtime)?;
 
         self.frame
@@ -1034,7 +1047,7 @@ where
         G: Global,
     {
         self.globals.set(value)?;
-        self.all_dirty.set(true);
+        self.runtime_cx().global_changed(TypeId::of::<G>());
 
         Ok(())
     }
@@ -1065,7 +1078,7 @@ where
     where
         G: Global,
     {
-        GlobalMut::acquire(&self.globals, &self.all_dirty)
+        GlobalMut::acquire(self.runtime_cx())
     }
 
     pub fn global_mut<G>(&self) -> GlobalMut<'_, G>
@@ -1252,18 +1265,16 @@ mod tests {
     }
 
     #[test]
-    fn global_changes_mark_every_entity() {
+    fn global_changes_without_readers_mark_nothing() {
         let mut runtime = TestRuntime::default();
+        let counter = runtime.create(|_| Counter { value: 0 }).unwrap();
 
         runtime.set_global(Theme).unwrap();
-
-        assert!(runtime.all_dirty.get());
-        assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
-        assert!(!runtime.all_dirty.get());
-
         drop(runtime.global_mut::<Theme>());
 
-        assert!(runtime.all_dirty.get());
+        assert!(!runtime.all_dirty.get());
+        assert!(!runtime.entities.is_dirty(counter.entity_id()));
+        assert_eq!(runtime.invalidation(), Invalidation::None);
     }
 
     #[test]

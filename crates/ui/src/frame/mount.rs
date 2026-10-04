@@ -47,7 +47,7 @@ impl<F: FrameStorage> FrameArena<F> {
     where
         E: IntoElement,
     {
-        let app = AppContext::from_globals(runtime.globals);
+        let app = AppContext::from_runtime(runtime);
         let root = self.mount(element, app)?;
         self.expand_entities(runtime)?;
 

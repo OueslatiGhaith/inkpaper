@@ -1,8 +1,11 @@
+use core::any::TypeId;
+
 use crate::{
     Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, PaintCx, Rect, RuntimeCx,
     callback::{CallbackAllocError, register_canvas_callback, register_listener},
     entity::create_entity,
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
+    runtime::{DependencyStore, Source},
 };
 
 pub struct Context<'a, T> {
@@ -25,7 +28,7 @@ impl<'a, T> Context<'a, T> {
 
     /// marks this entity as changed, so it renders again
     pub fn notify(&mut self) {
-        self.runtime.entities.mark_dirty(self.entity.entity_id());
+        self.runtime.notify(self.entity.entity_id());
     }
 
     #[allow(clippy::new_ret_no_self)]
@@ -43,6 +46,9 @@ impl<'a, T> Context<'a, T> {
     where
         G: Global,
     {
+        // a render that finds the global missing renders again once it is set
+        self.runtime.record_read(Source::Global(TypeId::of::<G>()));
+
         GlobalRef::acquire(self.runtime.globals)
     }
 
@@ -58,7 +64,7 @@ impl<'a, T> Context<'a, T> {
     where
         G: Global,
     {
-        GlobalMut::acquire(self.runtime.globals, self.runtime.all_dirty)
+        GlobalMut::acquire(self.runtime)
     }
 
     pub fn global_mut<G>(&self) -> GlobalMut<'a, G>
@@ -94,6 +100,9 @@ impl<T: 'static> Context<'_, T> {
     where
         F: Fn(&T, &mut PaintCx<'_>) + 'static,
     {
+        // the canvas paints from its target's state
+        self.runtime.record_read(Source::Entity(self.entity_id()));
+
         let owner = self.runtime.callback_owner(self.entity_id());
         let callback =
             register_canvas_callback(self.runtime.callbacks, owner, self.entity, callback)?;
@@ -111,20 +120,40 @@ impl<T: 'static> Context<'_, T> {
 }
 
 #[derive(Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AppContext<'a> {
     globals: &'a dyn GlobalStore,
+    /// records the global reads of the entity being rendered
+    dependencies: &'a dyn DependencyStore,
+    rendering: Option<EntityId>,
 }
 
 impl<'a> AppContext<'a> {
+    #[cfg(test)]
     pub(crate) const fn from_globals(globals: &'a dyn GlobalStore) -> Self {
-        Self { globals }
+        Self {
+            globals,
+            dependencies: &crate::runtime::NoDependencies,
+            rendering: None,
+        }
+    }
+
+    pub(crate) fn from_runtime(runtime: RuntimeCx<'a>) -> Self {
+        Self {
+            globals: runtime.globals,
+            dependencies: runtime.dependencies,
+            rendering: runtime.rendering,
+        }
     }
 
     pub fn try_global<G>(&self) -> Result<GlobalRef<'a, G>, GlobalAccessError>
     where
         G: Global,
     {
+        if let Some(reader) = self.rendering {
+            self.dependencies
+                .record(reader, Source::Global(TypeId::of::<G>()));
+        }
+
         GlobalRef::acquire(self.globals)
     }
 

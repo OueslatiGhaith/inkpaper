@@ -189,12 +189,25 @@ fn mutable_global_borrow_conflicts_with_shared_borrow() {
 }
 
 #[test]
-fn mutating_global_requests_rebuild() {
+fn mutating_global_requests_rebuild_of_its_readers() {
+    let observed = Rc::new(Cell::new(0));
     let mut runtime = TestRuntime::default();
 
     runtime.set_global(Theme { value: 10 }).unwrap();
-
+    runtime.set_global(Locale { value: 1 }).unwrap();
+    runtime
+        .create_root({
+            let observed = observed.clone();
+            move |_| ReadsTheme { observed }
+        })
+        .unwrap();
+    runtime.rebuild().unwrap();
     runtime.take_invalidation();
+
+    // nothing rendered reads the locale
+    runtime.global_mut::<Locale>().value = 2;
+
+    assert_eq!(runtime.invalidation(), Invalidation::None);
 
     {
         let mut theme = runtime.global_mut::<Theme>();
@@ -204,7 +217,10 @@ fn mutating_global_requests_rebuild() {
 
     assert_eq!(runtime.invalidation(), Invalidation::Rebuild,);
 
-    assert_eq!(runtime.global::<Theme>().value, 99,);
+    runtime.take_invalidation();
+    runtime.rebuild().unwrap();
+
+    assert_eq!(observed.get(), 99);
 }
 
 #[test]

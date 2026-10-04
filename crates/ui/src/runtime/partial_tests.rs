@@ -38,13 +38,36 @@ impl Render for Label {
             .bg(Color::rgb(200, 200, 200))
             .on_activate(activate)
             .child(self.text)
+            .child(Badge)
     }
 }
+
+/// reads [`LabelTheme`] while mounting, through the app context
+struct Badge;
+
+impl RenderOnce for Badge {
+    fn render(self, cx: &AppContext<'_>) -> impl IntoElement {
+        let _ = cx.try_global::<LabelTheme>();
+
+        div()
+    }
+}
+
+struct ShellTheme;
+
+impl Global for ShellTheme {}
+
+struct LabelTheme;
+
+impl Global for LabelTheme {}
 
 struct Shell {
     first: Entity<Label>,
     second: Entity<Label>,
     show_second: bool,
+    read_theme: bool,
+    /// shows the first label's text, read from the label
+    mirror_first: bool,
     /// notified by the shell's render
     touch_first: bool,
     renders: u32,
@@ -53,6 +76,13 @@ struct Shell {
 impl Render for Shell {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         self.renders += 1;
+
+        if self.read_theme {
+            let _ = cx.try_global::<ShellTheme>();
+        }
+        let mirrored = self
+            .mirror_first
+            .then(|| self.first.read(cx, |label| label.text).unwrap());
 
         if self.touch_first {
             self.first
@@ -68,6 +98,7 @@ impl Render for Shell {
             .bg(Color::rgb(100, 100, 100))
             .child(self.first)
             .children(self.show_second.then_some(self.second))
+            .children(mirrored)
     }
 }
 
@@ -87,6 +118,8 @@ fn fixture(partial: bool) -> Fixture {
             first,
             second,
             show_second: true,
+            read_theme: true,
+            mirror_first: false,
             touch_first: false,
             renders: 0,
         })
@@ -332,19 +365,114 @@ fn a_child_notified_by_its_parents_render_renders_again() {
 }
 
 #[test]
-fn global_changes_rebuild_fully() {
-    struct Theme;
-
-    impl Global for Theme {}
-
+fn global_changes_render_only_their_readers() {
     let mut fixture = fixture(true);
 
-    fixture.runtime.set_global(Theme).unwrap();
+    fixture.runtime.set_global(ShellTheme).unwrap();
+    fixture.present();
+
+    assert_eq!(fixture.shell_renders(), 2);
+    assert_eq!(fixture.label(fixture.first), (1, 0));
+
+    // the labels read this one while mounting their badges
+    fixture.runtime.set_global(LabelTheme).unwrap();
     fixture.present();
 
     assert_eq!(fixture.shell_renders(), 2);
     assert_eq!(fixture.label(fixture.first), (2, 0));
-    assert_eq!(fixture.runtime.frame().detached_node_count(), 0);
+    assert_eq!(fixture.label(fixture.second), (2, 0));
+
+    drop(fixture.runtime.global_mut::<ShellTheme>());
+    fixture.present();
+
+    assert_eq!(fixture.shell_renders(), 3);
+    assert_eq!(fixture.label(fixture.first), (2, 0));
+}
+
+#[test]
+fn globals_nobody_reads_need_no_rebuild() {
+    struct Unread;
+
+    impl Global for Unread {}
+
+    let mut fixture = fixture(true);
+
+    fixture
+        .runtime
+        .update(fixture.shell, |shell, cx| {
+            shell.read_theme = false;
+            cx.notify();
+        })
+        .unwrap();
+    fixture.present();
+
+    fixture.runtime.set_global(Unread).unwrap();
+    fixture.runtime.set_global(ShellTheme).unwrap();
+
+    assert_eq!(fixture.runtime.invalidation(), Invalidation::None);
+}
+
+#[test]
+fn reading_an_entity_renders_again_when_it_changes() {
+    let mut fixture = fixture(true);
+
+    fixture
+        .runtime
+        .update(fixture.shell, |shell, cx| {
+            shell.mirror_first = true;
+            cx.notify();
+        })
+        .unwrap();
+    fixture.present();
+    assert_eq!(fixture.shell_renders(), 2);
+
+    set_text(&fixture, fixture.first, "renamed");
+    fixture.present();
+
+    assert_eq!(fixture.shell_renders(), 3);
+    assert_eq!(fixture.label(fixture.first), (2, 0));
+    assert!(
+        fixture
+            .outline()
+            .iter()
+            .filter(|line| line.ends_with("\"renamed\""))
+            .count()
+            == 2
+    );
+
+    // a label the shell doesn't read renders alone
+    set_text(&fixture, fixture.second, "other");
+    fixture.present();
+
+    assert_eq!(fixture.shell_renders(), 3);
+}
+
+#[test]
+fn a_render_forgets_what_it_no_longer_reads() {
+    let mut fixture = fixture(true);
+
+    fixture
+        .runtime
+        .update(fixture.shell, |shell, cx| {
+            shell.mirror_first = true;
+            cx.notify();
+        })
+        .unwrap();
+    fixture.present();
+    fixture
+        .runtime
+        .update(fixture.shell, |shell, cx| {
+            shell.mirror_first = false;
+            cx.notify();
+        })
+        .unwrap();
+    fixture.present();
+    assert_eq!(fixture.shell_renders(), 3);
+
+    set_text(&fixture, fixture.first, "renamed");
+    fixture.present();
+
+    assert_eq!(fixture.shell_renders(), 3);
 }
 
 #[test]
@@ -353,13 +481,22 @@ fn many_detached_nodes_lead_to_a_full_rebuild() {
 
     // each shell render detaches its div and two entity nodes. Once more than half the
     // frame is detached, the next rebuild is full and renders the labels too
-    for _ in 0..4 {
+    let mut partial_rebuilds = 0;
+    loop {
         fixture.notify(fixture.shell);
         fixture.present();
+
+        let frame = fixture.runtime.frame();
+        if frame.detached_node_count() == 0 {
+            break;
+        }
+
+        assert!(frame.detached_node_count() * 2 <= frame.node_count() + 6);
+        partial_rebuilds += 1;
     }
 
+    assert!(partial_rebuilds > 1);
     assert_eq!(fixture.label(fixture.first).0, 2);
-    assert_eq!(fixture.runtime.frame().detached_node_count(), 0);
 }
 
 const WIDTH: i32 = 80;

@@ -59,9 +59,10 @@ where
 
     let state = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
     let entity = Entity::<T>::from_id(entity_id);
-    let mut cx = Context::new_in(entity, runtime.rendering(entity_id));
+    let runtime = runtime.rendering(entity_id);
+    let mut cx = Context::new_in(entity, runtime);
     let element = state.render(&mut cx).into_element();
-    let app = AppContext::from_globals(runtime.globals);
+    let app = AppContext::from_runtime(runtime);
     let mut mount_cx = MountCx::new(frame, app);
 
     element.mount(&mut mount_cx)

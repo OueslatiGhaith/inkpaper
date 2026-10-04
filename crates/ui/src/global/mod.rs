@@ -1,7 +1,6 @@
 use core::{
     alloc::Layout,
     any::TypeId,
-    cell::Cell,
     marker::PhantomData,
     ops::{Deref, DerefMut},
     ptr::NonNull,
@@ -10,7 +9,8 @@ use core::{
 #[cfg(feature = "alloc")]
 use crate::slot_table::HeapSlots;
 use crate::{
-    BorrowKind,
+    BorrowKind, RuntimeCx,
+    runtime::Source,
     slot_table::{FixedSlots, ReserveError, SlotStorage, SlotTable},
 };
 
@@ -289,7 +289,7 @@ where
     G: Global,
 {
     borrow: RawGlobalBorrow<'a>,
-    notified: &'a Cell<bool>,
+    runtime: RuntimeCx<'a>,
     _marker: PhantomData<&'a mut G>,
 }
 
@@ -297,13 +297,17 @@ impl<'a, G> GlobalMut<'a, G>
 where
     G: Global,
 {
-    pub(crate) fn acquire(
-        store: &'a dyn GlobalStore,
-        notified: &'a Cell<bool>,
-    ) -> Result<Self, GlobalAccessError> {
+    /// borrows the global for changing it. A render that does so counts as reading it
+    pub(crate) fn acquire(runtime: RuntimeCx<'a>) -> Result<Self, GlobalAccessError> {
+        runtime.record_read(Source::Global(TypeId::of::<G>()));
+
         Ok(Self {
-            borrow: RawGlobalBorrow::acquire(store, TypeId::of::<G>(), BorrowKind::Exclusive)?,
-            notified,
+            borrow: RawGlobalBorrow::acquire(
+                runtime.globals,
+                TypeId::of::<G>(),
+                BorrowKind::Exclusive,
+            )?,
+            runtime,
             _marker: PhantomData,
         })
     }
@@ -334,6 +338,6 @@ where
     G: Global,
 {
     fn drop(&mut self) {
-        self.notified.set(true);
+        self.runtime.global_changed(TypeId::of::<G>());
     }
 }

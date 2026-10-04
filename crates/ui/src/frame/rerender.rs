@@ -90,6 +90,7 @@ impl<F: FrameStorage> FrameArena<F> {
             self.detached_entities
                 .truncate(self.detached_entities.len() - 1);
             self.stale_entities.push(entity, MountError::NodesFull)?;
+            runtime.dependencies.forget(entity);
             self.detach_content(node)?;
         }
 
@@ -195,6 +196,8 @@ impl<F: FrameStorage> FrameArena<F> {
 
         // a notify while rendering keeps the entity dirty for the next frame
         runtime.entities.mark_rendered(entity);
+        // the render records what it reads again
+        runtime.dependencies.forget(entity);
         self.stale_entities.push(entity, MountError::NodesFull)?;
 
         count_metric!(self, entity_render_calls);
