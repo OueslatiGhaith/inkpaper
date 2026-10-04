@@ -1,29 +1,24 @@
 mod arena;
-#[cfg(feature = "alloc")]
-mod heap;
 mod store;
 
-pub use arena::{EntityAccessError, EntityAllocError};
-
-pub use arena::FixedEntityArena;
-pub(crate) use arena::{EntityBorrowKind, align_up};
 #[cfg(feature = "alloc")]
-pub use heap::HeapEntityArena;
+pub use arena::HeapEntityArena;
+pub use arena::{EntityAccessError, EntityAllocError, FixedEntityArena};
 
 // unit tests run against the storage the `alloc` feature implies
 #[cfg(all(test, not(feature = "alloc")))]
-pub(crate) type EntityArena<const BYTES: usize, const SLOTS: usize> =
+pub(crate) type TestEntityArena<const BYTES: usize, const SLOTS: usize> =
     FixedEntityArena<BYTES, SLOTS>;
 #[cfg(all(test, feature = "alloc"))]
-pub(crate) type EntityArena<const BYTES: usize, const SLOTS: usize> = HeapEntityArena<SLOTS>;
+pub(crate) type TestEntityArena<const BYTES: usize, const SLOTS: usize> = HeapEntityArena<SLOTS>;
 
 pub(crate) use store::{
-    BorrowState, EntityStore, RawEntityBorrow, RawEntityReservation, create_entity, drop_value,
+    EntityStore, RawEntityBorrow, RawEntityReservation, create_entity, drop_value,
 };
 
 use core::{any::TypeId, marker::PhantomData};
 
-use crate::{Context, Element, MountCx, MountError, NodeId, Render, render_entity};
+use crate::{BorrowKind, Context, Element, MountCx, MountError, NodeId, Render, render_entity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -74,12 +69,8 @@ impl<T: 'static> Entity<T> {
     where
         C: 'static,
     {
-        let borrow = RawEntityBorrow::acquire(
-            cx.store,
-            self.id,
-            TypeId::of::<T>(),
-            EntityBorrowKind::Shared,
-        )?;
+        let borrow =
+            RawEntityBorrow::acquire(cx.store, self.id, TypeId::of::<T>(), BorrowKind::Shared)?;
 
         let value = unsafe { &*borrow.ptr().cast::<T>().as_ptr() };
 
@@ -94,12 +85,8 @@ impl<T: 'static> Entity<T> {
     where
         C: 'static,
     {
-        let borrow = RawEntityBorrow::acquire(
-            cx.store,
-            self.id,
-            TypeId::of::<T>(),
-            EntityBorrowKind::Exclusive,
-        )?;
+        let borrow =
+            RawEntityBorrow::acquire(cx.store, self.id, TypeId::of::<T>(), BorrowKind::Exclusive)?;
 
         let value = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
         let mut entity_cx =

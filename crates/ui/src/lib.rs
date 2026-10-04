@@ -25,6 +25,7 @@ mod metrics;
 mod rendering;
 mod resources;
 mod runtime;
+mod slot_table;
 mod storage;
 mod style;
 mod svg_source;
@@ -38,19 +39,18 @@ pub use callback::{CallbackAllocError, FixedCallbackArena, Listener, ListenerInv
 pub use color::*;
 pub use context::*;
 pub use element::*;
-#[cfg(test)]
-pub(crate) use entity::EntityArena;
 #[cfg(feature = "alloc")]
 pub use entity::HeapEntityArena;
+#[cfg(test)]
+pub(crate) use entity::TestEntityArena;
 pub use entity::{Entity, EntityAccessError, EntityAllocError, EntityId, FixedEntityArena};
-pub(crate) use entity::{EntityBorrowKind, align_up};
 pub use font::*;
 pub use frame::*;
 pub use geometry::*;
-#[cfg(test)]
-pub(crate) use global::GlobalArena;
 #[cfg(feature = "alloc")]
 pub use global::HeapGlobalArena;
+#[cfg(test)]
+pub(crate) use global::TestGlobalArena;
 pub use global::{
     FixedGlobalArena, Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError,
 };
@@ -61,6 +61,7 @@ pub use metrics::*;
 pub use rendering::*;
 pub use resources::*;
 pub use runtime::*;
+pub(crate) use slot_table::BorrowKind;
 pub use storage::{FixedElementStates, FixedFrame, FixedStorage, RuntimeStorage};
 #[cfg(feature = "alloc")]
 pub use storage::{HeapElementStates, HeapFrame, HeapStorage};

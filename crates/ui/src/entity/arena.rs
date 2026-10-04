@@ -1,16 +1,10 @@
-use core::{
-    alloc::Layout,
-    any::TypeId,
-    cell::{Cell, RefCell, UnsafeCell},
-    mem::MaybeUninit,
-    ptr::NonNull,
-};
+use core::{alloc::Layout, any::TypeId, ptr::NonNull};
 
-use heapless::Vec;
+#[cfg(feature = "alloc")]
+use crate::slot_table::HeapSlots;
+use crate::slot_table::{BorrowKind, FixedSlots, NotLive, ReserveError, SlotStorage, SlotTable};
 
-use super::{
-    BorrowState, Entity, EntityId, EntityStore, RawEntityBorrow, RawEntityReservation, drop_value,
-};
+use super::{Entity, EntityId, EntityStore, RawEntityBorrow, RawEntityReservation, drop_value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityAllocError {
@@ -32,114 +26,55 @@ pub enum EntityAccessError {
     BorrowConflict,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EntitySlotState {
-    Vacant,
-    Initializing,
-    Live,
-    Abandoned,
-}
-
-const ENTITY_ARENA_ALIGNMENT: usize = 16;
-
-#[repr(C, align(16))]
-struct EntityBytes<const N: usize> {
-    bytes: [MaybeUninit<u8>; N],
-}
-
-impl<const N: usize> EntityBytes<N> {
-    fn new() -> Self {
-        Self {
-            bytes: [MaybeUninit::uninit(); N],
+impl From<ReserveError> for EntityAllocError {
+    fn from(error: ReserveError) -> Self {
+        match error {
+            ReserveError::SlotsFull => Self::SlotsFull,
+            ReserveError::StorageFull => Self::StorageFull,
+            ReserveError::UnsupportedAlignment {
+                requested,
+                supported,
+            } => Self::UnsupportedAlignment {
+                requested,
+                supported,
+            },
+            ReserveError::AllocationFailed => Self::AllocationFailed,
         }
     }
-}
-
-#[derive(Clone, Copy)]
-struct EntityMeta {
-    offset: usize,
-    type_id: TypeId,
-    generation: u16,
-    drop_fn: unsafe fn(*mut u8),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntityBorrowKind {
-    Shared,
-    Exclusive,
-}
-
-pub(crate) fn align_up(value: usize, alignment: usize) -> Option<usize> {
-    debug_assert!(alignment.is_power_of_two());
-
-    let mask = alignment - 1;
-    value.checked_add(mask).map(|v| v & !mask)
 }
 
 /// fixed-capacity entity storage: at most `SLOTS` entities in `BYTES` bytes. Never
 /// allocates.
+pub type FixedEntityArena<const BYTES: usize, const SLOTS: usize> =
+    EntityArena<FixedSlots<BYTES, SLOTS>>;
+
+/// heap entity storage. The first allocation reserves `INITIAL_SLOTS` entries.
+#[cfg(feature = "alloc")]
+pub type HeapEntityArena<const INITIAL_SLOTS: usize = 0> = EntityArena<HeapSlots<INITIAL_SLOTS>>;
+
+/// entity state, stored by [`SlotTable`].
 ///
-/// SAFETY INVARIANTS:
-///
-/// 1. every [`EntityMeta`] refers to exactly one live value in `storage`
-/// 2. the value at [`EntityMeta::offset`] has exactly the [`TypeId`] in that metadata
-/// 3. allocated object ranges never overlap
-/// 4. values never move after insertion
-/// 5. an `&mut T` exists only while that entity's [`BorrowState`] is `Exclusive`
-/// 6. an `&T` never exists while that entity's [`BorrowState`] is `Exclusive`
-/// 7. the runtime validates [`TypeId`] before converting raw storage into `&T` or `&mut T`
-/// 8. no reference to the whole storage buffer is created while references to stored objects
-///    may exist
-/// 9. each inserted value is dropped once when the arena is dropped
-pub struct FixedEntityArena<const BYTES: usize, const SLOTS: usize> {
-    storage: UnsafeCell<EntityBytes<BYTES>>,
-    entries: RefCell<Vec<EntityMeta, SLOTS>>,
-    borrows: [Cell<BorrowState>; SLOTS],
-    states: [Cell<EntitySlotState>; SLOTS],
-    cursor: Cell<usize>,
+/// entity ids always have generation 0: slots are never reused. A slot's [`TypeId`] is
+/// checked before its value is borrowed.
+pub struct EntityArena<S: SlotStorage> {
+    slots: SlotTable<S, TypeId>,
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Default for FixedEntityArena<BYTES, SLOTS> {
+impl<S: SlotStorage> Default for EntityArena<S> {
     fn default() -> Self {
         Self {
-            storage: UnsafeCell::new(EntityBytes::new()),
-            entries: RefCell::new(Vec::new()),
-            borrows: core::array::from_fn(|_| Cell::new(BorrowState::Free)),
-            states: core::array::from_fn(|_| Cell::new(EntitySlotState::Vacant)),
-            cursor: Cell::new(0),
+            slots: SlotTable::default(),
         }
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> FixedEntityArena<BYTES, SLOTS> {
+impl<S: SlotStorage> EntityArena<S> {
     pub(crate) fn len(&self) -> usize {
-        self.entries.borrow().len()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub(crate) const fn capacity(&self) -> usize {
-        SLOTS
+        self.slots.len()
     }
 
     pub(crate) fn used_bytes(&self) -> usize {
-        self.cursor.get()
-    }
-
-    pub(crate) const fn byte_capacity(&self) -> usize {
-        BYTES
-    }
-
-    fn storage_ptr(&self) -> *mut u8 {
-        let storage = self.storage.get();
-
-        unsafe {
-            core::ptr::addr_of_mut!((*storage).bytes)
-                .cast::<MaybeUninit<u8>>()
-                .cast::<u8>()
-        }
+        self.slots.used_bytes()
     }
 
     pub(crate) fn insert<T>(&self, value: T) -> Result<Entity<T>, EntityAllocError>
@@ -147,83 +82,14 @@ impl<const BYTES: usize, const SLOTS: usize> FixedEntityArena<BYTES, SLOTS> {
         T: 'static,
     {
         let reservation = self.reserve(Layout::new::<T>(), TypeId::of::<T>(), drop_value::<T>)?;
-        let entity = Entity::from_id(reservation.id);
+
+        // SAFETY: the reservation fits T, and commit follows its initialization
         unsafe {
             reservation.ptr.cast::<T>().as_ptr().write(value);
             self.commit(reservation.id);
         }
 
-        Ok(entity)
-    }
-
-    fn meta_for(
-        &self,
-        entity: EntityId,
-        type_id: TypeId,
-    ) -> Result<(usize, EntityMeta), EntityAccessError> {
-        let slot = entity.slot() as usize;
-        let entries = self.entries.borrow();
-
-        let meta = entries
-            .get(slot)
-            .copied()
-            .ok_or(EntityAccessError::InvalidEntity)?;
-
-        if meta.generation != entity.generation() {
-            return Err(EntityAccessError::InvalidEntity);
-        }
-
-        match self.states[slot].get() {
-            EntitySlotState::Live => {}
-            EntitySlotState::Initializing => return Err(EntityAccessError::NotReady),
-            EntitySlotState::Vacant | EntitySlotState::Abandoned => {
-                return Err(EntityAccessError::InvalidEntity);
-            }
-        }
-
-        if meta.type_id != type_id {
-            return Err(EntityAccessError::TypeMismatch);
-        }
-
-        Ok((slot, meta))
-    }
-
-    fn acquire_shared(&self, slot: usize) -> Result<(), EntityAccessError> {
-        let state = self
-            .borrows
-            .get(slot)
-            .ok_or(EntityAccessError::InvalidEntity)?;
-
-        match state.get() {
-            BorrowState::Free => {
-                state.set(BorrowState::Shared(1));
-                Ok(())
-            }
-            BorrowState::Shared(count) if count < u16::MAX => {
-                state.set(BorrowState::Shared(count + 1));
-                Ok(())
-            }
-            BorrowState::Shared(_) | BorrowState::Exclusive => {
-                Err(EntityAccessError::BorrowConflict)
-            }
-        }
-    }
-
-    fn acquire_exclusive(&self, slot: usize) -> Result<(), EntityAccessError> {
-        let state = self
-            .borrows
-            .get(slot)
-            .ok_or(EntityAccessError::InvalidEntity)?;
-
-        match state.get() {
-            BorrowState::Free => {
-                state.set(BorrowState::Exclusive);
-                Ok(())
-            }
-            BorrowState::Shared(_) | BorrowState::Exclusive => {
-                Err(EntityAccessError::BorrowConflict)
-            }
-        }
+        Ok(Entity::from_id(reservation.id))
     }
 
     pub(crate) fn read<T, R>(
@@ -238,12 +104,11 @@ impl<const BYTES: usize, const SLOTS: usize> FixedEntityArena<BYTES, SLOTS> {
             self,
             entity.entity_id(),
             TypeId::of::<T>(),
-            EntityBorrowKind::Shared,
+            BorrowKind::Shared,
         )?;
 
-        let value = unsafe { &*borrow.ptr().cast::<T>().as_ptr() };
-
-        Ok(f(value))
+        // SAFETY: the guard validated T and holds a shared borrow until f returns
+        Ok(f(unsafe { &*borrow.ptr().cast::<T>().as_ptr() }))
     }
 
     pub(crate) fn update<T, R>(
@@ -258,84 +123,41 @@ impl<const BYTES: usize, const SLOTS: usize> FixedEntityArena<BYTES, SLOTS> {
             self,
             entity.entity_id(),
             TypeId::of::<T>(),
-            EntityBorrowKind::Exclusive,
+            BorrowKind::Exclusive,
         )?;
 
-        let value = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
-
-        Ok(f(value))
+        // SAFETY: the guard validated T and holds an exclusive borrow until f returns
+        Ok(f(unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() }))
     }
 }
 
-unsafe impl<const BYTES: usize, const SLOTS: usize> EntityStore for FixedEntityArena<BYTES, SLOTS> {
+// SAFETY: values never move, type and state checks precede access, and every returned
+// pointer has a tracked borrow. Reservations become accessible only through commit
+unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
     fn reserve(
         &self,
         layout: Layout,
         type_id: TypeId,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<RawEntityReservation, EntityAllocError> {
-        let mut entries = self.entries.borrow_mut();
-        let slot = entries.len();
+        let (slot, ptr) = self.slots.reserve(layout, type_id, drop_fn)?;
 
-        if slot >= SLOTS || slot > u16::MAX as usize {
-            return Err(EntityAllocError::SlotsFull);
-        }
-
-        let alignment = layout.align();
-        if alignment > ENTITY_ARENA_ALIGNMENT {
-            return Err(EntityAllocError::UnsupportedAlignment {
-                requested: alignment,
-                supported: ENTITY_ARENA_ALIGNMENT,
-            });
-        }
-
-        let offset = align_up(self.cursor.get(), alignment).ok_or(EntityAllocError::StorageFull)?;
-
-        // reserve at least one byte for ZST so separate entries still receive
-        // distinct storage locations
-        let allocation_size = layout.size().max(1);
-
-        let end = offset
-            .checked_add(allocation_size)
-            .ok_or(EntityAllocError::StorageFull)?;
-        if end > BYTES {
-            return Err(EntityAllocError::StorageFull);
-        }
-
-        let generation = 0;
-        let id = EntityId::new(slot as u16, generation);
-
-        let meta = EntityMeta {
-            offset,
-            generation,
-            type_id,
-            drop_fn,
-        };
-
-        entries
-            .push(meta)
-            .map_err(|_| EntityAllocError::SlotsFull)?;
-
-        self.cursor.set(end);
-        self.states[slot].set(EntitySlotState::Initializing);
-
-        let ptr = unsafe { self.storage_ptr().add(offset) };
-        let ptr = unsafe { NonNull::new_unchecked(ptr) };
-
-        Ok(RawEntityReservation { id, ptr })
+        Ok(RawEntityReservation {
+            id: EntityId::new(slot, 0),
+            ptr,
+        })
     }
 
     unsafe fn commit(&self, entity: EntityId) {
-        let slot = entity.slot() as usize;
-        debug_assert_eq!(self.states[slot].get(), EntitySlotState::Initializing);
-        self.states[slot].set(EntitySlotState::Live);
+        debug_assert_eq!(entity.generation(), 0);
+
+        // SAFETY: the caller initialized the reserved value
+        unsafe { self.slots.commit(entity.slot()) };
     }
 
     fn abandon(&self, entity: EntityId) {
-        let slot = entity.slot() as usize;
-
-        if matches!(self.states[slot].get(), EntitySlotState::Initializing) {
-            self.states[slot].set(EntitySlotState::Abandoned);
+        if entity.generation() == 0 {
+            self.slots.abandon(entity.slot());
         }
     }
 
@@ -343,72 +165,39 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> EntityStore for FixedEntityA
         &self,
         entity: EntityId,
         type_id: TypeId,
-        kind: EntityBorrowKind,
+        kind: BorrowKind,
     ) -> Result<NonNull<u8>, EntityAccessError> {
-        let (slot, meta) = self.meta_for(entity, type_id)?;
-
-        match kind {
-            EntityBorrowKind::Shared => self.acquire_shared(slot)?,
-            EntityBorrowKind::Exclusive => self.acquire_exclusive(slot)?,
+        if entity.generation() != 0 {
+            return Err(EntityAccessError::InvalidEntity);
         }
 
-        let ptr = unsafe { self.storage_ptr().add(meta.offset) };
+        let slot = usize::from(entity.slot());
+        let (slot_type, ptr) = self.slots.live(slot).map_err(|error| match error {
+            NotLive::Initializing => EntityAccessError::NotReady,
+            NotLive::Missing | NotLive::Abandoned => EntityAccessError::InvalidEntity,
+        })?;
 
-        // # SAFETY
-        //
-        // - `storage_ptr` points to the arena's backing allocation, so it is non-null.
-        // - `meta.offset` was produced by `reserve()` and validated against the arena's capacity
-        // - `meta_for()` also verifies that this slot is `Live` and has the requested TypeId
-        let ptr = unsafe { NonNull::new_unchecked(ptr) };
+        if slot_type != type_id {
+            return Err(EntityAccessError::TypeMismatch);
+        }
+
+        self.slots
+            .acquire(slot, kind)
+            .map_err(|_| EntityAccessError::BorrowConflict)?;
 
         Ok(ptr)
     }
 
-    fn release(&self, entity: EntityId, kind: EntityBorrowKind) {
-        let slot = entity.slot() as usize;
-        let state = &self.borrows[slot];
-
-        match kind {
-            EntityBorrowKind::Exclusive => {
-                debug_assert_eq!(state.get(), BorrowState::Exclusive);
-                state.set(BorrowState::Free);
-            }
-            EntityBorrowKind::Shared => match state.get() {
-                BorrowState::Shared(1) => state.set(BorrowState::Free),
-                BorrowState::Shared(n) if n > 1 => state.set(BorrowState::Shared(n - 1)),
-                _ => debug_assert!(false, "released entity without matching shared borrow"),
-            },
-        }
+    fn release(&self, entity: EntityId, kind: BorrowKind) {
+        self.slots.release(usize::from(entity.slot()), kind);
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> crate::storage::EntityStorage
-    for FixedEntityArena<BYTES, SLOTS>
-{
-}
+impl<S: SlotStorage> crate::storage::EntityStorage for EntityArena<S> {}
 
-impl<const BYTES: usize, const SLOTS: usize> Drop for FixedEntityArena<BYTES, SLOTS> {
-    fn drop(&mut self) {
-        let storage = self.storage.get();
-
-        let storage_ptr = unsafe {
-            core::ptr::addr_of_mut!((*storage).bytes)
-                .cast::<MaybeUninit<u8>>()
-                .cast::<u8>()
-        };
-
-        let entries = self.entries.get_mut();
-
-        for (slot, meta) in entries.iter().enumerate().rev() {
-            if self.states[slot].get() != EntitySlotState::Live {
-                continue;
-            }
-
-            let ptr = unsafe { storage_ptr.add(meta.offset) };
-            unsafe { (meta.drop_fn)(ptr) }
-        }
-    }
-}
+#[cfg(all(test, feature = "alloc"))]
+#[path = "heap_tests.rs"]
+mod heap_tests;
 
 #[cfg(test)]
 mod tests {

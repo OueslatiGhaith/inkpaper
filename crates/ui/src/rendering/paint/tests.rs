@@ -219,7 +219,7 @@ fn draw_test_canvas(paint: &mut PaintCx<'_>) {
 #[test]
 fn frame_paints_backend_independent_commands_in_tree_order() {
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -279,7 +279,7 @@ fn frame_paints_backend_independent_commands_in_tree_order() {
 #[test]
 fn frame_converts_style_to_box_paint() {
     let mut frame = FrameArena::<TestFrame<8, 64>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -319,7 +319,7 @@ fn frame_converts_style_to_box_paint() {
 #[test]
 fn overflow_hidden_clips_descendant_painting() {
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -358,7 +358,7 @@ fn overflow_hidden_clips_descendant_painting() {
 #[test]
 fn overflow_hidden_clips_children_inside_parent_border() {
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -401,7 +401,7 @@ fn overflow_hidden_clips_children_inside_parent_border() {
 #[test]
 fn painting_receives_resolved_text_style() {
     let mut frame = FrameArena::<TestFrame<8, 64>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -442,7 +442,7 @@ fn frame_emits_image_paint_command() {
 
     let mut frame = FrameArena::<TestFrame<8, 128>>::default();
 
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
 
     let cx = AppContext::from_globals(&globals);
 
@@ -493,7 +493,7 @@ fn frame_emits_image_paint_command() {
 #[test]
 fn canvas_callback_draws_in_local_coordinates() {
     let mut frame = FrameArena::<TestFrame<8, 128>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -636,7 +636,7 @@ fn entity_canvas_callback_can_capture_render_data() {
 #[test]
 fn partial_damage_skips_non_intersecting_nodes() {
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -692,7 +692,7 @@ fn partial_damage_skips_non_intersecting_nodes() {
 #[test]
 fn disjoint_damage_rectangles_produce_disjoint_paint_clips() {
     let mut frame = FrameArena::<TestFrame<8, 64>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -738,7 +738,7 @@ fn disjoint_damage_rectangles_produce_disjoint_paint_clips() {
 #[test]
 fn partial_damage_respects_existing_visual_clip() {
     let mut frame = FrameArena::<TestFrame<8, 64>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -771,7 +771,7 @@ fn partial_damage_respects_existing_visual_clip() {
 #[test]
 fn empty_damage_performs_no_visual_work() {
     let mut frame = FrameArena::<TestFrame<8, 64>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -877,7 +877,7 @@ fn damage_paint_prunes_subtree_when_inherited_clip_misses_damage() {
 #[test]
 fn damage_paint_prunes_off_damage_child_subtrees_by_extent() {
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -932,7 +932,7 @@ fn damage_paint_prunes_off_damage_child_subtrees_by_extent() {
 #[test]
 fn partial_paint_before_layout_does_not_use_stale_subtree_bounds() {
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let first_root = frame
@@ -982,7 +982,7 @@ fn partial_paint_before_layout_does_not_use_stale_subtree_bounds() {
 #[test]
 fn damage_paint_prunes_ordered_vertical_sibling_tail() {
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -1047,7 +1047,7 @@ fn damage_paint_prunes_ordered_vertical_sibling_tail() {
 #[test]
 fn damage_paint_prunes_ordered_horizontal_leaf_sibling_tail() {
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -1110,7 +1110,7 @@ fn damage_paint_prunes_ordered_horizontal_leaf_sibling_tail() {
 #[test]
 fn damage_paint_binary_searches_ordered_sibling_prefix() {
     let mut frame = FrameArena::<TestFrame<64, 512>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -1159,7 +1159,7 @@ fn damage_paint_binary_searches_ordered_sibling_prefix() {
 #[test]
 fn ordered_prefix_search_preserves_earlier_overflowing_subtree() {
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -1216,7 +1216,7 @@ fn ordered_prefix_search_preserves_earlier_overflowing_subtree() {
 #[test]
 fn partial_damage_keeps_relative_sibling_shifted_back_into_damage() {
     let mut frame = FrameArena::<TestFrame<32, 128>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -1279,7 +1279,7 @@ fn paint_report_records_painted_content_classes() {
 
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
 
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -1318,7 +1318,7 @@ fn partial_paint_report_only_records_content_inside_damage() {
 
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
 
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -1356,7 +1356,7 @@ fn partial_paint_report_only_records_content_inside_damage() {
 #[test]
 fn grown_frame_lays_out_and_paints_after_storage_reuse_and_shrink() {
     let mut frame = FrameArena::<TestFrame<1, 1>>::default();
-    let globals = GlobalArena::<0, 0>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
     let mut painter = RecordingPainter::default();
 
     let root = frame

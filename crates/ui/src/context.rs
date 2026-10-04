@@ -157,7 +157,7 @@ impl<'a> AppContext<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{EntityAccessError, EntityArena, GlobalArena, callback::CallbackArena};
+    use crate::{EntityAccessError, TestEntityArena, TestGlobalArena, callback::TestCallbackArena};
 
     use super::*;
 
@@ -169,9 +169,9 @@ mod tests {
 
     #[test]
     fn entity_can_update_through_context() {
-        let arena = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<1024, 16>::default();
+        let arena = TestEntityArena::<1024, 16>::default();
+        let callbacks = TestCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
@@ -200,9 +200,9 @@ mod tests {
             child: Entity<Child>,
         }
 
-        let arena = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let arena = TestEntityArena::<1024, 16>::default();
+        let callbacks = TestCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
@@ -230,9 +230,9 @@ mod tests {
             parent: Entity<Parent>,
         }
 
-        let arena = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let arena = TestEntityArena::<1024, 16>::default();
+        let callbacks = TestCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 
@@ -257,9 +257,9 @@ mod tests {
 
     #[test]
     fn initializing_entity_cannot_be_read() {
-        let arena = EntityArena::<1024, 16>::default();
-        let callbacks = CallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let arena = TestEntityArena::<1024, 16>::default();
+        let callbacks = TestCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let root = arena.insert(Root).unwrap();
         let notified = Cell::new(false);
 

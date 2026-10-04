@@ -1,8 +1,8 @@
 use core::{any::TypeId, cell::Cell};
 
 use crate::{
-    AppContext, Context, Element, Entity, EntityBorrowKind, EntityId, FrameStore, IntoElement,
-    MountCx, MountError, NodeId,
+    AppContext, BorrowKind, Context, Element, Entity, EntityId, FrameStore, IntoElement, MountCx,
+    MountError, NodeId,
     callback::CallbackStore,
     entity::{EntityStore, RawEntityBorrow},
     global::GlobalStore,
@@ -63,7 +63,7 @@ where
         entities,
         entity_id,
         TypeId::of::<T>(),
-        EntityBorrowKind::Exclusive,
+        BorrowKind::Exclusive,
     )?;
 
     let state = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };

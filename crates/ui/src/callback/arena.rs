@@ -1,18 +1,13 @@
-use core::{
-    alloc::Layout,
-    any::TypeId,
-    cell::{Cell, RefCell, UnsafeCell},
-    mem::MaybeUninit,
-    ptr::NonNull,
-};
+use core::{alloc::Layout, any::TypeId, cell::Cell, ptr::NonNull};
 
-use heapless::Vec;
-
+#[cfg(feature = "alloc")]
+use crate::slot_table::HeapSlots;
 use crate::{
-    CanvasPainter, Context, Entity, EntityAccessError, EntityId, Listener, PaintCx, Rect,
+    BorrowKind, Context, Entity, EntityAccessError, EntityId, Listener, PaintCx,
     callback::CallbackId,
-    entity::{EntityBorrowKind, EntityStore, RawEntityBorrow, align_up},
+    entity::{EntityStore, RawEntityBorrow},
     global::GlobalStore,
+    slot_table::{FixedSlots, ReserveError, SlotStorage, SlotTable},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,19 +78,8 @@ pub enum CallbackKind {
 
 #[derive(Clone, Copy)]
 struct CallbackMeta {
-    offset: usize,
     target: EntityId,
-    generation: u32,
     kind: CallbackKind,
-    drop_fn: unsafe fn(*mut u8),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CallbackSlotState {
-    Vacant,
-    Initializing,
-    Live,
-    Abandonned,
 }
 
 pub struct RawCallbackReservation {
@@ -126,65 +110,67 @@ pub unsafe trait CallbackStore {
     ) -> Result<(), CanvasInvokeError>;
 }
 
-const CALLBACK_ARENA_ALIGNMENT: usize = 16;
-
-#[repr(C, align(16))]
-struct CallbackBytes<const N: usize> {
-    bytes: [MaybeUninit<u8>; N],
-}
-
-impl<const N: usize> CallbackBytes<N> {
-    const fn new() -> Self {
-        Self {
-            bytes: [MaybeUninit::uninit(); N],
+impl From<ReserveError> for CallbackAllocError {
+    fn from(error: ReserveError) -> Self {
+        match error {
+            ReserveError::SlotsFull => Self::SlotsFull,
+            ReserveError::StorageFull => Self::StorageFull,
+            ReserveError::UnsupportedAlignment {
+                requested,
+                supported,
+            } => Self::UnsupportedAlignment {
+                requested,
+                supported,
+            },
+            ReserveError::AllocationFailed => Self::AllocationFailed,
         }
     }
 }
 
 /// fixed-capacity callback storage: at most `SLOTS` callbacks in `BYTES` bytes per frame.
 /// Never allocates.
+pub type FixedCallbackArena<const BYTES: usize, const SLOTS: usize> =
+    CallbackArena<FixedSlots<BYTES, SLOTS>>;
+
+/// heap callback storage. The first allocation reserves `INITIAL_SLOTS` callbacks.
+#[cfg(feature = "alloc")]
+pub type HeapCallbackArena<const INITIAL_SLOTS: usize = 0> =
+    CallbackArena<HeapSlots<INITIAL_SLOTS>>;
+
+/// the callbacks registered while rendering one frame, stored by [`SlotTable`].
 ///
 /// SAFETY INVARIANTS:
 ///
-/// 1. every Live [`CallbackMeta`] refers to one initialized callback F.
-/// 2. callback storage remains fixed until reset.
-/// 3. callback generation must match metadata generation before invocation.
-/// 4. event [`TypeId`] is checked before casting event pointer to E.
-/// 5. the callback trampoline used for a callback matches the concrete F, T, and E used when
+/// 1. callback ids carry the generation of the frame that registered them, and only
+///    match while that frame's callbacks are stored.
+/// 2. event [`TypeId`] is checked before casting event pointer to E.
+/// 3. the callback trampoline used for a callback matches the concrete F, T, and E used when
 ///    that callback was registered.
-/// 6. Listeners hold an exclusive target borrow and canvas callbacks hold a shared target
+/// 4. Listeners hold an exclusive target borrow and canvas callbacks hold a shared target
 ///    borrow for the complete callback
-/// 7. only Live callbacks are dropped.
-/// 8. each live callback is dropped exactly once.
-pub struct FixedCallbackArena<const BYTES: usize, const SLOTS: usize> {
-    storage: UnsafeCell<CallbackBytes<BYTES>>,
-    entries: RefCell<Vec<CallbackMeta, SLOTS>>,
-    states: [Cell<CallbackSlotState>; SLOTS],
-    cursor: Cell<usize>,
-    generation: Cell<u32>,
+/// 5. invocation copies metadata out before calling user code, so callbacks may register
+///    more callbacks. Reset takes `&mut self`, so it can't run during an invocation.
+pub struct CallbackArena<S: SlotStorage> {
+    slots: SlotTable<S, CallbackMeta>,
+    generation: u32,
 }
 
-impl<const BYTES: usize, const SLOTS: usize> Default for FixedCallbackArena<BYTES, SLOTS> {
+impl<S: SlotStorage> Default for CallbackArena<S> {
     fn default() -> Self {
         Self {
-            storage: UnsafeCell::new(CallbackBytes::new()),
-            entries: RefCell::new(Vec::new()),
-            states: core::array::from_fn(|_| Cell::new(CallbackSlotState::Vacant)),
-            cursor: Cell::new(0),
-            generation: Cell::new(0),
+            slots: SlotTable::default(),
+            generation: 0,
         }
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> FixedCallbackArena<BYTES, SLOTS> {
-    fn storage_ptr(&self) -> *mut u8 {
-        let storage = self.storage.get();
-
-        unsafe {
-            core::ptr::addr_of_mut!((*storage).bytes)
-                .cast::<MaybeUninit<u8>>()
-                .cast::<u8>()
+impl<S: SlotStorage> CallbackArena<S> {
+    fn lookup(&self, id: CallbackId) -> Option<(CallbackMeta, NonNull<u8>)> {
+        if id.generation() != self.generation {
+            return None;
         }
+
+        self.slots.live(usize::from(id.slot())).ok()
     }
 
     pub(crate) fn invoke_listener<E>(
@@ -198,23 +184,9 @@ impl<const BYTES: usize, const SLOTS: usize> FixedCallbackArena<BYTES, SLOTS> {
     where
         E: 'static,
     {
-        let id = listener.id;
-        let slot = id.slot() as usize;
-
-        let meta = {
-            let entries = self.entries.borrow();
-            entries
-                .get(slot)
-                .copied()
-                .ok_or(ListenerInvokeError::InvalidListener)?
-        };
-
-        if meta.generation != id.generation() {
-            return Err(ListenerInvokeError::InvalidListener);
-        }
-        if self.states[slot].get() != CallbackSlotState::Live {
-            return Err(ListenerInvokeError::InvalidListener);
-        }
+        let (meta, closure) = self
+            .lookup(listener.id)
+            .ok_or(ListenerInvokeError::InvalidListener)?;
 
         let CallbackKind::Listener {
             event_type,
@@ -228,11 +200,11 @@ impl<const BYTES: usize, const SLOTS: usize> FixedCallbackArena<BYTES, SLOTS> {
             return Err(ListenerInvokeError::EventTypeMismatch);
         }
 
-        let closure = unsafe { self.storage_ptr().add(meta.offset) };
-
+        // SAFETY: lookup validated a live closure of this frame, and the event type
+        // matches its trampoline
         unsafe {
             invoke_fn(
-                closure,
+                closure.as_ptr(),
                 meta.target,
                 event as *const E as *const u8,
                 entities,
@@ -243,77 +215,17 @@ impl<const BYTES: usize, const SLOTS: usize> FixedCallbackArena<BYTES, SLOTS> {
         }
     }
 
-    fn drop_live_callbacks(&mut self) {
-        let storage_ptr = {
-            let storage = self.storage.get();
-            unsafe {
-                core::ptr::addr_of_mut!((*storage).bytes)
-                    .cast::<MaybeUninit<u8>>()
-                    .cast::<u8>()
-            }
-        };
-
-        let entries = self.entries.get_mut();
-
-        for (slot, meta) in entries.iter().enumerate().rev() {
-            if self.states[slot].get() != CallbackSlotState::Live {
-                continue;
-            }
-
-            let callback_ptr = unsafe { storage_ptr.add(meta.offset) };
-            unsafe { (meta.drop_fn)(callback_ptr) };
-
-            self.states[slot].set(CallbackSlotState::Abandonned);
-        }
-    }
-
     pub(crate) fn reset(&mut self) {
-        self.drop_live_callbacks();
-
-        self.entries.get_mut().clear();
-
-        for state in &self.states {
-            state.set(CallbackSlotState::Vacant);
-        }
-
-        self.cursor.set(0);
-        self.generation.set(self.generation.get().wrapping_add(1));
-    }
-
-    fn invoke_canvas_callback(
-        &self,
-        callback: CallbackId,
-        paint: &mut PaintCx<'_>,
-        entities: &dyn EntityStore,
-    ) -> Result<(), CanvasInvokeError> {
-        let slot = callback.slot() as usize;
-        let meta = self
-            .entries
-            .borrow()
-            .get(slot)
-            .copied()
-            .ok_or(CanvasInvokeError::InvalidCallback)?;
-
-        if meta.generation != callback.generation() {
-            return Err(CanvasInvokeError::InvalidCallback);
-        }
-        if self.states[slot].get() != CallbackSlotState::Live {
-            return Err(CanvasInvokeError::InvalidCallback);
-        }
-
-        let CallbackKind::Canvas { invoke_fn } = meta.kind else {
-            return Err(CanvasInvokeError::CallbackKindMismatch);
-        };
-
-        let closure = unsafe { self.storage_ptr().add(meta.offset) };
-
-        unsafe { invoke_fn(closure, meta.target, paint, entities) }
+        // invalidate handles before dropping captures, including if a drop unwinds
+        self.generation = self.generation.wrapping_add(1);
+        self.slots.clear();
     }
 }
 
-unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore
-    for FixedCallbackArena<BYTES, SLOTS>
-{
+// SAFETY: reservations fit the registered closure. Only committed closures are
+// callable. Both invocation paths validate generation and kind and use the registered
+// trampoline, which enforces the target entity's borrow rules
+unsafe impl<S: SlotStorage> CallbackStore for CallbackArena<S> {
     fn reserve(
         &self,
         layout: Layout,
@@ -321,62 +233,21 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore
         kind: CallbackKind,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<RawCallbackReservation, CallbackAllocError> {
-        let mut entries = self.entries.borrow_mut();
-        let slot = entries.len();
+        let (slot, ptr) = self
+            .slots
+            .reserve(layout, CallbackMeta { target, kind }, drop_fn)?;
 
-        if slot >= SLOTS || slot > u16::MAX as usize {
-            return Err(CallbackAllocError::SlotsFull);
-        }
-
-        let alignment = layout.align();
-        if alignment > CALLBACK_ARENA_ALIGNMENT {
-            return Err(CallbackAllocError::UnsupportedAlignment {
-                requested: alignment,
-                supported: CALLBACK_ARENA_ALIGNMENT,
-            });
-        }
-
-        let offset =
-            align_up(self.cursor.get(), alignment).ok_or(CallbackAllocError::StorageFull)?;
-
-        // reserve at least one byte for ZST so separate entries still receive
-        // distinct storage locations
-        let allocation_size = layout.size().max(1);
-
-        let end = offset
-            .checked_add(allocation_size)
-            .ok_or(CallbackAllocError::StorageFull)?;
-        if end > BYTES {
-            return Err(CallbackAllocError::StorageFull);
-        }
-
-        let generation = self.generation.get();
-        let id = CallbackId::new(slot as u16, generation);
-
-        let meta = CallbackMeta {
-            offset,
-            target,
-            generation,
-            kind,
-            drop_fn,
-        };
-
-        entries
-            .push(meta)
-            .map_err(|_| CallbackAllocError::SlotsFull)?;
-
-        self.cursor.set(end);
-        self.states[slot].set(CallbackSlotState::Initializing);
-
-        let ptr = unsafe { self.storage_ptr().add(offset) };
-        let ptr = unsafe { NonNull::new_unchecked(ptr) };
-
-        Ok(RawCallbackReservation { id, ptr })
+        Ok(RawCallbackReservation {
+            id: CallbackId::new(slot, self.generation),
+            ptr,
+        })
     }
 
     unsafe fn commit(&self, callback: CallbackId) {
-        let slot = callback.slot() as usize;
-        self.states[slot].set(CallbackSlotState::Live);
+        debug_assert_eq!(callback.generation(), self.generation);
+
+        // SAFETY: the caller initialized the reserved closure
+        unsafe { self.slots.commit(callback.slot()) };
     }
 
     fn invoke_canvas(
@@ -385,15 +256,23 @@ unsafe impl<const BYTES: usize, const SLOTS: usize> CallbackStore
         paint: &mut PaintCx<'_>,
         entities: &dyn EntityStore,
     ) -> Result<(), CanvasInvokeError> {
-        self.invoke_canvas_callback(callback, paint, entities)
+        let (meta, closure) = self
+            .lookup(callback)
+            .ok_or(CanvasInvokeError::InvalidCallback)?;
+
+        let CallbackKind::Canvas { invoke_fn } = meta.kind else {
+            return Err(CanvasInvokeError::CallbackKindMismatch);
+        };
+
+        // SAFETY: lookup validated a live closure of this frame. Its canvas trampoline
+        // acquires a shared borrow of the target
+        unsafe { invoke_fn(closure.as_ptr(), meta.target, paint, entities) }
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> crate::storage::CallbackStorage
-    for FixedCallbackArena<BYTES, SLOTS>
-{
+impl<S: SlotStorage> crate::storage::CallbackStorage for CallbackArena<S> {
     fn reset(&mut self) {
-        FixedCallbackArena::reset(self);
+        CallbackArena::reset(self);
     }
 
     fn invoke_listener<E>(
@@ -407,13 +286,7 @@ impl<const BYTES: usize, const SLOTS: usize> crate::storage::CallbackStorage
     where
         E: 'static,
     {
-        FixedCallbackArena::invoke_listener(self, listener, event, entities, globals, notified)
-    }
-}
-
-impl<const BYTES: usize, const SLOTS: usize> Drop for FixedCallbackArena<BYTES, SLOTS> {
-    fn drop(&mut self) {
-        self.drop_live_callbacks();
+        CallbackArena::invoke_listener(self, listener, event, entities, globals, notified)
     }
 }
 
@@ -435,12 +308,8 @@ where
     E: 'static,
     F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
 {
-    let borrow = RawEntityBorrow::acquire(
-        entities,
-        target,
-        TypeId::of::<T>(),
-        EntityBorrowKind::Exclusive,
-    )?;
+    let borrow =
+        RawEntityBorrow::acquire(entities, target, TypeId::of::<T>(), BorrowKind::Exclusive)?;
 
     let state = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
     let event = unsafe { &*event.cast::<E>() };
@@ -463,12 +332,7 @@ where
     T: 'static,
     F: Fn(&T, &mut PaintCx<'_>) + 'static,
 {
-    let borrow = RawEntityBorrow::acquire(
-        entities,
-        target,
-        TypeId::of::<T>(),
-        EntityBorrowKind::Shared,
-    )?;
+    let borrow = RawEntityBorrow::acquire(entities, target, TypeId::of::<T>(), BorrowKind::Shared)?;
 
     let state = unsafe { &*borrow.ptr().cast::<T>().as_ptr() };
     let callback = unsafe { &*closure.cast::<F>() };
@@ -528,6 +392,10 @@ where
     Ok(reservation.id)
 }
 
+#[cfg(all(test, feature = "alloc"))]
+#[path = "heap_tests.rs"]
+mod heap_tests;
+
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
@@ -548,9 +416,9 @@ mod tests {
 
     #[test]
     fn invokes_method_listener() {
-        let entities = EntityArena::<1024, 16>::default();
+        let entities = TestEntityArena::<1024, 16>::default();
         let callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
 
         let root = entities.insert(Counter { value: 0 }).unwrap();
 
@@ -577,9 +445,9 @@ mod tests {
 
     #[test]
     fn invokes_capturing_listener() {
-        let entities = EntityArena::<1024, 16>::default();
+        let entities = TestEntityArena::<1024, 16>::default();
         let callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
         let amount = 5;
@@ -609,9 +477,9 @@ mod tests {
 
     #[test]
     fn listener_rejects_reentrant_update_of_target_entity() {
-        let entities = EntityArena::<1024, 16>::default();
+        let entities = TestEntityArena::<1024, 16>::default();
         let callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
 
@@ -642,9 +510,9 @@ mod tests {
 
     #[test]
     fn listener_can_update_another_entity() {
-        let entities = EntityArena::<1024, 16>::default();
+        let entities = TestEntityArena::<1024, 16>::default();
         let callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let settings = entities.insert(Settings { dirty: false }).unwrap();
         let notified = Cell::new(false);
@@ -681,9 +549,9 @@ mod tests {
 
     #[test]
     fn stale_listener_is_rejected_after_reset() {
-        let entities = EntityArena::<1024, 16>::default();
+        let entities = TestEntityArena::<1024, 16>::default();
         let mut callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
 
@@ -720,9 +588,9 @@ mod tests {
     fn reset_drops_captured_listener_values() {
         DROPS.store(0, Ordering::SeqCst);
 
-        let entities = EntityArena::<1024, 16>::default();
+        let entities = TestEntityArena::<1024, 16>::default();
         let mut callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
 
@@ -745,9 +613,9 @@ mod tests {
 
     #[test]
     fn listener_arena_reports_slot_exhaustion() {
-        let entities = EntityArena::<1024, 16>::default();
+        let entities = TestEntityArena::<1024, 16>::default();
         let callbacks = FixedCallbackArena::<1024, 1>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
 
@@ -763,9 +631,9 @@ mod tests {
 
     #[test]
     fn listener_arena_reports_storage_exhaustion() {
-        let entities = EntityArena::<1024, 16>::default();
+        let entities = TestEntityArena::<1024, 16>::default();
         let callbacks = FixedCallbackArena::<4, 16>::default();
-        let globals = GlobalArena::<0, 0>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let notified = Cell::new(false);
         let capture = [0u8; 32];

@@ -55,7 +55,7 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
     )
     .unwrap();
 
-    let address = callbacks.lookup(listener.id).unwrap().0;
+    let address = callbacks.lookup(listener.id).unwrap().1;
 
     callbacks
         .invoke_listener(
@@ -67,7 +67,7 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
         )
         .unwrap();
 
-    assert_eq!(callbacks.lookup(listener.id).unwrap().0, address);
+    assert_eq!(callbacks.lookup(listener.id).unwrap().1, address);
     assert_eq!(entities.read(target, |value| *value), Ok(42));
 }
 
@@ -196,15 +196,15 @@ fn reset_releases_captures_and_reuses_slot_capacity() {
         .unwrap();
     }
 
-    let capacity = callbacks.entries.borrow().capacity();
+    let capacity = callbacks.slots.capacity();
 
     assert_eq!(drops.get(), 0);
 
     callbacks.reset();
 
     assert_eq!(drops.get(), 32);
-    assert_eq!(callbacks.entries.borrow().capacity(), capacity);
-    assert!(callbacks.entries.borrow().is_empty());
+    assert_eq!(callbacks.slots.capacity(), capacity);
+    assert_eq!(callbacks.slots.len(), 0);
 
     let capture = Capture(drops.clone());
 

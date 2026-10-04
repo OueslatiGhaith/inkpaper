@@ -1,28 +1,25 @@
 use core::{
+    alloc::Layout,
     any::TypeId,
-    cell::{Cell, UnsafeCell},
+    cell::Cell,
     marker::PhantomData,
-    mem::MaybeUninit,
     ops::{Deref, DerefMut},
     ptr::NonNull,
 };
 
-use heapless::Vec;
-
-use crate::align_up;
-
 #[cfg(feature = "alloc")]
-mod heap;
-
-#[cfg(feature = "alloc")]
-pub use heap::HeapGlobalArena;
+use crate::slot_table::HeapSlots;
+use crate::{
+    BorrowKind,
+    slot_table::{FixedSlots, ReserveError, SlotStorage, SlotTable},
+};
 
 // unit tests run against the storage the `alloc` feature implies
 #[cfg(all(test, not(feature = "alloc")))]
-pub(crate) type GlobalArena<const BYTES: usize, const SLOTS: usize> =
+pub(crate) type TestGlobalArena<const BYTES: usize, const SLOTS: usize> =
     FixedGlobalArena<BYTES, SLOTS>;
 #[cfg(all(test, feature = "alloc"))]
-pub(crate) type GlobalArena<const BYTES: usize, const SLOTS: usize> = HeapGlobalArena<SLOTS>;
+pub(crate) type TestGlobalArena<const BYTES: usize, const SLOTS: usize> = HeapGlobalArena<SLOTS>;
 
 /// marker trait for application-wide immutable values
 ///
@@ -53,85 +50,70 @@ pub enum GlobalSetError {
     AllocationFailed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GlobalBorrowKind {
-    Shared,
-    Exclusive,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GlobalBorrowState {
-    Free,
-    Shared(u16),
-    Exclusive,
-}
-
-#[derive(Clone, Copy)]
-struct GlobalMeta {
-    type_id: TypeId,
-    offset: usize,
-    drop_fn: unsafe fn(*mut u8),
-}
-
-const GLOBAL_ARENA_ALIGNMENT: usize = 16;
-
-#[repr(C, align(16))]
-struct GlobalBytes<const N: usize> {
-    bytes: [MaybeUninit<u8>; N],
-}
-
-impl<const N: usize> Default for GlobalBytes<N> {
-    fn default() -> Self {
-        Self {
-            bytes: [MaybeUninit::uninit(); N],
-        }
-    }
-}
-
 pub trait GlobalStore {
     fn acquire(
         &self,
         type_id: TypeId,
-        kind: GlobalBorrowKind,
+        kind: BorrowKind,
     ) -> Result<(usize, NonNull<u8>), GlobalAccessError>;
-    fn release(&self, slot: usize, kind: GlobalBorrowKind);
+    fn release(&self, slot: usize, kind: BorrowKind);
 }
 
-/// fixed-capacity storage for application globals: at most `SLOTS` globals in `BYTES`
-/// bytes. Never allocates.
-pub struct FixedGlobalArena<const BYTES: usize, const SLOTS: usize> {
-    storage: UnsafeCell<GlobalBytes<BYTES>>,
-    entries: Vec<GlobalMeta, SLOTS>,
-    borrows: [Cell<GlobalBorrowState>; SLOTS],
-    cursor: usize,
-}
-
-impl<const BYTES: usize, const SLOTS: usize> Default for FixedGlobalArena<BYTES, SLOTS> {
-    fn default() -> Self {
-        Self {
-            storage: UnsafeCell::new(GlobalBytes::default()),
-            entries: Vec::new(),
-            borrows: core::array::from_fn(|_| Cell::new(GlobalBorrowState::Free)),
-            cursor: 0,
+impl From<ReserveError> for GlobalSetError {
+    fn from(error: ReserveError) -> Self {
+        match error {
+            ReserveError::SlotsFull => Self::SlotsFull,
+            ReserveError::StorageFull => Self::StorageFull,
+            ReserveError::UnsupportedAlignment {
+                requested,
+                supported,
+            } => Self::UnsupportedAlignment {
+                requested,
+                supported,
+            },
+            ReserveError::AllocationFailed => Self::AllocationFailed,
         }
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> FixedGlobalArena<BYTES, SLOTS> {
+/// fixed-capacity storage for application globals: at most `SLOTS` globals in `BYTES`
+/// bytes. Never allocates.
+pub type FixedGlobalArena<const BYTES: usize, const SLOTS: usize> =
+    GlobalArena<FixedSlots<BYTES, SLOTS>>;
+
+/// heap storage for application globals. The first allocation reserves `INITIAL_SLOTS`
+/// entries.
+#[cfg(feature = "alloc")]
+pub type HeapGlobalArena<const INITIAL_SLOTS: usize = 0> = GlobalArena<HeapSlots<INITIAL_SLOTS>>;
+
+/// application globals, at most one per type, stored by [`SlotTable`]
+pub struct GlobalArena<S: SlotStorage> {
+    slots: SlotTable<S, TypeId>,
+}
+
+impl<S: SlotStorage> Default for GlobalArena<S> {
+    fn default() -> Self {
+        Self {
+            slots: SlotTable::default(),
+        }
+    }
+}
+
+impl<S: SlotStorage> GlobalArena<S> {
     pub(crate) fn len(&self) -> usize {
-        self.entries.len()
+        self.slots.len()
     }
 
     pub(crate) fn used_bytes(&self) -> usize {
-        self.cursor
+        self.slots.used_bytes()
     }
 
-    pub(crate) const fn capacity(&self) -> usize {
-        SLOTS
+    pub(crate) fn capacity(&self) -> usize {
+        self.slots.capacity()
     }
 
-    pub(crate) const fn byte_capacity(&self) -> usize {
-        BYTES
+    pub(crate) fn byte_capacity(&self) -> usize {
+        self.slots.byte_capacity()
     }
 
     pub(crate) fn contains<G>(&self) -> bool
@@ -147,192 +129,89 @@ impl<const BYTES: usize, const SLOTS: usize> FixedGlobalArena<BYTES, SLOTS> {
     {
         let type_id = TypeId::of::<G>();
         if let Some(slot) = self.index_of(type_id) {
-            if self.borrows[slot].get() != GlobalBorrowState::Free {
+            if self.slots.is_borrowed(slot) {
                 return Err(GlobalSetError::BorrowConflict);
             }
 
-            let meta = self.entries[slot];
-            let ptr = unsafe { self.storage_ptr().add(meta.offset) };
-            let old = unsafe { ptr.cast::<G>().replace(value) };
+            let (_, ptr) = self.slots.live(slot).expect("globals are always live");
 
+            // SAFETY: the slot holds a G and no global guard borrows it. Install the
+            // replacement before running the old value's destructor
+            let old = unsafe { ptr.cast::<G>().as_ptr().replace(value) };
             drop(old);
 
             return Ok(());
         }
 
-        if self.entries.len() >= SLOTS {
-            return Err(GlobalSetError::SlotsFull);
-        }
+        let (slot, ptr) = self
+            .slots
+            .reserve(Layout::new::<G>(), type_id, drop_global::<G>)?;
 
-        let layout = core::alloc::Layout::new::<G>();
-        let alignment = layout.align();
-        if alignment > GLOBAL_ARENA_ALIGNMENT {
-            return Err(GlobalSetError::UnsupportedAlignment {
-                requested: alignment,
-                supported: GLOBAL_ARENA_ALIGNMENT,
-            });
-        }
-
-        let offset = align_up(self.cursor, alignment).ok_or(GlobalSetError::StorageFull)?;
-
-        // reserve one byte for ZSTs so entries still get distinct storage locations.
-        let allocation_size = layout.size().max(1);
-
-        let end = offset
-            .checked_add(allocation_size)
-            .ok_or(GlobalSetError::StorageFull)?;
-
-        if end > BYTES {
-            return Err(GlobalSetError::StorageFull);
-        }
-
-        let meta = GlobalMeta {
-            type_id,
-            offset,
-            drop_fn: drop_global::<G>,
-        };
-
-        self.entries
-            .push(meta)
-            .map_err(|_| GlobalSetError::SlotsFull)?;
-
-        let ptr = unsafe { self.storage_ptr().add(offset) };
-
+        // SAFETY: the reservation fits G, and commit follows its initialization
         unsafe {
-            ptr.cast::<G>().write(value);
+            ptr.cast::<G>().as_ptr().write(value);
+            self.slots.commit(slot);
         }
-
-        self.cursor = end;
 
         Ok(())
     }
 
     fn index_of(&self, type_id: TypeId) -> Option<usize> {
-        self.entries
-            .iter()
-            .position(|entry| entry.type_id == type_id)
-    }
-
-    fn storage_ptr(&self) -> *mut u8 {
-        let storage = self.storage.get();
-
-        unsafe {
-            core::ptr::addr_of_mut!((*storage).bytes)
-                .cast::<MaybeUninit<u8>>()
-                .cast::<u8>()
-        }
-    }
-
-    fn acquire_shared(&self, slot: usize) -> Result<(), GlobalAccessError> {
-        let state = &self.borrows[slot];
-
-        match state.get() {
-            GlobalBorrowState::Free => state.set(GlobalBorrowState::Shared(1)),
-            GlobalBorrowState::Shared(count) if count < u16::MAX => {
-                state.set(GlobalBorrowState::Shared(count + 1));
-            }
-            GlobalBorrowState::Shared(_) | GlobalBorrowState::Exclusive => {
-                return Err(GlobalAccessError::BorrowConflict);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn acquire_exclusive(&self, slot: usize) -> Result<(), GlobalAccessError> {
-        let state = &self.borrows[slot];
-
-        match state.get() {
-            GlobalBorrowState::Free => state.set(GlobalBorrowState::Exclusive),
-            GlobalBorrowState::Shared(_) | GlobalBorrowState::Exclusive => {
-                return Err(GlobalAccessError::BorrowConflict);
-            }
-        }
-
-        Ok(())
+        self.slots.position(|slot_type| *slot_type == type_id)
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> GlobalStore for FixedGlobalArena<BYTES, SLOTS> {
+impl<S: SlotStorage> GlobalStore for GlobalArena<S> {
     fn acquire(
         &self,
         type_id: TypeId,
-        kind: GlobalBorrowKind,
+        kind: BorrowKind,
     ) -> Result<(usize, NonNull<u8>), GlobalAccessError> {
         let slot = self.index_of(type_id).ok_or(GlobalAccessError::NotFound)?;
-        match kind {
-            GlobalBorrowKind::Shared => self.acquire_shared(slot)?,
-            GlobalBorrowKind::Exclusive => self.acquire_exclusive(slot)?,
-        }
 
-        let meta = self.entries[slot];
-        let ptr = unsafe { self.storage_ptr().add(meta.offset) };
-        let ptr = unsafe { NonNull::new_unchecked(ptr) };
+        self.slots
+            .acquire(slot, kind)
+            .map_err(|_| GlobalAccessError::BorrowConflict)?;
+
+        let (_, ptr) = self.slots.live(slot).expect("globals are always live");
 
         Ok((slot, ptr))
     }
 
-    fn release(&self, slot: usize, kind: GlobalBorrowKind) {
-        let state = &self.borrows[slot];
-
-        match kind {
-            GlobalBorrowKind::Exclusive => {
-                debug_assert_eq!(state.get(), GlobalBorrowState::Exclusive);
-                state.set(GlobalBorrowState::Free);
-            }
-            GlobalBorrowKind::Shared => match state.get() {
-                GlobalBorrowState::Shared(1) => state.set(GlobalBorrowState::Free),
-                GlobalBorrowState::Shared(count) if count > 1 => {
-                    state.set(GlobalBorrowState::Shared(count - 1));
-                }
-                _ => debug_assert!(false, "released global without matching shared borrow"),
-            },
-        }
+    fn release(&self, slot: usize, kind: BorrowKind) {
+        self.slots.release(slot, kind);
     }
 }
 
-impl<const BYTES: usize, const SLOTS: usize> crate::storage::GlobalStorage
-    for FixedGlobalArena<BYTES, SLOTS>
-{
+impl<S: SlotStorage> crate::storage::GlobalStorage for GlobalArena<S> {
     fn set<G>(&mut self, value: G) -> Result<(), GlobalSetError>
     where
         G: Global,
     {
-        FixedGlobalArena::set(self, value)
+        GlobalArena::set(self, value)
     }
 
     fn contains<G>(&self) -> bool
     where
         G: Global,
     {
-        FixedGlobalArena::contains::<G>(self)
+        GlobalArena::contains::<G>(self)
     }
 
     fn len(&self) -> usize {
-        FixedGlobalArena::len(self)
+        GlobalArena::len(self)
     }
 
     fn used_bytes(&self) -> usize {
-        FixedGlobalArena::used_bytes(self)
+        GlobalArena::used_bytes(self)
     }
 
     fn capacity(&self) -> usize {
-        FixedGlobalArena::capacity(self)
+        GlobalArena::capacity(self)
     }
 
     fn byte_capacity(&self) -> usize {
-        FixedGlobalArena::byte_capacity(self)
-    }
-}
-
-impl<const BYTES: usize, const SLOTS: usize> Drop for FixedGlobalArena<BYTES, SLOTS> {
-    fn drop(&mut self) {
-        let storage_ptr = self.storage_ptr();
-
-        for meta in self.entries.iter().rev() {
-            let ptr = unsafe { storage_ptr.add(meta.offset) };
-            unsafe { (meta.drop_fn)(ptr) };
-        }
+        GlobalArena::byte_capacity(self)
     }
 }
 
@@ -344,14 +223,14 @@ struct RawGlobalBorrow<'a> {
     store: &'a dyn GlobalStore,
     slot: usize,
     ptr: NonNull<u8>,
-    kind: GlobalBorrowKind,
+    kind: BorrowKind,
 }
 
 impl<'a> RawGlobalBorrow<'a> {
     fn acquire(
         store: &'a dyn GlobalStore,
         type_id: TypeId,
-        kind: GlobalBorrowKind,
+        kind: BorrowKind,
     ) -> Result<Self, GlobalAccessError> {
         let (slot, ptr) = store.acquire(type_id, kind)?;
 
@@ -388,7 +267,7 @@ where
 {
     pub(crate) fn acquire(store: &'a dyn GlobalStore) -> Result<Self, GlobalAccessError> {
         Ok(Self {
-            borrow: RawGlobalBorrow::acquire(store, TypeId::of::<G>(), GlobalBorrowKind::Shared)?,
+            borrow: RawGlobalBorrow::acquire(store, TypeId::of::<G>(), BorrowKind::Shared)?,
             _marker: PhantomData,
         })
     }
@@ -423,11 +302,7 @@ where
         notified: &'a Cell<bool>,
     ) -> Result<Self, GlobalAccessError> {
         Ok(Self {
-            borrow: RawGlobalBorrow::acquire(
-                store,
-                TypeId::of::<G>(),
-                GlobalBorrowKind::Exclusive,
-            )?,
+            borrow: RawGlobalBorrow::acquire(store, TypeId::of::<G>(), BorrowKind::Exclusive)?,
             notified,
             _marker: PhantomData,
         })

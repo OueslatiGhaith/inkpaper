@@ -1,8 +1,8 @@
 use core::{alloc::Layout, any::TypeId, cell::Cell, ptr::NonNull};
 
-use super::{Entity, EntityAccessError, EntityAllocError, EntityBorrowKind, EntityId};
+use super::{Entity, EntityAccessError, EntityAllocError, EntityId};
 
-use crate::{Context, callback::CallbackStore, global::GlobalStore};
+use crate::{Context, callback::CallbackStore, global::GlobalStore, slot_table::BorrowKind};
 
 pub struct RawEntityReservation {
     pub(crate) id: EntityId,
@@ -29,28 +29,21 @@ pub unsafe trait EntityStore {
         &self,
         entity: EntityId,
         type_id: TypeId,
-        kind: EntityBorrowKind,
+        kind: BorrowKind,
     ) -> Result<NonNull<u8>, EntityAccessError>;
 
-    fn release(&self, entity: EntityId, kind: EntityBorrowKind);
+    fn release(&self, entity: EntityId, kind: BorrowKind);
 }
 
 pub(crate) unsafe fn drop_value<T>(ptr: *mut u8) {
     unsafe { core::ptr::drop_in_place(ptr.cast::<T>()) };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BorrowState {
-    Free,
-    Shared(u16),
-    Exclusive,
-}
-
 pub(crate) struct RawEntityBorrow<'a> {
     store: &'a dyn EntityStore,
     entity: EntityId,
     ptr: NonNull<u8>,
-    kind: EntityBorrowKind,
+    kind: BorrowKind,
 }
 
 impl<'a> RawEntityBorrow<'a> {
@@ -58,7 +51,7 @@ impl<'a> RawEntityBorrow<'a> {
         store: &'a dyn EntityStore,
         entity: EntityId,
         type_id: TypeId,
-        kind: EntityBorrowKind,
+        kind: BorrowKind,
     ) -> Result<Self, EntityAccessError> {
         let ptr = store.borrow(entity, type_id, kind)?;
 

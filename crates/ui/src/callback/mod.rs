@@ -1,22 +1,19 @@
 use core::marker::PhantomData;
 
 mod arena;
+
 #[cfg(feature = "alloc")]
-mod heap;
-
-pub use arena::{CallbackAllocError, CanvasInvokeError, ListenerInvokeError};
-
-pub use arena::FixedCallbackArena;
+pub use arena::HeapCallbackArena;
+pub use arena::{CallbackAllocError, CanvasInvokeError, FixedCallbackArena, ListenerInvokeError};
 pub(crate) use arena::{CallbackStore, register_canvas_callback, register_listener};
-#[cfg(feature = "alloc")]
-pub use heap::HeapCallbackArena;
 
 // unit tests run against the storage the `alloc` feature implies
 #[cfg(all(test, not(feature = "alloc")))]
-pub(crate) type CallbackArena<const BYTES: usize, const SLOTS: usize> =
+pub(crate) type TestCallbackArena<const BYTES: usize, const SLOTS: usize> =
     FixedCallbackArena<BYTES, SLOTS>;
 #[cfg(all(test, feature = "alloc"))]
-pub(crate) type CallbackArena<const BYTES: usize, const SLOTS: usize> = HeapCallbackArena<SLOTS>;
+pub(crate) type TestCallbackArena<const BYTES: usize, const SLOTS: usize> =
+    HeapCallbackArena<SLOTS>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CallbackId {
