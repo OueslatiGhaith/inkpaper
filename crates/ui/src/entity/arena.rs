@@ -185,7 +185,9 @@ unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
         let slot = usize::from(entity.slot());
         let (meta, ptr) = self.slots.live(slot).map_err(|error| match error {
             NotLive::Initializing => EntityAccessError::NotReady,
-            NotLive::Missing | NotLive::Abandoned => EntityAccessError::InvalidEntity,
+            NotLive::Missing | NotLive::Abandoned | NotLive::Removed => {
+                EntityAccessError::InvalidEntity
+            }
         })?;
 
         if meta.type_id != type_id {

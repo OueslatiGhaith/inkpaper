@@ -7,8 +7,8 @@
 use core::ops::{Deref, DerefMut};
 
 use crate::{
-    FixedCallbackArena, FixedEntityArena, FixedGlobalArena, Global, GlobalSetError, Listener,
-    ListenerInvokeError, RuntimeCx, callback::CallbackStore, entity::EntityStore,
+    EntityId, FixedCallbackArena, FixedEntityArena, FixedGlobalArena, Global, GlobalSetError,
+    Listener, ListenerInvokeError, RuntimeCx, callback::CallbackStore, entity::EntityStore,
     global::GlobalStore,
 };
 #[cfg(feature = "alloc")]
@@ -110,6 +110,10 @@ pub trait EntityStorage: EntityStore + Default {}
 /// storage for the callbacks registered while rendering a frame
 pub trait CallbackStorage: CallbackStore + Default {
     fn reset(&mut self);
+
+    /// drops the callbacks `owner` registered, keeping every other callback callable.
+    /// Returns how many callbacks were released.
+    fn release_owner(&mut self, owner: EntityId) -> usize;
 
     fn invoke_listener<E>(
         &self,

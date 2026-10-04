@@ -342,15 +342,25 @@ fn canvas_paint_callbacks_validate_kind_borrow_and_generation_and_drop_captures(
     let drops = Rc::new(Cell::new(0));
     let capture = Capture(drops.clone());
 
-    let callback = register_canvas_callback(&callbacks, entity, move |value, paint| {
-        assert_eq!(*value, 42);
-        let _ = &capture;
-        paint.draw_text(rect(0, 0, 10, 10), text("ok"));
-    })
+    let callback = register_canvas_callback(
+        &callbacks,
+        entity.entity_id(),
+        entity,
+        move |value, paint| {
+            assert_eq!(*value, 42);
+            let _ = &capture;
+            paint.draw_text(rect(0, 0, 10, 10), text("ok"));
+        },
+    )
     .unwrap();
 
-    let listener =
-        register_listener(&callbacks, entity, |_: &mut u32, _: &ActivateEvent, _| {}).unwrap();
+    let listener = register_listener(
+        &callbacks,
+        entity.entity_id(),
+        entity,
+        |_: &mut u32, _: &ActivateEvent, _| {},
+    )
+    .unwrap();
 
     let mut recorder = Recorder::default();
     let mut resources = ();
@@ -401,7 +411,8 @@ fn canvas_paint_callbacks_validate_kind_borrow_and_generation_and_drop_captures(
         Err(CanvasInvokeError::InvalidCallback)
     );
 
-    let replacement = register_canvas_callback(&callbacks, entity, |_, _| {}).unwrap();
+    let replacement =
+        register_canvas_callback(&callbacks, entity.entity_id(), entity, |_, _| {}).unwrap();
 
     assert_ne!(callback, replacement);
     assert_eq!(
@@ -434,7 +445,7 @@ fn canvas_paint_fixed_storage_exhaustion_drops_captures() {
     let slots = TestCallbackArena::<64, 0>::default();
 
     assert_eq!(
-        register_canvas_callback(&slots, entity, move |_, _| {
+        register_canvas_callback(&slots, entity.entity_id(), entity, move |_, _| {
             let _ = &capture;
         }),
         Err(CallbackAllocError::SlotsFull)
@@ -445,7 +456,7 @@ fn canvas_paint_fixed_storage_exhaustion_drops_captures() {
     let bytes = TestCallbackArena::<1, 1>::default();
 
     assert_eq!(
-        register_canvas_callback(&bytes, entity, move |_, _| {
+        register_canvas_callback(&bytes, entity.entity_id(), entity, move |_, _| {
             let _ = &capture;
         }),
         Err(CallbackAllocError::StorageFull)

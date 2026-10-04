@@ -74,6 +74,9 @@ pub enum CallbackKind {
 
 #[derive(Clone, Copy)]
 struct CallbackMeta {
+    /// the entity whose render registered the callback, or the target outside rendering.
+    /// The callback is released when its owner renders again
+    owner: EntityId,
     target: EntityId,
     kind: CallbackKind,
 }
@@ -91,6 +94,7 @@ pub unsafe trait CallbackStore {
     fn reserve(
         &self,
         layout: Layout,
+        owner: EntityId,
         target: EntityId,
         kind: CallbackKind,
         drop_fn: unsafe fn(*mut u8),
@@ -138,14 +142,16 @@ pub type HeapCallbackArena<const INITIAL_SLOTS: usize = 0> =
 /// SAFETY INVARIANTS:
 ///
 /// 1. callback ids carry the generation of the frame that registered them, and only
-///    match while that frame's callbacks are stored.
+///    match while that frame's callbacks are stored and their slot is live. Released
+///    callbacks keep their slot number until reset, so their ids stay invalid.
 /// 2. event [`TypeId`] is checked before casting event pointer to E.
 /// 3. the callback trampoline used for a callback matches the concrete F, T, and E used when
 ///    that callback was registered.
 /// 4. Listeners hold an exclusive target borrow and canvas callbacks hold a shared target
 ///    borrow for the complete callback
 /// 5. invocation copies metadata out before calling user code, so callbacks may register
-///    more callbacks. Reset takes `&mut self`, so it can't run during an invocation.
+///    more callbacks. Reset and release take `&mut self`, so they can't run during an
+///    invocation.
 pub struct CallbackArena<S: SlotStorage> {
     slots: SlotTable<S, CallbackMeta>,
     generation: u32,
@@ -212,6 +218,12 @@ impl<S: SlotStorage> CallbackArena<S> {
         self.generation = self.generation.wrapping_add(1);
         self.slots.clear();
     }
+
+    /// drops the callbacks `owner` registered, so it can render again. Other callbacks
+    /// stay callable. Returns how many callbacks were released.
+    pub(crate) fn release_owner(&mut self, owner: EntityId) -> usize {
+        self.slots.remove_where(|meta| meta.owner == owner)
+    }
 }
 
 // SAFETY: reservations fit the registered closure. Only committed closures are
@@ -221,13 +233,17 @@ unsafe impl<S: SlotStorage> CallbackStore for CallbackArena<S> {
     fn reserve(
         &self,
         layout: Layout,
+        owner: EntityId,
         target: EntityId,
         kind: CallbackKind,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<RawCallbackReservation, CallbackAllocError> {
-        let (slot, ptr) = self
-            .slots
-            .reserve(layout, CallbackMeta { target, kind }, drop_fn)?;
+        let meta = CallbackMeta {
+            owner,
+            target,
+            kind,
+        };
+        let (slot, ptr) = self.slots.reserve(layout, meta, drop_fn)?;
 
         Ok(RawCallbackReservation {
             id: CallbackId::new(slot, self.generation),
@@ -265,6 +281,10 @@ unsafe impl<S: SlotStorage> CallbackStore for CallbackArena<S> {
 impl<S: SlotStorage> crate::storage::CallbackStorage for CallbackArena<S> {
     fn reset(&mut self) {
         CallbackArena::reset(self);
+    }
+
+    fn release_owner(&mut self, owner: EntityId) -> usize {
+        CallbackArena::release_owner(self, owner)
     }
 
     fn invoke_listener<E>(
@@ -333,8 +353,10 @@ where
     Ok(())
 }
 
+/// registers a listener on `entity`, released when `owner` renders again
 pub(crate) fn register_listener<T, E, F>(
     store: &dyn CallbackStore,
+    owner: EntityId,
     entity: Entity<T>,
     callback: F,
 ) -> Result<Listener<E>, CallbackAllocError>
@@ -345,6 +367,7 @@ where
 {
     let reservation = store.reserve(
         Layout::new::<F>(),
+        owner,
         entity.entity_id(),
         CallbackKind::Listener {
             event_type: TypeId::of::<E>(),
@@ -359,8 +382,10 @@ where
     Ok(Listener::from_id(reservation.id))
 }
 
+/// registers a canvas callback on `entity`, released when `owner` renders again
 pub(crate) fn register_canvas_callback<T, F>(
     store: &dyn CallbackStore,
+    owner: EntityId,
     entity: Entity<T>,
     callback: F,
 ) -> Result<CallbackId, CallbackAllocError>
@@ -370,6 +395,7 @@ where
 {
     let reservation = store.reserve(
         Layout::new::<F>(),
+        owner,
         entity.entity_id(),
         CallbackKind::Canvas {
             invoke_fn: invoke_canvas_callback::<T, F>,
@@ -613,6 +639,114 @@ mod tests {
         callbacks.reset();
 
         assert_eq!(DROPS.load(Ordering::SeqCst), 1);
+    }
+
+    static RELEASE_DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    struct ReleasedCapture;
+
+    impl Drop for ReleasedCapture {
+        fn drop(&mut self) {
+            RELEASE_DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn releasing_an_owner_keeps_other_callbacks_callable() {
+        RELEASE_DROPS.store(0, Ordering::SeqCst);
+
+        let entities = TestEntityArena::<1024, 16>::default();
+        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
+        let kept = entities.insert(Counter { value: 0 }).unwrap();
+        let released = entities.insert(Counter { value: 0 }).unwrap();
+        let all_dirty = Cell::new(false);
+        let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty);
+
+        let kept_listener = Context::new_in(kept, runtime).listener(Counter::increment);
+        let released_listener = {
+            let capture = ReleasedCapture;
+
+            Context::new_in(released, runtime).listener(
+                move |counter: &mut Counter, _: &ActivateEvent, _| {
+                    let _ = &capture;
+                    counter.value += 1;
+                },
+            )
+        };
+
+        assert_eq!(callbacks.release_owner(released.entity_id()), 1);
+        // the capture is dropped right away, not when the arena resets
+        assert_eq!(RELEASE_DROPS.load(Ordering::SeqCst), 1);
+
+        let event = ActivateEvent::new(ElementId::Name("test"));
+        let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty);
+
+        assert!(matches!(
+            callbacks.invoke_listener(released_listener, &event, runtime),
+            Err(ListenerInvokeError::InvalidListener)
+        ));
+        callbacks
+            .invoke_listener(kept_listener, &event, runtime)
+            .unwrap();
+        assert_eq!(entities.read(kept, |counter| counter.value), Ok(1));
+
+        // a new render gets a new slot, so the released id stays invalid
+        let replacement = Context::new_in(released, runtime).listener(Counter::increment);
+
+        assert_ne!(replacement.id, released_listener.id);
+        assert!(matches!(
+            callbacks.invoke_listener(released_listener, &event, runtime),
+            Err(ListenerInvokeError::InvalidListener)
+        ));
+
+        callbacks.reset();
+        assert_eq!(RELEASE_DROPS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn callbacks_registered_while_rendering_belong_to_the_rendering_entity() {
+        let entities = TestEntityArena::<1024, 16>::default();
+        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
+        let parent = entities.insert(Counter { value: 0 }).unwrap();
+        let child = entities.insert(Counter { value: 0 }).unwrap();
+        let all_dirty = Cell::new(false);
+
+        let (listener, _canvas) = {
+            let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty)
+                .rendering(parent.entity_id());
+            let cx = Context::new_in(parent, runtime);
+
+            // the parent's render mounts a listener and a canvas that target the child
+            child
+                .update(&cx, |_, cx| {
+                    (cx.listener(Counter::increment), cx.canvas(|_, _| {}))
+                })
+                .unwrap()
+        };
+
+        // outside rendering, the target owns the callback
+        let update_listener = Context::new_in(
+            child,
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
+        )
+        .listener(Counter::increment);
+
+        // the child releases only the callback it registered itself. The parent releases
+        // the listener and the canvas
+        assert_eq!(callbacks.release_owner(child.entity_id()), 1);
+        assert_eq!(callbacks.release_owner(parent.entity_id()), 2);
+
+        let event = ActivateEvent::new(ElementId::Name("test"));
+        let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty);
+
+        for listener in [listener, update_listener] {
+            assert!(matches!(
+                callbacks.invoke_listener(listener, &event, runtime),
+                Err(ListenerInvokeError::InvalidListener)
+            ));
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::{callback::CallbackStore, entity::EntityStore, global::GlobalStore};
+use crate::{EntityId, callback::CallbackStore, entity::EntityStore, global::GlobalStore};
 
 /// the runtime tables that rendering, listeners and entity updates reach through a
 /// [`Context`](crate::Context)
@@ -11,6 +11,8 @@ pub struct RuntimeCx<'a> {
     pub(crate) callbacks: &'a dyn CallbackStore,
     /// set when every entity needs to render again, such as after a global changed
     pub(crate) all_dirty: &'a Cell<bool>,
+    /// the entity being rendered, which owns the callbacks registered meanwhile
+    pub(crate) rendering: Option<EntityId>,
 }
 
 impl<'a> RuntimeCx<'a> {
@@ -25,7 +27,21 @@ impl<'a> RuntimeCx<'a> {
             globals,
             callbacks,
             all_dirty,
+            rendering: None,
         }
+    }
+
+    pub(crate) fn rendering(self, entity: EntityId) -> Self {
+        Self {
+            rendering: Some(entity),
+            ..self
+        }
+    }
+
+    /// the owner of a callback registered now on `target`: the entity being rendered,
+    /// or the target itself outside rendering
+    pub(crate) fn callback_owner(self, target: EntityId) -> EntityId {
+        self.rendering.unwrap_or(target)
     }
 
     /// whether any entity needs to render again

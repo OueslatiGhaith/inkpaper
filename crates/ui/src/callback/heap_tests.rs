@@ -39,6 +39,7 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
 
     let listener = register_listener(
         &callbacks,
+        target.entity_id(),
         target,
         move |state: &mut u32, _: &ActivateEvent, cx: &mut Context<'_, u32>| {
             let address = &capture as *const Capture;
@@ -77,14 +78,20 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
     let target = entities.insert(42u32).unwrap();
     let all_dirty = Cell::new(false);
 
-    let listener =
-        register_listener(&callbacks, target, |_: &mut u32, _: &ActivateEvent, _| {}).unwrap();
-
-    let canvas = register_canvas_callback(&callbacks, target, |value, paint| {
-        assert_eq!(*value, 42);
-        paint.draw_text(paint.bounds(), text("ok"));
-    })
+    let listener = register_listener(
+        &callbacks,
+        target.entity_id(),
+        target,
+        |_: &mut u32, _: &ActivateEvent, _| {},
+    )
     .unwrap();
+
+    let canvas =
+        register_canvas_callback(&callbacks, target.entity_id(), target, |value, paint| {
+            assert_eq!(*value, 42);
+            paint.draw_text(paint.bounds(), text("ok"));
+        })
+        .unwrap();
 
     let mut painter = Painter::default();
     let bounds = Rect::new(Point::ZERO, Size::new(px(10), px(10)));
@@ -128,7 +135,8 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
 
     callbacks.reset();
 
-    let replacement = register_canvas_callback(&callbacks, target, |_, _| {}).unwrap();
+    let replacement =
+        register_canvas_callback(&callbacks, target.entity_id(), target, |_, _| {}).unwrap();
 
     assert_eq!(replacement.slot(), listener.id.slot());
     assert_ne!(replacement.generation(), listener.id.generation());
@@ -173,6 +181,7 @@ fn reset_releases_captures_and_reuses_slot_capacity() {
 
         register_listener(
             &callbacks,
+            target.entity_id(),
             target,
             move |_: &mut (), _: &ActivateEvent, _| {
                 let _ = &capture;
@@ -182,7 +191,7 @@ fn reset_releases_captures_and_reuses_slot_capacity() {
 
         let capture = Capture(drops.clone());
 
-        register_canvas_callback(&callbacks, target, move |_, _| {
+        register_canvas_callback(&callbacks, target.entity_id(), target, move |_, _| {
             let _ = &capture;
         })
         .unwrap();
@@ -202,6 +211,7 @@ fn reset_releases_captures_and_reuses_slot_capacity() {
 
     register_listener(
         &callbacks,
+        target.entity_id(),
         target,
         move |_: &mut (), _: &ActivateEvent, _| {
             let _ = &capture;
@@ -222,15 +232,63 @@ fn callback_id_limit_is_enforced_and_reset_recovers_capacity() {
     let mut callbacks = HeapCallbackArena::<0>::default();
 
     for _ in 0..=u16::MAX {
-        register_listener(&callbacks, target, |_: &mut (), _: &ActivateEvent, _| {}).unwrap();
+        register_listener(
+            &callbacks,
+            target.entity_id(),
+            target,
+            |_: &mut (), _: &ActivateEvent, _| {},
+        )
+        .unwrap();
     }
 
     assert!(matches!(
-        register_listener(&callbacks, target, |_: &mut (), _: &ActivateEvent, _| {}),
+        register_listener(
+            &callbacks,
+            target.entity_id(),
+            target,
+            |_: &mut (), _: &ActivateEvent, _| {}
+        ),
         Err(CallbackAllocError::SlotsFull)
     ));
 
     callbacks.reset();
 
-    register_listener(&callbacks, target, |_: &mut (), _: &ActivateEvent, _| {}).unwrap();
+    register_listener(
+        &callbacks,
+        target.entity_id(),
+        target,
+        |_: &mut (), _: &ActivateEvent, _| {},
+    )
+    .unwrap();
+}
+
+#[test]
+fn releasing_an_owner_frees_its_memory() {
+    let entities = HeapEntityArena::<0>::default();
+    let kept = entities.insert(()).unwrap();
+    let released = entities.insert(()).unwrap();
+    let mut callbacks = HeapCallbackArena::<0>::default();
+    let capture = [0u8; 64];
+
+    register_listener(
+        &callbacks,
+        kept.entity_id(),
+        kept,
+        move |_: &mut (), _: &ActivateEvent, _| {
+            let _ = &capture;
+        },
+    )
+    .unwrap();
+    let used = callbacks.slots.used_bytes();
+
+    register_canvas_callback(&callbacks, released.entity_id(), released, move |_, _| {
+        let _ = &capture;
+    })
+    .unwrap();
+    assert!(callbacks.slots.used_bytes() > used);
+
+    assert_eq!(callbacks.release_owner(released.entity_id()), 1);
+    assert_eq!(callbacks.slots.used_bytes(), used);
+    // the slot stays taken until reset
+    assert_eq!(callbacks.slots.len(), 2);
 }

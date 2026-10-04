@@ -76,7 +76,9 @@ impl<T: 'static> Context<'_, T> {
         E: 'static,
         F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
     {
-        register_listener(self.runtime.callbacks, self.entity, callback)
+        let owner = self.runtime.callback_owner(self.entity_id());
+
+        register_listener(self.runtime.callbacks, owner, self.entity, callback)
     }
 
     pub fn listener<E, F>(&mut self, callback: F) -> Listener<E>
@@ -92,7 +94,9 @@ impl<T: 'static> Context<'_, T> {
     where
         F: Fn(&T, &mut PaintCx<'_>) + 'static,
     {
-        let callback = register_canvas_callback(self.runtime.callbacks, self.entity, callback)?;
+        let owner = self.runtime.callback_owner(self.entity_id());
+        let callback =
+            register_canvas_callback(self.runtime.callbacks, owner, self.entity, callback)?;
 
         Ok(Canvas::from_entity_callback(callback))
     }

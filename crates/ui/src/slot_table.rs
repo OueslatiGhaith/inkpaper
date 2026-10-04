@@ -9,8 +9,8 @@
 //!
 //! 1. a place is never reused while its slot exists, so values never move and never
 //!    overlap. Growing the slot list moves slots, not values.
-//! 2. only `Live` slots hold an initialized value. Each is dropped exactly once, in
-//!    reverse reservation order.
+//! 2. only `Live` slots hold an initialized value. Each is dropped exactly once: when it
+//!    is removed, or when the table is cleared or dropped, in reverse reservation order.
 //! 3. no `RefCell` guard on the slot list is held while user code runs, so callbacks may
 //!    reserve new slots.
 //! 4. no reference to a fixed byte buffer as a whole is created while references to
@@ -65,7 +65,7 @@ pub trait ValueMemory: Default {
     /// the value's address. Only called for places that still hold memory.
     fn ptr(&self, place: &Self::Place) -> NonNull<u8>;
 
-    /// releases an abandoned place's memory early, if the memory can
+    /// releases an abandoned or removed place's memory early, if the memory can
     fn free(&self, place: &mut Self::Place);
 
     /// called once all places have been dropped
@@ -274,6 +274,7 @@ enum SlotState {
     Initializing,
     Live,
     Abandoned,
+    Removed,
 }
 
 /// why a slot has no live value
@@ -282,6 +283,7 @@ pub(crate) enum NotLive {
     Missing,
     Initializing,
     Abandoned,
+    Removed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -399,7 +401,32 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
             SlotState::Live => Ok((slot.meta, self.memory.ptr(&slot.place))),
             SlotState::Initializing => Err(NotLive::Initializing),
             SlotState::Abandoned => Err(NotLive::Abandoned),
+            SlotState::Removed => Err(NotLive::Removed),
         }
+    }
+
+    /// drops the live values whose metadata matches `predicate`, in reverse reservation
+    /// order, and releases their memory if the memory can. Their slot numbers stay
+    /// taken, so handles to them become invalid. Returns how many values were removed.
+    pub(crate) fn remove_where(&mut self, mut predicate: impl FnMut(&M) -> bool) -> usize {
+        let slots = self.slots.get_mut();
+        let mut removed = 0;
+
+        for slot in slots.iter_mut().rev() {
+            if slot.state != SlotState::Live || !predicate(&slot.meta) {
+                continue;
+            }
+
+            // mark first, so an unwinding destructor can't lead to a second drop
+            slot.state = SlotState::Removed;
+            removed += 1;
+
+            // SAFETY: live slots hold an initialized value matching `drop_fn`
+            unsafe { (slot.drop_fn)(self.memory.ptr(&slot.place).as_ptr()) };
+            self.memory.free(&mut slot.place);
+        }
+
+        removed
     }
 
     pub(crate) fn position(&self, mut predicate: impl FnMut(&M) -> bool) -> Option<usize> {
