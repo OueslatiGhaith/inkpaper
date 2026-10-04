@@ -232,7 +232,7 @@ where
         let root_node = self.frame.mount_and_expand(root, runtime)?;
 
         self.frame
-            .resolve_identities(&mut self.element_states, generation)?;
+            .resolve_identities(root_node, &mut self.element_states, generation)?;
         self.scroll_states
             .prepare(self.element_states.slot_count())?;
 

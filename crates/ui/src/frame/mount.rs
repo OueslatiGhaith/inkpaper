@@ -35,17 +35,6 @@ impl<F: FrameStorage> FrameArena<F> {
 
         element.mount(&mut cx)
     }
-    fn contains_entity(&self, entity: EntityId) -> bool {
-        self.nodes.iter().any(|node| {
-            matches!(
-                node.kind,
-                NodeKind::Entity {
-                    entity: existing,
-                    ..
-                } if existing == entity
-            )
-        })
-    }
     pub(crate) fn expand_entities(&mut self, runtime: RuntimeCx<'_>) -> Result<(), MountError> {
         let mut index = 0;
 
@@ -224,23 +213,34 @@ impl<F: FrameStorage> FrameStore for FrameArena<F> {
         entity: EntityId,
         render: EntityRenderFn,
     ) -> Result<NodeId, MountError> {
-        if self.contains_entity(entity) {
+        let Err(position) = self.entity_node_position(entity) else {
             return Err(MountError::DuplicateEntityMount(entity));
-        }
+        };
 
-        self.push_node(NodeKind::Entity {
+        // reserve the index entry first, so a mounted entity node is always indexed
+        self.entity_nodes.reserve(1, MountError::NodesFull)?;
+        let node = self.push_node(NodeKind::Entity {
             entity,
             render,
             expanded: false,
-        })
+        })?;
+
+        self.entity_nodes
+            .push((entity, node), MountError::NodesFull)?;
+        self.entity_nodes[position..].rotate_right(1);
+
+        Ok(node)
     }
 
     fn append_child(&mut self, parent: NodeId, child: NodeId) {
         let parent_idx = parent.index();
         let child_idx = child.index();
+        // a child may be mounted before its parent, so an existing subtree can be
+        // attached under a newly mounted node
+        debug_assert!(child != parent, "a frame node cannot be its own child");
         debug_assert!(
-            child_idx > parent_idx,
-            "frame children must be mounted after their parents"
+            self.nodes[child_idx].parent.is_none(),
+            "a frame node can only be attached once"
         );
 
         self.nodes[child_idx].parent = Some(parent);

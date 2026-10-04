@@ -63,7 +63,7 @@ where
         .expand_entities(runtime)
         .expect("entity expansion should succeed");
 
-    frame.resolve_identities(states, generation)?;
+    frame.resolve_identities(root, states, generation)?;
     states.sweep(generation);
 
     Ok(root)
@@ -531,6 +531,68 @@ fn rejects_duplicate_entity_mounts() {
 }
 
 #[test]
+fn indexes_mounted_entity_nodes() {
+    let entities = TestEntityArena::<2048, 16>::default();
+    let callbacks = TestCallbackArena::<2048, 16>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
+    let app = AppContext::from_globals(&globals);
+    let mut frame = FrameArena::<TestFrame<32, 256>>::default();
+    let all_dirty = Cell::new(false);
+
+    let unmounted = entities.insert(Child).unwrap();
+    let child = entities.insert(Child).unwrap();
+    let parent = entities.insert(Parent { child }).unwrap();
+
+    let root = frame.mount(parent, app).unwrap();
+    frame
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
+        .unwrap();
+
+    assert_eq!(frame.entity_node(parent.entity_id()), Some(root));
+    let child_node = frame.entity_node(child.entity_id()).unwrap();
+    assert!(matches!(
+        frame.node(child_node).kind,
+        NodeKind::Entity { entity, .. } if entity == child.entity_id()
+    ));
+    assert_eq!(frame.entity_node(unmounted.entity_id()), None);
+
+    frame.clear();
+
+    assert_eq!(frame.entity_node(parent.entity_id()), None);
+}
+
+#[test]
+fn identities_resolve_in_tree_order_when_children_precede_parents() {
+    let entities = TestEntityArena::<1024, 4>::default();
+    let mut states = ElementStateTable::<TestElementStates<8>>::default();
+    let mut frame = FrameArena::<TestFrame<8, 0>>::default();
+
+    let owner = entities.insert(Child).unwrap();
+
+    // the child is mounted before the parent it is attached to, as when an existing
+    // subtree moves under a newly mounted node
+    let root = frame
+        .push_entity(owner.entity_id(), render_entity::<Child>)
+        .unwrap();
+    let child = frame.push_div(Style::default()).unwrap();
+    frame.identify(child, ElementId::Name("child"));
+    let parent = frame.push_div(Style::default()).unwrap();
+    frame.identify(parent, ElementId::Name("parent"));
+    frame.append_child(parent, child);
+    frame.append_child(root, parent);
+
+    frame.resolve_identities(root, &mut states, 1).unwrap();
+
+    let parent_state = state_id(&frame, parent);
+    let child_entry = states.entry(state_id(&frame, child)).unwrap();
+
+    assert_eq!(
+        child_entry.key.parent,
+        IdentityParent::Element(parent_state)
+    );
+}
+
+#[test]
 fn expanding_entities_twice_does_not_duplicate_nodes() {
     let entities = TestEntityArena::<2048, 16>::default();
     let callbacks = TestCallbackArena::<2048, 16>::default();
@@ -950,12 +1012,12 @@ fn duplicate_ids_in_same_scope_are_rejected() {
 
     let app = entities.insert(DuplicateApp).unwrap();
 
-    frame.mount(app, cx).unwrap();
+    let root = frame.mount(app, cx).unwrap();
     frame
         .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
-    let result = frame.resolve_identities(&mut states, 1);
+    let result = frame.resolve_identities(root, &mut states, 1);
 
     assert_eq!(
         result,
@@ -1288,13 +1350,13 @@ fn identity_resolution_reports_state_capacity_exhaustion() {
 
     let app = entities.insert(TooManyStatesApp).unwrap();
 
-    frame.mount(app, cx).unwrap();
+    let root = frame.mount(app, cx).unwrap();
     frame
         .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     assert_eq!(
-        frame.resolve_identities(&mut states, 1,),
+        frame.resolve_identities(root, &mut states, 1,),
         Err(IdentityError::StatesFull)
     );
 }

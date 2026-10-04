@@ -157,6 +157,10 @@ impl From<EntityAccessError> for MountError {
     }
 }
 
+const fn entity_order(entity: EntityId) -> (u16, u16) {
+    (entity.slot(), entity.generation())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MeasurementCache {
     available: Size,
@@ -172,6 +176,8 @@ enum NodeCache {
 
 pub(crate) struct FrameArena<F: FrameStorage> {
     pub(crate) nodes: FrameBuffer<Node, F::Nodes<Node>>,
+    /// the node of each mounted entity, sorted by entity id
+    entity_nodes: FrameBuffer<(EntityId, NodeId), F::Nodes<(EntityId, NodeId)>>,
     pub(crate) event_bindings: FrameBuffer<EventBinding, F::Nodes<EventBinding>>,
     text: FrameBuffer<u8, F::Text>,
     node_cache: FrameBuffer<NodeCache, F::Nodes<NodeCache>>,
@@ -188,6 +194,7 @@ impl<F: FrameStorage> Default for FrameArena<F> {
     fn default() -> Self {
         Self {
             nodes: FrameBuffer::new(),
+            entity_nodes: FrameBuffer::new(),
             event_bindings: FrameBuffer::new(),
             text: FrameBuffer::new(),
             node_cache: FrameBuffer::new(),
@@ -220,6 +227,7 @@ impl<F: FrameStorage> FrameArena<F> {
 
     pub fn clear(&mut self) {
         self.nodes.clear();
+        self.entity_nodes.clear();
         self.text.clear();
         self.event_bindings.clear();
         self.node_cache.clear();
@@ -231,6 +239,7 @@ impl<F: FrameStorage> FrameArena<F> {
 
     pub(crate) fn shrink_to_fit(&mut self) {
         self.nodes.shrink_to_fit();
+        self.entity_nodes.shrink_to_fit();
         self.node_cache.shrink_to_fit();
         self.event_bindings.shrink_to_fit();
         self.text.shrink_to_fit();
@@ -243,6 +252,18 @@ impl<F: FrameStorage> FrameArena<F> {
 
     pub(crate) fn node_mut(&mut self, id: NodeId) -> &mut Node {
         &mut self.nodes[id.index()]
+    }
+
+    /// the node an entity is mounted at, if it is in this frame
+    pub(crate) fn entity_node(&self, entity: EntityId) -> Option<NodeId> {
+        self.entity_node_position(entity)
+            .ok()
+            .map(|position| self.entity_nodes[position].1)
+    }
+
+    fn entity_node_position(&self, entity: EntityId) -> Result<usize, usize> {
+        self.entity_nodes
+            .binary_search_by_key(&entity_order(entity), |&(entity, _)| entity_order(entity))
     }
 
     /// a div's style, with its focused and pressed styles applied while its element is

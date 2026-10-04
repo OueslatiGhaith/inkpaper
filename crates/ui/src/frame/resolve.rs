@@ -28,26 +28,30 @@ impl<F: FrameStorage> FrameArena<F> {
 
         None
     }
+    /// resolves the identities of the tree under `root`.
+    ///
+    /// walks in tree order rather than arena order, so each node's identity scope is
+    /// resolved before the node itself wherever its subtree sits in the arena
     pub(crate) fn resolve_identities<E: ElementStateStorage>(
         &mut self,
+        root: NodeId,
         states: &mut ElementStateTable<E>,
         frame_generation: u32,
     ) -> Result<(), IdentityError> {
-        let len = self.nodes.len();
+        let mut current = Some(root);
 
-        for index in 0..len {
-            let node_id = NodeId::new(index as u16);
-            let Some(local_id) = self.nodes[index].element_id else {
-                continue;
-            };
+        while let Some(node_id) = current {
+            if let Some(local_id) = self.node(node_id).element_id {
+                let parent = self
+                    .identity_parent(node_id)
+                    .ok_or(IdentityError::MissingEntityScope { node: node_id })?;
 
-            let parent = self
-                .identity_parent(node_id)
-                .ok_or(IdentityError::MissingEntityScope { node: node_id })?;
+                let state_id = states.resolve(parent, local_id, frame_generation)?;
 
-            let state_id = states.resolve(parent, local_id, frame_generation)?;
+                self.node_mut(node_id).element_state_id = Some(state_id);
+            }
 
-            self.nodes[index].element_state_id = Some(state_id);
+            current = self.next_depth_first_node(node_id);
         }
 
         Ok(())
