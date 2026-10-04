@@ -84,6 +84,10 @@ pub trait RenderRuntimeApi {
 
     fn take_render_invalidation(&self) -> RenderInvalidation;
 
+    /// the damage to paint after a rebuild and the layout that follows it, in place of
+    /// the damage of the taken [`Invalidation::Rebuild`](crate::Invalidation::Rebuild)
+    fn rebuild_damage(&self) -> DamageRegion;
+
     fn paint_with_damage<P>(
         &mut self,
         damage: DamageRegion,
@@ -215,6 +219,10 @@ where
 
     fn take_render_invalidation(&self) -> RenderInvalidation {
         self.take_render_invalidation()
+    }
+
+    fn rebuild_damage(&self) -> DamageRegion {
+        self.rebuild_damage()
     }
 
     fn paint_with_damage<P>(

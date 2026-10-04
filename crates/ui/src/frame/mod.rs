@@ -1,7 +1,7 @@
 use crate::{
-    CanvasDraw, CanvasStyle, ElementId, EntityAccessError, EntityId, EntityRenderFn, EventBinding,
-    EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size, Style,
-    StylePatch, SvgSource, SvgStyle, TextStyle, element::state::ElementStateId,
+    CanvasDraw, CanvasStyle, DamageRegion, ElementId, EntityAccessError, EntityId, EntityRenderFn,
+    EventBinding, EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size,
+    Style, StylePatch, SvgSource, SvgStyle, TextStyle, element::state::ElementStateId,
     frame::storage::FrameBuffer, interaction::scroll::ScrollAxes, storage::FrameStorage,
 };
 #[cfg(feature = "metrics")]
@@ -191,6 +191,15 @@ pub(crate) struct FrameArena<F: FrameStorage> {
     /// the entity nodes a partial rebuild rendered again, none inside another
     rerendered_nodes: FrameBuffer<NodeId, F::Nodes<NodeId>>,
     detached_nodes: usize,
+    /// what the re-rendered subtrees painted before the last partial rebuild, while the
+    /// layout after it is pending. `None` when unknown
+    rerendered_damage: Option<DamageRegion>,
+    /// while the layout after a partial rebuild is pending, the first node it mounted.
+    /// Earlier nodes were laid out before
+    tracked_layout_start: Option<usize>,
+    /// a node outside the re-rendered subtrees moved or scrolled since the partial
+    /// rebuild
+    layout_changed_outside: bool,
     pub(crate) event_bindings: FrameBuffer<EventBinding, F::Nodes<EventBinding>>,
     text: FrameBuffer<u8, F::Text>,
     node_cache: FrameBuffer<NodeCache, F::Nodes<NodeCache>>,
@@ -212,6 +221,9 @@ impl<F: FrameStorage> Default for FrameArena<F> {
             stale_entities: FrameBuffer::new(),
             rerendered_nodes: FrameBuffer::new(),
             detached_nodes: 0,
+            rerendered_damage: None,
+            tracked_layout_start: None,
+            layout_changed_outside: false,
             event_bindings: FrameBuffer::new(),
             text: FrameBuffer::new(),
             node_cache: FrameBuffer::new(),
@@ -249,6 +261,9 @@ impl<F: FrameStorage> FrameArena<F> {
         self.stale_entities.clear();
         self.rerendered_nodes.clear();
         self.detached_nodes = 0;
+        self.rerendered_damage = None;
+        self.tracked_layout_start = None;
+        self.layout_changed_outside = false;
         self.text.clear();
         self.event_bindings.clear();
         self.node_cache.clear();

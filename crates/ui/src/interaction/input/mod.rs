@@ -263,7 +263,11 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     pub(crate) fn set_scroll_offset(&mut self, node: NodeId, offset: Offset) {
-        self.node_mut(node).interaction.scroll_offset = offset;
+        let previous =
+            core::mem::replace(&mut self.node_mut(node).interaction.scroll_offset, offset);
+        if previous != offset {
+            self.note_layout_change(node);
+        }
     }
 
     /// scroll containers seen for the first time start at their requested child.
@@ -352,7 +356,11 @@ impl<F: FrameStorage> FrameArena<F> {
 
             states.set_offset(element, next);
 
-            self.node_mut(node_id).interaction.scroll_offset = next;
+            let previous =
+                core::mem::replace(&mut self.node_mut(node_id).interaction.scroll_offset, next);
+            if previous != next {
+                self.note_layout_change(node_id);
+            }
         }
     }
 

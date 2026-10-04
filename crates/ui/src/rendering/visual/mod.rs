@@ -456,6 +456,20 @@ impl<F: FrameStorage> FrameArena<F> {
         self.node(node).layout.bounds.translated(translation)
     }
 
+    /// the screen area the subtree under `node` paints, as of the last layout. `None`
+    /// when nodes were mounted since
+    pub(crate) fn visual_subtree_damage(&self, root: NodeId, node: NodeId) -> Option<DamageRegion> {
+        let bounds = self.subtree_paint_bounds(node)?;
+        let context = self.visual_context_for_node(root, node);
+
+        Some(
+            match context.clip.intersect(context.translate_rect(bounds)) {
+                ClipRegion::Rect(rect) => DamageRegion::from_rect(rect),
+                ClipRegion::Unbounded | ClipRegion::Empty => DamageRegion::none(),
+            },
+        )
+    }
+
     fn visual_context_for_node(&self, root: NodeId, node: NodeId) -> VisualContext {
         if node == root {
             return VisualContext::ROOT;

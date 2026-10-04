@@ -318,8 +318,7 @@ fn render_invalidation(
         return None;
     }
 
-    let damage = normalize_damage(invalidation.damage());
-    if damage.is_none() {
+    if normalize_damage(invalidation.damage()).is_none() {
         return None;
     }
 
@@ -331,14 +330,14 @@ fn render_invalidation(
 
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
 
-    let (paint_report, eink_report) = {
+    let (damage, paint_report, eink_report) = {
         let mut painter = EInkPainter::new(&mut display)
             .with_coverage_blitter(Framebuffer::draw_coverage_bitmap)
             .with_ui_mode(EInkUiMode::BinaryDither);
 
-        match invalidation.kind() {
+        let damage = match invalidation.kind() {
             Invalidation::None => return None,
-            Invalidation::Paint => {}
+            Invalidation::Paint => invalidation.damage(),
             Invalidation::Layout => {
                 let _trace = inkpaper_trace::span!(
                     target: "ui.render",
@@ -348,6 +347,8 @@ fn render_invalidation(
                 runtime
                     .layout(DISPLAY_SIZE)
                     .expect("layout requires a mounted root");
+
+                invalidation.damage()
             }
 
             Invalidation::Rebuild => {
@@ -370,7 +371,14 @@ fn render_invalidation(
                         .layout(DISPLAY_SIZE)
                         .expect("rebuilt UI must have a root");
                 }
+
+                // a partial rebuild narrows the damage to what changed
+                runtime.rebuild_damage()
             }
+        };
+        let damage = normalize_damage(damage);
+        if damage.is_none() {
+            return None;
         }
 
         {
@@ -406,7 +414,7 @@ fn render_invalidation(
 
         let eink_report = painter.report();
 
-        (paint_report, eink_report)
+        (damage, paint_report, eink_report)
     };
 
     let physical_damage = {

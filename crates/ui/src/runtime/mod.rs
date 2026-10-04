@@ -68,6 +68,10 @@ where
     full_rebuild_pending: Cell<bool>,
     /// whether a rebuild renders only the entities that need it
     partial_rebuilds: bool,
+    /// the damage of the last rebuild, once the layout after it ran
+    rebuild_damage: Option<DamageRegion>,
+    /// the visual damage taken along with a rebuild, which its damage includes
+    taken_visual_damage: Cell<DamageRegion>,
     visual_invalidation: Cell<RenderInvalidation>,
     frame_generation: u32,
     root_entity: Option<RuntimeRoot>,
@@ -94,6 +98,8 @@ where
             all_dirty: Cell::new(false),
             full_rebuild_pending: Cell::new(false),
             partial_rebuilds: false,
+            rebuild_damage: None,
+            taken_visual_damage: Cell::new(DamageRegion::none()),
             visual_invalidation: Cell::new(RenderInvalidation::none()),
             frame_generation: 0,
             root_entity: None,
@@ -216,6 +222,7 @@ where
     fn rebuild_partially(&mut self) -> Result<(), FrameBuildError> {
         let root = self.root.ok_or(FrameBuildError::RootNotSet)?;
         let callbacks = self.callbacks.mark();
+        self.rebuild_damage = None;
 
         self.visual_invalidation.set(RenderInvalidation::none());
         let generation = self.next_frame_generation();
@@ -273,6 +280,8 @@ where
         // if render/event logic calls notify during this build, it becomes dirty again
         self.runtime_cx().clear_dirty();
         self.full_rebuild_pending.set(false);
+        self.rebuild_damage = None;
+        self.taken_visual_damage.set(DamageRegion::none());
         self.visual_invalidation.set(RenderInvalidation::none());
         let generation = self.next_frame_generation();
 
@@ -378,6 +387,12 @@ where
     ) -> Option<Size> {
         let root = self.root?;
         let size = self.frame.layout(root, viewport, text_measurer);
+        self.finish_layout(root);
+
+        Some(size)
+    }
+
+    fn finish_layout(&mut self, root: NodeId) {
         self.frame
             .apply_initial_scroll_offsets(&mut self.scroll_states);
         self.frame.clamp_scroll_offset(&mut self.scroll_states);
@@ -387,7 +402,23 @@ where
                 .scroll_element_into_view(root, element, &mut self.scroll_states);
         }
 
-        Some(size)
+        if self.rebuild_damage.is_none() {
+            self.rebuild_damage = Some(match self.frame.take_rerendered_damage(root) {
+                Some(damage) => damage.merge(self.taken_visual_damage.get()),
+                None => DamageRegion::full(),
+            });
+            self.taken_visual_damage.set(DamageRegion::none());
+        }
+    }
+
+    /// the damage to paint after a rebuild and the layout that follows it.
+    ///
+    /// a full rebuild damages the whole viewport. After a partial rebuild, it is what the
+    /// re-rendered entities painted before and paint now, along with the damage taken
+    /// with the rebuild, unless the rest of the frame moved. Painters should use it
+    /// in place of the damage of a taken [`Invalidation::Rebuild`]
+    pub fn rebuild_damage(&self) -> DamageRegion {
+        self.rebuild_damage.unwrap_or(DamageRegion::full())
     }
 
     pub fn paint<P>(&mut self, painter: &mut P) -> Result<Option<PaintReport>, P::Error>
@@ -571,6 +602,8 @@ where
             if self.all_dirty.replace(false) {
                 self.full_rebuild_pending.set(true);
             }
+            self.taken_visual_damage
+                .set(self.taken_visual_damage.get().merge(visual.damage()));
             self.entities.take_dirty();
             RenderInvalidation::full(Invalidation::Rebuild)
         } else {
@@ -1069,14 +1102,7 @@ where
         let root = self.root?;
         let size = self.frame.layout(root, viewport, &self.resources);
 
-        self.frame
-            .apply_initial_scroll_offsets(&mut self.scroll_states);
-        self.frame.clamp_scroll_offset(&mut self.scroll_states);
-
-        if let Some(element) = self.pending_scroll_into_view.take() {
-            self.frame
-                .scroll_element_into_view(root, element, &mut self.scroll_states);
-        }
+        self.finish_layout(root);
 
         Some(size)
     }

@@ -10,7 +10,7 @@
 use super::{FrameArena, FrameStore, MountError, NodeId, NodeKind};
 
 use crate::{
-    EntityId, RuntimeCx, count_metric,
+    DamageRegion, EntityId, RuntimeCx, count_metric,
     element::state::{ElementStateTable, IdentityError},
     storage::{ElementStateStorage, FrameStorage},
 };
@@ -60,21 +60,27 @@ impl<F: FrameStorage> FrameArena<F> {
         let mut current = Some(root);
 
         while let Some(node) = current {
-            let NodeKind::Entity { entity, .. } = self.node(node).kind else {
-                current = self.next_depth_first_node_within(node, root);
-                continue;
-            };
-            if !runtime.entities.needs_render(entity) {
-                current = self.next_depth_first_node_within(node, root);
+            if let NodeKind::Entity { entity, .. } = self.node(node).kind
+                && runtime.entities.needs_render(entity)
+            {
+                self.rerendered_nodes.push(node, MountError::NodesFull)?;
+                current = self.next_node_after_subtree_within(node, root);
                 continue;
             }
 
-            self.rerendered_nodes.push(node, MountError::NodesFull)?;
+            current = self.next_depth_first_node_within(node, root);
+        }
+
+        // measure what the old subtrees painted before mounting invalidates the layout
+        self.rerendered_damage = self.rerendered_subtrees_damage(root);
+        self.tracked_layout_start = self.rerendered_damage.map(|_| start);
+        self.layout_changed_outside = false;
+
+        for index in 0..self.rerendered_nodes.len() {
+            let node = self.rerendered_nodes[index];
+
             self.detach_content(node)?;
             self.render_entity_node(node, runtime)?;
-
-            // the new subtree is expanded below, with the other new nodes
-            current = self.next_node_after_subtree_within(node, root);
         }
 
         self.expand_entities_from(start, runtime)?;
@@ -88,6 +94,56 @@ impl<F: FrameStorage> FrameArena<F> {
         }
 
         Ok(())
+    }
+
+    /// the damage of the last partial rebuild, once the layout after it has run: what
+    /// the re-rendered subtrees painted before and paint now. `None` when the rest of
+    /// the frame moved or scrolled, or the old paint area is unknown.
+    ///
+    /// stops tracking layout changes, so only the first layout after a partial rebuild
+    /// reports its damage
+    pub(crate) fn take_rerendered_damage(&mut self, root: NodeId) -> Option<DamageRegion> {
+        let previous = self.rerendered_damage.take();
+        let tracked = self.tracked_layout_start.take().is_some();
+        if !tracked || self.layout_changed_outside {
+            return None;
+        }
+
+        Some(previous?.merge(self.rerendered_subtrees_damage(root)?))
+    }
+
+    fn rerendered_subtrees_damage(&self, root: NodeId) -> Option<DamageRegion> {
+        let mut damage = DamageRegion::none();
+
+        for &node in self.rerendered_nodes.iter() {
+            let content = self.node(node).first_child?;
+            damage = damage.merge(self.visual_subtree_damage(root, content)?);
+        }
+
+        Some(damage)
+    }
+
+    /// records that layout changed a node's bounds or scroll offset, which needs full
+    /// damage when the node is outside the re-rendered subtrees
+    pub(crate) fn note_layout_change(&mut self, node: NodeId) {
+        let Some(start) = self.tracked_layout_start else {
+            return;
+        };
+        // new nodes are all inside the re-rendered subtrees
+        if self.layout_changed_outside || node.index() >= start {
+            return;
+        }
+
+        let mut current = Some(node);
+        while let Some(ancestor) = current {
+            if self.rerendered_nodes.contains(&ancestor) {
+                return;
+            }
+
+            current = self.node(ancestor).parent;
+        }
+
+        self.layout_changed_outside = true;
     }
 
     /// renders the unexpanded entity nodes from `start` on, including the ones those

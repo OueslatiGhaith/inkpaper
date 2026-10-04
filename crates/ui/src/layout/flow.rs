@@ -414,7 +414,13 @@ impl<F: FrameStorage> FrameArena<F> {
             _ => origin,
         };
 
-        self.node_mut(node).layout.bounds = Rect::new(positioned_origin, size);
+        let bounds = Rect::new(positioned_origin, size);
+        let previous_bounds = core::mem::replace(&mut self.node_mut(node).layout.bounds, bounds);
+        let is_entity = matches!(self.node(node).kind, NodeKind::Entity { .. });
+        // an entity node's bounds are final once its rendered root is laid out
+        if !is_entity && previous_bounds != bounds {
+            self.note_layout_change(node);
+        }
         let own_bounds = self.own_paint_bounds(node);
 
         match self.node(node).kind {
@@ -439,12 +445,21 @@ impl<F: FrameStorage> FrameArena<F> {
                         // keep the entity's bounds synchronized with that root
                         let child_bounds = self.node(child).layout.bounds;
                         self.node_mut(node).layout.bounds = child_bounds;
+                        if previous_bounds != child_bounds {
+                            self.note_layout_change(node);
+                        }
 
                         self.set_subtree_paint_bounds(child, child_subtree);
 
                         child_subtree
                     }
-                    None => own_bounds,
+                    None => {
+                        if previous_bounds != bounds {
+                            self.note_layout_change(node);
+                        }
+
+                        own_bounds
+                    }
                 }
             }
             NodeKind::Div { .. } => {

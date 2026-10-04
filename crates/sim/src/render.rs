@@ -75,17 +75,19 @@ where
 {
     let invalidation = runtime.take_render_invalidation();
 
-    match invalidation.kind() {
+    let damage = match invalidation.kind() {
         Invalidation::None => {
             return;
         }
 
-        Invalidation::Paint => {}
+        Invalidation::Paint => invalidation.damage(),
 
         Invalidation::Layout => {
             runtime
                 .layout(DISPLAY_SIZE)
                 .expect("layout requires a mounted root");
+
+            invalidation.damage()
         }
 
         Invalidation::Rebuild => {
@@ -94,10 +96,13 @@ where
             runtime
                 .layout(DISPLAY_SIZE)
                 .expect("rebuilt UI must have a root");
-        }
-    }
 
-    paint_ui(runtime, display, invalidation.damage());
+            // a partial rebuild narrows the damage to what changed
+            runtime.rebuild_damage()
+        }
+    };
+
+    paint_ui(runtime, display, damage);
 }
 
 pub(super) fn ui_point(point: EgPoint) -> Point {
