@@ -22,9 +22,11 @@ use crate::{
 use crate::{GlyphCacheMetrics, PerformanceMetrics};
 
 mod api;
+mod cx;
 mod root;
 
 pub use api::{RenderRuntimeApi, ResourceRuntimeApi, RuntimeApi};
+pub(crate) use cx::RuntimeCx;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameBuildError {
@@ -59,7 +61,9 @@ where
     scroll_states: ScrollStateTable<S::ElementStates>,
     resources: RESOURCES,
 
-    notified: Cell<bool>,
+    /// every entity needs to render again. Entities changed one at a time are marked
+    /// in `entities`
+    all_dirty: Cell<bool>,
     visual_invalidation: Cell<RenderInvalidation>,
     frame_generation: u32,
     root_entity: Option<RuntimeRoot>,
@@ -83,7 +87,7 @@ where
             element_states: ElementStateTable::default(),
             scroll_states: ScrollStateTable::default(),
             resources: RESOURCES::default(),
-            notified: Cell::new(false),
+            all_dirty: Cell::new(false),
             visual_invalidation: Cell::new(RenderInvalidation::none()),
             frame_generation: 0,
             root_entity: None,
@@ -106,13 +110,7 @@ where
     where
         T: 'static,
     {
-        create_entity(
-            &self.entities,
-            &self.globals,
-            &self.callbacks,
-            &self.notified,
-            build,
-        )
+        create_entity(self.runtime_cx(), build)
     }
 
     pub fn create_root<T>(
@@ -136,7 +134,7 @@ where
 
         // changing the registered root requires a full rebuild, but keep the currently
         // mounted frame alive until that rebuild occurs.
-        self.notified.set(true);
+        self.all_dirty.set(true);
     }
 
     pub fn update<T, R>(
@@ -147,15 +145,18 @@ where
     where
         T: 'static,
     {
-        let cx = Context::from_parts(
-            entity,
+        let cx = Context::new_in(entity, self.runtime_cx());
+
+        entity.update(&cx, update)
+    }
+
+    fn runtime_cx(&self) -> RuntimeCx<'_> {
+        RuntimeCx::new(
             &self.entities,
             &self.globals,
             &self.callbacks,
-            &self.notified,
-        );
-
-        entity.update(&cx, update)
+            &self.all_dirty,
+        )
     }
 
     fn next_frame_generation(&mut self) -> u32 {
@@ -183,7 +184,7 @@ where
         self.callbacks.reset();
         // consume the previous dirty request.
         // if render/event logic calls notify during this build, it becomes dirty again
-        self.notified.set(false);
+        self.runtime_cx().clear_dirty();
         self.visual_invalidation.set(RenderInvalidation::none());
         let generation = self.next_frame_generation();
 
@@ -222,13 +223,13 @@ where
         root: RuntimeRoot,
         generation: u32,
     ) -> Result<NodeId, FrameBuildError> {
-        let root_node = self.frame.mount_and_expand(
-            root,
+        let runtime = RuntimeCx::new(
             &self.entities,
             &self.globals,
             &self.callbacks,
-            &self.notified,
-        )?;
+            &self.all_dirty,
+        );
+        let root_node = self.frame.mount_and_expand(root, runtime)?;
 
         self.frame
             .resolve_identities(&mut self.element_states, generation)?;
@@ -278,13 +279,8 @@ where
     where
         E: 'static,
     {
-        self.callbacks.invoke_listener(
-            listener,
-            event,
-            &self.entities,
-            &self.globals,
-            &self.notified,
-        )
+        self.callbacks
+            .invoke_listener(listener, event, self.runtime_cx())
     }
 
     pub fn layout_with_measurer(
@@ -443,7 +439,7 @@ where
 
     pub fn render_invalidation(&self) -> RenderInvalidation {
         let visual = self.visual_invalidation.get();
-        if self.notified.get() {
+        if self.runtime_cx().is_dirty() {
             visual.merge(RenderInvalidation::full(Invalidation::Rebuild))
         } else {
             visual
@@ -481,7 +477,9 @@ where
     pub fn take_render_invalidation(&self) -> RenderInvalidation {
         let visual = self.visual_invalidation.replace(RenderInvalidation::none());
 
-        let application = if self.notified.replace(false) {
+        let runtime = self.runtime_cx();
+        let application = if runtime.is_dirty() {
+            runtime.clear_dirty();
             RenderInvalidation::full(Invalidation::Rebuild)
         } else {
             RenderInvalidation::none()
@@ -911,7 +909,7 @@ where
         G: Global,
     {
         self.globals.set(value)?;
-        self.notified.set(true);
+        self.all_dirty.set(true);
 
         Ok(())
     }
@@ -942,7 +940,7 @@ where
     where
         G: Global,
     {
-        GlobalMut::acquire(&self.globals, &self.notified)
+        GlobalMut::acquire(&self.globals, &self.all_dirty)
     }
 
     pub fn global_mut<G>(&self) -> GlobalMut<'_, G>
@@ -1036,7 +1034,7 @@ where
     ) -> Result<ImageSource, ImageRegistryError> {
         let source = self.resources.register_owned_image(image)?;
 
-        self.notified.set(true);
+        self.all_dirty.set(true);
 
         Ok(source)
     }
@@ -1044,7 +1042,7 @@ where
     #[cfg(feature = "alloc")]
     pub fn clear_owned_images(&mut self) {
         self.resources.clear_owned_images();
-        self.notified.set(true);
+        self.all_dirty.set(true);
     }
 
     pub fn clear_glyph_cache(&mut self) {
@@ -1067,5 +1065,104 @@ where
     #[cfg(feature = "metrics")]
     pub const fn glyph_cache_metrics(&self) -> GlyphCacheMetrics {
         self.resources.glyph_cache_metrics()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{entity::EntityStore, *};
+
+    type TestRuntime = Runtime<TestStorage<1024, 8, 1024, 8, 16, 64, 8, 64, 2>>;
+
+    struct Counter {
+        value: i32,
+    }
+
+    struct Theme;
+
+    impl Global for Theme {}
+
+    impl Render for Counter {
+        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            if self.value < 0 {
+                // a render that notifies keeps its entity dirty for the next frame
+                cx.notify();
+            }
+
+            div()
+        }
+    }
+
+    fn notify(runtime: &TestRuntime, entity: Entity<Counter>) {
+        runtime
+            .update(entity, |counter, cx| {
+                counter.value += 1;
+                cx.notify();
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn notify_marks_only_the_notifying_entity() {
+        let runtime = TestRuntime::default();
+        let first = runtime.create(|_| Counter { value: 0 }).unwrap();
+        let second = runtime.create(|_| Counter { value: 0 }).unwrap();
+
+        assert_eq!(runtime.invalidation(), Invalidation::None);
+
+        notify(&runtime, first);
+
+        assert!(runtime.entities.is_dirty(first.entity_id()));
+        assert!(!runtime.entities.is_dirty(second.entity_id()));
+        assert!(!runtime.all_dirty.get());
+        assert_eq!(runtime.invalidation(), Invalidation::Rebuild);
+    }
+
+    #[test]
+    fn taking_the_invalidation_clears_dirty_entities() {
+        let runtime = TestRuntime::default();
+        let counter = runtime.create(|_| Counter { value: 0 }).unwrap();
+
+        notify(&runtime, counter);
+
+        assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
+        assert!(!runtime.entities.is_dirty(counter.entity_id()));
+        assert_eq!(runtime.invalidation(), Invalidation::None);
+    }
+
+    #[test]
+    fn global_changes_mark_every_entity() {
+        let mut runtime = TestRuntime::default();
+
+        runtime.set_global(Theme).unwrap();
+
+        assert!(runtime.all_dirty.get());
+        assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
+        assert!(!runtime.all_dirty.get());
+
+        drop(runtime.global_mut::<Theme>());
+
+        assert!(runtime.all_dirty.get());
+    }
+
+    #[test]
+    fn rebuild_clears_dirty_entities_except_those_notified_while_rendering() {
+        let mut runtime = TestRuntime::default();
+        let root = runtime.create_root(|_| Counter { value: 0 }).unwrap();
+
+        notify(&runtime, root);
+        runtime.rebuild().unwrap();
+
+        assert!(!runtime.entities.is_dirty(root.entity_id()));
+        assert!(!runtime.all_dirty.get());
+        assert_eq!(runtime.invalidation(), Invalidation::None);
+
+        runtime
+            .update(root, |counter, _| counter.value = -1)
+            .unwrap();
+        runtime.rebuild().unwrap();
+
+        assert!(runtime.entities.is_dirty(root.entity_id()));
+        assert_eq!(runtime.invalidation(), Invalidation::Rebuild);
     }
 }

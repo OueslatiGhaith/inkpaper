@@ -34,7 +34,7 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
     let callbacks = HeapCallbackArena::<1>::default();
     let globals = HeapGlobalArena::<0>::default();
     let target = entities.insert(0u32).unwrap();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
     let capture = Capture(42);
 
     let listener = register_listener(
@@ -61,9 +61,7 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
         .invoke_listener(
             listener,
             &ActivateEvent::new(ElementId::Name("test")),
-            &entities,
-            &globals,
-            &notified,
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         )
         .unwrap();
 
@@ -77,7 +75,7 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
     let mut callbacks = HeapCallbackArena::<0>::default();
     let globals = HeapGlobalArena::<0>::default();
     let target = entities.insert(42u32).unwrap();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let listener =
         register_listener(&callbacks, target, |_: &mut u32, _: &ActivateEvent, _| {}).unwrap();
@@ -100,9 +98,7 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
         callbacks.invoke_listener(
             Listener::<u32>::from_id(listener.id),
             &0,
-            &entities,
-            &globals,
-            &notified
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty)
         ),
         Err(ListenerInvokeError::EventTypeMismatch)
     );
@@ -116,9 +112,7 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
         callbacks.invoke_listener(
             Listener::<ActivateEvent>::from_id(canvas),
             &ActivateEvent::new(ElementId::Name("test")),
-            &entities,
-            &globals,
-            &notified
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty)
         ),
         Err(ListenerInvokeError::InvalidListener)
     );
@@ -143,9 +137,7 @@ fn listener_and_canvas_validation_survive_slot_reuse() {
         callbacks.invoke_listener(
             listener,
             &ActivateEvent::new(ElementId::Name("test")),
-            &entities,
-            &globals,
-            &notified
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty)
         ),
         Err(ListenerInvokeError::InvalidListener)
     );

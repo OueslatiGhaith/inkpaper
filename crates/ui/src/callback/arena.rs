@@ -1,12 +1,11 @@
-use core::{alloc::Layout, any::TypeId, cell::Cell, ptr::NonNull};
+use core::{alloc::Layout, any::TypeId, ptr::NonNull};
 
 #[cfg(feature = "alloc")]
 use crate::slot_table::HeapSlots;
 use crate::{
-    BorrowKind, Context, Entity, EntityAccessError, EntityId, Listener, PaintCx,
+    BorrowKind, Context, Entity, EntityAccessError, EntityId, Listener, PaintCx, RuntimeCx,
     callback::CallbackId,
     entity::{EntityStore, RawEntityBorrow},
-    global::GlobalStore,
     slot_table::{FixedSlots, ReserveError, SlotStorage, SlotTable},
 };
 
@@ -52,10 +51,7 @@ type ListenerInvokeFn = unsafe fn(
     closure: *const u8,
     target: EntityId,
     event: *const u8,
-    entities: &dyn EntityStore,
-    globals: &dyn GlobalStore,
-    callbacks: &dyn CallbackStore,
-    notified: &Cell<bool>,
+    runtime: RuntimeCx<'_>,
 ) -> Result<(), ListenerInvokeError>;
 
 type CanvasInvokeFn = unsafe fn(
@@ -173,13 +169,12 @@ impl<S: SlotStorage> CallbackArena<S> {
         self.slots.live(usize::from(id.slot())).ok()
     }
 
+    /// runs a listener of this arena. `runtime` must refer to this arena as its callbacks
     pub(crate) fn invoke_listener<E>(
         &self,
         listener: Listener<E>,
         event: &E,
-        entities: &dyn EntityStore,
-        globals: &dyn GlobalStore,
-        notified: &Cell<bool>,
+        runtime: RuntimeCx<'_>,
     ) -> Result<(), ListenerInvokeError>
     where
         E: 'static,
@@ -207,10 +202,7 @@ impl<S: SlotStorage> CallbackArena<S> {
                 closure.as_ptr(),
                 meta.target,
                 event as *const E as *const u8,
-                entities,
-                globals,
-                self,
-                notified,
+                runtime,
             )
         }
     }
@@ -279,14 +271,12 @@ impl<S: SlotStorage> crate::storage::CallbackStorage for CallbackArena<S> {
         &self,
         listener: Listener<E>,
         event: &E,
-        entities: &dyn EntityStore,
-        globals: &dyn GlobalStore,
-        notified: &Cell<bool>,
+        runtime: RuntimeCx<'_>,
     ) -> Result<(), ListenerInvokeError>
     where
         E: 'static,
     {
-        CallbackArena::invoke_listener(self, listener, event, entities, globals, notified)
+        CallbackArena::invoke_listener(self, listener, event, runtime)
     }
 }
 
@@ -298,24 +288,25 @@ unsafe fn invoke_listener_callback<T, E, F>(
     closure: *const u8,
     target: EntityId,
     event: *const u8,
-    entities: &dyn EntityStore,
-    globals: &dyn GlobalStore,
-    callbacks: &dyn CallbackStore,
-    notified: &Cell<bool>,
+    runtime: RuntimeCx<'_>,
 ) -> Result<(), ListenerInvokeError>
 where
     T: 'static,
     E: 'static,
     F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
 {
-    let borrow =
-        RawEntityBorrow::acquire(entities, target, TypeId::of::<T>(), BorrowKind::Exclusive)?;
+    let borrow = RawEntityBorrow::acquire(
+        runtime.entities,
+        target,
+        TypeId::of::<T>(),
+        BorrowKind::Exclusive,
+    )?;
 
     let state = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
     let event = unsafe { &*event.cast::<E>() };
     let callback = unsafe { &*closure.cast::<F>() };
     let entity = Entity::<T>::from_id(target);
-    let mut cx = Context::from_parts(entity, entities, globals, callbacks, notified);
+    let mut cx = Context::new_in(entity, runtime);
 
     callback(state, event, &mut cx);
 
@@ -398,7 +389,10 @@ mod heap_tests;
 
 #[cfg(test)]
 mod tests {
-    use core::sync::atomic::{AtomicUsize, Ordering};
+    use core::{
+        cell::Cell,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use super::*;
     use crate::*;
@@ -422,10 +416,13 @@ mod tests {
 
         let root = entities.insert(Counter { value: 0 }).unwrap();
 
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
         let listener = {
-            let mut cx = Context::from_parts(root, &entities, &globals, &callbacks, &notified);
+            let mut cx = Context::new_in(
+                root,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
+            );
             cx.listener(Counter::increment)
         };
 
@@ -433,14 +430,12 @@ mod tests {
             .invoke_listener(
                 listener,
                 &ActivateEvent::new(ElementId::Name("test")),
-                &entities,
-                &globals,
-                &notified,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             )
             .unwrap();
 
         assert_eq!(entities.read(root, |counter| { counter.value }), Ok(1));
-        assert!(notified.get());
+        assert!(entities.is_dirty(root.entity_id()));
     }
 
     #[test]
@@ -449,11 +444,14 @@ mod tests {
         let callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
         let amount = 5;
 
         let listener = {
-            let mut cx = Context::from_parts(counter, &entities, &globals, &callbacks, &notified);
+            let mut cx = Context::new_in(
+                counter,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
+            );
 
             cx.listener(move |counter: &mut Counter, _: &ActivateEvent, cx| {
                 counter.value += amount;
@@ -465,14 +463,12 @@ mod tests {
             .invoke_listener(
                 listener,
                 &ActivateEvent::new(ElementId::Name("test")),
-                &entities,
-                &globals,
-                &notified,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             )
             .unwrap();
 
         assert_eq!(entities.read(counter, |counter| counter.value), Ok(5));
-        assert!(notified.get());
+        assert!(entities.is_dirty(counter.entity_id()));
     }
 
     #[test]
@@ -481,10 +477,13 @@ mod tests {
         let callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
         let listener = {
-            let mut cx = Context::from_parts(counter, &entities, &globals, &callbacks, &notified);
+            let mut cx = Context::new_in(
+                counter,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
+            );
 
             cx.listener(move |_: &mut Counter, _: &ActivateEvent, cx| {
                 let result = counter.update(cx, |_, _| {});
@@ -497,9 +496,7 @@ mod tests {
             .invoke_listener(
                 listener,
                 &ActivateEvent::new(ElementId::Name("test")),
-                &entities,
-                &globals,
-                &notified,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             )
             .unwrap();
     }
@@ -515,10 +512,13 @@ mod tests {
         let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let settings = entities.insert(Settings { dirty: false }).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
         let listener = {
-            let mut cx = Context::from_parts(counter, &entities, &globals, &callbacks, &notified);
+            let mut cx = Context::new_in(
+                counter,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
+            );
 
             cx.listener(move |counter: &mut Counter, _: &ActivateEvent, cx| {
                 counter.value += 1;
@@ -536,15 +536,15 @@ mod tests {
             .invoke_listener(
                 listener,
                 &ActivateEvent::new(ElementId::Name("test")),
-                &entities,
-                &globals,
-                &notified,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             )
             .unwrap();
 
         assert_eq!(entities.read(counter, |counter| counter.value), Ok(1));
         assert!(entities.read(settings, |settings| settings.dirty).unwrap());
-        assert!(notified.get());
+        // only the entity that notified needs to render again
+        assert!(entities.is_dirty(settings.entity_id()));
+        assert!(!entities.is_dirty(counter.entity_id()));
     }
 
     #[test]
@@ -553,10 +553,13 @@ mod tests {
         let mut callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
         let listener = {
-            let mut cx = Context::from_parts(counter, &entities, &globals, &callbacks, &notified);
+            let mut cx = Context::new_in(
+                counter,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
+            );
 
             cx.listener(Counter::increment)
         };
@@ -566,9 +569,7 @@ mod tests {
         let result = callbacks.invoke_listener(
             listener,
             &ActivateEvent::new(ElementId::Name("test")),
-            &entities,
-            &globals,
-            &notified,
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         );
 
         assert!(matches!(result, Err(ListenerInvokeError::InvalidListener)));
@@ -592,12 +593,15 @@ mod tests {
         let mut callbacks = FixedCallbackArena::<1024, 16>::default();
         let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
         {
             let capture = DroppableCapture;
 
-            let mut cx = Context::from_parts(counter, &entities, &globals, &callbacks, &notified);
+            let mut cx = Context::new_in(
+                counter,
+                RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
+            );
 
             let _listener = cx.listener(move |_: &mut Counter, _: &ActivateEvent, _| {
                 let _ = &capture;
@@ -617,9 +621,12 @@ mod tests {
         let callbacks = FixedCallbackArena::<1024, 1>::default();
         let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
-        let mut cx = Context::from_parts(counter, &entities, &globals, &callbacks, &notified);
+        let mut cx = Context::new_in(
+            counter,
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
+        );
 
         cx.try_listener::<ActivateEvent, _>(|_: &mut Counter, _, _| {})
             .unwrap();
@@ -635,10 +642,13 @@ mod tests {
         let callbacks = FixedCallbackArena::<4, 16>::default();
         let globals = TestGlobalArena::<0, 0>::default();
         let counter = entities.insert(Counter { value: 0 }).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
         let capture = [0u8; 32];
 
-        let mut cx = Context::from_parts(counter, &entities, &globals, &callbacks, &notified);
+        let mut cx = Context::new_in(
+            counter,
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
+        );
 
         let result = cx.try_listener::<ActivateEvent, _>(move |_: &mut Counter, _, _| {
             let _ = &capture;

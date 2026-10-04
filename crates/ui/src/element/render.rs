@@ -1,11 +1,8 @@
-use core::{any::TypeId, cell::Cell};
+use core::any::TypeId;
 
 use crate::{
     AppContext, BorrowKind, Context, Element, Entity, EntityId, FrameStore, IntoElement, MountCx,
-    MountError, NodeId,
-    callback::CallbackStore,
-    entity::{EntityStore, RawEntityBorrow},
-    global::GlobalStore,
+    MountError, NodeId, RuntimeCx, entity::RawEntityBorrow,
 };
 
 /// a persistent component backed by an [`Entity`]
@@ -41,26 +38,20 @@ where
 
 pub(crate) type EntityRenderFn = fn(
     entity: EntityId,
-    entities: &dyn EntityStore,
-    globals: &dyn GlobalStore,
-    callbacks: &dyn CallbackStore,
-    notified: &Cell<bool>,
+    runtime: RuntimeCx<'_>,
     frame: &mut dyn FrameStore,
 ) -> Result<NodeId, MountError>;
 
 pub(crate) fn render_entity<T>(
     entity_id: EntityId,
-    entities: &dyn EntityStore,
-    globals: &dyn GlobalStore,
-    callbacks: &dyn CallbackStore,
-    notified: &Cell<bool>,
+    runtime: RuntimeCx<'_>,
     frame: &mut dyn FrameStore,
 ) -> Result<NodeId, MountError>
 where
     T: Render,
 {
     let borrow = RawEntityBorrow::acquire(
-        entities,
+        runtime.entities,
         entity_id,
         TypeId::of::<T>(),
         BorrowKind::Exclusive,
@@ -68,9 +59,9 @@ where
 
     let state = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
     let entity = Entity::<T>::from_id(entity_id);
-    let mut cx = Context::from_parts(entity, entities, globals, callbacks, notified);
+    let mut cx = Context::new_in(entity, runtime);
     let element = state.render(&mut cx).into_element();
-    let app = AppContext::from_globals(globals);
+    let app = AppContext::from_globals(runtime.globals);
     let mut mount_cx = MountCx::new(frame, app);
 
     element.mount(&mut mount_cx)

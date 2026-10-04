@@ -409,6 +409,25 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
             .position(|slot| predicate(&slot.meta))
     }
 
+    /// the metadata of an existing slot, whatever its state
+    pub(crate) fn meta(&self, slot: usize) -> Option<M> {
+        self.slots.borrow().get(slot).map(|slot| slot.meta)
+    }
+
+    /// changes the metadata of an existing slot. `None` if the slot doesn't exist
+    pub(crate) fn update_meta<R>(&self, slot: usize, f: impl FnOnce(&mut M) -> R) -> Option<R> {
+        self.slots
+            .borrow_mut()
+            .get_mut(slot)
+            .map(|slot| f(&mut slot.meta))
+    }
+
+    pub(crate) fn for_each_meta_mut(&self, mut f: impl FnMut(&mut M)) {
+        for slot in self.slots.borrow_mut().iter_mut() {
+            f(&mut slot.meta);
+        }
+    }
+
     pub(crate) fn is_borrowed(&self, slot: usize) -> bool {
         self.slots.borrow()[slot].borrow != BorrowState::Free
     }

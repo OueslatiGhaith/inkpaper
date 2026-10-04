@@ -52,12 +52,19 @@ pub type FixedEntityArena<const BYTES: usize, const SLOTS: usize> =
 #[cfg(feature = "alloc")]
 pub type HeapEntityArena<const INITIAL_SLOTS: usize = 0> = EntityArena<HeapSlots<INITIAL_SLOTS>>;
 
+#[derive(Debug, Clone, Copy)]
+struct EntityMeta {
+    type_id: TypeId,
+    /// set by `notify` until the runtime renders again
+    dirty: bool,
+}
+
 /// entity state, stored by [`SlotTable`].
 ///
 /// entity ids always have generation 0: slots are never reused. A slot's [`TypeId`] is
 /// checked before its value is borrowed.
 pub struct EntityArena<S: SlotStorage> {
-    slots: SlotTable<S, TypeId>,
+    slots: SlotTable<S, EntityMeta>,
 }
 
 impl<S: SlotStorage> Default for EntityArena<S> {
@@ -140,7 +147,11 @@ unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
         type_id: TypeId,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<RawEntityReservation, EntityAllocError> {
-        let (slot, ptr) = self.slots.reserve(layout, type_id, drop_fn)?;
+        let meta = EntityMeta {
+            type_id,
+            dirty: false,
+        };
+        let (slot, ptr) = self.slots.reserve(layout, meta, drop_fn)?;
 
         Ok(RawEntityReservation {
             id: EntityId::new(slot, 0),
@@ -172,12 +183,12 @@ unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
         }
 
         let slot = usize::from(entity.slot());
-        let (slot_type, ptr) = self.slots.live(slot).map_err(|error| match error {
+        let (meta, ptr) = self.slots.live(slot).map_err(|error| match error {
             NotLive::Initializing => EntityAccessError::NotReady,
             NotLive::Missing | NotLive::Abandoned => EntityAccessError::InvalidEntity,
         })?;
 
-        if slot_type != type_id {
+        if meta.type_id != type_id {
             return Err(EntityAccessError::TypeMismatch);
         }
 
@@ -190,6 +201,29 @@ unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
 
     fn release(&self, entity: EntityId, kind: BorrowKind) {
         self.slots.release(usize::from(entity.slot()), kind);
+    }
+
+    fn mark_dirty(&self, entity: EntityId) {
+        if entity.generation() == 0 {
+            self.slots
+                .update_meta(usize::from(entity.slot()), |meta| meta.dirty = true);
+        }
+    }
+
+    fn is_dirty(&self, entity: EntityId) -> bool {
+        entity.generation() == 0
+            && self
+                .slots
+                .meta(usize::from(entity.slot()))
+                .is_some_and(|meta| meta.dirty)
+    }
+
+    fn has_dirty(&self) -> bool {
+        self.slots.position(|meta| meta.dirty).is_some()
+    }
+
+    fn clear_dirty(&self) {
+        self.slots.for_each_meta_mut(|meta| meta.dirty = false);
     }
 }
 

@@ -1,8 +1,8 @@
-use core::{alloc::Layout, any::TypeId, cell::Cell, ptr::NonNull};
+use core::{alloc::Layout, any::TypeId, ptr::NonNull};
 
 use super::{Entity, EntityAccessError, EntityAllocError, EntityId};
 
-use crate::{Context, callback::CallbackStore, global::GlobalStore, slot_table::BorrowKind};
+use crate::{Context, RuntimeCx, slot_table::BorrowKind};
 
 pub struct RawEntityReservation {
     pub(crate) id: EntityId,
@@ -33,6 +33,16 @@ pub unsafe trait EntityStore {
     ) -> Result<NonNull<u8>, EntityAccessError>;
 
     fn release(&self, entity: EntityId, kind: BorrowKind);
+
+    /// records that the entity changed and needs to render again. Ignores invalid ids
+    fn mark_dirty(&self, entity: EntityId);
+
+    fn is_dirty(&self, entity: EntityId) -> bool;
+
+    /// whether any entity is dirty
+    fn has_dirty(&self) -> bool;
+
+    fn clear_dirty(&self);
 }
 
 pub(crate) unsafe fn drop_value<T>(ptr: *mut u8) {
@@ -96,15 +106,13 @@ impl Drop for ReservationGuard<'_> {
 }
 
 pub(crate) fn create_entity<T>(
-    store: &dyn EntityStore,
-    globals: &dyn GlobalStore,
-    callbacks: &dyn CallbackStore,
-    notified: &Cell<bool>,
+    runtime: RuntimeCx<'_>,
     build: impl FnOnce(&mut Context<'_, T>) -> T,
 ) -> Result<Entity<T>, EntityAllocError>
 where
     T: 'static,
 {
+    let store = runtime.entities;
     let reservation = store.reserve(Layout::new::<T>(), TypeId::of::<T>(), drop_value::<T>)?;
 
     let entity = Entity::from_id(reservation.id);
@@ -115,7 +123,7 @@ where
         armed: true,
     };
 
-    let mut cx = Context::from_parts(entity, store, globals, callbacks, notified);
+    let mut cx = Context::new_in(entity, runtime);
 
     let value = build(&mut cx);
 

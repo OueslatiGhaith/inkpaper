@@ -2,10 +2,9 @@ use core::{any::TypeId, cell::Cell};
 use std::string::String;
 
 use crate::{
-    callback::{CallbackStore, TestCallbackArena},
+    callback::TestCallbackArena,
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity::EntityStore,
-    global::GlobalStore,
     storage::{ElementStateStorage, FrameStorage},
     *,
 };
@@ -45,15 +44,11 @@ fn state_id<F: FrameStorage>(frame: &FrameArena<F>, node: NodeId) -> ElementStat
         .expect("element should have resolved state identity")
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_frame<Root, F: FrameStorage, E: ElementStateStorage>(
     frame: &mut FrameArena<F>,
     states: &mut ElementStateTable<E>,
     root: Entity<Root>,
-    entities: &dyn EntityStore,
-    globals: &dyn GlobalStore,
-    callbacks: &dyn CallbackStore,
-    notified: &Cell<bool>,
+    runtime: RuntimeCx<'_>,
     generation: u32,
 ) -> Result<NodeId, IdentityError>
 where
@@ -61,11 +56,11 @@ where
 {
     frame.clear();
 
-    let app = AppContext::from_globals(globals);
+    let app = AppContext::from_globals(runtime.globals);
     let root = frame.mount(root, app).expect("mount should succeed");
 
     frame
-        .expand_entities(entities, globals, callbacks, notified)
+        .expand_entities(runtime)
         .expect("entity expansion should succeed");
 
     frame.resolve_identities(states, generation)?;
@@ -386,14 +381,14 @@ fn expands_nested_entities() {
     let callbacks = TestCallbackArena::<2048, 16>::default();
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
     let parent = entities.insert(Parent { child }).unwrap();
     let root = frame.mount(parent, app).unwrap();
 
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     assert_eq!(frame.node_count(), 6);
@@ -444,14 +439,14 @@ fn releases_entity_borrows_after_rendering() {
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
     let parent = entities.insert(Parent { child }).unwrap();
 
     frame.mount(parent, app).unwrap();
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     // if rendering leaked the exclusive borrow, either of these would return BorrowConflict.
@@ -476,7 +471,7 @@ fn copies_entity_text_into_frame_storage() {
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let label = entities
         .insert(Label {
@@ -486,7 +481,7 @@ fn copies_entity_text_into_frame_storage() {
 
     let root = frame.mount(label, app).unwrap();
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     // mutate the original persistent state after the frame has already been built.
@@ -520,14 +515,14 @@ fn rejects_duplicate_entity_mounts() {
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
     let parent = entities.insert(DuplicateParent { child }).unwrap();
 
     frame.mount(parent, app).unwrap();
 
-    let result = frame.expand_entities(&entities, &globals, &callbacks, &notified);
+    let result = frame.expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty));
 
     assert_eq!(
         result,
@@ -542,20 +537,20 @@ fn expanding_entities_twice_does_not_duplicate_nodes() {
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
     let parent = entities.insert(Parent { child }).unwrap();
 
     frame.mount(parent, app).unwrap();
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     let first_count = frame.node_count();
 
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     assert_eq!(frame.node_count(), first_count);
@@ -591,13 +586,13 @@ fn entity_render_mounts_click_listener() {
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let counter = entities.insert(Counter { value: 0 }).unwrap();
 
     frame.mount(counter, app).unwrap();
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     let button =
@@ -613,13 +608,13 @@ fn mounted_listener_updates_owning_entity() {
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let counter = entities.insert(Counter { value: 0 }).unwrap();
 
     frame.mount(counter, app).unwrap();
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     let button =
@@ -635,16 +630,14 @@ fn mounted_listener_updates_owning_entity() {
         .invoke_listener(
             listener,
             &ActivateEvent::new(ElementId::Name("test")),
-            &entities,
-            &globals,
-            &notified,
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         )
         .unwrap();
 
     let value = entities.read(counter, |counter| counter.value);
 
     assert_eq!(value, Ok(1));
-    assert!(notified.get());
+    assert!(entities.is_dirty(counter.entity_id()));
 }
 
 struct Status {
@@ -684,14 +677,14 @@ fn rendered_listener_can_update_another_entity() {
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let status = entities.insert(Status { value: 0 }).unwrap();
     let controller = entities.insert(Controller { status }).unwrap();
 
     frame.mount(controller, app).unwrap();
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     let button = find_element(&frame, ElementId::Name("update-status")).unwrap();
@@ -705,14 +698,14 @@ fn rendered_listener_can_update_another_entity() {
         .invoke_listener(
             listener,
             &ActivateEvent::new(ElementId::Name("test")),
-            &entities,
-            &globals,
-            &notified,
+            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         )
         .unwrap();
 
     assert_eq!(entities.read(status, |status| status.value,), Ok(10));
-    assert!(notified.get());
+    // the listener belongs to the controller, but only the status changed
+    assert!(entities.is_dirty(status.entity_id()));
+    assert!(!entities.is_dirty(controller.entity_id()));
 }
 
 #[test]
@@ -722,14 +715,14 @@ fn entity_render_access_errors_become_mount_errors() {
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
     let fake = Entity::<Parent>::from_id(child.entity_id());
 
     frame.mount(fake, app).unwrap();
 
-    let result = frame.expand_entities(&entities, &globals, &callbacks, &notified);
+    let result = frame.expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty));
 
     assert_eq!(
         result,
@@ -744,13 +737,13 @@ fn expanded_entity_root_is_child_of_entity_node() {
     let globals = TestGlobalArena::<0, 0>::default();
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let child = entities.insert(Child).unwrap();
     let entity_node = frame.mount(child, app).unwrap();
 
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     let rendered_root = frame.node(entity_node).first_child.unwrap();
@@ -774,7 +767,7 @@ fn element_identity_is_stable_across_frames() {
     let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let app = entities.insert(StableApp).unwrap();
 
@@ -782,10 +775,7 @@ fn element_identity_is_stable_across_frames() {
         &mut frame,
         &mut states,
         app,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         1,
     )
     .unwrap();
@@ -797,10 +787,7 @@ fn element_identity_is_stable_across_frames() {
         &mut frame,
         &mut states,
         app,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         2,
     )
     .unwrap();
@@ -843,7 +830,7 @@ fn unnamed_wrappers_do_not_affect_identity_path() {
     let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::<TestFrame<64, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let plain = entities.insert(WrapperApp { _wrapped: false }).unwrap();
     let wrapped = entities.insert(WrappedApp).unwrap();
@@ -856,10 +843,7 @@ fn unnamed_wrappers_do_not_affect_identity_path() {
         &mut frame,
         &mut states,
         plain,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         1,
     )
     .unwrap();
@@ -879,10 +863,7 @@ fn unnamed_wrappers_do_not_affect_identity_path() {
         &mut frame,
         &mut states,
         wrapped,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         2,
     )
     .unwrap();
@@ -914,7 +895,7 @@ fn nested_element_uses_nearest_identified_parent() {
     let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let app = entities.insert(NestedApp).unwrap();
 
@@ -922,10 +903,7 @@ fn nested_element_uses_nearest_identified_parent() {
         &mut frame,
         &mut states,
         app,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         1,
     )
     .unwrap();
@@ -968,13 +946,13 @@ fn duplicate_ids_in_same_scope_are_rejected() {
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let app = entities.insert(DuplicateApp).unwrap();
 
     frame.mount(app, cx).unwrap();
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     let result = frame.resolve_identities(&mut states, 1);
@@ -1004,7 +982,7 @@ fn same_local_id_is_allowed_under_different_identified_parents() {
     let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let app = entities.insert(SeparateScopesApp).unwrap();
 
@@ -1012,10 +990,7 @@ fn same_local_id_is_allowed_under_different_identified_parents() {
         &mut frame,
         &mut states,
         app,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         1,
     )
     .unwrap();
@@ -1061,7 +1036,7 @@ fn separate_entities_have_separate_identity_namespaces() {
     let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::<TestFrame<64, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let left = entities.insert(Widget).unwrap();
     let right = entities.insert(Widget).unwrap();
@@ -1071,10 +1046,7 @@ fn separate_entities_have_separate_identity_namespaces() {
         &mut frame,
         &mut states,
         app,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         1,
     )
     .unwrap();
@@ -1141,7 +1113,7 @@ fn moving_entity_does_not_change_internal_element_identity() {
     let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::<TestFrame<64, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let child = entities.insert(MovableChild).unwrap();
     let parent_a = entities.insert(ParentA { child }).unwrap();
@@ -1151,10 +1123,7 @@ fn moving_entity_does_not_change_internal_element_identity() {
         &mut frame,
         &mut states,
         parent_a,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         1,
     )
     .unwrap();
@@ -1169,10 +1138,7 @@ fn moving_entity_does_not_change_internal_element_identity() {
         &mut frame,
         &mut states,
         parent_b,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         2,
     )
     .unwrap();
@@ -1210,7 +1176,7 @@ fn element_state_is_removed_when_element_disappears() {
     let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let with_button = entities.insert(WithButton).unwrap();
     let without_button = entities.insert(WithoutButton).unwrap();
@@ -1219,10 +1185,7 @@ fn element_state_is_removed_when_element_disappears() {
         &mut frame,
         &mut states,
         with_button,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         1,
     )
     .unwrap();
@@ -1236,10 +1199,7 @@ fn element_state_is_removed_when_element_disappears() {
         &mut frame,
         &mut states,
         without_button,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         2,
     )
     .unwrap();
@@ -1255,7 +1215,7 @@ fn reappearing_element_gets_new_generation() {
     let mut states = ElementStateTable::<TestElementStates<32>>::default();
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::<TestFrame<32, 256>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let with_button = entities.insert(WithButton).unwrap();
     let without_button = entities.insert(WithoutButton).unwrap();
@@ -1265,10 +1225,7 @@ fn reappearing_element_gets_new_generation() {
         &mut frame,
         &mut states,
         with_button,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         1,
     )
     .unwrap();
@@ -1281,10 +1238,7 @@ fn reappearing_element_gets_new_generation() {
         &mut frame,
         &mut states,
         without_button,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         2,
     )
     .unwrap();
@@ -1296,10 +1250,7 @@ fn reappearing_element_gets_new_generation() {
         &mut frame,
         &mut states,
         with_button,
-        &entities,
-        &globals,
-        &callbacks,
-        &notified,
+        RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         3,
     )
     .unwrap();
@@ -1333,13 +1284,13 @@ fn identity_resolution_reports_state_capacity_exhaustion() {
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let notified = Cell::new(false);
+    let all_dirty = Cell::new(false);
 
     let app = entities.insert(TooManyStatesApp).unwrap();
 
     frame.mount(app, cx).unwrap();
     frame
-        .expand_entities(&entities, &globals, &callbacks, &notified)
+        .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
     assert_eq!(

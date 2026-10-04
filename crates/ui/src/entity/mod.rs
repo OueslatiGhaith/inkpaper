@@ -69,8 +69,12 @@ impl<T: 'static> Entity<T> {
     where
         C: 'static,
     {
-        let borrow =
-            RawEntityBorrow::acquire(cx.store, self.id, TypeId::of::<T>(), BorrowKind::Shared)?;
+        let borrow = RawEntityBorrow::acquire(
+            cx.runtime.entities,
+            self.id,
+            TypeId::of::<T>(),
+            BorrowKind::Shared,
+        )?;
 
         let value = unsafe { &*borrow.ptr().cast::<T>().as_ptr() };
 
@@ -85,12 +89,15 @@ impl<T: 'static> Entity<T> {
     where
         C: 'static,
     {
-        let borrow =
-            RawEntityBorrow::acquire(cx.store, self.id, TypeId::of::<T>(), BorrowKind::Exclusive)?;
+        let borrow = RawEntityBorrow::acquire(
+            cx.runtime.entities,
+            self.id,
+            TypeId::of::<T>(),
+            BorrowKind::Exclusive,
+        )?;
 
         let value = unsafe { &mut *borrow.ptr().cast::<T>().as_ptr() };
-        let mut entity_cx =
-            Context::from_parts(self, cx.store, cx.globals, cx.callbacks, cx.notified);
+        let mut entity_cx = Context::new_in(self, cx.runtime);
 
         Ok(f(value, &mut entity_cx))
     }

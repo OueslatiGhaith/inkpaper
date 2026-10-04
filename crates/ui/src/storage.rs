@@ -4,14 +4,12 @@
 //! are not exported. Applications choose among the storage types this crate provides
 //! and cannot implement the traits for their own types.
 
-use core::{
-    cell::Cell,
-    ops::{Deref, DerefMut},
-};
+use core::ops::{Deref, DerefMut};
 
 use crate::{
     FixedCallbackArena, FixedEntityArena, FixedGlobalArena, Global, GlobalSetError, Listener,
-    ListenerInvokeError, callback::CallbackStore, entity::EntityStore, global::GlobalStore,
+    ListenerInvokeError, RuntimeCx, callback::CallbackStore, entity::EntityStore,
+    global::GlobalStore,
 };
 #[cfg(feature = "alloc")]
 use crate::{HeapCallbackArena, HeapEntityArena, HeapGlobalArena};
@@ -117,9 +115,7 @@ pub trait CallbackStorage: CallbackStore + Default {
         &self,
         listener: Listener<E>,
         event: &E,
-        entities: &dyn EntityStore,
-        globals: &dyn GlobalStore,
-        notified: &Cell<bool>,
+        runtime: RuntimeCx<'_>,
     ) -> Result<(), ListenerInvokeError>
     where
         E: 'static;

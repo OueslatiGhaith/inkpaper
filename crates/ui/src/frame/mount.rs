@@ -1,17 +1,12 @@
-use core::{any::TypeId, cell::Cell};
+use core::any::TypeId;
 
 use super::{FrameArena, InteractionStyles, MountError, NodeId, NodeKind, TextRange};
 
 use crate::{
     AppContext, CanvasDraw, CanvasStyle, Element, ElementId, EntityId, EntityRenderFn,
     EventBinding, EventBindingId, EventCallbacks, ImageSource, ImageStyle, IntoElement, Node,
-    StatefulInteractivity, Style, SvgSource, SvgStyle, TextStyle,
-    callback::{CallbackId, CallbackStore},
-    count_metric,
-    entity::EntityStore,
-    frame::NodeCache,
-    global::GlobalStore,
-    storage::FrameStorage,
+    RuntimeCx, StatefulInteractivity, Style, SvgSource, SvgStyle, TextStyle, callback::CallbackId,
+    count_metric, frame::NodeCache, storage::FrameStorage,
 };
 
 impl<F: FrameStorage> FrameArena<F> {
@@ -51,13 +46,7 @@ impl<F: FrameStorage> FrameArena<F> {
             )
         })
     }
-    pub(crate) fn expand_entities(
-        &mut self,
-        entities: &dyn EntityStore,
-        globals: &dyn GlobalStore,
-        callbacks: &dyn CallbackStore,
-        notified: &Cell<bool>,
-    ) -> Result<(), MountError> {
+    pub(crate) fn expand_entities(&mut self, runtime: RuntimeCx<'_>) -> Result<(), MountError> {
         let mut index = 0;
 
         while index < self.nodes.len() {
@@ -73,7 +62,7 @@ impl<F: FrameStorage> FrameArena<F> {
             if let Some((entity, render)) = pending {
                 count_metric!(self, entity_render_calls);
                 let entity_node = NodeId::new(index as u16);
-                let root = render(entity, entities, globals, callbacks, notified, self)?;
+                let root = render(entity, runtime, self)?;
                 self.append_child(entity_node, root);
 
                 match &mut self.nodes[index].kind {
@@ -90,17 +79,14 @@ impl<F: FrameStorage> FrameArena<F> {
     pub(crate) fn mount_and_expand<E>(
         &mut self,
         element: E,
-        entities: &dyn EntityStore,
-        globals: &dyn GlobalStore,
-        callbacks: &dyn CallbackStore,
-        notified: &Cell<bool>,
+        runtime: RuntimeCx<'_>,
     ) -> Result<NodeId, MountError>
     where
         E: IntoElement,
     {
-        let app = AppContext::from_globals(globals);
+        let app = AppContext::from_globals(runtime.globals);
         let root = self.mount(element, app)?;
-        self.expand_entities(entities, globals, callbacks, notified)?;
+        self.expand_entities(runtime)?;
 
         Ok(root)
     }

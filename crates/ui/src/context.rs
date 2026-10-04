@@ -1,35 +1,18 @@
-use core::cell::Cell;
-
 use crate::{
-    Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, PaintCx, Rect,
-    callback::{CallbackAllocError, CallbackStore, register_canvas_callback, register_listener},
-    entity::{EntityStore, create_entity},
+    Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, PaintCx, Rect, RuntimeCx,
+    callback::{CallbackAllocError, register_canvas_callback, register_listener},
+    entity::create_entity,
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
 };
 
 pub struct Context<'a, T> {
     pub(crate) entity: Entity<T>,
-    pub(crate) store: &'a dyn EntityStore,
-    pub(crate) globals: &'a dyn GlobalStore,
-    pub(crate) callbacks: &'a dyn CallbackStore,
-    pub(crate) notified: &'a Cell<bool>,
+    pub(crate) runtime: RuntimeCx<'a>,
 }
 
 impl<'a, T> Context<'a, T> {
-    pub(crate) fn from_parts(
-        entity: Entity<T>,
-        store: &'a dyn EntityStore,
-        globals: &'a dyn GlobalStore,
-        callbacks: &'a dyn CallbackStore,
-        notified: &'a Cell<bool>,
-    ) -> Self {
-        Self {
-            entity,
-            store,
-            globals,
-            callbacks,
-            notified,
-        }
+    pub(crate) fn new_in(entity: Entity<T>, runtime: RuntimeCx<'a>) -> Self {
+        Self { entity, runtime }
     }
 
     pub fn entity(&self) -> Entity<T> {
@@ -40,8 +23,9 @@ impl<'a, T> Context<'a, T> {
         self.entity.entity_id()
     }
 
+    /// marks this entity as changed, so it renders again
     pub fn notify(&mut self) {
-        self.notified.set(true);
+        self.runtime.entities.mark_dirty(self.entity.entity_id());
     }
 
     #[allow(clippy::new_ret_no_self)]
@@ -52,20 +36,14 @@ impl<'a, T> Context<'a, T> {
     where
         U: 'static,
     {
-        create_entity(
-            self.store,
-            self.globals,
-            self.callbacks,
-            self.notified,
-            build,
-        )
+        create_entity(self.runtime, build)
     }
 
     pub fn try_global<G>(&self) -> Result<GlobalRef<'a, G>, GlobalAccessError>
     where
         G: Global,
     {
-        GlobalRef::acquire(self.globals)
+        GlobalRef::acquire(self.runtime.globals)
     }
 
     pub fn global<G>(&self) -> GlobalRef<'a, G>
@@ -80,7 +58,7 @@ impl<'a, T> Context<'a, T> {
     where
         G: Global,
     {
-        GlobalMut::acquire(self.globals, self.notified)
+        GlobalMut::acquire(self.runtime.globals, self.runtime.all_dirty)
     }
 
     pub fn global_mut<G>(&self) -> GlobalMut<'a, G>
@@ -98,7 +76,7 @@ impl<T: 'static> Context<'_, T> {
         E: 'static,
         F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
     {
-        register_listener(self.callbacks, self.entity, callback)
+        register_listener(self.runtime.callbacks, self.entity, callback)
     }
 
     pub fn listener<E, F>(&mut self, callback: F) -> Listener<E>
@@ -114,7 +92,7 @@ impl<T: 'static> Context<'_, T> {
     where
         F: Fn(&T, &mut PaintCx<'_>) + 'static,
     {
-        let callback = register_canvas_callback(self.callbacks, self.entity, callback)?;
+        let callback = register_canvas_callback(self.runtime.callbacks, self.entity, callback)?;
 
         Ok(Canvas::from_entity_callback(callback))
     }
@@ -159,7 +137,10 @@ impl<'a> AppContext<'a> {
 mod tests {
     use crate::{EntityAccessError, TestEntityArena, TestGlobalArena, callback::TestCallbackArena};
 
+    use core::cell::Cell;
+
     use super::*;
+    use crate::entity::EntityStore;
 
     struct Root;
 
@@ -173,9 +154,12 @@ mod tests {
         let callbacks = TestCallbackArena::<1024, 16>::default();
         let globals = TestGlobalArena::<1024, 16>::default();
         let root = arena.insert(Root).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
+        let mut cx = Context::new_in(
+            root,
+            RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
+        );
 
         let counter = cx.new(|_| Counter { value: 1 }).unwrap();
 
@@ -187,7 +171,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(counter.read(&cx, |counter| counter.value,), Ok(2));
-        assert!(notified.get());
+        assert!(arena.is_dirty(counter.entity_id()));
+        assert!(!arena.is_dirty(root.entity_id()));
     }
 
     #[test]
@@ -204,9 +189,12 @@ mod tests {
         let callbacks = TestCallbackArena::<1024, 16>::default();
         let globals = TestGlobalArena::<0, 0>::default();
         let root = arena.insert(Root).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
+        let mut cx = Context::new_in(
+            root,
+            RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
+        );
 
         let parent = cx
             .new(|cx| {
@@ -234,9 +222,12 @@ mod tests {
         let callbacks = TestCallbackArena::<1024, 16>::default();
         let globals = TestGlobalArena::<0, 0>::default();
         let root = arena.insert(Root).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
+        let mut cx = Context::new_in(
+            root,
+            RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
+        );
 
         let parent = cx
             .new(|cx| {
@@ -261,9 +252,12 @@ mod tests {
         let callbacks = TestCallbackArena::<1024, 16>::default();
         let globals = TestGlobalArena::<0, 0>::default();
         let root = arena.insert(Root).unwrap();
-        let notified = Cell::new(false);
+        let all_dirty = Cell::new(false);
 
-        let mut cx = Context::from_parts(root, &arena, &globals, &callbacks, &notified);
+        let mut cx = Context::new_in(
+            root,
+            RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
+        );
 
         let _ = cx
             .new(|cx| {
