@@ -93,6 +93,11 @@ impl InkPaperApp {
         }
     }
 
+    /// renders the reader's drawer again, for changes nothing else shows
+    pub(crate) fn refresh_reader_menu(&self, cx: &mut Context<'_, Self>) {
+        self.reader_menu.update(cx, |_, cx| cx.notify()).ok();
+    }
+
     pub(crate) fn open_reader_menu(&mut self, cx: &mut Context<'_, Self>) {
         if self.reader.open_menu() {
             cx.notify();
@@ -111,7 +116,7 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
     ) {
         if self.reader.select_menu_tab(ReaderMenuTab::Font) {
-            cx.notify();
+            self.refresh_reader_menu(cx);
         }
     }
 
@@ -121,7 +126,7 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
     ) {
         if self.reader.select_menu_tab(ReaderMenuTab::More) {
-            cx.notify();
+            self.refresh_reader_menu(cx);
         }
     }
 

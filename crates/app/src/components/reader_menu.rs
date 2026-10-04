@@ -3,6 +3,7 @@ use alloc::format;
 use inkpaper_ui::prelude::*;
 
 use crate::{
+    InkPaperApp,
     components::{
         drawer_handle::{DrawerHandle, DrawerHandleProps},
         settings_row::{ListRow, ListRowProps},
@@ -30,7 +31,8 @@ pub(crate) fn font_slider_value_at(x: i32) -> u8 {
 }
 
 /// Reader drawer: a bottom sheet over the page with a handle, a content pane and
-/// an icon tab bar. Tabs are added as their features exist.
+/// an icon tab bar. Tabs are added as their features exist. The reader screen closes
+/// it on taps above the sheet.
 #[component]
 pub(crate) struct ReaderMenu {
     tab: ReaderMenuTab,
@@ -50,84 +52,110 @@ impl RenderOnce for ReaderMenu {
         let font_size_value = font_size_slider_value(self.font_size);
 
         rsx! {
-            <div class="absolute left-0 top-0 w-[480px] h-[800px]">
-                // taps above the sheet close the drawer
+            // 429 px sheet with a 3 px top rule
+            <div class="absolute left-0 top-[371px] w-[480px] h-[429px] bg-white">
+                <div class="absolute left-0 top-0 w-full h-[3px] bg-black" />
+
                 <div
-                    id="reader-menu-dismiss"
+                    id="reader-menu-handle"
                     on:activate={self.on_close}
-                    class="absolute left-0 top-0 w-full h-[371px]"
-                />
-
-                // 429 px sheet with a 3 px top rule
-                <div class="absolute left-0 top-[371px] w-[480px] h-[429px] bg-white">
-                    <div class="absolute left-0 top-0 w-full h-[3px] bg-black" />
-
-                    <div
-                        id="reader-menu-handle"
-                        on:activate={self.on_close}
-                        class="absolute left-[188px] top-0 w-[104px] h-[29px]"
-                    >
-                        <div class="absolute left-4 top-[13px]">
-                            <DrawerHandle />
-                        </div>
+                    class="absolute left-[188px] top-0 w-[104px] h-[29px]"
+                >
+                    <div class="absolute left-4 top-[13px]">
+                        <DrawerHandle />
                     </div>
+                </div>
 
-                    {#if self.tab == ReaderMenuTab::Font}
-                        // content pane, inset like the control center's sliders
-                        <div class="absolute left-8 top-8 w-[416px] flex flex-col">
-                            <div class="w-full h-6 flex items-center">
-                                <text class="text-base no-wrap">
-                                    {font_size_label}
-                                </text>
-                            </div>
-
-                            <div class="h-1" />
-
-                            <Slider
-                                id="reader-font-size"
-                                value={font_size_value}
-                                on_decrease={Some(self.on_decrease_font_size)}
-                                on_increase={Some(self.on_increase_font_size)}
-                            />
+                {#if self.tab == ReaderMenuTab::Font}
+                    // content pane, inset like the control center's sliders
+                    <div class="absolute left-8 top-8 w-[416px] flex flex-col">
+                        <div class="w-full h-6 flex items-center">
+                            <text class="text-base no-wrap">
+                                {font_size_label}
+                            </text>
                         </div>
-                    {:else}
-                        <div class="absolute left-0 top-8 w-[480px] flex flex-col">
-                            <ListRow
-                                id={("reader-menu-select-chapter", 0)}
-                                label="Select Chapter"
-                                depth={0}
-                                selected={false}
-                                chevron={true}
-                                on_activate={Some(self.on_select_chapter)}
-                            />
-                        </div>
-                    {/if}
 
-                    // 66 px tab bar under a 1 px rule; the active tab is inverted
-                    <div class="absolute left-0 bottom-0 w-full h-[66px]">
-                        <div class="absolute left-0 top-0 w-full h-px bg-black" />
+                        <div class="h-1" />
 
-                        <MenuTab
-                            id="reader-menu-font-tab"
-                            icon={CASE_SENSITIVE}
-                            icon_size={px(32)}
-                            left={px(4)}
-                            active={self.tab == ReaderMenuTab::Font}
-                            on_activate={self.on_font_tab}
-                        />
-
-                        <MenuTab
-                            id="reader-menu-more-tab"
-                            icon={ELLIPSIS}
-                            icon_size={px(24)}
-                            left={px(244)}
-                            active={self.tab == ReaderMenuTab::More}
-                            on_activate={self.on_more_tab}
+                        <Slider
+                            id="reader-font-size"
+                            value={font_size_value}
+                            on_decrease={Some(self.on_decrease_font_size)}
+                            on_increase={Some(self.on_increase_font_size)}
                         />
                     </div>
+                {:else}
+                    <div class="absolute left-0 top-8 w-[480px] flex flex-col">
+                        <ListRow
+                            id={("reader-menu-select-chapter", 0)}
+                            label="Select Chapter"
+                            depth={0}
+                            selected={false}
+                            chevron={true}
+                            on_activate={Some(self.on_select_chapter)}
+                        />
+                    </div>
+                {/if}
+
+                // 66 px tab bar under a 1 px rule; the active tab is inverted
+                <div class="absolute left-0 bottom-0 w-full h-[66px]">
+                    <div class="absolute left-0 top-0 w-full h-px bg-black" />
+
+                    <MenuTab
+                        id="reader-menu-font-tab"
+                        icon={CASE_SENSITIVE}
+                        icon_size={px(32)}
+                        left={px(4)}
+                        active={self.tab == ReaderMenuTab::Font}
+                        on_activate={self.on_font_tab}
+                    />
+
+                    <MenuTab
+                        id="reader-menu-more-tab"
+                        icon={ELLIPSIS}
+                        icon_size={px(24)}
+                        left={px(244)}
+                        active={self.tab == ReaderMenuTab::More}
+                        on_activate={self.on_more_tab}
+                    />
                 </div>
             </div>
         }
+    }
+}
+
+/// the reader's drawer. As its own entity, a font size preview or a tab switch renders
+/// and paints only the drawer, not the page under it. Its state stays in the app, which
+/// renders it again through [`InkPaperApp::refresh_reader_menu`].
+pub(crate) struct ReaderMenuView {
+    app: Entity<InkPaperApp>,
+}
+
+impl ReaderMenuView {
+    pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
+        Self { app }
+    }
+}
+
+impl Render for ReaderMenuView {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        // the listeners target the app, so its handlers can render this drawer again
+        // without borrowing it
+        let props = self
+            .app
+            .update(cx, |app, cx| ReaderMenuProps {
+                tab: app.reader.menu_tab(),
+                font_size: app.reader.menu_font_size(),
+                on_close: cx.listener(InkPaperApp::activate_close_reader_menu),
+                on_font_tab: cx.listener(InkPaperApp::activate_reader_font_tab),
+                on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),
+                on_decrease_font_size: cx.listener(InkPaperApp::activate_decrease_reader_font_size),
+                on_increase_font_size: cx.listener(InkPaperApp::activate_increase_reader_font_size),
+                on_select_chapter: cx.listener(InkPaperApp::show_table_of_contents),
+            })
+            .expect("the app outlives its reader menu");
+
+        ReaderMenu::from(props)
     }
 }
 

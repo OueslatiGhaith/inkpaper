@@ -3,8 +3,11 @@ use inkpaper_ui::{FontRegistryError, prelude::*};
 use crate::{
     ClockState, FileTransferState, FrontlightState,
     browser::BrowserState,
-    components::control_center::{ControlCenter, ControlCenterProps, FrontlightPanel},
     components::header::BatteryIndicator,
+    components::{
+        control_center::{ControlCenter, ControlCenterProps, FrontlightPanel},
+        reader_menu::ReaderMenuView,
+    },
     control_center::ControlCenterState,
     reader::ReaderState,
     reading_history::ReadingHistoryState,
@@ -96,6 +99,8 @@ pub struct InkPaperApp {
     frontlight: Entity<FrontlightState>,
     /// the frontlight controls of the control center
     frontlight_panel: Entity<FrontlightPanel>,
+    /// the reader's drawer
+    pub(crate) reader_menu: Entity<ReaderMenuView>,
     control_center: ControlCenterState,
     /// set once a long press took the current touch
     pointer_captured: bool,
@@ -110,6 +115,8 @@ impl InkPaperApp {
         let reader_battery_icon = cx.new(|_| ReaderBatteryIcon::default()).unwrap();
         let frontlight = cx.new(|_| FrontlightState::default()).unwrap();
         let frontlight_panel = cx.new(|_| FrontlightPanel::new(frontlight)).unwrap();
+        let app = cx.entity();
+        let reader_menu = cx.new(|_| ReaderMenuView::new(app)).unwrap();
 
         Self {
             navigation: NavigationStack::default(),
@@ -125,6 +132,7 @@ impl InkPaperApp {
             wifi: WifiState::default(),
             frontlight,
             frontlight_panel,
+            reader_menu,
             control_center: ControlCenterState::default(),
             pointer_captured: false,
             file_transfer: FileTransferState::default(),

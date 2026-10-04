@@ -6,9 +6,9 @@ use crate::{
     components::{
         header::battery_icon,
         icon::{Icon, IconKind, IconProps},
-        reader_menu::{self, ReaderMenu, ReaderMenuProps},
+        reader_menu::{self, ReaderMenuView},
     },
-    reader::{ReaderMenuTab, font_size_from_slider, reader_viewport},
+    reader::{font_size_from_slider, reader_viewport},
 };
 
 #[component]
@@ -26,18 +26,12 @@ pub(crate) struct ReaderScreen<'a> {
     battery: Entity<ReaderBatteryIcon>,
 
     menu_open: bool,
-    menu_tab: ReaderMenuTab,
-    font_size: u16,
+    menu: Entity<ReaderMenuView>,
 
     on_previous_page: Listener<ActivateEvent>,
     on_open_menu: Listener<ActivateEvent>,
     on_next_page: Listener<ActivateEvent>,
     on_close_menu: Listener<ActivateEvent>,
-    on_font_tab: Listener<ActivateEvent>,
-    on_more_tab: Listener<ActivateEvent>,
-    on_decrease_font_size: Listener<ActivateEvent>,
-    on_increase_font_size: Listener<ActivateEvent>,
-    on_select_chapter: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for ReaderScreen<'_> {
@@ -89,16 +83,15 @@ impl RenderOnce for ReaderScreen<'_> {
                     />
 
                     {#if self.menu_open}
-                        <ReaderMenu
-                            tab={self.menu_tab}
-                            font_size={self.font_size}
-                            on_close={self.on_close_menu}
-                            on_font_tab={self.on_font_tab}
-                            on_more_tab={self.on_more_tab}
-                            on_decrease_font_size={self.on_decrease_font_size}
-                            on_increase_font_size={self.on_increase_font_size}
-                            on_select_chapter={self.on_select_chapter}
+                        // taps above the drawer close it. The drawer is its own entity
+                        // and only covers its sheet, so it repaints only that
+                        <div
+                            id="reader-menu-dismiss"
+                            on:activate={self.on_close_menu}
+                            class="absolute left-0 top-0 w-full h-[371px]"
                         />
+
+                        {self.menu}
                     {/if}
                 {:else}
                     <div class="absolute left-5 top-[220px] w-[440px] flex flex-col items-center gap-2.5">
@@ -237,8 +230,9 @@ impl ScreenInput for ReaderRoute {
         if app.reader.font_slider_shown() && reader_menu::font_slider_contains(origin) {
             let value = reader_menu::font_slider_value_at(position.x.get());
 
+            // the preview shows only in the drawer
             if app.reader.preview_font_size(font_size_from_slider(value)) {
-                cx.notify();
+                app.refresh_reader_menu(cx);
             }
 
             return true;
@@ -321,17 +315,11 @@ impl ScreenView for ReaderRoute {
             progress_label: app.reader.progress_label(),
             battery: app.reader_battery_icon,
             menu_open: app.reader.menu_open(),
-            menu_tab: app.reader.menu_tab(),
-            font_size: app.reader.menu_font_size(),
+            menu: app.reader_menu,
+            on_close_menu: cx.listener(InkPaperApp::activate_close_reader_menu),
             on_previous_page: cx.listener(InkPaperApp::activate_previous_reader_page),
             on_open_menu: cx.listener(InkPaperApp::activate_open_reader_menu),
             on_next_page: cx.listener(InkPaperApp::activate_next_reader_page),
-            on_close_menu: cx.listener(InkPaperApp::activate_close_reader_menu),
-            on_font_tab: cx.listener(InkPaperApp::activate_reader_font_tab),
-            on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),
-            on_select_chapter: cx.listener(InkPaperApp::show_table_of_contents),
-            on_decrease_font_size: cx.listener(InkPaperApp::activate_decrease_reader_font_size),
-            on_increase_font_size: cx.listener(InkPaperApp::activate_increase_reader_font_size),
         })
         .into_any_element()
     }
