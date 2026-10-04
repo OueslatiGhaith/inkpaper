@@ -1,12 +1,12 @@
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, InkPaperApp,
+    InkPaperApp,
     app::{Back, Entry, ScreenInput, ScreenLifecycle, ScreenView},
     browser::{BrowseEntry, BrowseEntryKind},
     components::{
         file_row::{FileKind, FileRow, FileRowProps},
-        header::{BackHeader, BackHeaderProps},
+        header::{BackHeader, BackHeaderProps, BatteryIndicator},
     },
 };
 
@@ -19,7 +19,7 @@ pub(crate) struct BrowseFilesScreen<'a> {
     revision: u64,
     return_to: Option<usize>,
     error: bool,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -154,7 +154,7 @@ impl ScreenView for BrowseFilesRoute {
             revision: app.browser.revision(),
             return_to: app.browser.return_to(),
             error: app.browser.error(),
-            battery: app.system_status.battery(),
+            battery: app.battery_indicator,
             on_back: cx.listener(InkPaperApp::activate_back),
         })
         .into_any_element()

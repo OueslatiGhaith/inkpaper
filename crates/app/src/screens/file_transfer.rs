@@ -1,10 +1,10 @@
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, FileTransferStatus, InkPaperApp,
+    FileTransferStatus, InkPaperApp,
     app::{Back, Exit, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
-        header::{BackHeader, BackHeaderProps, TitleHeader, TitleHeaderProps},
+        header::{BackHeader, BackHeaderProps, BatteryIndicator, TitleHeader, TitleHeaderProps},
         icon::IconKind,
         transfer_mode_row::{TransferModeRow, TransferModeRowProps},
     },
@@ -13,7 +13,7 @@ use crate::{
 #[component]
 pub(crate) struct FileTransferScreen {
     status: FileTransferStatus,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     on_back: Listener<ActivateEvent>,
     on_usb_drive: Listener<ActivateEvent>,
 }
@@ -141,7 +141,7 @@ impl ScreenView for FileTransferRoute {
     ) -> AnyElement<'a> {
         FileTransferScreen::from(FileTransferScreenProps {
             status: app.file_transfer.status(),
-            battery: app.system_status.battery(),
+            battery: app.battery_indicator,
             on_back: cx.listener(InkPaperApp::activate_back),
             on_usb_drive: cx.listener(InkPaperApp::activate_usb_drive),
         })

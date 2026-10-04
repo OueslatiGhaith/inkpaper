@@ -3,10 +3,10 @@ use alloc::vec;
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, InkPaperApp, SavedNetworks, WifiNetwork, WifiScanStatus,
+    InkPaperApp, SavedNetworks, WifiNetwork, WifiScanStatus,
     app::{Back, Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
-        header::{BackHeader, BackHeaderProps},
+        header::{BackHeader, BackHeaderProps, BatteryIndicator},
         popup_menu::{MenuItem, PopupMenu, PopupMenuProps},
         settings_row::{ListRow, ListRowProps, SettingsValueRow, SettingsValueRowProps},
     },
@@ -50,7 +50,7 @@ pub(crate) struct WifiNetworksScreen<'a> {
     on_dismiss_menu: Listener<ActivateEvent>,
     scan: WifiScanStatus,
     revision: u64,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     on_back: Listener<ActivateEvent>,
     on_scan: Listener<ActivateEvent>,
 }
@@ -271,7 +271,7 @@ impl ScreenView for WifiNetworksRoute {
             on_dismiss_menu: cx.listener(InkPaperApp::dismiss_wifi_menu),
             scan: app.wifi.scan_status(),
             revision: app.wifi.revision(),
-            battery: app.system_status.battery(),
+            battery: app.battery_indicator,
             on_back: cx.listener(InkPaperApp::activate_back),
             on_scan: cx.listener(InkPaperApp::activate_wifi_scan),
         })

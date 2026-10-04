@@ -1,11 +1,11 @@
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, InkPaperApp, ReadingHistoryEntry,
+    InkPaperApp, ReadingHistoryEntry,
     app::{Entry, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         current_book_card::{CurrentBookCard, CurrentBookCardProps},
-        header::{HomeHeader, HomeHeaderProps},
+        header::{BatteryIndicator, HomeHeader, HomeHeaderProps},
         home_menu::{HomeMenu, HomeMenuProps},
     },
 };
@@ -13,7 +13,7 @@ use crate::{
 #[component]
 pub(crate) struct HomeScreen<'a> {
     current_book: Option<&'a ReadingHistoryEntry>,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     on_current_book: Listener<ActivateEvent>,
     on_browse_files: Listener<ActivateEvent>,
     on_recent_books: Listener<ActivateEvent>,
@@ -81,7 +81,7 @@ impl ScreenView for HomeRoute {
     ) -> AnyElement<'a> {
         HomeScreen::from(HomeScreenProps {
             current_book: app.reading_history.current(),
-            battery: app.system_status.battery(),
+            battery: app.battery_indicator,
             on_current_book: cx.listener(InkPaperApp::activate_current_book),
             on_browse_files: cx.listener(InkPaperApp::show_browse_files),
             on_recent_books: cx.listener(InkPaperApp::show_recent_books),

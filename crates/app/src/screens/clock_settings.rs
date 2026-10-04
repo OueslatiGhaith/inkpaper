@@ -2,10 +2,10 @@ use alloc::{format, string::String};
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, ClockStatus, ClockSyncStatus, InkPaperApp, UtcOffset,
+    ClockStatus, ClockSyncStatus, InkPaperApp, UtcOffset,
     app::{Entry, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
-        header::{BackHeader, BackHeaderProps},
+        header::{BackHeader, BackHeaderProps, BatteryIndicator},
         settings_row::{ListRow, ListRowProps, SettingsValueRow, SettingsValueRowProps},
         slider::{self, Slider, SliderProps},
     },
@@ -21,7 +21,7 @@ const TIMEZONE_SLIDER_TOP: i32 = 186 + 24 + 4;
 #[component]
 pub(crate) struct ClockSettingsScreen<'a> {
     network: Option<&'a str>,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     clock: Option<ClockStatus>,
     utc_offset: UtcOffset,
     sync: ClockSyncStatus,
@@ -183,8 +183,8 @@ impl ScreenView for ClockSettingsRoute {
     ) -> AnyElement<'a> {
         ClockSettingsScreen::from(ClockSettingsScreenProps {
             network: app.wifi.saved().connected().map(|network| network.ssid()),
-            battery: app.system_status.battery(),
-            clock: app.local_clock(),
+            battery: app.battery_indicator,
+            clock: app.local_clock(cx),
             utc_offset: app.clock.utc_offset(),
             sync: app.clock.sync_status(),
             on_back: cx.listener(InkPaperApp::activate_back),

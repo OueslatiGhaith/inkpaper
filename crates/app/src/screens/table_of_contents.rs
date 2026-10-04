@@ -1,10 +1,10 @@
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, InkPaperApp,
+    InkPaperApp,
     app::{Entry, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
-        header::{BackHeader, BackHeaderProps},
+        header::{BackHeader, BackHeaderProps, BatteryIndicator},
         settings_row::{ListRow, ListRowProps},
     },
     reader::{TableOfContents, TocEntry},
@@ -17,7 +17,7 @@ pub(crate) struct TableOfContentsScreen<'a> {
     toc: &'a TableOfContents,
     current: Option<usize>,
     on_entry: Listener<ActivateEvent>,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -129,7 +129,7 @@ impl ScreenView for TableOfContentsRoute {
             toc: app.reader.table_of_contents(),
             current: app.reader.current_toc_index(),
             on_entry: cx.listener(InkPaperApp::activate_toc_entry),
-            battery: app.system_status.battery(),
+            battery: app.battery_indicator,
             on_back: cx.listener(InkPaperApp::activate_back),
         })
         .into_any_element()

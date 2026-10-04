@@ -1,10 +1,10 @@
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, InkPaperApp, ReadingHistoryEntry,
+    InkPaperApp, ReadingHistoryEntry,
     app::{Entry, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
-        header::{BackHeader, BackHeaderProps},
+        header::{BackHeader, BackHeaderProps, BatteryIndicator},
         recent_book_row::{RecentBookRow, RecentBookRowProps},
     },
 };
@@ -15,7 +15,7 @@ pub(crate) struct RecentBooksScreen<'a> {
     on_entry: Listener<ActivateEvent>,
     revision: u64,
     error: bool,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -112,7 +112,7 @@ impl ScreenView for RecentBooksRoute {
             on_entry: cx.listener(InkPaperApp::activate_recent_book),
             revision: app.reading_history.revision(),
             error: app.reading_history.error(),
-            battery: app.system_status.battery(),
+            battery: app.battery_indicator,
             on_back: cx.listener(InkPaperApp::activate_back),
         })
         .into_any_element()

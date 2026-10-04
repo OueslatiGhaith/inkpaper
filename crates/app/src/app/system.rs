@@ -7,35 +7,43 @@ use crate::{
 };
 
 impl InkPaperApp {
+    /// Renders again what shows the battery: the entities and screens that read it, and
+    /// the reader's icon when it changes. Nothing else renders, so reading a book
+    /// doesn't wake the display for a new percentage.
     pub fn apply_battery_status(&mut self, battery: BatteryStatus, cx: &mut Context<'_, Self>) {
-        let visible_changed = self.system_status.set_battery(battery);
-
-        if visible_changed && (self.screen() != Screen::Reader || self.control_center.is_open()) {
-            cx.notify();
-        }
+        self.battery
+            .update(cx, |state, cx| {
+                if state.set(battery) {
+                    cx.notify();
+                }
+            })
+            .ok();
+        self.reader_battery_icon
+            .update(cx, |icon, cx| icon.set_battery(battery, cx))
+            .ok();
     }
 
+    /// Renders again only what read the time, so the RTC's minute ticks don't wake the
+    /// display on screens without a clock.
     pub fn apply_clock_status(&mut self, clock: Option<ClockStatus>, cx: &mut Context<'_, Self>) {
-        let changed = self.system_status.set_clock(clock);
-
-        // The clock is currently rendered only by Settings and Clock.
-        //
-        // Keeping RTC updates out of the Reader avoids waking the e-ink display
-        // once per minute while somebody is reading.
-        let shown = matches!(self.screen(), Screen::Settings | Screen::ClockSettings)
-            || self.control_center.is_open();
-
-        if changed && shown {
-            cx.notify();
-        }
+        self.rtc
+            .update(cx, |state, cx| {
+                if state.set(clock) {
+                    cx.notify();
+                }
+            })
+            .ok();
     }
 
-    /// The RTC's UTC time shifted to the chosen timezone.
-    pub(crate) fn local_clock(&self) -> Option<ClockStatus> {
+    /// The RTC's UTC time shifted to the chosen timezone. A render that calls this renders
+    /// again when the time changes.
+    pub(crate) fn local_clock<T: 'static>(&self, cx: &Context<'_, T>) -> Option<ClockStatus> {
         let minutes = self.clock.utc_offset().minutes();
 
-        self.system_status
-            .clock()
+        self.rtc
+            .read(cx, |rtc| rtc.get())
+            .ok()
+            .flatten()
             .map(|clock| clock.offset_by(minutes))
     }
 

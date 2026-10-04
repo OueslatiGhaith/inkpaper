@@ -5,7 +5,7 @@ use crate::{
     app::{Exit, ScreenInput, ScreenLifecycle, ScreenView, SideButton},
     components::{
         header::battery_icon,
-        icon::{Icon, IconProps},
+        icon::{Icon, IconKind, IconProps},
         reader_menu::{self, ReaderMenu, ReaderMenuProps},
     },
     reader::{ReaderMenuTab, font_size_from_slider, reader_viewport},
@@ -23,7 +23,7 @@ pub(crate) struct ReaderScreen<'a> {
 
     page_label: &'a str,
     progress_label: &'a str,
-    battery: Option<BatteryStatus>,
+    battery: Entity<ReaderBatteryIcon>,
 
     menu_open: bool,
     menu_tab: ReaderMenuTab,
@@ -137,13 +137,11 @@ impl RenderOnce for ReaderScreen<'_> {
 struct ReaderStatusBar<'a> {
     page_label: &'a str,
     progress_label: &'a str,
-    battery: Option<BatteryStatus>,
+    battery: Entity<ReaderBatteryIcon>,
 }
 
 impl RenderOnce for ReaderStatusBar<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let battery_icon = self.battery.map(battery_icon);
-
         rsx! {
             <div class="absolute left-5 top-[735px] w-[440px] h-[45px] bg-white">
                 <div class="absolute left-0 top-2 h-7 flex items-center">
@@ -157,10 +155,40 @@ impl RenderOnce for ReaderStatusBar<'_> {
                         {self.progress_label}
                     </text>
 
-                    {#if let Some(icon) = battery_icon}
-                        <Icon kind={icon} size={px(24)} />
-                    {/if}
+                    {self.battery}
                 </div>
+            </div>
+        }
+    }
+}
+
+/// the battery icon of the reader's status bar. It keeps only the icon, so a new
+/// percentage paints nothing while reading unless the icon changes
+#[derive(Default)]
+pub(crate) struct ReaderBatteryIcon {
+    icon: Option<IconKind>,
+}
+
+impl ReaderBatteryIcon {
+    pub(crate) fn set_battery(&mut self, battery: BatteryStatus, cx: &mut Context<'_, Self>) {
+        let icon = Some(battery_icon(battery));
+
+        if self.icon != icon {
+            self.icon = icon;
+            cx.notify();
+        }
+    }
+}
+
+impl Render for ReaderBatteryIcon {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let icon = self.icon;
+
+        rsx! {
+            <div class="flex items-center">
+                {#if let Some(icon) = icon}
+                    <Icon kind={icon} size={px(24)} />
+                {/if}
             </div>
         }
     }
@@ -291,7 +319,7 @@ impl ScreenView for ReaderRoute {
             page_canvas,
             page_label: app.reader.page_label(),
             progress_label: app.reader.progress_label(),
-            battery: app.system_status.battery(),
+            battery: app.reader_battery_icon,
             menu_open: app.reader.menu_open(),
             menu_tab: app.reader.menu_tab(),
             font_size: app.reader.menu_font_size(),

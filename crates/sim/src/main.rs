@@ -35,7 +35,7 @@ fn main() {
     InkPaperApp::register_resources(&mut runtime).expect("InkPaper resources must fit");
 
     let app = runtime
-        .create_root(|_| InkPaperApp::default())
+        .create_root(InkPaperApp::new)
         .expect("InkPaper application root must fit");
 
     seed_system_status(&mut runtime, app);
@@ -188,4 +188,64 @@ fn seed_system_status(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>) {
 fn send_input(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>, event: AppInputEvent) {
     inkpaper_app::dispatch_input(runtime, app, event)
         .expect("application input dispatch must remain available");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn painted_home() -> (
+        runtime::SimulatorRuntime<'static>,
+        Entity<InkPaperApp>,
+        SimulatorDisplay<Rgb888>,
+    ) {
+        let mut runtime = new_runtime();
+        InkPaperApp::register_resources(&mut runtime).unwrap();
+        let app = runtime.create_root(InkPaperApp::new).unwrap();
+        seed_system_status(&mut runtime, app);
+
+        let mut display = SimulatorDisplay::new(DISPLAY_SIZE_EG);
+        rebuild_ui(&mut runtime, &mut display);
+
+        (runtime, app, display)
+    }
+
+    /// paints the current frame from scratch
+    fn repaint(runtime: &mut runtime::SimulatorRuntime<'static>) -> SimulatorDisplay<Rgb888> {
+        let mut display = SimulatorDisplay::new(DISPLAY_SIZE_EG);
+        rebuild_ui(runtime, &mut display);
+
+        display
+    }
+
+    #[test]
+    fn a_partially_painted_battery_change_matches_a_full_repaint() {
+        let (mut runtime, app, mut display) = painted_home();
+
+        runtime
+            .update(app, |app, cx| {
+                app.apply_battery_status(BatteryStatus::new(9, 3_500).unwrap(), cx);
+            })
+            .unwrap();
+        render_pending_ui(&mut runtime, &mut display);
+
+        // only the header's indicator was painted again
+        assert!(!runtime.rebuild_damage().is_full());
+        assert!(display == repaint(&mut runtime));
+    }
+
+    #[test]
+    fn a_clock_tick_on_the_home_screen_paints_nothing() {
+        let (mut runtime, app, mut display) = painted_home();
+        let before = repaint(&mut runtime);
+
+        runtime
+            .update(app, |app, cx| {
+                app.apply_clock_status(ClockStatus::new(2026, 9, 23, 12, 35), cx);
+            })
+            .unwrap();
+        render_pending_ui(&mut runtime, &mut display);
+
+        assert!(display == before);
+    }
 }

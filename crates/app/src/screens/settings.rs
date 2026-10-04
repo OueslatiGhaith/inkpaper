@@ -2,17 +2,17 @@ use alloc::{format, string::String};
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, ClockStatus, InkPaperApp,
+    ClockStatus, InkPaperApp,
     app::{ScreenInput, ScreenLifecycle, ScreenView},
     components::{
-        header::{BackHeader, BackHeaderProps},
+        header::{BackHeader, BackHeaderProps, BatteryIndicator},
         settings_row::{ListRow, ListRowProps},
     },
 };
 
 #[component]
 pub(crate) struct SettingsScreen {
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     clock: Option<ClockStatus>,
     on_back: Listener<ActivateEvent>,
     on_clock: Listener<ActivateEvent>,
@@ -76,8 +76,8 @@ impl ScreenView for SettingsRoute {
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
         SettingsScreen::from(SettingsScreenProps {
-            battery: app.system_status.battery(),
-            clock: app.local_clock(),
+            battery: app.battery_indicator,
+            clock: app.local_clock(cx),
             on_back: cx.listener(InkPaperApp::activate_back),
             on_clock: cx.listener(InkPaperApp::show_clock_settings),
         })

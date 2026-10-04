@@ -118,31 +118,42 @@ const fn days_in_month(year: u16, month: u8) -> u8 {
     }
 }
 
+/// the battery as last reported. Renders that show it read this entity, so they render
+/// again when its visible percentage changes
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SystemStatus {
+pub(crate) struct BatteryState {
     battery: Option<BatteryStatus>,
-    clock: Option<ClockStatus>,
 }
 
-impl SystemStatus {
-    pub(crate) const fn battery(self) -> Option<BatteryStatus> {
+impl BatteryState {
+    pub(crate) const fn get(self) -> Option<BatteryStatus> {
         self.battery
     }
 
-    pub(crate) const fn clock(self) -> Option<ClockStatus> {
-        self.clock
-    }
-
     /// Returns whether the UI-visible battery percentage changed.
-    pub(crate) fn set_battery(&mut self, battery: BatteryStatus) -> bool {
+    pub(crate) fn set(&mut self, battery: BatteryStatus) -> bool {
         let changed = self.battery.map(BatteryStatus::percent) != Some(battery.percent());
 
         self.battery = Some(battery);
 
         changed
     }
+}
 
-    pub(crate) fn set_clock(&mut self, clock: Option<ClockStatus>) -> bool {
+/// the RTC's UTC time as last reported. Renders that show it read this entity, so they
+/// render again when it changes
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RtcState {
+    clock: Option<ClockStatus>,
+}
+
+impl RtcState {
+    pub(crate) const fn get(self) -> Option<ClockStatus> {
+        self.clock
+    }
+
+    /// Returns whether the time changed.
+    pub(crate) fn set(&mut self, clock: Option<ClockStatus>) -> bool {
         if self.clock == clock {
             return false;
         }

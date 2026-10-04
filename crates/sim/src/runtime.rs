@@ -28,5 +28,9 @@ pub(crate) type SimulatorRuntime<'resources> =
     Runtime<SimulatorStorage, RuntimeResources<'resources, 2, 128, { 16 * 1024 }, 32>>;
 
 pub(crate) fn new_runtime<'resources>() -> SimulatorRuntime<'resources> {
-    SimulatorRuntime::default()
+    let mut runtime = SimulatorRuntime::default();
+    // render only the entities that changed, like the device
+    runtime.set_partial_rebuilds(true);
+
+    runtime
 }

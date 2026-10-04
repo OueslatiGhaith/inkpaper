@@ -4,11 +4,15 @@ use crate::{
     ClockState, FileTransferState, FrontlightState,
     browser::BrowserState,
     components::control_center::{ControlCenter, ControlCenterProps},
+    components::header::BatteryIndicator,
     control_center::ControlCenterState,
     reader::ReaderState,
     reading_history::ReadingHistoryState,
-    screens::sleep::{SleepScreen, SleepScreenProps},
-    system::SystemStatus,
+    screens::{
+        reader::ReaderBatteryIcon,
+        sleep::{SleepScreen, SleepScreenProps},
+    },
+    system::{BatteryState, RtcState},
     wifi::WifiState,
 };
 
@@ -75,14 +79,18 @@ impl Screen {
     }
 }
 
-#[derive(Default)]
 pub struct InkPaperApp {
     navigation: NavigationStack,
     sleeping: bool,
     pub(crate) browser: BrowserState,
     pub(crate) reader: ReaderState,
     pub(crate) reading_history: ReadingHistoryState,
-    pub(crate) system_status: SystemStatus,
+    pub(crate) battery: Entity<BatteryState>,
+    pub(crate) rtc: Entity<RtcState>,
+    /// the battery in screen headers
+    pub(crate) battery_indicator: Entity<BatteryIndicator>,
+    /// the battery in the reader's status bar
+    pub(crate) reader_battery_icon: Entity<ReaderBatteryIcon>,
     pub(crate) clock: ClockState,
     pub(crate) wifi: WifiState,
     frontlight: FrontlightState,
@@ -93,6 +101,31 @@ pub struct InkPaperApp {
 }
 
 impl InkPaperApp {
+    pub fn new(cx: &mut Context<'_, Self>) -> Self {
+        let battery = cx.new(|_| BatteryState::default()).unwrap();
+        let rtc = cx.new(|_| RtcState::default()).unwrap();
+        let battery_indicator = cx.new(|_| BatteryIndicator::new(battery)).unwrap();
+        let reader_battery_icon = cx.new(|_| ReaderBatteryIcon::default()).unwrap();
+
+        Self {
+            navigation: NavigationStack::default(),
+            sleeping: false,
+            browser: BrowserState::default(),
+            reader: ReaderState::default(),
+            reading_history: ReadingHistoryState::default(),
+            battery,
+            rtc,
+            battery_indicator,
+            reader_battery_icon,
+            clock: ClockState::default(),
+            wifi: WifiState::default(),
+            frontlight: FrontlightState::default(),
+            control_center: ControlCenterState::default(),
+            pointer_captured: false,
+            file_transfer: FileTransferState::default(),
+        }
+    }
+
     pub fn register_resources<'resource>(
         runtime: &mut impl ResourceRuntimeApi<'resource>,
     ) -> Result<(), FontRegistryError> {
@@ -102,9 +135,19 @@ impl InkPaperApp {
 
 impl Render for InkPaperApp {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-        let battery = self.system_status.battery();
-        let clock = self.local_clock();
         let control_center_open = self.control_center.is_open();
+        // read only while shown, so the app renders again for them only then
+        let (battery, clock) = if control_center_open {
+            let battery = self
+                .battery
+                .read(cx, |battery| battery.get())
+                .ok()
+                .flatten();
+
+            (battery, self.local_clock(cx))
+        } else {
+            (None, None)
+        };
         let frontlight = self.frontlight.setting();
 
         let reader_title = if self.screen() == Screen::Reader {

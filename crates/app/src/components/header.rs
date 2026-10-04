@@ -5,18 +5,19 @@ use inkpaper_ui::prelude::*;
 use crate::{
     BatteryStatus,
     components::icon::{Icon, IconKind, IconProps},
+    system::BatteryState,
 };
 
 #[component]
 pub(crate) struct HomeHeader {
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
 }
 
 impl RenderOnce for HomeHeader {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-full h-full relative">
-                <BatteryIndicator battery={self.battery} />
+                {self.battery}
             </div>
         }
     }
@@ -25,14 +26,14 @@ impl RenderOnce for HomeHeader {
 #[component]
 pub(crate) struct TitleHeader<'a> {
     title: &'a str,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
 }
 
 impl RenderOnce for TitleHeader<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-full h-full relative">
-                <BatteryIndicator battery={self.battery} />
+                {self.battery}
 
                 <div class="absolute left-5 top-3 h-[52px] flex items-center">
                     <text class="font-bold text-2xl no-wrap max-lines-1 text-ellipsis">
@@ -47,7 +48,7 @@ impl RenderOnce for TitleHeader<'_> {
 #[component]
 pub(crate) struct BackHeader<'a> {
     title: &'a str,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     on_back: Listener<ActivateEvent>,
 }
 
@@ -55,7 +56,7 @@ impl RenderOnce for BackHeader<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
             <div class="w-full h-full relative">
-                <BatteryIndicator battery={self.battery} />
+                {self.battery}
 
                 <div
                     id="back"
@@ -75,12 +76,36 @@ impl RenderOnce for BackHeader<'_> {
     }
 }
 
+/// the battery in a screen's header. As its own entity, a new percentage renders and
+/// paints only the indicator, not the screen
+pub(crate) struct BatteryIndicator {
+    battery: Entity<BatteryState>,
+}
+
+impl BatteryIndicator {
+    pub(crate) const fn new(battery: Entity<BatteryState>) -> Self {
+        Self { battery }
+    }
+}
+
+impl Render for BatteryIndicator {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let battery = self
+            .battery
+            .read(cx, |battery| battery.get())
+            .ok()
+            .flatten();
+
+        BatteryLabel::from(BatteryLabelProps { battery })
+    }
+}
+
 #[component]
-struct BatteryIndicator {
+struct BatteryLabel {
     battery: Option<BatteryStatus>,
 }
 
-impl RenderOnce for BatteryIndicator {
+impl RenderOnce for BatteryLabel {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let label = match self.battery {
             Some(battery) => format!("{}%", battery.percent()),

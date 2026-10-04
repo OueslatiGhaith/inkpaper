@@ -211,9 +211,11 @@ async fn main(spawner: Spawner) -> ! {
     let frame = FRAMEBUFFER.init_with(FramebufferStorage::white);
 
     let runtime = UI_RUNTIME.init_with(UiRuntime::default);
+    // render only the entities that changed, and refresh only what they painted
+    runtime.set_partial_rebuilds(true);
 
     InkPaperApp::register_resources(runtime).unwrap();
-    let app = runtime.create_root(|_| InkPaperApp::default()).unwrap();
+    let app = runtime.create_root(InkPaperApp::new).unwrap();
 
     // Storage initialization has been running concurrently with display startup.
     // Wait only when AppService is about to load persisted app state

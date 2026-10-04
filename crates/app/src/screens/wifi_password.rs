@@ -1,10 +1,10 @@
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    BatteryStatus, InkPaperApp,
+    InkPaperApp,
     app::{Exit, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
-        header::{BackHeader, BackHeaderProps},
+        header::{BackHeader, BackHeaderProps, BatteryIndicator},
         keyboard::{Keyboard, KeyboardProps},
         text_field::{TextField, TextFieldProps},
     },
@@ -16,7 +16,7 @@ use crate::{
 #[component]
 pub(crate) struct WifiPasswordScreen<'a> {
     entry: &'a PasswordEntry,
-    battery: Option<BatteryStatus>,
+    battery: Entity<BatteryIndicator>,
     on_back: Listener<ActivateEvent>,
     on_toggle: Listener<ActivateEvent>,
     on_key: Listener<ActivateEvent>,
@@ -106,7 +106,7 @@ impl ScreenView for WifiPasswordRoute {
 
         WifiPasswordScreen::from(WifiPasswordScreenProps {
             entry,
-            battery: app.system_status.battery(),
+            battery: app.battery_indicator,
             on_back: cx.listener(InkPaperApp::activate_back),
             on_toggle: cx.listener(InkPaperApp::activate_toggle_wifi_password),
             on_key: cx.listener(InkPaperApp::activate_wifi_password_key),
