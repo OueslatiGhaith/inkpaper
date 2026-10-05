@@ -19,6 +19,7 @@ metrics = []
 defmt = { workspace = true, optional = true }
 embedded-graphics = { workspace = true, optional = true }
 heapless = { workspace = true }
+icu_properties = { version = "2.3.0", default-features = false, features = ["compiled_data"] }
 inkpaper-ui-macros = { path = "../ui-macros", optional = true }
 inkpaper-ui-style-schema = { path = "../ui-style-schema" }
 num-traits = { version = "0.2.19", default-features = false }

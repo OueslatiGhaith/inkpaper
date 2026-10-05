@@ -1,3 +1,8 @@
+use icu_properties::{
+    CodePointMapData, CodePointMapDataBorrowed,
+    props::{BidiClass, BidiMirroringGlyph},
+};
+
 use crate::{FontRegistry, Offset, PreparedFont, pair_cache::PairPositioningCache, px};
 
 use super::{
@@ -6,6 +11,11 @@ use super::{
 };
 
 const DIRECTIONAL_RUN_CAPACITY: usize = 32;
+
+const BIDI_CLASSES: CodePointMapDataBorrowed<'static, BidiClass> =
+    CodePointMapData::<BidiClass>::new();
+const MIRRORING_GLYPHS: CodePointMapDataBorrowed<'static, BidiMirroringGlyph> =
+    CodePointMapData::<BidiMirroringGlyph>::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -255,38 +265,12 @@ fn directional_class_for_cluster(text: &str, cluster: usize) -> DirectionalClass
 }
 
 fn directional_class(character: char) -> DirectionalClass {
-    if is_directional_number(character) {
-        return DirectionalClass::Number;
+    match BIDI_CLASSES.get(character) {
+        BidiClass::LeftToRight => DirectionalClass::LeftToRight,
+        BidiClass::RightToLeft | BidiClass::ArabicLetter => DirectionalClass::RightToLeft,
+        BidiClass::EuropeanNumber | BidiClass::ArabicNumber => DirectionalClass::Number,
+        _ => DirectionalClass::Neutral,
     }
-    if is_arabic_directional(character) && character.is_alphabetic() {
-        return DirectionalClass::RightToLeft;
-    }
-    if character.is_alphabetic() {
-        return DirectionalClass::LeftToRight;
-    }
-
-    DirectionalClass::Neutral
-}
-
-fn is_directional_number(character: char) -> bool {
-    matches!(
-        character,
-        '0'..='9'
-            | '\u{0660}'..='\u{0669}'
-            | '\u{06F0}'..='\u{06F9}'
-    )
-}
-
-fn is_arabic_directional(character: char) -> bool {
-    matches!(
-        character,
-        '\u{0600}'..='\u{06FF}'
-            | '\u{0750}'..='\u{077F}'
-            | '\u{0870}'..='\u{089F}'
-            | '\u{08A0}'..='\u{08FF}'
-            | '\u{FB50}'..='\u{FDFF}'
-            | '\u{FE70}'..='\u{FEFF}'
-    )
 }
 
 fn resolve_directional_run_levels(runs: &mut [DirectionalRun], paragraph_direction: TextDirection) {
@@ -392,42 +376,7 @@ fn mirror_odd_level_glyphs<'font, const FONTS: usize>(
 }
 
 fn mirrored_character(character: char) -> Option<char> {
-    match character {
-        '(' => Some(')'),
-        ')' => Some('('),
-
-        '[' => Some(']'),
-        ']' => Some('['),
-
-        '{' => Some('}'),
-        '}' => Some('{'),
-
-        '<' => Some('>'),
-        '>' => Some('<'),
-
-        '«' => Some('»'),
-        '»' => Some('«'),
-
-        '‹' => Some('›'),
-        '›' => Some('‹'),
-
-        '⁅' => Some('⁆'),
-        '⁆' => Some('⁅'),
-
-        '〈' => Some('〉'),
-        '〉' => Some('〈'),
-
-        '⟨' => Some('⟩'),
-        '⟩' => Some('⟨'),
-
-        '⟦' => Some('⟧'),
-        '⟧' => Some('⟦'),
-
-        '⟪' => Some('⟫'),
-        '⟫' => Some('⟪'),
-
-        _ => None,
-    }
+    MIRRORING_GLYPHS.get(character).mirroring_glyph
 }
 
 fn previous_strong_direction(runs: &[DirectionalRun], index: usize) -> Option<TextDirection> {

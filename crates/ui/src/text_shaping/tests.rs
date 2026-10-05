@@ -885,6 +885,96 @@ fn ltr_run_between_arabic_runs_keeps_internal_order() {
 }
 
 #[test]
+fn hebrew_resolves_right_to_left() {
+    static CHARACTERS: [char; 5] = ['א', 'ב', ' ', 'A', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 4];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, "אב A", &mut output)
+        .unwrap();
+
+    assert_eq!(run.direction(), TextDirection::RightToLeft);
+
+    // logical clusters:
+    // א 0
+    // ב 2
+    //   4
+    // A 5
+    //
+    // visual:
+    // A <space> ב א
+    assert_eq!(run.glyphs()[0].cluster(), 5);
+    assert_eq!(run.glyphs()[1].cluster(), 4);
+    assert_eq!(run.glyphs()[2].cluster(), 2);
+    assert_eq!(run.glyphs()[3].cluster(), 0);
+}
+
+#[test]
+fn hebrew_run_inside_ltr_paragraph_is_reversed() {
+    static CHARACTERS: [char; 5] = ['א', 'ב', ' ', 'A', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 4];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, "A אב", &mut output)
+        .unwrap();
+
+    assert_eq!(run.direction(), TextDirection::LeftToRight);
+
+    // logical clusters:
+    // A 0
+    //   1
+    // א 2
+    // ב 4
+    //
+    // visual:
+    // A <space> ב א
+    assert_eq!(run.glyphs()[0].cluster(), 0);
+    assert_eq!(run.glyphs()[1].cluster(), 1);
+    assert_eq!(run.glyphs()[2].cluster(), 4);
+    assert_eq!(run.glyphs()[3].cluster(), 2);
+}
+
+#[test]
+fn rtl_mirroring_covers_unicode_mirrored_pairs() {
+    static CHARACTERS: [char; 4] = ['ب', '≤', '≥', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 3];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, "ب≤ب", &mut output)
+        .unwrap();
+
+    assert_eq!(run.direction(), TextDirection::RightToLeft);
+    assert_eq!(run.glyphs()[1].glyph(), font.glyph_id('≥').unwrap());
+}
+
+#[test]
 fn bidi_reordering_preserves_resolved_fallback_fonts() {
     static LATIN: [char; 3] = ['A', ' ', '?'];
     static ARABIC: [char; 2] = ['ب', '?'];
