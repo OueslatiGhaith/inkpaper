@@ -1,6 +1,6 @@
 use icu_properties::{
     CodePointMapData, CodePointMapDataBorrowed,
-    props::{BidiClass, BidiMirroringGlyph},
+    props::{BidiClass, BidiMirroringGlyph, BidiPairedBracketType},
 };
 
 use crate::{FontRegistry, Offset, PreparedFont, pair_cache::PairPositioningCache, px};
@@ -11,6 +11,8 @@ use super::{
 };
 
 const DIRECTIONAL_RUN_CAPACITY: usize = 32;
+/// lines with more bracket pairs, or deeper nesting, leave their brackets as plain neutrals
+const BRACKET_PAIR_CAPACITY: usize = 32;
 
 const BIDI_CLASSES: CodePointMapDataBorrowed<'static, BidiClass> =
     CodePointMapData::<BidiClass>::new();
@@ -56,6 +58,26 @@ impl DirectionalRun {
 
     const fn len(self) -> usize {
         self.end.saturating_sub(self.start)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BracketPair {
+    open: usize,
+    close: usize,
+    /// `None` when there is no strong text between the brackets
+    direction: Option<TextDirection>,
+}
+
+impl BracketPair {
+    const EMPTY: Self = Self {
+        open: 0,
+        close: 0,
+        direction: None,
+    };
+
+    const fn contains_bracket(self, offset: usize) -> bool {
+        self.open == offset || self.close == offset
     }
 }
 
@@ -144,7 +166,8 @@ impl SimpleShaper {
         let text_glyph_count = text_glyph_count.min(glyphs.len());
         let mut runs = [DirectionalRun::EMPTY; DIRECTIONAL_RUN_CAPACITY];
 
-        let run_count = build_directional_runs(text, text_glyph_count, glyphs, &mut runs)?;
+        let run_count =
+            build_directional_runs(text, direction, text_glyph_count, glyphs, &mut runs)?;
 
         resolve_directional_run_levels(&mut runs[..run_count], direction);
 
@@ -188,6 +211,7 @@ fn paragraph_direction(text: &str) -> TextDirection {
 
 fn build_directional_runs(
     text: &str,
+    paragraph_direction: TextDirection,
     text_glyph_count: usize,
     glyphs: &[ShapedGlyph],
     output: &mut [DirectionalRun],
@@ -207,11 +231,17 @@ fn build_directional_runs(
         return Ok(1);
     }
 
+    let mut brackets = [BracketPair::EMPTY; BRACKET_PAIR_CAPACITY];
+    let bracket_count = find_bracket_pairs(text, &mut brackets).unwrap_or(0);
+    let brackets = &mut brackets[..bracket_count];
+
+    resolve_bracket_pairs(text, paragraph_direction, brackets);
+
     let mut written = 0;
 
     for (index, glyph) in glyphs.iter().copied().enumerate() {
         let class = if index < text_glyph_count {
-            directional_class_for_cluster(text, glyph.cluster())
+            directional_class_for_cluster(text, glyph.cluster(), brackets)
         } else {
             // extr glyphs, currently the renderer's ellipsis suffix, don't have cluster
             // offsets into `text`. Treat them as neutrals and let the paragraph context
@@ -253,7 +283,11 @@ fn build_directional_runs(
     Ok(written)
 }
 
-fn directional_class_for_cluster(text: &str, cluster: usize) -> DirectionalClass {
+fn directional_class_for_cluster(
+    text: &str,
+    cluster: usize,
+    brackets: &[BracketPair],
+) -> DirectionalClass {
     let Some(remaining) = text.get(cluster..) else {
         return DirectionalClass::Neutral;
     };
@@ -261,7 +295,205 @@ fn directional_class_for_cluster(text: &str, cluster: usize) -> DirectionalClass
         return DirectionalClass::Neutral;
     };
 
-    directional_class(character)
+    let class = directional_class(character);
+
+    // a resolved bracket acts as a strong character from here on
+    if class == DirectionalClass::Neutral
+        && let Some(direction) = brackets
+            .iter()
+            .find(|pair| pair.contains_bracket(cluster))
+            .and_then(|pair| pair.direction)
+    {
+        return match direction {
+            TextDirection::LeftToRight => DirectionalClass::LeftToRight,
+            TextDirection::RightToLeft => DirectionalClass::RightToLeft,
+        };
+    }
+
+    class
+}
+
+/// pairs each closing bracket with the nearest open bracket of the same kind (UAX #9 BD16),
+/// sorted by opening position.
+///
+/// `None` when the brackets don't fit in `pairs`
+fn find_bracket_pairs(
+    text: &str,
+    pairs: &mut [BracketPair; BRACKET_PAIR_CAPACITY],
+) -> Option<usize> {
+    // the opening bracket's position and the closing bracket it expects
+    let mut openers = [(0usize, '\0'); BRACKET_PAIR_CAPACITY];
+    let mut depth = 0usize;
+    let mut count = 0usize;
+
+    for (offset, character) in text.char_indices() {
+        let mirroring = MIRRORING_GLYPHS.get(character);
+
+        match mirroring.paired_bracket_type {
+            BidiPairedBracketType::Open => {
+                if BIDI_CLASSES.get(character) != BidiClass::OtherNeutral {
+                    continue;
+                }
+
+                let Some(closing) = mirroring.mirroring_glyph else {
+                    continue;
+                };
+
+                *openers.get_mut(depth)? = (offset, canonical_bracket(closing));
+                depth += 1;
+            }
+
+            BidiPairedBracketType::Close => {
+                let closing = canonical_bracket(character);
+
+                // an unmatched closing bracket is ignored, and closing an outer pair also
+                // drops the unclosed brackets inside it
+                let Some(index) = openers[..depth]
+                    .iter()
+                    .rposition(|(_, expected)| *expected == closing)
+                else {
+                    continue;
+                };
+
+                if count == BRACKET_PAIR_CAPACITY {
+                    return None;
+                }
+
+                let open = openers[index].0;
+                let position = pairs[..count].partition_point(|pair| pair.open < open);
+
+                pairs.copy_within(position..count, position + 1);
+                pairs[position] = BracketPair {
+                    open,
+                    close: offset,
+                    direction: None,
+                };
+
+                count += 1;
+                depth = index;
+            }
+
+            _ => {}
+        }
+    }
+
+    Some(count)
+}
+
+/// U+2329 and U+232A are canonically equivalent to U+3008 and U+3009, so they pair
+/// with each other
+const fn canonical_bracket(character: char) -> char {
+    match character {
+        '\u{2329}' => '\u{3008}',
+        '\u{232A}' => '\u{3009}',
+        _ => character,
+    }
+}
+
+/// gives each bracket pair the direction of the text it encloses (UAX #9 N0), so the
+/// brackets stay with that text
+fn resolve_bracket_pairs(
+    text: &str,
+    paragraph_direction: TextDirection,
+    pairs: &mut [BracketPair],
+) {
+    for index in 0..pairs.len() {
+        let pair = pairs[index];
+
+        let Some(inside) = text.get(pair.open..pair.close) else {
+            continue;
+        };
+
+        let mut previous_strong =
+            strong_direction_before(text, pair.open).unwrap_or(paragraph_direction);
+        let mut found_paragraph_direction = false;
+        let mut found_opposite_direction = false;
+
+        for character in inside.chars() {
+            let direction = match BIDI_CLASSES.get(character) {
+                BidiClass::LeftToRight => {
+                    previous_strong = TextDirection::LeftToRight;
+                    previous_strong
+                }
+                BidiClass::RightToLeft | BidiClass::ArabicLetter => {
+                    previous_strong = TextDirection::RightToLeft;
+                    previous_strong
+                }
+                BidiClass::ArabicNumber => TextDirection::RightToLeft,
+                // a European number after left-to-right text is left-to-right, otherwise
+                // it counts as right-to-left (W7)
+                BidiClass::EuropeanNumber => previous_strong,
+                _ => continue,
+            };
+
+            if direction == paragraph_direction {
+                found_paragraph_direction = true;
+                break;
+            }
+
+            found_opposite_direction = true;
+        }
+
+        pairs[index].direction = if found_paragraph_direction {
+            Some(paragraph_direction)
+        } else if found_opposite_direction {
+            // only opposite text inside: the brackets follow it when the text before
+            // them runs the same way
+            Some(
+                bracket_context_before(text, pair.open, &pairs[..index])
+                    .unwrap_or(paragraph_direction),
+            )
+        } else {
+            None
+        };
+    }
+}
+
+/// the direction of the last strong character before `offset`
+fn strong_direction_before(text: &str, offset: usize) -> Option<TextDirection> {
+    let before = text.get(..offset)?;
+
+    before
+        .chars()
+        .rev()
+        .find_map(|character| match BIDI_CLASSES.get(character) {
+            BidiClass::LeftToRight => Some(TextDirection::LeftToRight),
+            BidiClass::RightToLeft | BidiClass::ArabicLetter => Some(TextDirection::RightToLeft),
+            _ => None,
+        })
+}
+
+/// the direction of the text before a bracket pair, for N0. Arabic numbers count as
+/// right-to-left, and the brackets resolved so far as strong
+fn bracket_context_before(
+    text: &str,
+    offset: usize,
+    resolved: &[BracketPair],
+) -> Option<TextDirection> {
+    let before = text.get(..offset)?;
+
+    for (position, character) in before.char_indices().rev() {
+        match BIDI_CLASSES.get(character) {
+            BidiClass::LeftToRight => return Some(TextDirection::LeftToRight),
+            BidiClass::RightToLeft | BidiClass::ArabicLetter | BidiClass::ArabicNumber => {
+                return Some(TextDirection::RightToLeft);
+            }
+            BidiClass::OtherNeutral => {
+                if let Some(direction) = resolved
+                    .iter()
+                    .find(|pair| pair.contains_bracket(position))
+                    .and_then(|pair| pair.direction)
+                {
+                    return Some(direction);
+                }
+            }
+            // a European number takes the direction of the strong text before it (W7),
+            // so keep looking
+            _ => {}
+        }
+    }
+
+    None
 }
 
 fn directional_class(character: char) -> DirectionalClass {

@@ -1311,6 +1311,73 @@ fn rtl_brackets_are_mirrored_around_ltr_run() {
 }
 
 #[test]
+fn bracket_pair_after_arabic_stays_with_it_at_line_end() {
+    static CHARACTERS: [char; 6] = ['a', ' ', 'ب', '(', ')', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 7];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, "a ب (ب)", &mut output)
+        .unwrap();
+
+    assert_eq!(run.direction(), TextDirection::LeftToRight);
+
+    // logical UTF-8 clusters:
+    //     a 0, space 1, ب 2, space 4, ( 5, ب 6, ) 8
+    //
+    // visual:
+    //     a <space> ) ب ( <space> ب
+    //
+    // the brackets enclose only Arabic and follow Arabic, so both join the RTL run
+    // and are mirrored
+    let clusters: [usize; 7] = core::array::from_fn(|index| run.glyphs()[index].cluster());
+    assert_eq!(clusters, [0, 1, 8, 6, 5, 4, 2]);
+
+    assert_eq!(run.glyphs()[2].glyph(), font.glyph_id('(').unwrap());
+    assert_eq!(run.glyphs()[4].glyph(), font.glyph_id(')').unwrap());
+}
+
+#[test]
+fn bracket_pair_after_arabic_stays_with_it_before_english() {
+    static CHARACTERS: [char; 7] = ['a', 'b', ' ', 'ب', '(', ')', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 9];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, "a ب (ب) b", &mut output)
+        .unwrap();
+
+    assert_eq!(run.direction(), TextDirection::LeftToRight);
+
+    // logical UTF-8 clusters:
+    //     a 0, space 1, ب 2, space 4, ( 5, ب 6, ) 8, space 9, b 10
+    //
+    // visual:
+    //     a <space> ) ب ( <space> ب <space> b
+    let clusters: [usize; 9] = core::array::from_fn(|index| run.glyphs()[index].cluster());
+    assert_eq!(clusters, [0, 1, 8, 6, 5, 4, 2, 9, 10]);
+
+    assert_eq!(run.glyphs()[2].glyph(), font.glyph_id('(').unwrap());
+    assert_eq!(run.glyphs()[4].glyph(), font.glyph_id(')').unwrap());
+}
+
+#[test]
 fn ltr_brackets_around_rtl_run_are_not_mirrored() {
     static CHARACTERS: [char; 7] = ['A', 'B', ' ', '(', ')', 'ب', '?'];
 
