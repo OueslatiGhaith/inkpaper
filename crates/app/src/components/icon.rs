@@ -15,6 +15,7 @@ pub(crate) enum IconKind {
     BatteryMedium,
     BatteryLow,
     BatteryWarning,
+    BatteryCharging,
     Usb,
 }
 #[component]
@@ -40,6 +41,9 @@ impl RenderOnce for Icon {
             IconKind::BatteryLow => include_svg!("assets/icons/lucide/battery-low.svg"),
             IconKind::BatteryWarning => {
                 include_svg!("assets/icons/lucide/battery-warning.svg")
+            }
+            IconKind::BatteryCharging => {
+                include_svg!("assets/icons/lucide/battery-charging.svg")
             }
             IconKind::Usb => include_svg!("assets/icons/lucide/usb.svg"),
         };

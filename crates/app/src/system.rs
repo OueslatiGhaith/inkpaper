@@ -2,10 +2,11 @@
 pub struct BatteryStatus {
     percent: u8,
     millivolts: u16,
+    charging: bool,
 }
 
 impl BatteryStatus {
-    pub const fn new(percent: u8, millivolts: u16) -> Option<Self> {
+    pub const fn new(percent: u8, millivolts: u16, charging: bool) -> Option<Self> {
         if percent > 100 {
             return None;
         }
@@ -13,6 +14,7 @@ impl BatteryStatus {
         Some(Self {
             percent,
             millivolts,
+            charging,
         })
     }
 
@@ -22,6 +24,10 @@ impl BatteryStatus {
 
     pub const fn millivolts(self) -> u16 {
         self.millivolts
+    }
+
+    pub const fn charging(self) -> bool {
+        self.charging
     }
 }
 
@@ -119,7 +125,7 @@ const fn days_in_month(year: u16, month: u8) -> u8 {
 }
 
 /// the battery as last reported. Renders that show it read this entity, so they render
-/// again when its visible percentage changes
+/// again when its visible percentage or charging state changes
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BatteryState {
     battery: Option<BatteryStatus>,
@@ -130,9 +136,10 @@ impl BatteryState {
         self.battery
     }
 
-    /// Returns whether the UI-visible battery percentage changed.
+    /// Returns whether the UI-visible battery percentage or charging state changed.
     pub(crate) fn set(&mut self, battery: BatteryStatus) -> bool {
-        let changed = self.battery.map(BatteryStatus::percent) != Some(battery.percent());
+        let visible = |battery: BatteryStatus| (battery.percent(), battery.charging());
+        let changed = self.battery.map(visible) != Some(visible(battery));
 
         self.battery = Some(battery);
 

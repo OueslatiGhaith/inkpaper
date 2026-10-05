@@ -311,7 +311,7 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
 
-    spawner.spawn(battery_task(i2c_bus::device(shared_i2c)).unwrap());
+    spawner.spawn(battery_task(i2c_bus::device(shared_i2c), peripherals.GPIO21).unwrap());
     spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
     info!("shared I2C services started");
 
@@ -517,12 +517,15 @@ fn apply_battery_reading(
     reading: BatteryReading,
 ) {
     debug!(
-        "battery update percent={} millivolts={}",
+        "battery update percent={} millivolts={} charging={}",
         reading.percent(),
         reading.millivolts(),
+        reading.charging(),
     );
 
-    let Some(status) = AppBatteryStatus::new(reading.percent(), reading.millivolts()) else {
+    let Some(status) =
+        AppBatteryStatus::new(reading.percent(), reading.millivolts(), reading.charging())
+    else {
         warn!("ignoring invalid battery percentage {}", reading.percent());
         return;
     };

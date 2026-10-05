@@ -174,7 +174,7 @@ fn main() {
 }
 
 fn seed_system_status(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>) {
-    let battery = BatteryStatus::new(72, 3_880).expect("simulated battery must be valid");
+    let battery = BatteryStatus::new(72, 3_880, false).expect("simulated battery must be valid");
     let clock = ClockStatus::new(2026, 9, 23, 12, 34).expect("simulated clock must be valid");
 
     runtime
