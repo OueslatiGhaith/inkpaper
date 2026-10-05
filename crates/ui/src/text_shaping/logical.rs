@@ -1,5 +1,9 @@
 use core::{convert::Infallible, str::CharIndices};
 
+use icu_properties::{
+    CodePointSetData, CodePointSetDataBorrowed, props::DefaultIgnorableCodePoint,
+};
+
 use crate::{
     FontId, FontInstance, FontRegistry, Offset, OpenTypeFeature, Pixels, PreparedFont,
     ResolvedGlyph, px,
@@ -15,6 +19,11 @@ pub(crate) const ARABIC_INIT_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"
 pub(crate) const ARABIC_MEDI_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"medi");
 pub(crate) const ARABIC_FINA_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"fina");
 pub(crate) const ARABIC_RLIG_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"rlig");
+
+/// characters with no visible form, such as soft hyphens, zero-width spaces and joiners,
+/// bidi marks and variation selectors
+const DEFAULT_IGNORABLES: CodePointSetDataBorrowed<'static> =
+    CodePointSetData::new::<DefaultIgnorableCodePoint>();
 
 impl SimpleShaper {
     pub fn try_shape_piece_with<'font, const FONTS: usize, F, E>(
@@ -63,6 +72,16 @@ impl SimpleShaper {
 
         while let Some((cluster, character)) = characters.next() {
             let joining = joining_type(character);
+
+            // ignorables draw nothing, not even the replacement glyph, but a non-joining
+            // one such as ZWNJ still ends the joining chain
+            if DEFAULT_IGNORABLES.contains(character) {
+                if !joining.is_transparent() {
+                    state.previous_joins_forward = joining.connects_forward();
+                }
+
+                continue;
+            }
 
             // transparent marks belong to the preceding logical cluster
             // they remain separate glyphs for now because we don't mark positioning yet,

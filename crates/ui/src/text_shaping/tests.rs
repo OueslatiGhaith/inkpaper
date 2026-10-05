@@ -523,6 +523,69 @@ fn arabic_letters_select_contextual_forms() {
 }
 
 #[test]
+fn default_ignorables_draw_nothing() {
+    // the font has a soft hyphen glyph, which must still not be drawn
+    static CHARACTERS: [char; 4] = ['a', 'b', '\u{00AD}', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let shaper = SimpleShaper::new();
+
+    // soft hyphen, zero-width space, zero-width joiner, variation selector 16
+    let text = "a\u{00AD}\u{200B}\u{200D}\u{FE0F}b";
+
+    let mut measured_output = [ShapedGlyph::EMPTY; 6];
+    let measured = shaper
+        .measure(&registry, font_id, 16, text, &mut measured_output)
+        .unwrap();
+
+    let mut output = [ShapedGlyph::EMPTY; 6];
+    let run = shaper
+        .shape_into(&registry, font_id, 16, text, &mut output)
+        .unwrap();
+
+    assert_eq!(run.len(), 2);
+    assert_eq!(run.glyphs()[0].glyph(), font.glyph_id('a').unwrap());
+    assert_eq!(run.glyphs()[1].glyph(), font.glyph_id('b').unwrap());
+    assert_eq!(run.glyphs()[1].cluster(), text.len() - 1);
+    assert_eq!(run.advance(), px(10));
+    assert_eq!(run.advance(), measured.advance());
+}
+
+#[test]
+fn zero_width_non_joiner_breaks_arabic_joining() {
+    static ARABIC: [char; 2] = [
+        '\u{FE8F}', // beh isolated
+        '?',
+    ];
+
+    let arabic = TestFont {
+        characters: &ARABIC,
+        advance: px(7),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font = registry.register(&arabic).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 3];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font, 16, "ب\u{200C}ب", &mut output)
+        .unwrap();
+
+    assert_eq!(run.len(), 2);
+    assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(1));
+    assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(1));
+    assert_eq!(run.advance(), px(14));
+}
+
+#[test]
 fn transparent_arabic_marks_do_not_break_joining_or_advance() {
     static ARABIC: [char; 4] = [
         '\u{FE91}', // beh initial
