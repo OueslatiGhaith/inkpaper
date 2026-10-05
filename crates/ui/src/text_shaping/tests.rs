@@ -1424,6 +1424,97 @@ fn arabic_marks_stack_around_their_base() {
 }
 
 #[test]
+fn latin_combining_marks_stack_on_their_base() {
+    static CHARACTERS: [char; 5] = ['e', 'b', '\u{0301}', '\u{0323}', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let shaper = SimpleShaper::new();
+
+    // e + combining acute + combining dot below, then b
+    let text = "e\u{0301}\u{0323}b";
+    let mut output = [ShapedGlyph::EMPTY; 4];
+
+    let run = shaper
+        .shape_into(&registry, font_id, 16, text, &mut output)
+        .unwrap();
+
+    assert_eq!(run.len(), 4);
+
+    for glyph in &run.glyphs()[..3] {
+        assert_eq!(glyph.cluster(), 0);
+    }
+
+    assert_eq!(run.glyphs()[1].mark_placement(), Some(MarkPlacement::Above));
+    assert_eq!(run.glyphs()[2].mark_placement(), Some(MarkPlacement::Below));
+    assert_eq!(run.glyphs()[1].offset(), Offset::new(px(-5), px(-2)));
+    assert_eq!(run.glyphs()[2].offset(), Offset::new(px(-5), px(2)));
+    assert_eq!(run.advance(), px(10));
+
+    // e is 0..1, the marks 1..5, so the first legal break comes after both marks
+    assert_eq!(
+        shaper.next_cluster_boundary(&registry, font_id, 16, text, 0),
+        Some(5),
+    );
+}
+
+#[test]
+fn hebrew_points_are_placed_by_combining_class() {
+    static CHARACTERS: [char; 4] = ['ב', '\u{05B0}', '\u{05B9}', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 3];
+
+    // bet + sheva + holam
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, "ב\u{05B0}\u{05B9}", &mut output)
+        .unwrap();
+
+    assert_eq!(run.len(), 3);
+    assert_eq!(run.glyphs()[1].mark_placement(), Some(MarkPlacement::Below));
+    assert_eq!(run.glyphs()[2].mark_placement(), Some(MarkPlacement::Above));
+    assert_eq!(run.advance(), px(5));
+}
+
+#[test]
+fn spacing_marks_join_the_cluster_and_keep_their_advance() {
+    static CHARACTERS: [char; 3] = ['क', '\u{093F}', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 2];
+
+    // ka + vowel sign i
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, "क\u{093F}", &mut output)
+        .unwrap();
+
+    assert_eq!(run.len(), 2);
+    assert_eq!(run.glyphs()[1].cluster(), 0);
+    assert_eq!(run.glyphs()[1].mark_placement(), None);
+    assert_eq!(run.advance(), px(10));
+}
+
+#[test]
 fn font_anchors_position_arabic_mark_chain() {
     static ARABIC: [char; 4] = [
         '\u{FE8F}', // beh isolated

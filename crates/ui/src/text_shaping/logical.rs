@@ -11,7 +11,8 @@ use crate::{
 
 use super::{
     ShapeError, ShapeState, ShapeSummary, ShapedGlyph, SimpleShaper,
-    arabic::{MarkPlacement, contextual_form, joining_type, lam_alef_form, mark_placement},
+    arabic::{MarkPlacement, contextual_form, joining_type, lam_alef_form},
+    marks::{extends_cluster, mark_placement},
 };
 
 pub(crate) const ARABIC_ISOL_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"isol");
@@ -83,11 +84,10 @@ impl SimpleShaper {
                 continue;
             }
 
-            // transparent marks belong to the preceding logical cluster
-            // they remain separate glyphs for now because we don't mark positioning yet,
-            // but line breaking, ellipsis and bidi must treat the base + marks as
-            // indivisible unit
-            if joining.is_transparent() {
+            // transparent Arabic characters and combining marks of any script belong to the
+            // preceding logical cluster. They remain separate glyphs, but line breaking,
+            // ellipsis and bidi must treat the base + marks as an indivisible unit
+            if joining.is_transparent() || extends_cluster(character) {
                 let cluster = previous_cluster.unwrap_or(cluster);
 
                 if let Some((resolved, base_advance)) = registry
@@ -108,10 +108,8 @@ impl SimpleShaper {
                             &mut visit,
                         )?;
                     } else {
-                        // Preserve the existing behavior for transparent
-                        // characters outside our supported Arabic-mark
-                        // subset. We can expand the table deliberately
-                        // later rather than guessing their placement.
+                        // spacing marks, and marks we can't place yet, keep their
+                        // own advance
                         emit_resolved_glyph(
                             resolved,
                             cluster,
@@ -351,7 +349,10 @@ fn next_non_transparent_accepts_previous(characters: &CharIndices<'_>) -> bool {
     for (_, character) in lookahead {
         let joining = joining_type(character);
 
-        if joining.is_transparent() {
+        // ZWNJ extends grapheme clusters, but it must still stop the joining chain
+        let ignorable = DEFAULT_IGNORABLES.contains(character);
+
+        if joining.is_transparent() || (extends_cluster(character) && !ignorable) {
             continue;
         }
 

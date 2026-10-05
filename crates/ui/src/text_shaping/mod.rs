@@ -7,6 +7,7 @@ use self::arabic::MarkPlacement;
 mod arabic;
 mod bidi;
 mod logical;
+mod marks;
 pub(crate) mod pair_cache;
 mod positioning;
 #[cfg(test)]
