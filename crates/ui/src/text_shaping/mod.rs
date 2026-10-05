@@ -2,7 +2,7 @@ use crate::{
     FontId, FontInstance, FontProperties, FontRegistry, GlyphId, Offset, Pixels, PreparedFont,
 };
 
-use self::arabic::MarkPlacement;
+use self::marks::MarkPlacement;
 
 mod arabic;
 mod bidi;

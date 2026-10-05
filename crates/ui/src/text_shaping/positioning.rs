@@ -3,7 +3,7 @@ use crate::{
     pair_cache::PairPositioningCache, px,
 };
 
-use super::{ShapedGlyph, arabic::MarkPlacement, bidi::DirectionalRun};
+use super::{ShapedGlyph, bidi::DirectionalRun, marks::MarkPlacement};
 
 const MARK_GAP: Pixels = px(1);
 
@@ -300,6 +300,7 @@ fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
         MarkPlacement::Shadda,
         MarkPlacement::Above,
         MarkPlacement::Below,
+        MarkPlacement::Center,
     ] {
         for mark in marks.iter_mut() {
             let shaped = *mark;
@@ -312,14 +313,14 @@ fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
                 .and_then(|face| face.glyph_metrics(shaped.glyph(), size_px));
 
             let offset = match mark_metrics {
-                Some(mark_metrics) => {
-                    let edge = match target {
-                        MarkPlacement::Shadda | MarkPlacement::Above => &mut above_edge,
-                        MarkPlacement::Below => &mut below_edge,
-                    };
-
-                    positioned_mark_offset(base, base_metrics, mark_metrics, target, edge)
-                }
+                Some(mark_metrics) => positioned_mark_offset(
+                    base,
+                    base_metrics,
+                    mark_metrics,
+                    target,
+                    &mut above_edge,
+                    &mut below_edge,
+                ),
 
                 None => fallback_offset,
             };
@@ -341,7 +342,8 @@ fn positioned_mark_offset(
     base_metrics: GlyphMetrics,
     mark_metrics: GlyphMetrics,
     placement: MarkPlacement,
-    edge: &mut Pixels,
+    above_edge: &mut Pixels,
+    below_edge: &mut Pixels,
 ) -> Offset {
     let base_width = px(i32::from(base_metrics.width));
     let mark_width = px(i32::from(mark_metrics.width));
@@ -357,20 +359,28 @@ fn positioned_mark_offset(
 
     let relative_y = match placement {
         MarkPlacement::Shadda | MarkPlacement::Above => {
-            let bottom = *edge - MARK_GAP;
+            let bottom = *above_edge - MARK_GAP;
             let top = bottom - mark_height;
 
-            *edge = top;
+            *above_edge = top;
 
             top - mark_metrics.bearing_y
         }
 
         MarkPlacement::Below => {
-            let top = *edge + MARK_GAP;
+            let top = *below_edge + MARK_GAP;
 
-            *edge = top + mark_height;
+            *below_edge = top + mark_height;
 
             top - mark_metrics.bearing_y
+        }
+
+        // a centered mark sits inside the base, so it doesn't stack with the others
+        MarkPlacement::Center => {
+            let base_height = px(i32::from(base_metrics.height));
+            let middle = base_metrics.bearing_y + base_height / 2;
+
+            middle - mark_height / 2 - mark_metrics.bearing_y
         }
     };
 

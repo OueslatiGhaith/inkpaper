@@ -3,6 +3,8 @@ use icu_properties::{
     props::{JoiningType as UnicodeJoiningType, Script},
 };
 
+use super::marks::MarkPlacement;
+
 const JOINING_TYPES: CodePointMapDataBorrowed<'static, UnicodeJoiningType> =
     CodePointMapData::<UnicodeJoiningType>::new();
 const SCRIPTS: CodePointMapDataBorrowed<'static, Script> = CodePointMapData::<Script>::new();
@@ -38,16 +40,6 @@ impl JoiningType {
             Self::JoinCausing | Self::DualJoining | Self::LeftJoining
         )
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) enum MarkPlacement {
-    /// shadda is handled separately so it stays closest to the base when combined
-    /// with another above-base vowel mark.
-    Shadda,
-    Above,
-    Below,
 }
 
 pub(crate) fn mark_placement(character: char) -> Option<MarkPlacement> {

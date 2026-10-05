@@ -3,12 +3,24 @@ use icu_properties::{
     props::{CanonicalCombiningClass, GraphemeClusterBreak},
 };
 
-use super::arabic::{self, MarkPlacement};
+use super::arabic;
 
 const COMBINING_CLASSES: CodePointMapDataBorrowed<'static, CanonicalCombiningClass> =
     CodePointMapData::<CanonicalCombiningClass>::new();
 const GRAPHEME_BREAKS: CodePointMapDataBorrowed<'static, GraphemeClusterBreak> =
     CodePointMapData::<GraphemeClusterBreak>::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) enum MarkPlacement {
+    /// shadda is handled separately so it stays closest to the base when combined
+    /// with another above-base vowel mark.
+    Shadda,
+    Above,
+    Below,
+    /// drawn over the middle of the base's ink, such as a dagesh or an overlay stroke
+    Center,
+}
 
 /// whether `character` continues the grapheme cluster of the character before it, such as
 /// a combining accent, a Hebrew point or an Indic vowel sign
@@ -21,8 +33,8 @@ pub(super) fn extends_cluster(character: char) -> bool {
 
 /// where a combining mark sits relative to its base when the font has no anchors for it.
 ///
-/// `None` keeps the mark as a spacing glyph, which is what marks we can't place yet, such
-/// as the Hebrew dagesh inside its letter, fall back to
+/// `None` keeps the mark as a spacing glyph, which is what marks we can't place yet fall
+/// back to
 pub(super) fn mark_placement(character: char) -> Option<MarkPlacement> {
     // the Arabic table also tells shadda apart, which stacks closest to its base
     if let Some(placement) = arabic::mark_placement(character) {
@@ -58,6 +70,7 @@ pub(super) fn mark_placement(character: char) -> Option<MarkPlacement> {
         CanonicalCombiningClass::CCC33 => Some(MarkPlacement::Shadda),
 
         CanonicalCombiningClass::Below
+        | CanonicalCombiningClass::Nukta
         | CanonicalCombiningClass::BelowLeft
         | CanonicalCombiningClass::BelowRight
         | CanonicalCombiningClass::AttachedBelow
@@ -83,6 +96,24 @@ pub(super) fn mark_placement(character: char) -> Option<MarkPlacement> {
         | CanonicalCombiningClass::CCC103
         | CanonicalCombiningClass::CCC118 => Some(MarkPlacement::Below),
 
+        CanonicalCombiningClass::Overlay
+        // Hebrew dagesh and mapiq
+        | CanonicalCombiningClass::CCC21 => Some(MarkPlacement::Center),
+
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marks_inside_their_letter_are_centered() {
+        // Hebrew dagesh, combining tilde overlay
+        assert_eq!(mark_placement('\u{05BC}'), Some(MarkPlacement::Center));
+        assert_eq!(mark_placement('\u{0334}'), Some(MarkPlacement::Center));
+        // Devanagari nukta
+        assert_eq!(mark_placement('\u{093C}'), Some(MarkPlacement::Below));
     }
 }

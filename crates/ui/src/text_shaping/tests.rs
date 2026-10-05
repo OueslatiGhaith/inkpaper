@@ -53,6 +53,49 @@ impl FontFace for TestFont {
     }
 }
 
+/// a font whose glyphs each have their own ink box, given as
+/// (character, width, height, bearing x, bearing y)
+struct BoxFont {
+    glyphs: &'static [(char, u16, u16, i32, i32)],
+    advance: Pixels,
+}
+
+impl FontFace for BoxFont {
+    fn glyph_id(&self, character: char) -> Option<GlyphId> {
+        let index = self
+            .glyphs
+            .iter()
+            .position(|(candidate, ..)| *candidate == character)?;
+
+        let index = u16::try_from(index).ok()?;
+
+        Some(GlyphId::new(index.saturating_add(1)))
+    }
+
+    fn metrics(&self, _: u16) -> FontMetrics {
+        FontMetrics::new(px(8), px(2), px(0))
+    }
+
+    fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+        let index = usize::from(glyph.value()).checked_sub(1)?;
+        let (_, width, height, bearing_x, bearing_y) = *self.glyphs.get(index)?;
+
+        Some(GlyphMetrics::new(
+            width,
+            height,
+            px(bearing_x),
+            px(bearing_y),
+            self.advance,
+        ))
+    }
+
+    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+        coverage.fill(255);
+
+        Ok(())
+    }
+}
+
 struct AsymmetricKerningFont {
     characters: &'static [char],
     advance: Pixels,
@@ -1561,6 +1604,40 @@ fn hebrew_points_are_placed_by_combining_class() {
     assert_eq!(run.glyphs()[1].mark_placement(), Some(MarkPlacement::Below));
     assert_eq!(run.glyphs()[2].mark_placement(), Some(MarkPlacement::Above));
     assert_eq!(run.advance(), px(5));
+}
+
+#[test]
+fn hebrew_dagesh_is_centered_in_its_letter() {
+    static GLYPHS: [(char, u16, u16, i32, i32); 3] = [
+        ('ב', 6, 8, 0, -8),
+        ('\u{05BC}', 2, 2, 0, -2),
+        ('?', 1, 1, 0, -1),
+    ];
+
+    let font = BoxFont {
+        glyphs: &GLYPHS,
+        advance: px(7),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 2];
+
+    // bet + dagesh
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font_id, 16, "ב\u{05BC}", &mut output)
+        .unwrap();
+
+    assert_eq!(run.len(), 2);
+    assert_eq!(
+        run.glyphs()[1].mark_placement(),
+        Some(MarkPlacement::Center)
+    );
+    // back over the 7px advance, then (6 - 2) / 2 = 2 in. The base's ink spans -8..0,
+    // so the 2px dagesh spans -5..-3, which is 3 above its own bearing of -2
+    assert_eq!(run.glyphs()[1].offset(), Offset::new(px(-5), px(-3)));
+    assert_eq!(run.glyphs()[1].advance(), px(0));
+    assert_eq!(run.advance(), px(7));
 }
 
 #[test]

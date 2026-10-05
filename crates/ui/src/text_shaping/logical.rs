@@ -11,8 +11,8 @@ use crate::{
 
 use super::{
     ShapeError, ShapeState, ShapeSummary, ShapedGlyph, SimpleShaper,
-    arabic::{MarkPlacement, contextual_form, has_contextual_forms, joining_type, lam_alef_form},
-    marks::{extends_cluster, mark_placement},
+    arabic::{contextual_form, has_contextual_forms, joining_type, lam_alef_form},
+    marks::{MarkPlacement, extends_cluster, mark_placement},
 };
 
 pub(crate) const ARABIC_ISOL_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"isol");
