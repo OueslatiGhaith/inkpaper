@@ -74,8 +74,8 @@ impl SimpleShaper {
         while let Some((cluster, character)) = characters.next() {
             let joining = joining_type(character);
 
-            // ignorables draw nothing, not even the replacement glyph, but a non-joining
-            // one such as ZWNJ still ends the joining chain
+            // ignorables draw nothing, not even the replacement glyph, but ZWJ still forces
+            // joining and ZWNJ still ends the joining chain
             if DEFAULT_IGNORABLES.contains(character) {
                 if !joining.is_transparent() {
                     state.previous_joins_forward = joining.connects_forward();
@@ -89,6 +89,12 @@ impl SimpleShaper {
             // ellipsis and bidi must treat the base + marks as an indivisible unit
             if joining.is_transparent() || extends_cluster(character) {
                 let cluster = previous_cluster.unwrap_or(cluster);
+
+                // only transparent characters keep the joining chain, the same as in
+                // the lookahead
+                if !joining.is_transparent() {
+                    state.previous_joins_forward = joining.connects_forward();
+                }
 
                 if let Some((resolved, base_advance)) = registry
                     .resolve_glyph_with_advance_prepared(
@@ -349,10 +355,7 @@ fn next_non_transparent_accepts_previous(characters: &CharIndices<'_>) -> bool {
     for (_, character) in lookahead {
         let joining = joining_type(character);
 
-        // ZWNJ extends grapheme clusters, but it must still stop the joining chain
-        let ignorable = DEFAULT_IGNORABLES.contains(character);
-
-        if joining.is_transparent() || (extends_cluster(character) && !ignorable) {
+        if joining.is_transparent() {
             continue;
         }
 

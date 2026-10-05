@@ -586,6 +586,80 @@ fn zero_width_non_joiner_breaks_arabic_joining() {
 }
 
 #[test]
+fn zero_width_joiner_forces_arabic_joining() {
+    static ARABIC: [char; 3] = [
+        '\u{FE91}', // beh initial
+        '\u{FE90}', // beh final
+        '?',
+    ];
+
+    let arabic = TestFont {
+        characters: &ARABIC,
+        advance: px(7),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font = registry.register(&arabic).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 3];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font, 16, "ب\u{200D}ب", &mut output)
+        .unwrap();
+
+    // visual RTL order: final beh, then initial beh. The joiner draws nothing
+    assert_eq!(run.len(), 2);
+    assert_eq!(
+        run.glyphs()[0].glyph(),
+        arabic.glyph_id('\u{FE90}').unwrap()
+    );
+    assert_eq!(
+        run.glyphs()[1].glyph(),
+        arabic.glyph_id('\u{FE91}').unwrap()
+    );
+    assert_eq!(run.advance(), px(14));
+}
+
+#[test]
+fn arabic_extended_a_letters_join() {
+    static ARABIC: [char; 4] = [
+        '\u{FE91}', // beh initial
+        '\u{08A0}', // beh with small v below
+        '\u{FE90}', // beh final
+        '?',
+    ];
+
+    let arabic = TestFont {
+        characters: &ARABIC,
+        advance: px(7),
+        kerning: px(0),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font = registry.register(&arabic).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 3];
+
+    let run = SimpleShaper::new()
+        .shape_into(&registry, font, 16, "ب\u{08A0}ب", &mut output)
+        .unwrap();
+
+    // U+08A0 has no presentation forms, so its neighbours show the joins
+    assert_eq!(run.len(), 3);
+    assert_eq!(
+        run.glyphs()[0].glyph(),
+        arabic.glyph_id('\u{FE90}').unwrap()
+    );
+    assert_eq!(
+        run.glyphs()[1].glyph(),
+        arabic.glyph_id('\u{08A0}').unwrap()
+    );
+    assert_eq!(
+        run.glyphs()[2].glyph(),
+        arabic.glyph_id('\u{FE91}').unwrap()
+    );
+}
+
+#[test]
 fn transparent_arabic_marks_do_not_break_joining_or_advance() {
     static ARABIC: [char; 4] = [
         '\u{FE91}', // beh initial

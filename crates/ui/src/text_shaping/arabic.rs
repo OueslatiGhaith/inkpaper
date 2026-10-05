@@ -1,9 +1,17 @@
+use icu_properties::{
+    CodePointMapData, CodePointMapDataBorrowed, props::JoiningType as UnicodeJoiningType,
+};
+
+const JOINING_TYPES: CodePointMapDataBorrowed<'static, UnicodeJoiningType> =
+    CodePointMapData::<UnicodeJoiningType>::new();
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum JoiningType {
     NonJoining,
     Transparent,
     JoinCausing,
     DualJoining,
+    LeftJoining,
     RightJoining,
 }
 
@@ -23,7 +31,10 @@ impl JoiningType {
     /// whether this character can continue a joining chain toward the following logical
     /// arabic character
     pub(crate) const fn connects_forward(self) -> bool {
-        matches!(self, Self::JoinCausing | Self::DualJoining)
+        matches!(
+            self,
+            Self::JoinCausing | Self::DualJoining | Self::LeftJoining
+        )
     }
 }
 
@@ -124,84 +135,14 @@ impl LamAlefForms {
     }
 }
 
-/// joining data for U+0600..U+077F
-///
-/// these ranges are compact representation of the Unicode ArabicShaping joining data used
-/// by our presentation forms shaper
+/// the Unicode joining type of `character`, from any script
 pub(crate) fn joining_type(character: char) -> JoiningType {
-    match character as u32 {
-        // transparent marks / format controls.
-        0x0610..=0x061A
-        | 0x061C
-        | 0x064B..=0x065F
-        | 0x0670
-        | 0x06D6..=0x06DC
-        | 0x06DF..=0x06E4
-        | 0x06E7..=0x06E8
-        | 0x06EA..=0x06ED
-        | 0x070F
-        | 0x0711
-        | 0x0730..=0x074A => JoiningType::Transparent,
-        // tatweel.
-        0x0640 => JoiningType::JoinCausing,
-        // dual-joining characters.
-        0x0620
-        | 0x0626
-        | 0x0628
-        | 0x062A..=0x062E
-        | 0x0633..=0x063F
-        | 0x0641..=0x0647
-        | 0x0649..=0x064A
-        | 0x066E..=0x066F
-        | 0x0678..=0x0687
-        | 0x069A..=0x06BF
-        | 0x06C1..=0x06C2
-        | 0x06CC
-        | 0x06CE
-        | 0x06D0..=0x06D1
-        | 0x06FA..=0x06FC
-        | 0x06FF
-        | 0x0712..=0x0714
-        | 0x071A..=0x071D
-        | 0x071F..=0x0727
-        | 0x0729
-        | 0x072B
-        | 0x072D..=0x072E
-        | 0x074E..=0x0758
-        | 0x075C..=0x076A
-        | 0x076D..=0x0770
-        | 0x0772
-        | 0x0775..=0x0777
-        | 0x077A..=0x077F => JoiningType::DualJoining,
-        // right-joining characters.
-        0x0622..=0x0625
-        | 0x0627
-        | 0x0629
-        | 0x062F..=0x0632
-        | 0x0648
-        | 0x0671..=0x0673
-        | 0x0675..=0x0677
-        | 0x0688..=0x0699
-        | 0x06C0
-        | 0x06C3..=0x06CB
-        | 0x06CD
-        | 0x06CF
-        | 0x06D2..=0x06D3
-        | 0x06D5
-        | 0x06EE..=0x06EF
-        | 0x0710
-        | 0x0715..=0x0719
-        | 0x071E
-        | 0x0728
-        | 0x072A
-        | 0x072C
-        | 0x072F
-        | 0x074D
-        | 0x0759..=0x075B
-        | 0x076B..=0x076C
-        | 0x0771
-        | 0x0773..=0x0774
-        | 0x0778..=0x0779 => JoiningType::RightJoining,
+    match JOINING_TYPES.get(character) {
+        UnicodeJoiningType::Transparent => JoiningType::Transparent,
+        UnicodeJoiningType::JoinCausing => JoiningType::JoinCausing,
+        UnicodeJoiningType::DualJoining => JoiningType::DualJoining,
+        UnicodeJoiningType::LeftJoining => JoiningType::LeftJoining,
+        UnicodeJoiningType::RightJoining => JoiningType::RightJoining,
         _ => JoiningType::NonJoining,
     }
 }
@@ -363,6 +304,16 @@ mod tests {
         assert_eq!(joining_type('\u{064E}'), JoiningType::Transparent);
         assert_eq!(joining_type('\u{0640}'), JoiningType::JoinCausing);
         assert_eq!(joining_type(' '), JoiningType::NonJoining);
+    }
+
+    #[test]
+    fn joining_types_cover_all_of_unicode() {
+        // arabic extended-a beh with small v below
+        assert_eq!(joining_type('\u{08A0}'), JoiningType::DualJoining);
+        // phags-pa superfixed letter ra
+        assert_eq!(joining_type('\u{A872}'), JoiningType::LeftJoining);
+        assert_eq!(joining_type('\u{200D}'), JoiningType::JoinCausing);
+        assert_eq!(joining_type('\u{200C}'), JoiningType::NonJoining);
     }
 
     #[test]
