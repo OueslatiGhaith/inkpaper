@@ -26,6 +26,7 @@ num-traits = { version = "0.2.19", default-features = false }
 skrifa = { version = "0.44.0", optional = true, default-features = false, features = ["libm"] }
 spin = { version = "0.12.3", optional = true, default-features = false, features = ["spin_mutex"] }
 ttf-parser = { version = "0.25.1", optional = true, default-features = false, features = ["no-std-float", "opentype-layout"] }
+unicode-linebreak = "0.1.5"
 
 [dev-dependencies]
 # runs the hinting tests with the rest of the crate's tests

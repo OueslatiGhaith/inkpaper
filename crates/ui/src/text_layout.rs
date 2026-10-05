@@ -1,3 +1,5 @@
+use unicode_linebreak::{BreakOpportunity, linebreaks};
+
 use crate::{Pixels, TextMaxLines, TextOverflow, TextWrap, px};
 
 fn next_scalar_boundary(text: &str, from: usize) -> Option<usize> {
@@ -38,16 +40,20 @@ where
     Some(boundary)
 }
 
-fn is_wrap_whitespace(character: char) -> bool {
-    matches!(character, ' ' | '\t')
+// characters that hang past the end of a line instead of counting toward its width
+fn is_hanging_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        ' ' | '\t' | '\r' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+    )
 }
 
-fn skip_wrap_whitespace(text: &str, mut offset: usize) -> usize {
+fn skip_hanging_whitespace(text: &str, mut offset: usize) -> usize {
     while offset < text.len() {
         let Some(character) = text[offset..].chars().next() else {
             break;
         };
-        if !is_wrap_whitespace(character) {
+        if !is_hanging_whitespace(character) {
             break;
         }
 
@@ -57,21 +63,19 @@ fn skip_wrap_whitespace(text: &str, mut offset: usize) -> usize {
     offset
 }
 
-fn next_word(text: &str, from: usize) -> Option<(usize, usize)> {
-    let start = skip_wrap_whitespace(text, from);
-    if start >= text.len() {
-        return None;
-    }
-
-    let mut end = text.len();
-    for (relative, character) in text[start..].char_indices() {
-        if is_wrap_whitespace(character) {
-            end = start + relative;
+fn trim_hanging_whitespace(text: &str, start: usize, mut end: usize) -> usize {
+    while end > start {
+        let Some(character) = text[start..end].chars().next_back() else {
+            break;
+        };
+        if !is_hanging_whitespace(character) {
             break;
         }
+
+        end -= character.len_utf8();
     }
 
-    Some((start, end))
+    end
 }
 
 fn emit_oversized_word<'a, B, M, V>(
@@ -145,43 +149,67 @@ fn wrap_paragraph<'a, B, M, V>(
         return;
     }
 
-    let mut cursor = 0usize;
     let mut line_start: Option<usize> = None;
     let mut line_end = 0usize;
     let mut emitted = false;
+    // whether anything was visited since the last mandatory break
+    let mut line_visited = false;
+    let mut segment_start = 0usize;
 
-    while let Some((word_start, word_end)) = next_word(paragraph, cursor) {
-        if let Some(start) = line_start {
-            let candidate = &paragraph[start..word_end];
+    for (segment_end, opportunity) in linebreaks(paragraph) {
+        let start = segment_start;
+        segment_start = segment_end;
+
+        let content_end = trim_hanging_whitespace(paragraph, start, segment_end);
+
+        if let Some(line) = line_start
+            && content_end > start
+        {
+            let candidate = &paragraph[line..content_end];
             if measure(candidate) <= max_width {
-                line_end = word_end;
-                cursor = word_end;
-                continue;
+                line_end = content_end;
+            } else {
+                let line = &paragraph[line..line_end];
+
+                visit(line, measure(line));
+
+                emitted = true;
+                line_visited = true;
+                line_start = None;
             }
-
-            let line = &paragraph[start..line_end];
-
-            visit(line, measure(line));
-
-            emitted = true;
-            line_start = None;
-            cursor = word_start;
-
-            continue;
         }
 
-        let word = &paragraph[word_start..word_end];
-        let width = measure(word);
+        if line_start.is_none() {
+            let word_start = skip_hanging_whitespace(paragraph, start).min(content_end);
 
-        if width <= max_width {
-            line_start = Some(word_start);
-            line_end = word_end;
-            cursor = word_end;
-        } else {
-            emit_oversized_word(word, max_width, next_boundary, measure, visit);
+            if word_start < content_end {
+                let word = &paragraph[word_start..content_end];
+                let width = measure(word);
+
+                if width <= max_width {
+                    line_start = Some(word_start);
+                    line_end = content_end;
+                } else {
+                    emit_oversized_word(word, max_width, next_boundary, measure, visit);
+
+                    emitted = true;
+                    line_visited = true;
+                }
+            }
+        }
+
+        if opportunity == BreakOpportunity::Mandatory && segment_end < paragraph.len() {
+            match line_start.take() {
+                Some(start) => {
+                    let line = &paragraph[start..line_end];
+                    visit(line, measure(line));
+                }
+                None if !line_visited => visit("", Pixels::ZERO),
+                None => {}
+            }
 
             emitted = true;
-            cursor = word_end;
+            line_visited = false;
         }
     }
 
@@ -538,6 +566,53 @@ mod tests {
             lines,
             vec![("hello", px(5)), ("world", px(5)), ("again", px(5)),]
         );
+    }
+
+    fn wrap(text: &str, max_width: i32) -> Vec<&str> {
+        let mut lines = Vec::new();
+
+        for_each_text_line(text, TextWrap::Word, px(max_width), measure, |line, _| {
+            lines.push(line);
+        });
+
+        lines
+    }
+
+    #[test]
+    fn word_wrap_breaks_after_hyphens_and_slashes() {
+        assert_eq!(wrap("well-known", 6), vec!["well-", "known"]);
+        assert_eq!(wrap("and/or", 4), vec!["and/", "or"]);
+    }
+
+    #[test]
+    fn word_wrap_breaks_around_em_dashes() {
+        assert_eq!(wrap("wait\u{2014}what", 5), vec!["wait\u{2014}", "what"]);
+        assert_eq!(wrap("abc\u{2014}d", 3), vec!["abc", "\u{2014}d"]);
+    }
+
+    #[test]
+    fn word_wrap_breaks_between_ideographs_but_keeps_closing_punctuation() {
+        assert_eq!(
+            wrap("\u{6211}\u{559C}\u{6B22}\u{4E66}\u{3002}", 2),
+            vec!["\u{6211}\u{559C}", "\u{6B22}", "\u{4E66}\u{3002}"],
+        );
+    }
+
+    #[test]
+    fn word_wrap_does_not_break_at_no_break_spaces() {
+        assert_eq!(wrap("10\u{00A0}km away", 6), vec!["10\u{00A0}km", "away"]);
+    }
+
+    #[test]
+    fn word_wrap_hangs_tabs_and_leading_spaces() {
+        assert_eq!(wrap("  one\ttwo", 3), vec!["one", "two"]);
+    }
+
+    #[test]
+    fn word_wrap_forces_mandatory_breaks() {
+        assert_eq!(wrap("one\u{2028}two", 20), vec!["one", "two"]);
+        assert_eq!(wrap("one\u{2028}\u{2028}two", 20), vec!["one", "", "two"]);
+        assert_eq!(wrap("one\r\ntwo", 20), vec!["one", "two"]);
     }
 
     #[test]
