@@ -966,3 +966,63 @@ fn pagination_does_not_break_lines_at_non_breaking_spaces() {
 
     assert_eq!(lines, [(0, "aa"), (1, "bb\u{00A0}cc")]);
 }
+
+fn first_page_lines(body: &str, width: u32) -> Vec<(u32, String)> {
+    let pagination = paginate_positions(body, width, 8);
+
+    let mut lines: Vec<(u32, String)> = Vec::new();
+
+    for item in pagination.pages()[0].items() {
+        let PageItem::Text(text) = item else {
+            continue;
+        };
+
+        let y = text.bounds().y();
+        match lines.last_mut() {
+            Some((line_y, line)) if *line_y == y => line.push_str(text.text()),
+            _ => lines.push((y, text.text().into())),
+        }
+    }
+
+    for (_, line) in &mut lines {
+        line.truncate(line.trim_end().len());
+    }
+
+    lines
+}
+
+#[test]
+fn pagination_breaks_lines_after_hyphens_and_slashes() {
+    assert_eq!(
+        first_page_lines("<p>a well-known and/or</p>", 7),
+        [
+            (0, "a well-".into()),
+            (1, "known".into()),
+            (2, "and/or".into())
+        ],
+    );
+    assert_eq!(
+        first_page_lines("<p>and/or</p>", 4),
+        [(0, "and/".into()), (1, "or".into())],
+    );
+}
+
+#[test]
+fn pagination_breaks_lines_around_em_dashes() {
+    assert_eq!(
+        first_page_lines("<p>ab\u{2014}cd</p>", 4),
+        [(0, "ab\u{2014}".into()), (1, "cd".into())],
+    );
+}
+
+#[test]
+fn pagination_breaks_lines_between_ideographs() {
+    assert_eq!(
+        first_page_lines("<p>\u{6211}\u{559C}\u{6B22}\u{4E66}\u{3002}</p>", 2),
+        [
+            (0, "\u{6211}\u{559C}".into()),
+            (1, "\u{6B22}".into()),
+            (2, "\u{4E66}\u{3002}".into()),
+        ],
+    );
+}

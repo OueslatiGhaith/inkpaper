@@ -6,6 +6,7 @@ use inkpaper_epub::{
     ContentOffset, CssLength, ImageDimensions, Inline, LineHeight, LinkTarget, SpineIndex,
     StyleNodeId, TextAlign, TextRun,
 };
+use unicode_linebreak::linebreaks;
 
 use crate::{
     ImageFragment, ImageMeasurer, Page, PageItem, ReaderSettings, ReadingPosition, Rect,
@@ -309,28 +310,20 @@ where
     ) -> Result<(), M::Error> {
         let mut start = 0usize;
 
-        while start < text.len() {
-            let Some(first) = text[start..].chars().next() else {
-                break;
-            };
+        // newlines in a run are collapsible whitespace, so mandatory breaks are
+        // treated like any other break opportunity.
+        for (end, _) in linebreaks(text) {
+            let content_start = skip_break_whitespace(text, start, end);
+            let content_end = trim_break_whitespace(text, content_start, end);
 
-            let whitespace = is_break_whitespace(first);
-
-            let mut end = text.len();
-
-            let first_end = start.saturating_add(first.len_utf8());
-
-            for (relative, character) in text[first_end..].char_indices() {
-                if is_break_whitespace(character) != whitespace {
-                    end = first_end.saturating_add(relative);
-                    break;
-                }
+            if start < content_start {
+                self.layout_whitespace(text, start, content_start, style, link, align)?;
             }
-
-            if whitespace {
-                self.layout_whitespace(text, start, end, style, link, align)?;
-            } else {
-                self.layout_word(text, start, end, style, link, align)?;
+            if content_start < content_end {
+                self.layout_word(text, content_start, content_end, style, link, align)?;
+            }
+            if content_end < end {
+                self.layout_whitespace(text, content_end, end, style, link, align)?;
             }
 
             start = end;
@@ -777,4 +770,28 @@ fn scalar_boundary(text: &str, from: usize) -> Option<usize> {
 // non-breaking spaces are laid out as part of the surrounding word
 fn is_break_whitespace(character: char) -> bool {
     character.is_whitespace() && !matches!(character, '\u{00A0}' | '\u{202F}')
+}
+
+fn skip_break_whitespace(text: &str, mut start: usize, end: usize) -> usize {
+    while let Some(character) = text[start..end].chars().next() {
+        if !is_break_whitespace(character) {
+            break;
+        }
+
+        start += character.len_utf8();
+    }
+
+    start
+}
+
+fn trim_break_whitespace(text: &str, start: usize, mut end: usize) -> usize {
+    while let Some(character) = text[start..end].chars().next_back() {
+        if !is_break_whitespace(character) {
+            break;
+        }
+
+        end -= character.len_utf8();
+    }
+
+    end
 }

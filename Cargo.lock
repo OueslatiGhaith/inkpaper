@@ -2227,6 +2227,7 @@ version = "0.1.0"
 dependencies = [
  "futures-lite",
  "inkpaper-epub",
+ "unicode-linebreak",
 ]
 
 [[package]]

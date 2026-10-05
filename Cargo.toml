@@ -22,6 +22,7 @@ proc-macro2 = "1.0.107"
 quote = "1.0.47"
 static_cell = "2.1.1"
 syn = "3.0.5"
+unicode-linebreak = "0.1.5"
 
 
 [profile.firmware]
