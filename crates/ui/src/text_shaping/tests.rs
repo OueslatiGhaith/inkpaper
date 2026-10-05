@@ -1810,6 +1810,41 @@ fn gsub_shapes_arabic_contextual_forms_without_presentation_glyphs() {
 }
 
 #[test]
+fn gsub_shapes_contextual_forms_for_letters_without_presentation_forms() {
+    static ARABIC: [char; 2] = [
+        '\u{08A0}', // beh with small v below, which has no Presentation Forms
+        '?',
+    ];
+
+    let arabic = GsubArabicFont {
+        characters: &ARABIC,
+        advance: px(6),
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&arabic).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 3];
+    let run = SimpleShaper::new()
+        .shape_into(
+            &registry,
+            font_id,
+            16,
+            "\u{08A0}\u{08A0}\u{08A0}",
+            &mut output,
+        )
+        .unwrap();
+
+    assert_eq!(run.direction(), TextDirection::RightToLeft);
+    assert_eq!(run.len(), 3);
+
+    // visual RTL order: final, medial, initial
+    assert_eq!(run.glyphs()[0].glyph(), GlyphId::new(103));
+    assert_eq!(run.glyphs()[1].glyph(), GlyphId::new(102));
+    assert_eq!(run.glyphs()[2].glyph(), GlyphId::new(101));
+    assert_eq!(run.advance(), px(18));
+}
+
+#[test]
 fn gsub_required_ligature_shapes_lam_alef_without_presentation_glyphs() {
     static ARABIC: [char; 3] = [
         '\u{0644}', // lam base

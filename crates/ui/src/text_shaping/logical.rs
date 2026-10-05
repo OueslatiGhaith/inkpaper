@@ -11,7 +11,7 @@ use crate::{
 
 use super::{
     ShapeError, ShapeState, ShapeSummary, ShapedGlyph, SimpleShaper,
-    arabic::{MarkPlacement, contextual_form, joining_type, lam_alef_form},
+    arabic::{MarkPlacement, contextual_form, has_contextual_forms, joining_type, lam_alef_form},
     marks::{extends_cluster, mark_placement},
 };
 
@@ -169,12 +169,12 @@ impl SimpleShaper {
             let joins_next = joining.connects_forward() && next_accepts;
             let presentation = contextual_form(character, joins_previous, joins_next);
 
-            // we only enable Arabic contextual GSUB for characters covered by our existing
-            // Arabic forms data.
+            // Arabic contextual GSUB applies to every joining Arabic letter, including ones
+            // without Presentation Forms.
             // that keeps unrelated scripts out of Arabic isol/init/medi/fina features
             // while still making Presentation Forms merely a fallback.
-            let feature =
-                presentation.map(|_| arabic_contextual_feature(joins_previous, joins_next));
+            let feature = has_contextual_forms(character, joining)
+                .then(|| arabic_contextual_feature(joins_previous, joins_next));
 
             let resolved = resolve_contextual_glyph(
                 registry,

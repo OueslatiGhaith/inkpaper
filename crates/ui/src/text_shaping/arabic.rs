@@ -1,9 +1,11 @@
 use icu_properties::{
-    CodePointMapData, CodePointMapDataBorrowed, props::JoiningType as UnicodeJoiningType,
+    CodePointMapData, CodePointMapDataBorrowed,
+    props::{JoiningType as UnicodeJoiningType, Script},
 };
 
 const JOINING_TYPES: CodePointMapDataBorrowed<'static, UnicodeJoiningType> =
     CodePointMapData::<UnicodeJoiningType>::new();
+const SCRIPTS: CodePointMapDataBorrowed<'static, Script> = CodePointMapData::<Script>::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum JoiningType {
@@ -145,6 +147,17 @@ pub(crate) fn joining_type(character: char) -> JoiningType {
         UnicodeJoiningType::RightJoining => JoiningType::RightJoining,
         _ => JoiningType::NonJoining,
     }
+}
+
+/// whether `character` is an Arabic letter whose shape depends on its neighbours, so
+/// the font's isol/init/medi/fina features apply to it.
+///
+/// Other joining scripts, such as Syriac, have their own shaping rules
+pub(crate) fn has_contextual_forms(character: char, joining: JoiningType) -> bool {
+    matches!(
+        joining,
+        JoiningType::DualJoining | JoiningType::RightJoining
+    ) && SCRIPTS.get(character) == Script::Arabic
 }
 
 pub(crate) fn contextual_form(
