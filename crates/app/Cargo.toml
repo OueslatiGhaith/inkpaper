@@ -14,8 +14,7 @@ inkpaper-epub = { path = "../epub" }
 inkpaper-reader = { path = "../reader" }
 inkpaper-trace = { path = "../trace" }
 inkpaper-ui = { path = "../ui", features = ["alloc"] }
-serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
-postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
+minicbor = { version = "2.3.0", default-features = false, features = ["alloc", "derive"] }
 zune-core = { version = "=0.5.3", default-features = false }
 zune-jpeg = { version = "=0.5.15", default-features = false }
 zune-png = { version = "=0.5.2", default-features = false }

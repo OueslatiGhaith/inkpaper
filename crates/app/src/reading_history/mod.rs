@@ -1,7 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use inkpaper_epub::{BookLocation, ContentOffset, SpineIndex};
 use inkpaper_reader::ReadingPosition;
-use serde::{Deserialize, Serialize};
+use minicbor::{Decode, Encode};
 
 mod progress;
 mod state;
@@ -9,7 +9,7 @@ mod state;
 pub use progress::BookProgress;
 pub(crate) use state::{ReadingHistoryRequest, ReadingHistoryState};
 
-const STORAGE_VERSION: u8 = 2;
+use crate::storage::{self, StorageError};
 
 pub const MAX_READING_HISTORY_ENTRIES: usize = 16;
 
@@ -87,11 +87,14 @@ fn parent_path(path: &str) -> &str {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadingHistoryError {
-    Encode,
-    Decode,
-    UnsupportedVersion(u8),
+    Storage(StorageError),
     TooManyEntries,
-    TrailingData,
+}
+
+impl From<StorageError> for ReadingHistoryError {
+    fn from(error: StorageError) -> Self {
+        Self::Storage(error)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -138,24 +141,14 @@ impl ReadingHistory {
         }
 
         let stored = StoredHistory {
-            version: STORAGE_VERSION,
             entries: self.entries.iter().map(StoredHistoryEntry::from).collect(),
         };
 
-        postcard::to_allocvec(&stored).map_err(|_| ReadingHistoryError::Encode)
+        Ok(storage::encode(&stored)?)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, ReadingHistoryError> {
-        let (stored, remainder) = postcard::take_from_bytes::<StoredHistory>(bytes)
-            .map_err(|_| ReadingHistoryError::Decode)?;
-
-        if !remainder.is_empty() {
-            return Err(ReadingHistoryError::TrailingData);
-        }
-
-        if stored.version != STORAGE_VERSION {
-            return Err(ReadingHistoryError::UnsupportedVersion(stored.version));
-        }
+        let stored: StoredHistory = storage::decode(bytes)?;
 
         if stored.entries.len() > MAX_READING_HISTORY_ENTRIES {
             return Err(ReadingHistoryError::TooManyEntries);
@@ -171,26 +164,35 @@ impl ReadingHistory {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Encode, Decode)]
 struct StoredHistory {
-    version: u8,
+    #[n(0)]
     entries: Vec<StoredHistoryEntry>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Encode, Decode)]
 struct StoredHistoryEntry {
+    #[n(0)]
     path: String,
+    #[n(1)]
     identifier: Option<String>,
+    #[n(2)]
     title: String,
+    #[n(3)]
     creator: Option<String>,
+    #[n(4)]
     position: StoredPosition,
+    #[n(5)]
     progress_basis_points: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Encode, Decode)]
 struct StoredPosition {
+    #[n(0)]
     spine: u32,
+    #[n(1)]
     offset: u64,
+    #[n(2)]
     non_text: u64,
 }
 
@@ -342,23 +344,6 @@ mod tests {
     }
 
     #[test]
-    fn decoder_rejects_an_unsupported_storage_version() {
-        let stored = StoredHistory {
-            version: STORAGE_VERSION.saturating_add(1),
-            entries: Vec::new(),
-        };
-
-        let bytes = postcard::to_allocvec(&stored).unwrap();
-
-        assert_eq!(
-            ReadingHistory::decode(&bytes),
-            Err(ReadingHistoryError::UnsupportedVersion(
-                STORAGE_VERSION.saturating_add(1),
-            )),
-        );
-    }
-
-    #[test]
     fn decoder_rejects_trailing_data() {
         let history = ReadingHistory::default();
         let mut encoded = history.encode().unwrap();
@@ -367,7 +352,7 @@ mod tests {
 
         assert_eq!(
             ReadingHistory::decode(&encoded),
-            Err(ReadingHistoryError::TrailingData),
+            Err(ReadingHistoryError::Storage(StorageError::TrailingData)),
         );
     }
 

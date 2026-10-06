@@ -18,6 +18,7 @@ mod reading_history;
 mod resources;
 mod screens;
 mod service;
+mod storage;
 mod system;
 mod typography;
 mod wifi;

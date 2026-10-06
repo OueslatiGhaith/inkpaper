@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
-use serde::{Deserialize, Serialize};
+use minicbor::{Decode, Encode};
 
-const STORAGE_VERSION: u8 = 1;
+use crate::storage::{self, StorageError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrontlightSetting {
@@ -64,29 +64,17 @@ impl FrontlightPreferences {
 
     pub(crate) fn encode(self) -> Result<Vec<u8>, FrontlightPreferencesError> {
         let stored = StoredFrontlightPreferences {
-            version: STORAGE_VERSION,
             brightness: self.setting.brightness,
             warmth: self.setting.warmth,
             on: self.setting.on,
             restore_on_wake: self.restore_on_wake,
         };
 
-        postcard::to_allocvec(&stored).map_err(|_| FrontlightPreferencesError::Encode)
+        Ok(storage::encode(&stored)?)
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self, FrontlightPreferencesError> {
-        let (stored, remainder) = postcard::take_from_bytes::<StoredFrontlightPreferences>(bytes)
-            .map_err(|_| FrontlightPreferencesError::Decode)?;
-
-        if !remainder.is_empty() {
-            return Err(FrontlightPreferencesError::TrailingData);
-        }
-
-        if stored.version != STORAGE_VERSION {
-            return Err(FrontlightPreferencesError::UnsupportedVersion(
-                stored.version,
-            ));
-        }
+        let stored: StoredFrontlightPreferences = storage::decode(bytes)?;
 
         let setting = FrontlightSetting::new(stored.brightness, stored.warmth, stored.on).ok_or(
             FrontlightPreferencesError::InvalidSetting {
@@ -120,19 +108,25 @@ pub(crate) enum FrontlightPreferencesRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FrontlightPreferencesError {
-    Encode,
-    Decode,
-    UnsupportedVersion(u8),
+    Storage(StorageError),
     InvalidSetting { brightness: u8, warmth: u8 },
-    TrailingData,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl From<StorageError> for FrontlightPreferencesError {
+    fn from(error: StorageError) -> Self {
+        Self::Storage(error)
+    }
+}
+
+#[derive(Debug, Encode, Decode)]
 struct StoredFrontlightPreferences {
-    version: u8,
+    #[n(0)]
     brightness: u8,
+    #[n(1)]
     warmth: u8,
+    #[n(2)]
     on: bool,
+    #[n(3)]
     restore_on_wake: bool,
 }
 

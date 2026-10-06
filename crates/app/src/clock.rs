@@ -1,8 +1,8 @@
 use alloc::{format, string::String, vec::Vec};
 
-use serde::{Deserialize, Serialize};
+use minicbor::{Decode, Encode};
 
-const STORAGE_VERSION: u8 = 1;
+use crate::storage::{self, StorageError};
 
 /// A fixed offset from UTC in quarter hours, from UTC-12:00 to UTC+14:00.
 ///
@@ -71,24 +71,14 @@ pub(crate) struct ClockPreferences {
 impl ClockPreferences {
     pub(crate) fn encode(self) -> Result<Vec<u8>, ClockPreferencesError> {
         let stored = StoredClockPreferences {
-            version: STORAGE_VERSION,
             utc_offset_quarters: self.utc_offset.quarters,
         };
 
-        postcard::to_allocvec(&stored).map_err(|_| ClockPreferencesError::Encode)
+        Ok(storage::encode(&stored)?)
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self, ClockPreferencesError> {
-        let (stored, remainder) = postcard::take_from_bytes::<StoredClockPreferences>(bytes)
-            .map_err(|_| ClockPreferencesError::Decode)?;
-
-        if !remainder.is_empty() {
-            return Err(ClockPreferencesError::TrailingData);
-        }
-
-        if stored.version != STORAGE_VERSION {
-            return Err(ClockPreferencesError::UnsupportedVersion(stored.version));
-        }
+        let stored: StoredClockPreferences = storage::decode(bytes)?;
 
         let utc_offset = UtcOffset::from_quarters(stored.utc_offset_quarters).ok_or(
             ClockPreferencesError::InvalidOffset(stored.utc_offset_quarters),
@@ -100,16 +90,19 @@ impl ClockPreferences {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClockPreferencesError {
-    Encode,
-    Decode,
-    UnsupportedVersion(u8),
+    Storage(StorageError),
     InvalidOffset(i8),
-    TrailingData,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl From<StorageError> for ClockPreferencesError {
+    fn from(error: StorageError) -> Self {
+        Self::Storage(error)
+    }
+}
+
+#[derive(Debug, Encode, Decode)]
 struct StoredClockPreferences {
-    version: u8,
+    #[n(0)]
     utc_offset_quarters: i8,
 }
 
@@ -290,10 +283,9 @@ mod tests {
         assert_eq!(ClockPreferences::decode(&bytes), Ok(preferences));
 
         let stored = StoredClockPreferences {
-            version: STORAGE_VERSION,
             utc_offset_quarters: 57,
         };
-        let bytes = postcard::to_allocvec(&stored).unwrap();
+        let bytes = storage::encode(&stored).unwrap();
 
         assert_eq!(
             ClockPreferences::decode(&bytes),

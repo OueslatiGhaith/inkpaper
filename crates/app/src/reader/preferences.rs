@@ -1,22 +1,9 @@
 use alloc::vec::Vec;
 
-use serde::{Deserialize, Serialize};
+use minicbor::{Decode, Encode};
 
 use super::{LineSpacing, ParagraphAlignment, ScreenMargin, TextSettings};
-
-const STORAGE_VERSION: u8 = 5;
-
-/// version 4 had no paragraph alignment setting
-const STORAGE_VERSION_NO_ALIGNMENT: u8 = 4;
-
-/// version 3 had no embedded style setting
-const STORAGE_VERSION_NO_EMBEDDED_STYLE: u8 = 3;
-
-/// version 2 had no paragraph settings
-const STORAGE_VERSION_NO_PARAGRAPHS: u8 = 2;
-
-/// version 1 stored only the font size
-const STORAGE_VERSION_FONT_SIZE_ONLY: u8 = 1;
+use crate::storage::{self, StorageError};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReaderPreferences {
@@ -34,7 +21,6 @@ impl ReaderPreferences {
 
     pub fn encode(self) -> Result<Vec<u8>, ReaderPreferencesError> {
         let stored = StoredReaderPreferences {
-            version: STORAGE_VERSION,
             font_size: self.text.font_size(),
             line_spacing: self.text.line_spacing().index(),
             margin: self.text.margin().px(),
@@ -44,81 +30,11 @@ impl ReaderPreferences {
             embedded_style: self.text.embedded_style(),
         };
 
-        postcard::to_allocvec(&stored).map_err(|_| ReaderPreferencesError::Encode)
+        Ok(storage::encode(&stored)?)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, ReaderPreferencesError> {
-        let defaults = TextSettings::default();
-
-        // postcard writes a u8 as one byte, so the version comes first. Older
-        // versions take the defaults of what they did not store
-        let stored = match bytes.first() {
-            Some(&STORAGE_VERSION) => take_all::<StoredReaderPreferences>(bytes)?,
-
-            Some(&STORAGE_VERSION_NO_ALIGNMENT) => {
-                let stored = take_all::<StoredNoAlignment>(bytes)?;
-
-                StoredReaderPreferences {
-                    version: stored.version,
-                    font_size: stored.font_size,
-                    line_spacing: stored.line_spacing,
-                    margin: stored.margin,
-                    alignment: defaults.alignment().index(),
-                    paragraph_indent: stored.paragraph_indent,
-                    paragraph_spacing: stored.paragraph_spacing,
-                    embedded_style: stored.embedded_style,
-                }
-            }
-
-            Some(&STORAGE_VERSION_NO_EMBEDDED_STYLE) => {
-                let stored = take_all::<StoredNoEmbeddedStyle>(bytes)?;
-
-                StoredReaderPreferences {
-                    version: stored.version,
-                    font_size: stored.font_size,
-                    line_spacing: stored.line_spacing,
-                    margin: stored.margin,
-                    alignment: defaults.alignment().index(),
-                    paragraph_indent: stored.paragraph_indent,
-                    paragraph_spacing: stored.paragraph_spacing,
-                    embedded_style: defaults.embedded_style(),
-                }
-            }
-
-            Some(&STORAGE_VERSION_NO_PARAGRAPHS) => {
-                let stored = take_all::<StoredNoParagraphs>(bytes)?;
-
-                StoredReaderPreferences {
-                    version: stored.version,
-                    font_size: stored.font_size,
-                    line_spacing: stored.line_spacing,
-                    margin: stored.margin,
-                    alignment: defaults.alignment().index(),
-                    paragraph_indent: defaults.paragraph_indent(),
-                    paragraph_spacing: defaults.paragraph_spacing(),
-                    embedded_style: defaults.embedded_style(),
-                }
-            }
-
-            Some(&STORAGE_VERSION_FONT_SIZE_ONLY) => {
-                let stored = take_all::<StoredFontSizeOnly>(bytes)?;
-
-                StoredReaderPreferences {
-                    version: stored.version,
-                    font_size: stored.font_size,
-                    line_spacing: defaults.line_spacing().index(),
-                    margin: defaults.margin().px(),
-                    alignment: defaults.alignment().index(),
-                    paragraph_indent: defaults.paragraph_indent(),
-                    paragraph_spacing: defaults.paragraph_spacing(),
-                    embedded_style: defaults.embedded_style(),
-                }
-            }
-
-            Some(&version) => return Err(ReaderPreferencesError::UnsupportedVersion(version)),
-
-            None => return Err(ReaderPreferencesError::Decode),
-        };
+        let stored: StoredReaderPreferences = storage::decode(bytes)?;
 
         let line_spacing = LineSpacing::from_index(stored.line_spacing).ok_or(
             ReaderPreferencesError::InvalidLineSpacing(stored.line_spacing),
@@ -144,17 +60,6 @@ impl ReaderPreferences {
     }
 }
 
-fn take_all<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, ReaderPreferencesError> {
-    let (stored, remainder) =
-        postcard::take_from_bytes::<T>(bytes).map_err(|_| ReaderPreferencesError::Decode)?;
-
-    if !remainder.is_empty() {
-        return Err(ReaderPreferencesError::TrailingData);
-    }
-
-    Ok(stored)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReaderPreferencesRequest {
     Load,
@@ -163,60 +68,34 @@ pub(crate) enum ReaderPreferencesRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReaderPreferencesError {
-    Encode,
-    Decode,
-    UnsupportedVersion(u8),
+    Storage(StorageError),
     InvalidFontSize(u16),
     InvalidLineSpacing(u8),
     InvalidMargin(u8),
     InvalidAlignment(u8),
     InvalidParagraphIndent(u8),
-    TrailingData,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl From<StorageError> for ReaderPreferencesError {
+    fn from(error: StorageError) -> Self {
+        Self::Storage(error)
+    }
+}
+
+#[derive(Debug, Encode, Decode)]
 struct StoredReaderPreferences {
-    version: u8,
+    #[n(0)]
     font_size: u16,
+    #[n(1)]
     line_spacing: u8,
+    #[n(2)]
     margin: u8,
+    #[n(3)]
     alignment: u8,
+    #[n(4)]
     paragraph_indent: u8,
+    #[n(5)]
     paragraph_spacing: bool,
+    #[n(6)]
     embedded_style: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StoredNoAlignment {
-    version: u8,
-    font_size: u16,
-    line_spacing: u8,
-    margin: u8,
-    paragraph_indent: u8,
-    paragraph_spacing: bool,
-    embedded_style: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StoredNoEmbeddedStyle {
-    version: u8,
-    font_size: u16,
-    line_spacing: u8,
-    margin: u8,
-    paragraph_indent: u8,
-    paragraph_spacing: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StoredNoParagraphs {
-    version: u8,
-    font_size: u16,
-    line_spacing: u8,
-    margin: u8,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StoredFontSizeOnly {
-    version: u8,
-    font_size: u16,
 }

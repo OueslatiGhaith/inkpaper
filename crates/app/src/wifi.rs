@@ -1,10 +1,9 @@
 use alloc::{string::String, vec::Vec};
 
-use serde::{Deserialize, Serialize};
+use minicbor::{Decode, Encode};
 
 use crate::keyboard::{Key, KeyResult, KeyboardState};
-
-const STORAGE_VERSION: u8 = 2;
+use crate::storage::{self, StorageError};
 
 /// Like crosspoint, up to eight networks are remembered.
 const MAX_SAVED_NETWORKS: usize = 8;
@@ -225,7 +224,6 @@ impl SavedNetworks {
     /// Encodes the networks with each password obfuscated by `device_key`.
     pub(crate) fn encode(&self, device_key: &DeviceKey) -> Result<Vec<u8>, SavedNetworksError> {
         let stored = StoredSavedNetworks {
-            version: STORAGE_VERSION,
             connected: self.connected,
             networks: self
                 .networks
@@ -238,40 +236,13 @@ impl SavedNetworks {
                 .collect(),
         };
 
-        postcard::to_allocvec(&stored).map_err(|_| SavedNetworksError::Encode)
+        Ok(storage::encode(&stored)?)
     }
 
     /// Decodes networks saved with the same `device_key`. Networks that don't
     /// decode, such as from a card moved over from another device, are dropped.
     pub(crate) fn decode(bytes: &[u8], device_key: &DeviceKey) -> Result<Self, SavedNetworksError> {
-        let (version, _) =
-            postcard::take_from_bytes::<u8>(bytes).map_err(|_| SavedNetworksError::Decode)?;
-
-        let stored = match version {
-            STORAGE_VERSION => decode_all::<StoredSavedNetworks>(bytes)?,
-
-            // version 1 had no connected flag or auto-connect: the first
-            // network was always the one in use
-            1 => {
-                let stored = decode_all::<StoredSavedNetworksV1>(bytes)?;
-
-                StoredSavedNetworks {
-                    version: STORAGE_VERSION,
-                    connected: true,
-                    networks: stored
-                        .networks
-                        .into_iter()
-                        .map(|network| StoredNetwork {
-                            ssid: network.ssid,
-                            password: network.password,
-                            auto_connect: true,
-                        })
-                        .collect(),
-                }
-            }
-
-            version => return Err(SavedNetworksError::UnsupportedVersion(version)),
-        };
+        let stored: StoredSavedNetworks = storage::decode(bytes)?;
 
         let mut connected = stored.connected;
         let mut networks = Vec::new();
@@ -299,17 +270,6 @@ impl SavedNetworks {
             connected,
         })
     }
-}
-
-fn decode_all<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, SavedNetworksError> {
-    let (stored, remainder) =
-        postcard::take_from_bytes::<T>(bytes).map_err(|_| SavedNetworksError::Decode)?;
-
-    if !remainder.is_empty() {
-        return Err(SavedNetworksError::TrailingData);
-    }
-
-    Ok(stored)
 }
 
 /// The networks a connection may use: the connected network first, then saved
@@ -357,10 +317,13 @@ impl WifiJoinPlan {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SavedNetworksError {
-    Encode,
-    Decode,
-    UnsupportedVersion(u8),
-    TrailingData,
+    Storage(StorageError),
+}
+
+impl From<StorageError> for SavedNetworksError {
+    fn from(error: StorageError) -> Self {
+        Self::Storage(error)
+    }
 }
 
 /// Bytes unique to the device, such as its MAC address.
@@ -378,31 +341,23 @@ fn obfuscate(bytes: &[u8], device_key: &DeviceKey) -> Vec<u8> {
         .collect()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Encode, Decode)]
 struct StoredSavedNetworks {
-    version: u8,
+    #[n(0)]
     connected: bool,
+    #[n(1)]
     networks: Vec<StoredNetwork>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Encode, Decode)]
 struct StoredNetwork {
+    #[n(0)]
     ssid: String,
     /// obfuscated with the device key
+    #[cbor(n(1), with = "minicbor::bytes")]
     password: Vec<u8>,
+    #[n(2)]
     auto_connect: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StoredSavedNetworksV1 {
-    version: u8,
-    networks: Vec<StoredNetworkV1>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StoredNetworkV1 {
-    ssid: String,
-    password: Vec<u8>,
 }
 
 /// Where a typed password is in being tried, like crosspoint, which joins
@@ -818,23 +773,6 @@ mod tests {
         let plan = saved.join_plan().unwrap();
         assert_eq!(plan.connected(), None);
         assert!(plan.has_fallbacks());
-    }
-
-    #[test]
-    fn version_1_files_load_with_their_first_network_connected() {
-        let stored = StoredSavedNetworksV1 {
-            version: 1,
-            networks: alloc::vec![StoredNetworkV1 {
-                ssid: String::from("home"),
-                password: obfuscate(b"password", &KEY),
-            }],
-        };
-        let bytes = postcard::to_allocvec(&stored).unwrap();
-
-        let saved = SavedNetworks::decode(&bytes, &KEY).unwrap();
-
-        assert_eq!(saved.connected(), Some(&credentials("home")));
-        assert!(saved.find("home").unwrap().auto_connect());
     }
 
     #[test]
