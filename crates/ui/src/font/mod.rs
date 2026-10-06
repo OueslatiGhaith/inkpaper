@@ -1,3 +1,5 @@
+use core::marker::PhantomData;
+
 use crate::{Offset, Pixels, px};
 
 mod cache;
@@ -371,7 +373,8 @@ pub enum FontRasterError {
 }
 
 enum PreparedFontKind<'font> {
-    Unprepared,
+    /// carries the lifetime for builds without a font backend
+    Unprepared(PhantomData<&'font ()>),
 
     #[cfg(feature = "ttf")]
     Ttf(ttf::PreparedTtfFont<'font>),
@@ -389,7 +392,7 @@ pub struct PreparedFontSource<'font> {
 impl PreparedFontSource<'_> {
     pub const fn unprepared() -> Self {
         Self {
-            kind: PreparedFontKind::Unprepared,
+            kind: PreparedFontKind::Unprepared(PhantomData),
         }
     }
 }
@@ -855,7 +858,9 @@ impl PreparedFont<'_> {
         size_px: u16,
     ) -> Option<(GlyphId, Pixels)> {
         match &self.source.kind {
-            PreparedFontKind::Unprepared => self.resolved.glyph_id_and_advance(character, size_px),
+            PreparedFontKind::Unprepared(_) => {
+                self.resolved.glyph_id_and_advance(character, size_px)
+            }
             #[cfg(feature = "ttf")]
             PreparedFontKind::Ttf(font) => font.glyph_id_and_advance(character, size_px),
         }
@@ -869,7 +874,7 @@ impl PreparedFont<'_> {
         right_to_left: bool,
     ) -> PairPositioning {
         match &self.source.kind {
-            PreparedFontKind::Unprepared => {
+            PreparedFontKind::Unprepared(_) => {
                 self.resolved
                     .pair_positioning(visual_left, visual_right, size_px, right_to_left)
             }
