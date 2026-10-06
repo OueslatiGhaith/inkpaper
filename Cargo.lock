@@ -2272,6 +2272,7 @@ dependencies = [
  "inkpaper-ui",
  "inkpaper-ui-macros",
  "inkpaper-ui-style-schema",
+ "libm",
  "num-traits",
  "skrifa",
  "spin",

@@ -22,6 +22,7 @@ heapless = { workspace = true }
 icu_properties = { version = "2.3.0", default-features = false, features = ["compiled_data"] }
 inkpaper-ui-macros = { path = "../ui-macros", optional = true }
 inkpaper-ui-style-schema = { path = "../ui-style-schema" }
+libm = "0.2.16"
 num-traits = { version = "0.2.19", default-features = false }
 skrifa = { version = "0.44.0", optional = true, default-features = false, features = ["libm"] }
 spin = { version = "0.12.3", optional = true, default-features = false, features = ["spin_mutex"] }

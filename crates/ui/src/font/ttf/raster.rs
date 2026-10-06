@@ -1,7 +1,5 @@
 use ttf_parser::OutlineBuilder;
 
-use super::metrics::{ceil_to_i32, floor_to_i32};
-
 const SUPERSAMPLE_X: usize = 4;
 pub(super) const SUPERSAMPLE_Y: usize = 4;
 const COVERAGE_SAMPLES: u16 = (SUPERSAMPLE_X * SUPERSAMPLE_Y) as u16;
@@ -408,13 +406,7 @@ pub(super) fn curve_steps(points: &[RasterPoint]) -> usize {
     }
 
     let estimate = length / CURVE_PIXELS_PER_STEP;
-    let truncated = estimate as usize;
-
-    let mut steps = if (truncated as f32) < estimate {
-        truncated.saturating_add(1)
-    } else {
-        truncated
-    };
+    let mut steps = libm::ceilf(estimate) as usize;
 
     if steps == 0 {
         steps = 1;
@@ -424,7 +416,7 @@ pub(super) fn curve_steps(points: &[RasterPoint]) -> usize {
 }
 
 fn approximate_distance(from: RasterPoint, to: RasterPoint) -> f32 {
-    abs_f32(to.x - from.x) + abs_f32(to.y - from.y)
+    (to.x - from.x).abs() + (to.y - from.y).abs()
 }
 
 pub(super) fn accumulate_scanline(
@@ -471,8 +463,8 @@ fn accumulate_interval(width: usize, row: usize, coverage: &mut [u8], start: f32
         return;
     }
 
-    let first_pixel = floor_to_i32(start).max(0);
-    let last_pixel = ceil_to_i32(end).min(i32::try_from(width).unwrap_or(i32::MAX));
+    let first_pixel = (libm::floorf(start) as i32).max(0);
+    let last_pixel = (libm::ceilf(end) as i32).min(i32::try_from(width).unwrap_or(i32::MAX));
     let Ok(first_pixel) = usize::try_from(first_pixel) else {
         return;
     };
@@ -508,8 +500,4 @@ pub(super) fn normalize_coverage(coverage: &mut [u8]) {
             .saturating_add(COVERAGE_SAMPLES / 2)
             / COVERAGE_SAMPLES) as u8;
     }
-}
-
-fn abs_f32(value: f32) -> f32 {
-    if value < 0.0 { -value } else { value }
 }

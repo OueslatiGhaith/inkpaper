@@ -5,7 +5,7 @@ use ttf_parser::{
 
 use crate::{CursiveAttachment, Offset, PairPositioning, Pixels, px};
 
-use super::metrics::{font_scale, round_to_i32};
+use super::metrics::font_scale;
 
 pub(super) fn gpos_cursive_attachment_for_face(
     face: &Face<'_>,
@@ -144,7 +144,9 @@ pub(super) fn gpos_kerning_for_face(
                 // xAdvance value.
                 // placement fields and the second glyph's advance are deliberately not
                 // folded into this scalar because doing so would change their semantics.
-                return Some(px(round_to_i32(f32::from(left_value.x_advance) * scale)));
+                return Some(px(
+                    libm::roundf(f32::from(left_value.x_advance) * scale) as i32
+                ));
             }
         }
     }
@@ -171,7 +173,7 @@ pub(super) fn legacy_kerning_for_face(
         }
 
         if let Some(value) = subtable.glyphs_kerning(left, right) {
-            return Some(px(round_to_i32(f32::from(value) * scale)));
+            return Some(px(libm::roundf(f32::from(value) * scale) as i32));
         }
     }
 
@@ -339,8 +341,8 @@ fn anchor_attachment_offset(parent: Anchor<'_>, child: Anchor<'_>, scale: f32) -
     let y_units = i32::from(child.y) - i32::from(parent.y);
 
     Offset::new(
-        px(round_to_i32(x_units as f32 * scale)),
-        px(round_to_i32(y_units as f32 * scale)),
+        px(libm::roundf(x_units as f32 * scale) as i32),
+        px(libm::roundf(y_units as f32 * scale) as i32),
     )
 }
 
@@ -465,7 +467,9 @@ pub(super) fn gpos_pair_positioning_for_face(
                     continue;
                 };
 
-                kerning = Some(px(round_to_i32(f32::from(left_value.x_advance) * scale)));
+                kerning = Some(px(
+                    libm::roundf(f32::from(left_value.x_advance) * scale) as i32
+                ));
 
                 break 'kern_feature;
             }

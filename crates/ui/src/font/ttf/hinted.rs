@@ -19,7 +19,7 @@ use ttf_parser::{Face, OutlineBuilder};
 
 use super::{
     TtfFont,
-    metrics::{ceil_to_i32, floor_to_i32, glyph_advance_for_face},
+    metrics::glyph_advance_for_face,
     raster::{
         Edge, EdgeBuilder, SUPERSAMPLE_Y, ScanlineBuilder, accumulate_scanline, normalize_coverage,
     },
@@ -303,10 +303,10 @@ impl OutlineRecorder {
     fn pixel_bounds(&self) -> Option<(i32, i32, i32, i32)> {
         let (left, bottom, right, top) = self.bounds?;
 
-        let left = floor_to_i32(left);
-        let top = floor_to_i32(-top);
-        let width = ceil_to_i32(right).saturating_sub(left).max(0);
-        let height = ceil_to_i32(-bottom).saturating_sub(top).max(0);
+        let left = libm::floorf(left) as i32;
+        let top = libm::floorf(-top) as i32;
+        let width = (libm::ceilf(right) as i32).saturating_sub(left).max(0);
+        let height = (libm::ceilf(-bottom) as i32).saturating_sub(top).max(0);
 
         Some((left, top, width, height))
     }

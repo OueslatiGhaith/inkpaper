@@ -414,25 +414,7 @@ fn normalized_direction(segment: Segment) -> Option<VectorPoint> {
 }
 
 fn vector_length(vector: VectorPoint) -> f32 {
-    sqrt(vector.x * vector.x + vector.y * vector.y)
-}
-
-fn sqrt(value: f32) -> f32 {
-    if value <= 0.0 || !value.is_finite() {
-        return 0.0;
-    }
-
-    let mut estimate = if value >= 1.0 { value } else { 1.0 };
-
-    let mut iteration = 0;
-
-    while iteration < 8 {
-        estimate = 0.5 * (estimate + value / estimate);
-
-        iteration += 1;
-    }
-
-    estimate
+    libm::sqrtf(vector.x * vector.x + vector.y * vector.y)
 }
 
 fn cross(a: VectorPoint, b: VectorPoint) -> f32 {
@@ -596,6 +578,24 @@ mod tests {
         );
 
         assert_eq!(painted_bounds(&painter), Some((2, 2, 10, 6)));
+    }
+
+    #[test]
+    fn long_segment_keeps_stroke_width() {
+        const COMMANDS: [PathCommand; 2] = [
+            PathCommand::MoveTo(VectorPoint::new(0.0, 10.0)),
+            PathCommand::LineTo(VectorPoint::new(400.0, 10.0)),
+        ];
+
+        let mut painter = RecordingPainter::default();
+
+        painter.stroke_path(
+            VectorPath::new(&COMMANDS),
+            AffineTransform::IDENTITY,
+            PathStroke::new(8.0, Color::BLACK),
+        );
+
+        assert_eq!(painted_bounds(&painter), Some((0, 6, 400, 14)));
     }
 
     #[test]

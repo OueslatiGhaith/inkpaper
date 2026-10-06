@@ -1,9 +1,9 @@
 use crate::{
     AffineTransform, CanvasPainter, Color, FillRule, PathFill, Point, Rect, Size, VectorPath,
-    VectorPoint, element::canvas::path::floor_to_i32, px,
+    VectorPoint, px,
 };
 
-use super::path::{FlattenedPathSink, ceil_to_i32, flatten_path};
+use super::path::{FlattenedPathSink, flatten_path};
 
 const MAX_INTERSECTIONS: usize = 96;
 
@@ -41,6 +41,13 @@ impl BoundsSink {
         self.max_x = self.max_x.max(point.x);
         self.min_y = self.min_y.min(point.y);
         self.max_y = self.max_y.max(point.y);
+    }
+
+    fn is_finite(&self) -> bool {
+        self.min_x.is_finite()
+            && self.max_x.is_finite()
+            && self.min_y.is_finite()
+            && self.max_y.is_finite()
     }
 }
 
@@ -233,15 +240,15 @@ pub(super) fn paint_filled_path<P>(
 
     flatten_path(path, transform, &mut bounds);
 
-    if !bounds.initialized {
+    if !bounds.initialized || !bounds.is_finite() {
         return;
     }
 
-    let start_x = floor_to_i32(bounds.min_x);
-    let end_x = ceil_to_i32(bounds.max_x);
+    let start_x = libm::floorf(bounds.min_x) as i32;
+    let end_x = libm::ceilf(bounds.max_x) as i32;
 
-    let start_y = floor_to_i32(bounds.min_y);
-    let end_y = ceil_to_i32(bounds.max_y);
+    let start_y = libm::floorf(bounds.min_y) as i32;
+    let end_y = libm::ceilf(bounds.max_y) as i32;
 
     let mut y = start_y;
 

@@ -177,13 +177,7 @@ fn curve_steps(points: &[VectorPoint]) -> usize {
     }
 
     let estimate = length / CURVE_PIXELS_PER_STEP;
-    let truncated = estimate as usize;
-
-    let mut steps = if (truncated as f32) < estimate {
-        truncated.saturating_add(1)
-    } else {
-        truncated
-    };
+    let mut steps = libm::ceilf(estimate) as usize;
 
     if steps == 0 {
         steps = 1;
@@ -194,40 +188,4 @@ fn curve_steps(points: &[VectorPoint]) -> usize {
 
 fn approximate_distance(from: VectorPoint, to: VectorPoint) -> f32 {
     (to.x - from.x).abs() + (to.y - from.y).abs()
-}
-
-pub(super) fn ceil_to_i32(value: f32) -> i32 {
-    let truncated = value as i32;
-
-    if (truncated as f32) < value {
-        truncated.saturating_add(1)
-    } else {
-        truncated
-    }
-}
-
-pub(super) fn round_to_i32(value: f32) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-
-    if value >= 0.0 {
-        (value + 0.5) as i32
-    } else {
-        (value - 0.5) as i32
-    }
-}
-
-pub(super) fn floor_to_i32(value: f32) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-
-    let truncated = value as i32;
-
-    if (truncated as f32) > value {
-        truncated.saturating_sub(1)
-    } else {
-        truncated
-    }
 }
