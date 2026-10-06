@@ -1,6 +1,6 @@
+use inkpaper_app::AppResources;
 use inkpaper_ui::{
     HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapFrame, HeapGlobalArena,
-    RuntimeResources,
     backend::{EInkError, EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
     prelude::*,
 };
@@ -27,11 +27,8 @@ const UI_FRAME_TEXT_BYTES: usize = 2_048;
 const UI_ELEMENT_STATES: usize = 32;
 const UI_GLOBAL_SLOTS: usize = 4;
 
-const UI_FONT_SLOTS: usize = 3;
 const UI_GLYPH_CACHE_SLOTS: usize = 128;
 const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
-
-const UI_IMAGE_SLOTS: usize = 32;
 
 pub struct UiStorage;
 
@@ -43,16 +40,8 @@ impl RuntimeStorage for UiStorage {
     type ElementStates = HeapElementStates<UI_ELEMENT_STATES>;
 }
 
-pub type UiRuntime = Runtime<
-    UiStorage,
-    RuntimeResources<
-        'static,
-        UI_FONT_SLOTS,
-        UI_GLYPH_CACHE_SLOTS,
-        UI_GLYPH_CACHE_BYTES,
-        UI_IMAGE_SLOTS,
-    >,
->;
+pub type UiRuntime =
+    Runtime<UiStorage, AppResources<'static, UI_GLYPH_CACHE_SLOTS, UI_GLYPH_CACHE_BYTES>>;
 
 #[derive(Debug, Clone, Copy)]
 struct RenderedFrame {

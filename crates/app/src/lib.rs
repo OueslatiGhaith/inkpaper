@@ -15,6 +15,7 @@ mod keyboard;
 mod reader;
 mod reader_page;
 mod reading_history;
+mod resources;
 mod screens;
 mod service;
 mod system;
@@ -48,4 +49,5 @@ pub(crate) use reader::{
 pub(crate) use reading_history::{
     BookProgress, ReadingHistory, ReadingHistoryEntry, ReadingHistoryRequest,
 };
+pub use resources::AppResources;
 pub(crate) use wifi::{SavedNetworks, WifiScanStatus};
