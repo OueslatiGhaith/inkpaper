@@ -88,16 +88,23 @@ impl<'a> PaintCx<'a> {
     /// unlike `draw_text`, the run's position and extent are considered final.
     /// a capable backend can therefore shape and paint it directly without repeating
     /// line layout or width measurement.
+    ///
+    /// glyph ink may overflow the run, like descenders below a tight line box, so
+    /// only the canvas clip applies.
     pub fn draw_text_run(&mut self, bounds: Rect, text: Text<'_>) {
         let content = text.content.as_str();
         if content.is_empty() {
             return;
         }
 
-        if let Some((bounds, clip)) = self.destination(bounds) {
-            self.sink
-                .text_run(bounds, clip, content, text.style.resolve(self.text_style));
-        }
+        let Some(clip) = self.clip else {
+            return;
+        };
+
+        let bounds = bounds.translated(Offset::new(self.bounds.x(), self.bounds.y()));
+
+        self.sink
+            .text_run(bounds, clip, content, text.style.resolve(self.text_style));
     }
 
     pub fn draw_image(&mut self, bounds: Rect, source: ImageSource, paint: ImagePaint) {

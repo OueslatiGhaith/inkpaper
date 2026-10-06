@@ -138,11 +138,20 @@ pub fn render(
     for (index, line) in lines.iter().enumerate() {
         let top = TOP + line_height * index as i32;
 
-        let clip = ClipRect {
+        let line_box = ClipRect {
             left: COLUMN_X,
             top,
             right: COLUMN_X + COLUMN_WIDTH,
             bottom: top + line_height,
+        };
+
+        // like the reader canvas, glyph ink may overflow its line and is only cut
+        // at the page edges
+        let clip = ClipRect {
+            left: 0,
+            top: 0,
+            right: i32::try_from(width)?,
+            bottom: i32::try_from(height)?,
         };
 
         place_line(
@@ -159,7 +168,7 @@ pub fn render(
             width,
         )?;
 
-        runs.push((line.clone(), clip));
+        runs.push((line.clone(), line_box));
     }
 
     let min_ink_coverage = min_ink_coverage.unwrap_or(DEFAULT_MIN_INK_COVERAGE);
@@ -363,8 +372,8 @@ fn place_line(
     let raster_scale = i32::from(IDEAL_RASTER_SCALE);
     let page_height = ideal.len() / page_width;
 
-    let mut pen_x = clip.left;
-    let mut ideal_pen_x = f64::from(clip.left);
+    let mut pen_x = COLUMN_X;
+    let mut ideal_pen_x = f64::from(COLUMN_X);
 
     for (index, (shaped, scaled)) in actual.iter().zip(&scaled).enumerate() {
         // mirrors draw_shaped_run in crates/ui/src/backend/eink/text.rs

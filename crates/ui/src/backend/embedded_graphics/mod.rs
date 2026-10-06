@@ -238,12 +238,8 @@ where
             return Ok(());
         }
 
-        let Some(text_clip) = (match clip {
-            Some(clip) => clip.intersection(bounds),
-            None => Some(bounds),
-        }) else {
-            return Ok(());
-        };
+        // glyph ink may overflow a run, so only the caller's clip applies
+        let text_clip = clip.unwrap_or(bounds);
 
         let font = resources
             .resolve_font_family_weight(style.font_family, style.font_weight)

@@ -525,7 +525,7 @@ fn canvas_routes_prelaid_out_text_runs_to_run_painter() {
         recorder.draws,
         vec![Draw::TextRun(
             rect(3, 4, 20, 12),
-            Some(rect(3, 4, 20, 12)),
+            Some(rect(0, 0, 40, 30)),
             String::from("reader run"),
             ResolvedTextStyle {
                 font_size: px(17),
