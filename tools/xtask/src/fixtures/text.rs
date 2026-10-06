@@ -64,3 +64,80 @@ pub fn chapters() -> Result<Epub> {
 
     Ok(book.build())
 }
+
+pub fn italics() -> Result<Epub> {
+    let mut long = String::from("<h1>Long Italic Paragraph</h1>\n<p><em>\n");
+
+    // one paragraph long enough to cross a page break
+    for index in 1..=24 {
+        long.push_str(&formatdoc! {r#"
+            Sentence {index} stays italic from the first word to the last,
+            including where the paragraph wraps onto the next page.
+        "#});
+    }
+
+    long.push_str("</em></p>\n<p>This paragraph after it is upright again.</p>\n");
+
+    Ok(Book::new("italics", "Italics")
+        .stylesheet(indoc! {r#"
+            .italic {
+                font-style: italic;
+            }
+
+            .oblique {
+                font-style: oblique 10deg;
+            }
+
+            .upright {
+                font-style: normal;
+            }
+
+            h2.italic-heading {
+                font-style: italic;
+            }
+        "#})
+        .chapter(
+            "chapter-1.xhtml",
+            "Italic Text",
+            indoc! {r#"
+                <h1>Italic Text</h1>
+
+                <p>Upright text, then <em>em text</em>, then <i>i text</i>.</p>
+
+                <p>
+                    Bold and italic together: <b><i>b around i</i></b>,
+                    <strong><em>strong around em</em></strong> and
+                    <em><strong>em around strong</strong></em>. Each should use
+                    the bold italic face.
+                </p>
+
+                <p class="italic">
+                    This whole paragraph is italic through a CSS class.
+                </p>
+
+                <p class="oblique">
+                    This paragraph asks for oblique, which renders as italic.
+                </p>
+
+                <p class="italic">
+                    Italic through a class, with
+                    <span class="upright">an upright span</span> that turns it
+                    off, and <em>em inside the italic</em> that stays italic.
+                </p>
+
+                <h2 class="italic-heading">An Italic Heading</h2>
+
+                <p>
+                    Italic inside one word: un<em>believ</em>able, and
+                    <em>italic</em>, punctuated: <em>“quoted,”</em> <em>(parenthetical)</em>.
+                </p>
+
+                <p>
+                    Scripts Libron lacks fall back to Inter, which has no italic:
+                    <em>Greek αβγ δέλτα and Cyrillic Привет мир</em>.
+                </p>
+            "#},
+        )
+        .chapter("chapter-2.xhtml", "Long Italic Paragraph", long)
+        .build())
+}

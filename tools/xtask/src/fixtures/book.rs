@@ -38,6 +38,7 @@ pub struct Book {
     images: Vec<Image>,
     toc: Option<Vec<TocEntry>>,
     omitted: Vec<String>,
+    stylesheet: String,
 }
 
 struct Chapter {
@@ -83,6 +84,7 @@ impl Book {
             images: Vec::new(),
             toc: None,
             omitted: Vec::new(),
+            stylesheet: String::from(STYLESHEET),
         }
     }
 
@@ -116,6 +118,13 @@ impl Book {
         self
     }
 
+    /// appends rules to the shared stylesheet
+    pub fn stylesheet(mut self, rules: &str) -> Self {
+        self.stylesheet.push('\n');
+        self.stylesheet.push_str(rules);
+        self
+    }
+
     /// keeps a file listed in the package but leaves it out of the archive
     pub fn omit(mut self, path: impl Into<String>) -> Self {
         self.omitted.push(path.into());
@@ -132,7 +141,7 @@ impl Book {
 
         let mut epub = Epub::new(&self.name)
             .file("META-INF/container.xml", container("OEBPS/content.opf"))
-            .file("OEBPS/styles.css", STYLESHEET)
+            .file("OEBPS/styles.css", self.stylesheet.as_str())
             .file(
                 "OEBPS/content.opf",
                 package_document(&self.title, &self.name, &self.chapters, &self.images),
