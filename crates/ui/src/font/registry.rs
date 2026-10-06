@@ -1,6 +1,6 @@
 use crate::{
-    FontFamilyId, FontInstance, FontProperties, FontWeight, FontWeightRange, Pixels, PreparedFont,
-    ResolvedFont,
+    FontFamilyId, FontInstance, FontProperties, FontStyle, FontWeight, FontWeightRange, Pixels,
+    PreparedFont, ResolvedFont,
 };
 
 use super::{FontFace, FontId, GlyphId};
@@ -56,6 +56,7 @@ pub enum FontRegistryError {
 struct RegisteredFont<'font> {
     family: FontFamilyId,
     weights: FontWeightRange,
+    style: FontStyle,
     face: &'font dyn FontFace,
 }
 
@@ -149,6 +150,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         self.fonts[self.len] = Some(RegisteredFont {
             family,
             weights,
+            style: font.style(),
             face: font,
         });
         self.len += 1;
@@ -212,12 +214,24 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         family: FontFamilyId,
         weight: FontWeight,
     ) -> Option<ResolvedFont<'font>> {
-        if let Some(resolved) = self.resolve_family_weight_exact(family, weight) {
+        self.resolve_family_font(family, weight, FontStyle::Normal)
+    }
+
+    /// picks the family's face for `style`, falling back to its other faces, then
+    /// to the default family
+    pub fn resolve_family_font(
+        &self,
+        family: FontFamilyId,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> Option<ResolvedFont<'font>> {
+        if let Some(resolved) = self.resolve_family_font_exact(family, weight, style) {
             return Some(resolved);
         }
 
         if family != FontFamilyId::DEFAULT
-            && let Some(resolved) = self.resolve_family_weight_exact(FontFamilyId::DEFAULT, weight)
+            && let Some(resolved) =
+                self.resolve_family_font_exact(FontFamilyId::DEFAULT, weight, style)
         {
             return Some(resolved);
         }
@@ -231,12 +245,13 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         ))
     }
 
-    fn resolve_family_weight_exact(
+    fn resolve_family_font_exact(
         &self,
         family: FontFamilyId,
         requested: FontWeight,
+        style: FontStyle,
     ) -> Option<ResolvedFont<'font>> {
-        let mut best: Option<(FontId, FontWeight, u8, u16)> = None;
+        let mut best: Option<(FontId, FontWeight, (bool, u8), u16)> = None;
 
         for index in 0..self.len {
             let Some(entry) = self.fonts[index] else {
@@ -253,13 +268,16 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
             let effective = entry.weights.resolve(requested);
             let distance = entry.weights.distance(requested);
 
-            let rank = if entry.weights.is_exact() && distance == 0 {
+            let weight_rank = if entry.weights.is_exact() && distance == 0 {
                 0
             } else if entry.weights.contains(requested) {
                 1
             } else {
                 2
             };
+
+            // a face in the requested style beats any weight match
+            let rank = (entry.style != style, weight_rank);
 
             let replace = match best {
                 None => true,

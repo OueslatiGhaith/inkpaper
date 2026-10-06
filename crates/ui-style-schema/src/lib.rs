@@ -243,6 +243,12 @@ macro_rules! inkpaper_style_schema {
                             font_weight(weight: FontWeight) => weight;
                         },
 
+                        font_style: FontStyle = FontStyle::Normal => {
+                            font_style(style: FontStyle) => style;
+                            italic => FontStyle::Italic;
+                            not_italic => FontStyle::Normal;
+                        },
+
                         font_size: Pixels = px(16) => {
                             @tailwind(FontSize, class = "text")
                             font_size(size: impl Into<Pixels>) => size.into().max(px(1));

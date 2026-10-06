@@ -153,6 +153,14 @@ impl Default for FontWeightRange {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FontStyle {
+    #[default]
+    Normal,
+    Italic,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FontProperties {
     weight: FontWeight,
 }
@@ -411,6 +419,10 @@ impl<'font> PreparedFontSource<'font> {
 pub trait FontFace {
     fn weight_range(&self) -> FontWeightRange {
         FontWeightRange::default()
+    }
+
+    fn style(&self) -> FontStyle {
+        FontStyle::Normal
     }
 
     fn prepare_with_properties(&self, _properties: FontProperties) -> PreparedFontSource<'_> {

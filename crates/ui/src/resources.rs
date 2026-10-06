@@ -5,8 +5,9 @@ use alloc::boxed::Box;
 use crate::GlyphCacheMetrics;
 use crate::{
     FontFace, FontFamilyId, FontId, FontInstance, FontRegistry, FontRegistryError, FontResources,
-    FontWeight, GlyphBitmap, GlyphCacheError, GlyphId, ImageId, ImageRegistry, ImageRegistryError,
-    ImageResource, ImageSource, ResolvedFont, ResolvedTextStyle, Size, TextMeasurer,
+    FontStyle, FontWeight, GlyphBitmap, GlyphCacheError, GlyphId, ImageId, ImageRegistry,
+    ImageRegistryError, ImageResource, ImageSource, ResolvedFont, ResolvedTextStyle, Size,
+    TextMeasurer,
 };
 
 pub struct RuntimeResources<
@@ -96,6 +97,15 @@ impl<
         weight: FontWeight,
     ) -> Option<ResolvedFont<'resource>> {
         self.fonts.resolve_family_weight(family, weight)
+    }
+
+    pub fn resolve_font_family_style(
+        &self,
+        family: FontFamilyId,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> Option<ResolvedFont<'resource>> {
+        self.fonts.resolve_family_font(family, weight, style)
     }
 
     pub fn glyph_bitmap(

@@ -1,5 +1,6 @@
 use inkpaper_reader::{
-    FontWeight as ReaderFontWeight, ImageFragment, Page, PageItem, Rect as ReaderRect, TextFragment,
+    FontStyle as ReaderFontStyle, FontWeight as ReaderFontWeight, ImageFragment, Page, PageItem,
+    Rect as ReaderRect, TextFragment,
 };
 use inkpaper_ui::prelude::*;
 
@@ -21,12 +22,14 @@ pub(crate) fn paint_reader_page(
 fn paint_text_fragment(fragment: &TextFragment<'_>, paint: &mut PaintCx<'_>) {
     let bounds = fragment.bounds();
     let style = fragment.style();
+    let (font_weight, font_style) = reader_font(style.font_weight(), style.font_style());
 
     paint.draw_text_run(
         reader_rect(bounds),
         text(fragment.text())
             .font_family(READER_FAMILY)
-            .font_weight(reader_font_weight(style.font_weight()))
+            .font_weight(font_weight)
+            .font_style(font_style)
             .font_size(px(i32::from(style.font_size()))),
     );
 }
@@ -58,11 +61,22 @@ fn reader_rect(bounds: ReaderRect) -> Rect {
     )
 }
 
-fn reader_font_weight(weight: ReaderFontWeight) -> FontWeight {
-    match weight {
+/// the reader family's weight and style for a book's text style
+pub(crate) fn reader_font(
+    weight: ReaderFontWeight,
+    style: ReaderFontStyle,
+) -> (FontWeight, FontStyle) {
+    let weight = match weight {
         ReaderFontWeight::Normal => FontWeight::NORMAL,
         ReaderFontWeight::Bold => FontWeight::BOLD,
-    }
+    };
+
+    let style = match style {
+        ReaderFontStyle::Normal => FontStyle::Normal,
+        ReaderFontStyle::Italic => FontStyle::Italic,
+    };
+
+    (weight, style)
 }
 
 fn reader_px(value: u32) -> Pixels {

@@ -285,7 +285,7 @@ where
         };
 
         let font = resources
-            .resolve_font_family_weight(style.font_family, style.font_weight)
+            .resolve_font_family_style(style.font_family, style.font_weight, style.font_style)
             .expect("EInkPainter requires a default font");
 
         let registry = resources.font_registry();
@@ -341,7 +341,7 @@ where
         let clip = clip.unwrap_or(bounds);
 
         let font = resources
-            .resolve_font_family_weight(style.font_family, style.font_weight)
+            .resolve_font_family_style(style.font_family, style.font_weight, style.font_style)
             .expect("EInkPainter requires a default font");
 
         let registry = resources.font_registry();

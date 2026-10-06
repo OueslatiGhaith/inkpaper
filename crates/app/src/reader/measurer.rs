@@ -1,8 +1,10 @@
-use inkpaper_epub::{ChapterImage, FontWeight as ReaderFontWeight, ImageDimensions};
+use inkpaper_epub::{
+    ChapterImage, FontStyle as ReaderFontStyle, FontWeight as ReaderFontWeight, ImageDimensions,
+};
 use inkpaper_reader::{ImageMeasurer, TextMeasurer, TextStyle as ReaderTextStyle};
 use inkpaper_ui::{
-    FontRegistry, FontRegistryError, FontWeight as UiFontWeight, PreparedSimpleShaper,
-    ResolvedFont, ShapeError, ShapedGlyph, SimpleShaper,
+    FontRegistry, FontRegistryError, PreparedSimpleShaper, ResolvedFont, ShapeError, ShapedGlyph,
+    SimpleShaper,
 };
 
 use crate::{
@@ -13,6 +15,7 @@ use crate::{
             ReaderMeasureCacheLookup,
         },
     },
+    reader_page::reader_font,
     typography::{self, FONT_FACES, READER_FAMILY},
 };
 
@@ -21,8 +24,8 @@ const READER_SHAPING_GLYPHS: usize = 128;
 pub(super) struct ReaderMeasurer {
     fonts: FontRegistry<'static, FONT_FACES>,
 
-    normal_shaper: PreparedSimpleShaper<'static>,
-    bold_shaper: PreparedSimpleShaper<'static>,
+    /// indexed by [`shaper_index`]
+    shapers: [PreparedSimpleShaper<'static>; 4],
 
     glyphs: [ShapedGlyph; READER_SHAPING_GLYPHS],
     images: ChapterImageMetrics,
@@ -36,40 +39,45 @@ impl ReaderMeasurer {
 
         typography::register_in(&mut fonts)?;
 
-        let normal_font = fonts
-            .resolve_family_weight(READER_FAMILY, UiFontWeight::NORMAL)
-            .expect("reader measurer always registers the reader fonts");
+        let shapers = [
+            (ReaderFontWeight::Normal, ReaderFontStyle::Normal),
+            (ReaderFontWeight::Bold, ReaderFontStyle::Normal),
+            (ReaderFontWeight::Normal, ReaderFontStyle::Italic),
+            (ReaderFontWeight::Bold, ReaderFontStyle::Italic),
+        ]
+        .map(|(weight, style)| {
+            let font = resolve_font(&fonts, weight, style);
 
-        let bold_font = fonts
-            .resolve_family_weight(READER_FAMILY, UiFontWeight::BOLD)
-            .expect("reader measurer always registers the reader fonts");
-
-        let normal_shaper = SimpleShaper::with_properties(normal_font.properties())
-            .prepare(&fonts, normal_font.id());
-
-        let bold_shaper =
-            SimpleShaper::with_properties(bold_font.properties()).prepare(&fonts, bold_font.id());
+            SimpleShaper::with_properties(font.properties()).prepare(&fonts, font.id())
+        });
 
         Ok(Self {
             fonts,
-            normal_shaper,
-            bold_shaper,
+            shapers,
             glyphs: [ShapedGlyph::EMPTY; READER_SHAPING_GLYPHS],
             images,
             measure_cache: ReaderMeasureCache::default(),
         })
     }
+}
 
-    fn resolve_font(&self, style: ReaderTextStyle) -> ResolvedFont<'static> {
-        let weight = match style.font_weight() {
-            ReaderFontWeight::Normal => UiFontWeight::NORMAL,
-            ReaderFontWeight::Bold => UiFontWeight::BOLD,
-        };
+fn shaper_index(weight: ReaderFontWeight, style: ReaderFontStyle) -> usize {
+    let bold = usize::from(weight == ReaderFontWeight::Bold);
+    let italic = usize::from(style == ReaderFontStyle::Italic);
 
-        self.fonts
-            .resolve_family_weight(READER_FAMILY, weight)
-            .expect("reader measurer always registers the reader fonts")
-    }
+    bold + 2 * italic
+}
+
+fn resolve_font(
+    fonts: &FontRegistry<'static, FONT_FACES>,
+    weight: ReaderFontWeight,
+    style: ReaderFontStyle,
+) -> ResolvedFont<'static> {
+    let (weight, style) = reader_font(weight, style);
+
+    fonts
+        .resolve_family_font(READER_FAMILY, weight, style)
+        .expect("reader measurer always registers the reader fonts")
 }
 
 impl TextMeasurer for ReaderMeasurer {
@@ -86,11 +94,7 @@ impl TextMeasurer for ReaderMeasurer {
             ReaderMeasureCacheLookup::Bypass => None,
         };
 
-        let shaper = match style.font_weight() {
-            ReaderFontWeight::Normal => &self.normal_shaper,
-
-            ReaderFontWeight::Bold => &self.bold_shaper,
-        };
+        let shaper = &self.shapers[shaper_index(style.font_weight(), style.font_style())];
 
         let summary = shaper.measure(&self.fonts, style.font_size(), text, &mut self.glyphs)?;
 
@@ -104,7 +108,7 @@ impl TextMeasurer for ReaderMeasurer {
     }
 
     fn line_height(&mut self, style: ReaderTextStyle) -> Result<u32, Self::Error> {
-        let font = self.resolve_font(style);
+        let font = resolve_font(&self.fonts, style.font_weight(), style.font_style());
 
         Ok(u32::try_from(
             font.metrics(style.font_size())
@@ -121,11 +125,7 @@ impl TextMeasurer for ReaderMeasurer {
         from: usize,
         style: ReaderTextStyle,
     ) -> Result<Option<usize>, Self::Error> {
-        let shaper = match style.font_weight() {
-            ReaderFontWeight::Normal => &self.normal_shaper,
-
-            ReaderFontWeight::Bold => &self.bold_shaper,
-        };
+        let shaper = &self.shapers[shaper_index(style.font_weight(), style.font_style())];
 
         Ok(shaper.next_cluster_boundary(&self.fonts, style.font_size(), text, from))
     }

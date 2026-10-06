@@ -15,7 +15,7 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
         }
 
         let font = self
-            .resolve_family_weight(style.font_family, style.font_weight)
+            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
             .expect("text measurement requires a default font");
 
         let font_instance = font.instance();

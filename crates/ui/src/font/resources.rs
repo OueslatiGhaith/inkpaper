@@ -1,6 +1,6 @@
 #[cfg(feature = "metrics")]
 use crate::GlyphCacheMetrics;
-use crate::{FontFamilyId, FontInstance, FontWeight, ResolvedFont};
+use crate::{FontFamilyId, FontInstance, FontStyle, FontWeight, ResolvedFont};
 
 use super::{
     FontFace, FontId, GlyphId,
@@ -74,6 +74,15 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
         weight: FontWeight,
     ) -> Option<ResolvedFont<'font>> {
         self.registry.resolve_family_weight(family, weight)
+    }
+
+    pub fn resolve_family_font(
+        &self,
+        family: FontFamilyId,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> Option<ResolvedFont<'font>> {
+        self.registry.resolve_family_font(family, weight, style)
     }
 
     pub fn glyph_bitmap(

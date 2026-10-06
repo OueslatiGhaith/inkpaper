@@ -80,7 +80,7 @@ pub mod prelude {
         ActivateEvent, AffineTransform, AppContext, Canvas, CanvasPainter, Children, Color,
         ComponentChildren, ComponentSlot, ConditionalElementExt, Context, DamageRegion, Div,
         Either, Element, ElementId, EmptySlot, Entity, EventTarget, FillRule, FixedStorage,
-        FontFamilyId, FontId, FontResources, FontWeight, FrameBuildError, Global,
+        FontFamilyId, FontId, FontResources, FontStyle, FontWeight, FrameBuildError, Global,
         GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError, IdentifiableElementExt, Image,
         ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint, ImagePosition, ImageRegistry,
         ImageRegistryError, ImageResource, ImageSampling, ImageSource, IntoElement, Invalidation,

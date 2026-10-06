@@ -26,9 +26,9 @@ use super::{
     to_ttf_glyph,
 };
 use crate::{
-    CursiveAttachment, FontFace, FontMetrics, FontProperties, FontRasterError, FontWeight,
-    FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning, Pixels,
-    PreparedFontSource, px,
+    CursiveAttachment, FontFace, FontMetrics, FontProperties, FontRasterError, FontStyle,
+    FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning,
+    Pixels, PreparedFontSource, px,
 };
 
 /// the reader and the UI each use a few sizes, and a hinting instance costs a pass
@@ -462,6 +462,10 @@ fn instance_with(properties: FontProperties, size_px: u16) -> InstanceKey {
 impl FontFace for HintedTtfFont<'_> {
     fn weight_range(&self) -> FontWeightRange {
         self.font.weight_range()
+    }
+
+    fn style(&self) -> FontStyle {
+        self.font.style()
     }
 
     fn prepare_with_properties(&self, properties: FontProperties) -> PreparedFontSource<'_> {

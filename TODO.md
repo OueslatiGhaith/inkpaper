@@ -10,7 +10,7 @@ New UI follows crosspoint/crossink's screens and layout.
 - [x] keep Inter for the UI
 - [x] use Libron for the reader
 - [x] bold reader face
-- [ ] italic reader faces
+- [x] italic reader faces
 - [ ] custom reader fonts loaded from storage
 - [ ] font picker in the reader settings
 

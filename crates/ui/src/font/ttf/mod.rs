@@ -1,7 +1,7 @@
 use ttf_parser::{Face, GlyphId as TtfGlyphId};
 
 use crate::{
-    CursiveAttachment, FontData, FontFace, FontMetrics, FontProperties, FontRasterError,
+    CursiveAttachment, FontData, FontFace, FontMetrics, FontProperties, FontRasterError, FontStyle,
     FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning,
     Pixels, PreparedFontSource, px, ttf::gpos::gpos_pair_positioning_for_face,
 };
@@ -104,6 +104,13 @@ impl FontFace for TtfFont<'_> {
         }
 
         FontWeightRange::exact(FontWeight::new(face.weight().to_number()))
+    }
+
+    fn style(&self) -> FontStyle {
+        match self.face() {
+            Ok(face) if face.is_italic() => FontStyle::Italic,
+            _ => FontStyle::Normal,
+        }
     }
 
     fn prepare_with_properties(&self, properties: FontProperties) -> PreparedFontSource<'_> {

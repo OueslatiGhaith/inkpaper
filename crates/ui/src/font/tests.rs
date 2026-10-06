@@ -174,6 +174,83 @@ fn registry_resolves_closest_weight_in_family() {
     assert_eq!(resolved_bold.weight(), FontWeight::BOLD);
 }
 
+struct ItalicTestFont(TestFont);
+
+impl FontFace for ItalicTestFont {
+    fn style(&self) -> FontStyle {
+        FontStyle::Italic
+    }
+
+    fn glyph_id(&self, character: char) -> Option<GlyphId> {
+        self.0.glyph_id(character)
+    }
+
+    fn metrics(&self, size_px: u16) -> FontMetrics {
+        self.0.metrics(size_px)
+    }
+
+    fn glyph_metrics(&self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics> {
+        self.0.glyph_metrics(glyph, size_px)
+    }
+
+    fn rasterize(
+        &self,
+        glyph: GlyphId,
+        size_px: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
+        self.0.rasterize(glyph, size_px, coverage)
+    }
+}
+
+#[test]
+fn registry_prefers_the_requested_style_over_weight() {
+    let regular = TestFont { fill: 10 };
+    let bold = TestFont { fill: 20 };
+    let italic = ItalicTestFont(TestFont { fill: 30 });
+
+    let mut registry = FontRegistry::<3>::default();
+    let family = registry.register_family().unwrap();
+
+    let regular_id = registry
+        .register_face_with_weight(family, FontWeight::NORMAL, &regular)
+        .unwrap();
+    let bold_id = registry
+        .register_face_with_weight(family, FontWeight::BOLD, &bold)
+        .unwrap();
+    let italic_id = registry
+        .register_face_with_weight(family, FontWeight::NORMAL, &italic)
+        .unwrap();
+
+    let resolve = |weight, style| {
+        registry
+            .resolve_family_font(family, weight, style)
+            .unwrap()
+            .id()
+    };
+
+    assert_eq!(resolve(FontWeight::NORMAL, FontStyle::Normal), regular_id);
+    assert_eq!(resolve(FontWeight::BOLD, FontStyle::Normal), bold_id);
+    assert_eq!(resolve(FontWeight::NORMAL, FontStyle::Italic), italic_id);
+    assert_eq!(resolve(FontWeight::BOLD, FontStyle::Italic), italic_id);
+}
+
+#[test]
+fn registry_falls_back_to_upright_faces_without_italics() {
+    let regular = TestFont { fill: 10 };
+
+    let mut registry = FontRegistry::<1>::default();
+    let family = registry.register_family().unwrap();
+
+    let regular_id = registry.register_face(family, &regular).unwrap();
+
+    let resolved = registry
+        .resolve_family_font(family, FontWeight::NORMAL, FontStyle::Italic)
+        .unwrap();
+
+    assert_eq!(resolved.id(), regular_id);
+}
+
 #[test]
 fn registry_rejects_unregistered_family() {
     let font = TestFont { fill: 10 };
