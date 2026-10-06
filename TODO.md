@@ -1,73 +1,57 @@
 # TODO List
 
-## reader
+# Next release: reader experience
 
-- [x] open EPUB files from local storage
-- [x] render EPUB xHTML/text
-- [x] basic EPUB CSS support
-- [x] render embedded EPUB images
-- [x] paginate reader content
-- [x] previous/next page navigation
-- [x] cross chapter boundaries while paging
-- [x] font size adjustment
-- [x] repaginate after font size change
-- [x] persist reader preferences
-- [x] reader status bar with title/page/section info
-- [x] resume a book from saved progress
-- [x] recent books can reopen saved books
-- [x] basic reader load/error state
-- [x] harden EPUB compatibility for EPUB 2/3
-- [x] more fixtures for EPUB 2/3
+New UI follows crosspoint/crossink's screens and layout.
 
-## Home and Library
+## Fonts
 
-- [x] Home screen
-- [x] current/continue reading book on home
-- [x] browse local filesystem
-- [x] open EPUB from file browser
-- [x] recent books screen
-- [x] persisted reading history
-- [x] basic browse error state
-- [x] remove or hide library actions that are not functional
+- [ ] separate the UI font from the reader font
+- [ ] keep Inter for the UI
+- [ ] use Libron for the reader
+- [ ] bold/italic reader faces
+- [ ] custom reader fonts loaded from storage
+- [ ] font picker in the reader settings
 
-## Frontlight
+## Typography settings
 
-- [x] on/off
-- [x] brigtness control
-- [x] warmth control
-- [x] live hardware update
-- [x] control center
-- [x] persistance
-- [x] restore persisted state at startup
+- [ ] line spacing
+- [ ] page margins
+- [ ] text alignment (book default/left/justified)
+- [ ] paragraph indent
+- [ ] paragraph spacing
+- [ ] option to override the book's CSS with these settings
+- [ ] persist typography settings
+- [ ] repaginate after any typography change
+- [ ] reader settings screen
 
-## Battery and Clock
+## Hyphenation: if it doesn't cost too much
 
-- [x] battery integration
-- [x] battery status in app
-- [x] RTC integration
-- [x] clock/date in app
-- [x] set RTC state
+- [ ] hyphenation dictionaries
+- [ ] break words at hyphenation points during line layout
+- [ ] hyphenation setting (on/off)
+- [ ] pick the dictionary from the book's language
 
-## Power management
+## Links
 
-- [x] deep sleep on power button
-- [x] flush app state before sleep
-- [x] change to long press
-- [x] faster wakeup
-- [x] sleep screen
-- [x] auto sleep
+- [ ] internal links between chapters and anchors
+- [ ] footnotes
+- [ ] return to the previous position after following a link
 
-## Display
+## Home
 
-- [x] short press on power button to force refresh
+- [ ] extract and cache the current book's cover
+- [ ] show the cover on the home screen instead of the placeholder
 
-## Settings
+# Done
 
-- [x] remove fake settings
-
-## Book transfer
-
-- [x] USB mass storage mode
+- reader: EPUB 2/3 open, render, CSS, images, pagination, chapter navigation, font size, status bar, saved progress
+- home and library: home screen, continue reading, file browser, recent books, reading history
+- frontlight: brightness, warmth, control center, persisted state
+- battery and clock: battery status, charging state, RTC, clock/date
+- power: long press deep sleep, sleep screen, auto sleep, fast wakeup
+- display: short press power button to force refresh
+- book transfer: USB mass storage
 
 # Future goals
 
