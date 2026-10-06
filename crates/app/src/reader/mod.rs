@@ -8,6 +8,7 @@ mod measurer;
 mod preferences;
 mod progress;
 mod state;
+mod text_settings;
 mod toc;
 
 #[cfg(test)]
@@ -19,10 +20,9 @@ pub(crate) use loader::ReaderSession;
 pub(crate) use loader::load_reader_document;
 pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesRequest};
 pub(crate) use state::{ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState};
+pub(crate) use text_settings::PageBounds;
+use text_settings::{DEFAULT_LINE_HEIGHT_PERCENT, ScreenMargin};
 pub(crate) use toc::{TableOfContents, TocEntry};
-
-const READER_VIEWPORT_WIDTH: u32 = 440;
-const READER_VIEWPORT_HEIGHT: u32 = 685;
 
 const READER_FONT_SIZE_DEFAULT: u16 = 20;
 const READER_FONT_SIZE_MIN: u16 = 14;
@@ -31,9 +31,12 @@ const READER_FONT_SIZE_STEP: u16 = 2;
 
 const READER_BLOCK_SPACING: u16 = 8;
 
+pub(crate) fn reader_page_bounds() -> PageBounds {
+    ScreenMargin::default().page_bounds()
+}
+
 pub(crate) fn reader_viewport() -> Viewport {
-    Viewport::new(READER_VIEWPORT_WIDTH, READER_VIEWPORT_HEIGHT)
-        .expect("reader viewport is statically non-zero")
+    reader_page_bounds().viewport()
 }
 
 /// Maps a slider value from 0 to 100 to the nearest supported font size.
@@ -59,7 +62,8 @@ fn reader_settings(font_size: u16) -> Option<ReaderSettings> {
         return None;
     }
 
-    ReaderSettings::new(font_size, READER_BLOCK_SPACING)
+    ReaderSettings::new(font_size, READER_BLOCK_SPACING)?
+        .with_line_height_percent(DEFAULT_LINE_HEIGHT_PERCENT)
 }
 
 fn default_reader_settings() -> ReaderSettings {

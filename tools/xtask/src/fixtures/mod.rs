@@ -27,6 +27,7 @@ const FIXTURES: &[fn() -> Result<Epub>] = &[
     text::long_text,
     text::chapters,
     text::italics,
+    text::typography,
     images::mixed_content,
     images::image_layout,
     images::transparent_image,

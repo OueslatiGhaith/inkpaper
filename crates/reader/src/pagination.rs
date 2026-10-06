@@ -125,6 +125,10 @@ struct Paginator<'chapter, 'context, M> {
     line_start: ReadingPosition,
     line_width: u32,
     line_height: u32,
+    /// how far below the line's top the text starts: half the space the line
+    /// adds around the font's own height, like CSS half-leading
+    line_text_offset: u32,
+    line_text_height: u32,
     line_align: TextAlign,
     line_indent: u32,
     line_items: Vec<PendingText<'chapter>>,
@@ -164,6 +168,8 @@ where
             line_start: start,
             line_width: 0,
             line_height: 0,
+            line_text_offset: 0,
+            line_text_height: 0,
             line_align: TextAlign::Start,
             line_indent: 0,
             line_items: Vec::new(),
@@ -505,6 +511,7 @@ where
         }
 
         let height = self.measured_line_height(style)?;
+        let text_height = self.measurer.line_height(style)?.max(1);
 
         self.line_items.push(PendingText {
             source,
@@ -518,6 +525,10 @@ where
 
         self.line_width = self.line_width.saturating_add(width);
         self.line_height = self.line_height.max(height);
+        self.line_text_offset = self
+            .line_text_offset
+            .max(height.saturating_sub(text_height) / 2);
+        self.line_text_height = self.line_text_height.max(text_height);
         self.cursor = self.cursor.advance_text(text);
         self.block_laid_out = true;
 
@@ -570,6 +581,8 @@ where
         }
 
         let y = self.used_height;
+        let text_y = y.saturating_add(self.line_text_offset);
+        let text_height = self.line_text_height.max(1);
 
         let line_width = self.viewport.width().saturating_sub(self.line_indent);
         let alignment = alignment_offset(self.line_align, line_width, self.line_width);
@@ -584,11 +597,11 @@ where
                     continue;
                 }
 
-                self.push_text_fragment(current, origin, y, height);
+                self.push_text_fragment(current, origin, text_y, text_height);
                 current = next;
             }
 
-            self.push_text_fragment(current, origin, y, height);
+            self.push_text_fragment(current, origin, text_y, text_height);
         }
 
         self.used_height = self.used_height.saturating_add(height);
@@ -596,6 +609,8 @@ where
         self.line_start = self.cursor;
         self.line_width = 0;
         self.line_height = 0;
+        self.line_text_offset = 0;
+        self.line_text_height = 0;
         self.line_align = TextAlign::Start;
         self.line_indent = 0;
     }
@@ -660,7 +675,13 @@ where
     }
 
     fn measured_line_height(&mut self, style: TextStyle) -> Result<u32, M::Error> {
-        if let Some(height) = self.block_line_height.resolve(u32::from(style.font_size())) {
+        let font_size = u32::from(style.font_size());
+
+        if let Some(percent) = self.settings.line_height_percent() {
+            return Ok((font_size * u32::from(percent) / 100).max(1));
+        }
+
+        if let Some(height) = self.block_line_height.resolve(font_size) {
             return Ok(height.max(1));
         }
 

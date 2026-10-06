@@ -8,7 +8,7 @@ use crate::{
         icon::{Icon, IconKind, IconProps},
         reader_menu::{self, ReaderMenuView},
     },
-    reader::{font_size_from_slider, reader_viewport},
+    reader::{font_size_from_slider, reader_page_bounds},
 };
 
 #[component]
@@ -36,45 +36,45 @@ pub(crate) struct ReaderScreen<'a> {
 
 impl RenderOnce for ReaderScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let viewport = reader_viewport();
+        let page = reader_page_bounds();
 
-        let page_size = Size::new(
-            px(i32::try_from(viewport.width()).unwrap_or(i32::MAX)),
-            px(i32::try_from(viewport.height()).unwrap_or(i32::MAX)),
-        );
+        let page_left = px(page.left as i32);
+        let page_top = px(page.top as i32);
+        let page_size = Size::new(px(page.width as i32), px(page.height as i32));
 
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
                 {#if self.page_canvas.is_some()}
-                    <div class="absolute left-5 top-[35px] w-[440px] h-[685px] overflow-hidden">
+                    <div class="absolute left-{page_left} top-{page_top} w-{page_size.width} h-{page_size.height} overflow-hidden">
                         {
                             self.page_canvas
                                 .expect("reader page canvas was checked above")
                                 .size(page_size)
                         }
-
-                        // taps pass through elements without listeners, so the
-                        // page zones are removed while the drawer covers them
-                        {#if !self.menu_open}
-                            <div
-                                id="reader-previous-page"
-                                on:activate={self.on_previous_page}
-                                class="absolute left-0 top-0 w-[147px] h-full"
-                            />
-
-                            <div
-                                id="reader-open-menu"
-                                on:activate={self.on_open_menu}
-                                class="absolute left-[147px] top-0 w-[146px] h-full"
-                            />
-
-                            <div
-                                id="reader-next-page"
-                                on:activate={self.on_next_page}
-                                class="absolute right-0 top-0 w-[147px] h-full"
-                            />
-                        {/if}
                     </div>
+
+                    // screen thirds above the status bar, whatever the margin.
+                    // Taps pass through elements without listeners, so the
+                    // zones are removed while the drawer covers them
+                    {#if !self.menu_open}
+                        <div
+                            id="reader-previous-page"
+                            on:activate={self.on_previous_page}
+                            class="absolute left-0 top-0 w-[160px] h-[720px]"
+                        />
+
+                        <div
+                            id="reader-open-menu"
+                            on:activate={self.on_open_menu}
+                            class="absolute left-[160px] top-0 w-[160px] h-[720px]"
+                        />
+
+                        <div
+                            id="reader-next-page"
+                            on:activate={self.on_next_page}
+                            class="absolute left-[320px] top-0 w-[160px] h-[720px]"
+                        />
+                    {/if}
 
                     <ReaderStatusBar
                         page_label={self.page_label}

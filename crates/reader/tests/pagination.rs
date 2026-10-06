@@ -905,9 +905,77 @@ fn css_line_height_controls_line_boxes() {
 
     assert_eq!(texts.len(), 2);
 
-    assert_eq!(texts[0].bounds(), Rect::new(0, 0, 3, 2));
+    // lines are two tall, the one-tall text sits in their top half
+    assert_eq!(texts[0].bounds(), Rect::new(0, 0, 3, 1));
 
-    assert_eq!(texts[1].bounds(), Rect::new(0, 2, 3, 2));
+    assert_eq!(texts[1].bounds(), Rect::new(0, 2, 3, 1));
+}
+
+fn line_bounds(body: &str, settings: ReaderSettings) -> Vec<Rect> {
+    let bytes = build_test_epub(body);
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let mut measurer = MonoMeasurer::default();
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(20, 40).unwrap(),
+        settings,
+        &mut measurer,
+    )
+    .unwrap();
+
+    pagination.pages()[0]
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            PageItem::Text(text) => Some(text.bounds()),
+            PageItem::Image(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn line_height_setting_overrides_css_line_height() {
+    let settings = ReaderSettings::new(1, 0)
+        .unwrap()
+        .with_line_height_percent(300)
+        .unwrap();
+
+    let bounds = line_bounds(r#"<p style="line-height: 2">one<br/>two</p>"#, settings);
+
+    // three-tall lines, with the one-tall text centered in each
+    assert_eq!(bounds, [Rect::new(0, 1, 3, 1), Rect::new(0, 4, 3, 1)]);
+}
+
+#[test]
+fn line_height_setting_is_a_percentage_of_the_font_size() {
+    let settings = ReaderSettings::new(10, 0)
+        .unwrap()
+        .with_line_height_percent(135)
+        .unwrap();
+
+    assert_eq!(settings.line_height_percent(), Some(135));
+    assert_eq!(
+        ReaderSettings::new(10, 0)
+            .unwrap()
+            .with_line_height_percent(0),
+        None
+    );
+
+    // 10 * 1.35 rounds down to 13; the one-tall text sits 6 below each line's top
+    let bounds = line_bounds("<p>one<br/>two</p>", settings);
+
+    assert_eq!(bounds, [Rect::new(0, 6, 3, 1), Rect::new(0, 19, 3, 1)]);
 }
 
 #[test]

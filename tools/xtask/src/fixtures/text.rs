@@ -141,3 +141,72 @@ pub fn italics() -> Result<Epub> {
         .chapter("chapter-2.xhtml", "Long Italic Paragraph", long)
         .build())
 }
+
+/// text for the reader's typography settings. Later settings add chapters here
+pub fn typography() -> Result<Epub> {
+    let mut plain = String::from("<h1>Plain Paragraphs</h1>\n");
+
+    for index in 1..=12 {
+        plain.push_str(&formatdoc! {r#"
+            <p>
+                Paragraph {index} has no styles of its own. Line spacing, margins
+                and font size come only from the reader settings, so every page
+                of this chapter changes as they do.
+            </p>
+        "#});
+    }
+
+    Ok(Book::new("typography", "Typography")
+        .stylesheet(indoc! {r#"
+            .tight {
+                line-height: 1;
+            }
+
+            .loose {
+                line-height: 2.5;
+            }
+        "#})
+        .chapter("chapter-1.xhtml", "Plain Paragraphs", plain)
+        .chapter(
+            "chapter-2.xhtml",
+            "Book Line Height",
+            indoc! {r#"
+                <h1>Book Line Height</h1>
+
+                <p class="tight">
+                    This paragraph asks for a line height of 1 in the book's CSS.
+                    The reader's line spacing setting replaces it, so its lines
+                    are spaced like every other paragraph.
+                </p>
+
+                <p class="loose">
+                    This paragraph asks for a line height of 2.5. It too follows
+                    the reader's setting instead, with the same spacing as the
+                    paragraphs around it.
+                </p>
+
+                <p>
+                    This paragraph has no line height of its own, for comparison
+                    with the two above.
+                </p>
+            "#},
+        )
+        .chapter(
+            "chapter-3.xhtml",
+            "Dialogue",
+            indoc! {r#"
+                <h1>Dialogue</h1>
+
+                <p>“Is it raining?”</p>
+                <p>“Not yet.”</p>
+                <p>“Then we walk.”</p>
+                <p>“And if it starts?”</p>
+                <p>“Then we walk faster.”</p>
+                <p>
+                    Short lines like these show the spacing between lines and
+                    paragraphs most clearly, since each paragraph is a single line.
+                </p>
+            "#},
+        )
+        .build())
+}
