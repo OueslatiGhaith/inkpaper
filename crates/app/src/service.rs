@@ -8,7 +8,7 @@ use crate::{
     FileTransferRequest, FrontlightPreferences, FrontlightPreferencesRequest, FrontlightSetting,
     InkPaperApp, ReaderPreferences, ReaderPreferencesRequest, ReaderRequest, ReaderSession,
     ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials, WifiJoinFailure,
-    WifiJoinPlan, WifiScanError,
+    WifiJoinPlan, WifiScanError, reader::TextSettings,
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
@@ -472,8 +472,8 @@ where
         R: RuntimeApi + ResourceRuntimeApi<'resource>,
     {
         match request {
-            ReaderRequest::OpenEpub { path, font_size } => {
-                self.open_document(runtime, app, path, font_size).await?;
+            ReaderRequest::OpenEpub { path, text } => {
+                self.open_document(runtime, app, path, text).await?;
             }
 
             ReaderRequest::LoadAdjacentChapter {
@@ -508,17 +508,11 @@ where
                 }
             }
 
-            ReaderRequest::RepaginateChapter {
-                path,
-                spine,
-                font_size,
-            } => {
+            ReaderRequest::RepaginateChapter { path, spine, text } => {
                 let chapter = match self.reader_session.as_mut() {
-                    Some(session) if session.path() == path => session
-                        .repaginate_chapter(spine, font_size)
-                        .await
-                        .ok()
-                        .flatten(),
+                    Some(session) if session.path() == path => {
+                        session.repaginate_chapter(spine, text).await.ok().flatten()
+                    }
 
                     _ => None,
                 };
@@ -528,13 +522,13 @@ where
                         chapter.register_images(runtime);
 
                         runtime.update(app, move |app, cx| {
-                            app.apply_reader_repagination(path, spine, font_size, chapter, cx);
+                            app.apply_reader_repagination(path, spine, text, chapter, cx);
                         })?;
                     }
 
                     None => {
                         runtime.update(app, move |app, _| {
-                            app.finish_reader_repagination_request(path, spine, font_size);
+                            app.finish_reader_repagination_request(path, spine, text);
                         })?;
                     }
                 }
@@ -601,7 +595,7 @@ where
         runtime: &mut R,
         app: Entity<InkPaperApp>,
         path: String,
-        font_size: u16,
+        text: TextSettings,
     ) -> Result<(), AppServiceError>
     where
         R: RuntimeApi + ResourceRuntimeApi<'resource>,
@@ -646,13 +640,11 @@ where
                 return Ok(());
             };
 
-            if !session.set_font_size(font_size) {
-                None
-            } else {
-                let resume = self.history.resume_position(&path, session.identifier());
+            session.set_text_settings(text);
 
-                session.load_document_at(resume).await.ok()
-            }
+            let resume = self.history.resume_position(&path, session.identifier());
+
+            session.load_document_at(resume).await.ok()
         };
 
         match document {

@@ -6,7 +6,7 @@ use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest,
-    reader::{ReaderMenuTab, TableOfContents, TocEntry},
+    reader::{ReaderMenuTab, TableOfContents, TextSettings, TocEntry},
     reader_page::paint_reader_page,
 };
 
@@ -215,13 +215,13 @@ impl InkPaperApp {
         &mut self,
         path: String,
         spine: SpineIndex,
-        font_size: u16,
+        text: TextSettings,
         chapter: ReaderChapter,
         cx: &mut Context<'_, Self>,
     ) -> bool {
         let changed = self
             .reader
-            .apply_repaginated_chapter(&path, spine, font_size, chapter);
+            .apply_repaginated_chapter(&path, spine, text, chapter);
 
         if changed {
             cx.notify();
@@ -234,10 +234,9 @@ impl InkPaperApp {
         &mut self,
         path: String,
         spine: SpineIndex,
-        font_size: u16,
+        text: TextSettings,
     ) -> bool {
-        self.reader
-            .finish_repagination_request(&path, spine, font_size)
+        self.reader.finish_repagination_request(&path, spine, text)
     }
 
     pub(crate) fn apply_reader_jump(

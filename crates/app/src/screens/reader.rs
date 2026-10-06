@@ -8,7 +8,7 @@ use crate::{
         icon::{Icon, IconKind, IconProps},
         reader_menu::{self, ReaderMenuView},
     },
-    reader::{font_size_from_slider, reader_page_bounds},
+    reader::{PageBounds, font_size_from_slider},
 };
 
 #[component]
@@ -26,6 +26,8 @@ pub(crate) struct ReaderScreen<'a> {
     battery: Entity<ReaderBatteryIcon>,
 
     menu_open: bool,
+    /// where the page sits, from the screen margin
+    page: PageBounds,
     menu: Entity<ReaderMenuView>,
 
     on_previous_page: Listener<ActivateEvent>,
@@ -36,7 +38,7 @@ pub(crate) struct ReaderScreen<'a> {
 
 impl RenderOnce for ReaderScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let page = reader_page_bounds();
+        let page = self.page;
 
         let page_left = px(page.left as i32);
         let page_top = px(page.top as i32);
@@ -315,6 +317,7 @@ impl ScreenView for ReaderRoute {
             progress_label: app.reader.progress_label(),
             battery: app.reader_battery_icon,
             menu_open: app.reader.menu_open(),
+            page: app.reader.text_settings().margin().page_bounds(),
             menu: app.reader_menu,
             on_close_menu: cx.listener(InkPaperApp::activate_close_reader_menu),
             on_previous_page: cx.listener(InkPaperApp::activate_previous_reader_page),

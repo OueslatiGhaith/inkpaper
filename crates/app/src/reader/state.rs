@@ -6,8 +6,8 @@ use crate::{
     ReaderChapter, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
     ReadingHistoryEntry,
     reader::{
-        READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN,
-        READER_FONT_SIZE_STEP, TableOfContents, TocEntry, toc::current_toc_index,
+        READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN, READER_FONT_SIZE_STEP, TableOfContents,
+        TextSettings, TocEntry, toc::current_toc_index,
     },
 };
 
@@ -21,7 +21,7 @@ pub(crate) enum ReaderChapterDirection {
 pub(crate) enum ReaderRequest {
     OpenEpub {
         path: String,
-        font_size: u16,
+        text: TextSettings,
     },
 
     LoadAdjacentChapter {
@@ -33,7 +33,7 @@ pub(crate) enum ReaderRequest {
     RepaginateChapter {
         path: String,
         spine: SpineIndex,
-        font_size: u16,
+        text: TextSettings,
     },
 
     JumpTo {
@@ -53,7 +53,7 @@ pub(crate) enum ReaderRequest {
 struct PendingRepaginationRequest {
     spine: SpineIndex,
     position: ReadingPosition,
-    font_size: u16,
+    text: TextSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +97,7 @@ pub(crate) struct ReaderState {
 
     document: Option<ReaderDocument>,
     page_index: usize,
-    font_size: u16,
+    text: TextSettings,
 
     failed: bool,
     chrome: ReaderChromeState,
@@ -116,7 +116,7 @@ impl Default for ReaderState {
             pending_jump: None,
             document: None,
             page_index: 0,
-            font_size: READER_FONT_SIZE_DEFAULT,
+            text: TextSettings::default(),
             failed: false,
             chrome: ReaderChromeState::default(),
             toc: TableOfContents::NotLoaded,
@@ -128,7 +128,7 @@ impl ReaderState {
     pub(crate) fn open(&mut self, path: String, fallback_title: String) {
         self.pending = Some(ReaderRequest::OpenEpub {
             path: path.clone(),
-            font_size: self.font_size,
+            text: self.text,
         });
 
         self.pending_chapter = None;
@@ -153,17 +153,17 @@ impl ReaderState {
     }
 
     pub(crate) fn apply_preferences(&mut self, preferences: ReaderPreferences) -> bool {
-        let font_size = preferences.font_size();
+        let text = preferences.text();
 
-        if font_size == self.font_size {
+        if text == self.text {
             return false;
         }
 
         if self.document.is_some() {
-            return self.request_font_size(font_size);
+            return self.request_text_settings(text);
         }
 
-        self.font_size = font_size;
+        self.text = text;
 
         true
     }
@@ -543,8 +543,10 @@ impl ReaderState {
     pub(crate) fn menu_font_size(&self) -> u16 {
         self.chrome
             .font_preview
-            .or(self.pending_repagination.map(|request| request.font_size))
-            .unwrap_or(self.font_size)
+            .or(self
+                .pending_repagination
+                .map(|request| request.text.font_size()))
+            .unwrap_or(self.text.font_size())
     }
 
     pub(crate) fn preview_font_size(&mut self, font_size: u16) -> bool {
@@ -700,7 +702,8 @@ impl ReaderState {
 
     pub(crate) fn decrease_font_size(&mut self) -> bool {
         let target = self
-            .font_size
+            .text
+            .font_size()
             .saturating_sub(READER_FONT_SIZE_STEP)
             .max(READER_FONT_SIZE_MIN);
 
@@ -709,7 +712,8 @@ impl ReaderState {
 
     pub(crate) fn increase_font_size(&mut self) -> bool {
         let target = self
-            .font_size
+            .text
+            .font_size()
             .saturating_add(READER_FONT_SIZE_STEP)
             .min(READER_FONT_SIZE_MAX);
 
@@ -717,7 +721,16 @@ impl ReaderState {
     }
 
     fn request_font_size(&mut self, font_size: u16) -> bool {
-        if font_size == self.font_size
+        let Some(text) = self.text.with_font_size(font_size) else {
+            return false;
+        };
+
+        self.request_text_settings(text)
+    }
+
+    /// Repaginates the current chapter with `text`, keeping the reading position.
+    pub(crate) fn request_text_settings(&mut self, text: TextSettings) -> bool {
+        if text == self.text
             || self.pending_chapter.is_some()
             || self.pending_repagination.is_some()
             || self.pending_jump.is_some()
@@ -736,7 +749,7 @@ impl ReaderState {
         let request = PendingRepaginationRequest {
             spine: document.spine(),
             position: page.position(),
-            font_size,
+            text,
         };
 
         self.pending_repagination = Some(request);
@@ -744,7 +757,7 @@ impl ReaderState {
         self.pending = Some(ReaderRequest::RepaginateChapter {
             path: self.path.clone(),
             spine: request.spine,
-            font_size,
+            text,
         });
 
         true
@@ -754,7 +767,7 @@ impl ReaderState {
         &mut self,
         path: &str,
         spine: SpineIndex,
-        font_size: u16,
+        text: TextSettings,
         chapter: ReaderChapter,
     ) -> bool {
         if path != self.path {
@@ -765,7 +778,7 @@ impl ReaderState {
             return false;
         };
 
-        if request.spine != spine || request.font_size != font_size || chapter.spine() != spine {
+        if request.spine != spine || request.text != text || chapter.spine() != spine {
             return false;
         }
 
@@ -785,7 +798,7 @@ impl ReaderState {
 
         self.page_index = page_index.min(document.page_count().saturating_sub(1));
 
-        self.font_size = font_size;
+        self.text = text;
         self.pending_repagination = None;
         self.failed = false;
 
@@ -800,7 +813,7 @@ impl ReaderState {
         &mut self,
         path: &str,
         spine: SpineIndex,
-        font_size: u16,
+        text: TextSettings,
     ) -> bool {
         if path != self.path {
             return false;
@@ -810,7 +823,7 @@ impl ReaderState {
             return false;
         };
 
-        if request.spine != spine || request.font_size != font_size {
+        if request.spine != spine || request.text != text {
             return false;
         }
 
@@ -821,12 +834,16 @@ impl ReaderState {
 
     #[cfg(test)]
     pub(super) const fn font_size(&self) -> u16 {
-        self.font_size
+        self.text.font_size()
+    }
+
+    /// The settings the page is laid out with.
+    pub(crate) const fn text_settings(&self) -> TextSettings {
+        self.text
     }
 
     fn queue_preferences_update(&mut self) {
-        let preferences = ReaderPreferences::new(self.font_size)
-            .expect("reader state only contains valid font sizes");
+        let preferences = ReaderPreferences::new(self.text);
 
         self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
     }

@@ -1,5 +1,3 @@
-use inkpaper_reader::{ReaderSettings, Viewport};
-
 mod document;
 mod images;
 mod loader;
@@ -20,8 +18,7 @@ pub(crate) use loader::ReaderSession;
 pub(crate) use loader::load_reader_document;
 pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesRequest};
 pub(crate) use state::{ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState};
-pub(crate) use text_settings::PageBounds;
-use text_settings::{DEFAULT_LINE_HEIGHT_PERCENT, ScreenMargin};
+pub(crate) use text_settings::{LineSpacing, PageBounds, ScreenMargin, TextSettings};
 pub(crate) use toc::{TableOfContents, TocEntry};
 
 const READER_FONT_SIZE_DEFAULT: u16 = 20;
@@ -30,14 +27,6 @@ const READER_FONT_SIZE_MAX: u16 = 32;
 const READER_FONT_SIZE_STEP: u16 = 2;
 
 const READER_BLOCK_SPACING: u16 = 8;
-
-pub(crate) fn reader_page_bounds() -> PageBounds {
-    ScreenMargin::default().page_bounds()
-}
-
-pub(crate) fn reader_viewport() -> Viewport {
-    reader_page_bounds().viewport()
-}
 
 /// Maps a slider value from 0 to 100 to the nearest supported font size.
 pub(crate) fn font_size_from_slider(value: u8) -> u16 {
@@ -55,17 +44,4 @@ pub(crate) fn font_size_slider_value(font_size: u16) -> u8 {
     );
 
     u8::try_from(offset * 100 / range).unwrap_or(100)
-}
-
-fn reader_settings(font_size: u16) -> Option<ReaderSettings> {
-    if !(READER_FONT_SIZE_MIN..=READER_FONT_SIZE_MAX).contains(&font_size) {
-        return None;
-    }
-
-    ReaderSettings::new(font_size, READER_BLOCK_SPACING)?
-        .with_line_height_percent(DEFAULT_LINE_HEIGHT_PERCENT)
-}
-
-fn default_reader_settings() -> ReaderSettings {
-    reader_settings(READER_FONT_SIZE_DEFAULT).expect("default reader settings are statically valid")
 }

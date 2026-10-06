@@ -3,12 +3,12 @@ use alloc::{string::String, vec::Vec};
 use inkpaper_epub::{
     BookLocation, ContentOffset, Epub, EpubSource, Error as EpubError, SpineIndex,
 };
-use inkpaper_reader::{ReaderSettings, ReadingPosition, paginate_chapter};
+use inkpaper_reader::{ReadingPosition, paginate_chapter};
 use inkpaper_trace::{async_span, span};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
 use crate::reader::{
-    default_reader_settings,
+    TextSettings,
     images::load_chapter_images,
     progress::BookProgressMap,
     toc::{TocEntry, toc_entries},
@@ -17,7 +17,6 @@ use crate::reader::{
 use super::{
     document::{ReaderChapter, ReaderDocument},
     measurer::ReaderMeasurer,
-    reader_settings, reader_viewport,
     state::ReaderChapterDirection,
 };
 
@@ -28,7 +27,6 @@ pub(crate) enum ReaderLoadError<E> {
     FontRegistry(FontRegistryError),
     Shape(ShapeError),
     SpineIndexOverflow,
-    InvalidFontSize(u16),
     NoReadableChapter,
 }
 
@@ -39,7 +37,7 @@ where
     path: String,
     epub: Epub<S>,
     progress: BookProgressMap,
-    settings: ReaderSettings,
+    text: TextSettings,
 }
 
 impl<S> ReaderSession<S>
@@ -58,7 +56,7 @@ where
             path,
             epub,
             progress,
-            settings: default_reader_settings(),
+            text: TextSettings::default(),
         })
     }
 
@@ -70,14 +68,8 @@ where
         self.epub.metadata().identifier()
     }
 
-    pub fn set_font_size(&mut self, font_size: u16) -> bool {
-        let Some(settings) = reader_settings(font_size) else {
-            return false;
-        };
-
-        self.settings = settings;
-
-        true
+    pub fn set_text_settings(&mut self, text: TextSettings) {
+        self.text = text;
     }
 
     #[cfg(test)]
@@ -94,7 +86,7 @@ where
             &mut self.epub,
             self.progress.clone(),
             position,
-            self.settings,
+            self.text,
         )
         .await
     }
@@ -104,7 +96,7 @@ where
         from: SpineIndex,
         direction: ReaderChapterDirection,
     ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>> {
-        load_adjacent_reader_chapter_from_epub(&mut self.epub, from, direction, self.settings).await
+        load_adjacent_reader_chapter_from_epub(&mut self.epub, from, direction, self.text).await
     }
 
     #[inkpaper_trace::instrument(target = "reader.document", name = "toc")]
@@ -140,7 +132,7 @@ where
             .ok_or(ReaderLoadError::SpineIndexOverflow)?;
 
         let Some((chapter, anchor_offset)) =
-            load_chapter_with_anchor(&mut self.epub, index, self.settings, anchor).await?
+            load_chapter_with_anchor(&mut self.epub, index, self.text, anchor).await?
         else {
             return Ok(None);
         };
@@ -161,25 +153,22 @@ where
         name = "repaginate",
         fields(
             spine = spine.get(),
-            font_size = font_size,
+            font_size = text.font_size(),
         )
     )]
     pub async fn repaginate_chapter(
         &mut self,
         spine: SpineIndex,
-        font_size: u16,
+        text: TextSettings,
     ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>> {
-        let settings =
-            reader_settings(font_size).ok_or(ReaderLoadError::InvalidFontSize(font_size))?;
-
         let index = spine
             .as_usize()
             .ok_or(ReaderLoadError::SpineIndexOverflow)?;
 
-        let chapter = load_readable_chapter_at(&mut self.epub, index, settings).await?;
+        let chapter = load_readable_chapter_at(&mut self.epub, index, text).await?;
 
         if chapter.is_some() {
-            self.settings = settings;
+            self.text = text;
         }
 
         Ok(chapter)
@@ -209,7 +198,7 @@ async fn load_reader_document_from_epub<S>(
     epub: &mut Epub<S>,
     progress: BookProgressMap,
     resume: Option<ReadingPosition>,
-    settings: ReaderSettings,
+    text: TextSettings,
 ) -> Result<ReaderDocument, ReaderLoadError<S::Error>>
 where
     S: EpubSource,
@@ -227,7 +216,7 @@ where
     if let Some(position) = resume
         && let Some(index) = position.location().spine().as_usize()
         && index < spine_len
-        && let Some(chapter) = load_readable_chapter_at(epub, index, settings).await?
+        && let Some(chapter) = load_readable_chapter_at(epub, index, text).await?
     {
         let opening_page_index = chapter.page_at_position(position).unwrap_or(0);
 
@@ -244,7 +233,7 @@ where
     }
 
     for index in 0..spine_len {
-        if let Some(chapter) = load_readable_chapter_at(epub, index, settings).await? {
+        if let Some(chapter) = load_readable_chapter_at(epub, index, text).await? {
             return Ok(ReaderDocument::new(
                 path,
                 identifier,
@@ -273,7 +262,7 @@ async fn load_adjacent_reader_chapter_from_epub<S>(
     epub: &mut Epub<S>,
     from: SpineIndex,
     direction: ReaderChapterDirection,
-    settings: ReaderSettings,
+    text: TextSettings,
 ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
 where
     S: EpubSource,
@@ -289,7 +278,7 @@ where
     match direction {
         ReaderChapterDirection::Next => {
             for index in from.saturating_add(1)..spine_len {
-                if let Some(chapter) = load_readable_chapter_at(epub, index, settings).await? {
+                if let Some(chapter) = load_readable_chapter_at(epub, index, text).await? {
                     return Ok(Some(chapter));
                 }
             }
@@ -297,7 +286,7 @@ where
 
         ReaderChapterDirection::Previous => {
             for index in (0..from).rev() {
-                if let Some(chapter) = load_readable_chapter_at(epub, index, settings).await? {
+                if let Some(chapter) = load_readable_chapter_at(epub, index, text).await? {
                     return Ok(Some(chapter));
                 }
             }
@@ -348,12 +337,12 @@ where
 async fn load_readable_chapter_at<S>(
     epub: &mut Epub<S>,
     index: usize,
-    settings: ReaderSettings,
+    text: TextSettings,
 ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
 where
     S: EpubSource,
 {
-    Ok(load_chapter_with_anchor(epub, index, settings, None)
+    Ok(load_chapter_with_anchor(epub, index, text, None)
         .await?
         .map(|(chapter, _)| chapter))
 }
@@ -363,12 +352,12 @@ where
 #[inkpaper_trace::instrument(
     target = "reader.chapter",
     name = "load",
-    fields(spine = index, font_size = settings.font_size())
+    fields(spine = index, font_size = text.font_size())
 )]
 async fn load_chapter_with_anchor<S>(
     epub: &mut Epub<S>,
     index: usize,
-    settings: ReaderSettings,
+    text: TextSettings,
     anchor: Option<&str>,
 ) -> Result<Option<(ReaderChapter, Option<ContentOffset>)>, ReaderLoadError<S::Error>>
 where
@@ -446,15 +435,15 @@ where
             target: "reader.pagination",
             "paginate",
             spine = index,
-            font_size = settings.font_size(),
+            font_size = text.font_size(),
         );
 
         paginate_chapter(
             &chapter,
             &styles,
             spine,
-            reader_viewport(),
-            settings,
+            text.viewport(),
+            text.reader_settings(),
             &mut measurer,
         )
         .map_err(ReaderLoadError::Shape)?

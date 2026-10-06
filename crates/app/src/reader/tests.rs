@@ -7,7 +7,7 @@ use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
     ReaderRequest, ReaderSession,
     reader::{
-        ReaderState, TableOfContents, font_size_from_slider, font_size_slider_value,
+        ReaderState, TableOfContents, TextSettings, font_size_from_slider, font_size_slider_value,
         load_reader_document,
     },
 };
@@ -407,20 +407,22 @@ fn font_size_repagination_keeps_the_current_reading_position() {
 
     assert!(state.increase_font_size());
 
+    let text = TextSettings::default().with_font_size(22).unwrap();
+
     assert_eq!(
         state.take_request(),
         Some(ReaderRequest::RepaginateChapter {
             path: path.clone(),
             spine,
-            font_size: 22,
+            text,
         }),
     );
 
-    let chapter = future::block_on(session.repaginate_chapter(spine, 22))
+    let chapter = future::block_on(session.repaginate_chapter(spine, text))
         .unwrap()
         .unwrap();
 
-    assert!(state.apply_repaginated_chapter(&path, spine, 22, chapter));
+    assert!(state.apply_repaginated_chapter(&path, spine, text, chapter));
 
     assert_eq!(state.font_size(), 22);
 
@@ -454,7 +456,8 @@ fn persisted_reader_preferences_are_used_when_opening_a_book() {
         Some(ReaderPreferencesRequest::Load),
     );
 
-    let preferences = ReaderPreferences::new(26).unwrap();
+    let text = TextSettings::default().with_font_size(26).unwrap();
+    let preferences = ReaderPreferences::new(text);
 
     assert!(state.apply_preferences(preferences));
 
@@ -466,10 +469,7 @@ fn persisted_reader_preferences_are_used_when_opening_a_book() {
 
     assert_eq!(
         state.take_request(),
-        Some(ReaderRequest::OpenEpub {
-            path,
-            font_size: 26,
-        }),
+        Some(ReaderRequest::OpenEpub { path, text }),
     );
 }
 
@@ -561,7 +561,7 @@ fn font_slider_preview_applies_on_commit_and_stays_shown_while_repaginating() {
     assert!(state.commit_font_preview());
     assert!(matches!(
         state.take_request(),
-        Some(ReaderRequest::RepaginateChapter { font_size: 26, .. })
+        Some(ReaderRequest::RepaginateChapter { text, .. }) if text.font_size() == 26
     ));
     assert_eq!(state.menu_font_size(), 26);
     assert!(!state.commit_font_preview());
