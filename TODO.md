@@ -16,15 +16,16 @@ New UI follows crosspoint/crossink's screens and layout.
 
 ## Typography settings
 
-- [ ] line spacing
-- [ ] page margins
+- [x] line spacing
+- [x] page margins
+- [x] persist typography settings
+- [x] repaginate after any typography change
+- [x] Text panel in the reader drawer, with crosspoint's option picker
 - [ ] text alignment (book default/left/justified)
 - [ ] paragraph indent
 - [ ] paragraph spacing
 - [ ] option to override the book's CSS with these settings
-- [ ] persist typography settings
-- [ ] repaginate after any typography change
-- [ ] reader settings screen
+- [ ] full Text Settings screen (Font | Size | Layout | Style tabs with a live preview)
 
 ## Hyphenation: if it doesn't cost too much
 

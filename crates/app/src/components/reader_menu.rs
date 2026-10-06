@@ -1,4 +1,4 @@
-use alloc::format;
+use alloc::string::String;
 
 use inkpaper_ui::prelude::*;
 
@@ -7,28 +7,12 @@ use crate::{
     components::{
         drawer_handle::{DrawerHandle, DrawerHandleProps},
         settings_row::{ListRow, ListRowProps},
-        slider::{self, Slider, SliderProps},
     },
-    reader::{ReaderMenuTab, font_size_slider_value},
+    reader::{ReaderMenuTab, TextSetting, TextSettings},
 };
 
 const CASE_SENSITIVE: SvgSource = include_svg!("assets/icons/lucide/case-sensitive.svg");
 const ELLIPSIS: SvgSource = include_svg!("assets/icons/lucide/ellipsis.svg");
-
-// screen geometry: the sheet starts 429 px above the bottom, the content 32 px
-// below it, and the font slider after a 24 px label and a 4 px gap
-const CONTENT_LEFT: i32 = 32;
-const FONT_SLIDER_TOP: i32 = 371 + 32 + 24 + 4;
-
-/// Whether `point` lands on the font size slider's track.
-pub(crate) fn font_slider_contains(point: Point) -> bool {
-    slider::track_contains(point, CONTENT_LEFT, FONT_SLIDER_TOP)
-}
-
-/// The font slider value at screen position `x`.
-pub(crate) fn font_slider_value_at(x: i32) -> u8 {
-    slider::value_at(x, CONTENT_LEFT)
-}
 
 /// Reader drawer: a bottom sheet over the page with a handle, a content pane and
 /// an icon tab bar. Tabs are added as their features exist. The reader screen closes
@@ -36,20 +20,33 @@ pub(crate) fn font_slider_value_at(x: i32) -> u8 {
 #[component]
 pub(crate) struct ReaderMenu {
     tab: ReaderMenuTab,
-    font_size: u16,
+    text: TextSettings,
     on_close: Listener<ActivateEvent>,
-    on_font_tab: Listener<ActivateEvent>,
+    on_text_tab: Listener<ActivateEvent>,
     on_more_tab: Listener<ActivateEvent>,
-    on_decrease_font_size: Listener<ActivateEvent>,
-    on_increase_font_size: Listener<ActivateEvent>,
+    /// a Text panel row; its index in [`TextSetting::ALL`] is its element id
+    on_text_row: Listener<ActivateEvent>,
     on_select_chapter: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for ReaderMenu {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let font_size_label = format!("Font Size  {}", self.font_size);
+        let text = self.text;
+        let on_text_row = self.on_text_row;
 
-        let font_size_value = font_size_slider_value(self.font_size);
+        // crosspoint's Text panel: one row per setting, its value on the right
+        let text_rows = TextSetting::ALL
+            .iter()
+            .enumerate()
+            .map(move |(index, &setting)| {
+                TextRow::from(TextRowProps {
+                    index,
+                    label: setting.label(),
+                    value: setting.value(text),
+                    on_activate: on_text_row,
+                })
+            });
+        let text_rows = div().w_full().flex().flex_col().children(text_rows);
 
         rsx! {
             // 429 px sheet with a 3 px top rule
@@ -66,23 +63,9 @@ impl RenderOnce for ReaderMenu {
                     </div>
                 </div>
 
-                {#if self.tab == ReaderMenuTab::Font}
-                    // content pane, inset like the control center's sliders
-                    <div class="absolute left-8 top-8 w-[416px] flex flex-col">
-                        <div class="w-full h-6 flex items-center">
-                            <text class="text-base no-wrap">
-                                {font_size_label}
-                            </text>
-                        </div>
-
-                        <div class="h-1" />
-
-                        <Slider
-                            id="reader-font-size"
-                            value={font_size_value}
-                            on_decrease={Some(self.on_decrease_font_size)}
-                            on_increase={Some(self.on_increase_font_size)}
-                        />
+                {#if self.tab == ReaderMenuTab::Text}
+                    <div class="absolute left-0 top-8 w-[480px]">
+                        {text_rows}
                     </div>
                 {:else}
                     <div class="absolute left-0 top-8 w-[480px] flex flex-col">
@@ -102,12 +85,12 @@ impl RenderOnce for ReaderMenu {
                     <div class="absolute left-0 top-0 w-full h-px bg-black" />
 
                     <MenuTab
-                        id="reader-menu-font-tab"
+                        id="reader-menu-text-tab"
                         icon={CASE_SENSITIVE}
                         icon_size={px(32)}
                         left={px(4)}
-                        active={self.tab == ReaderMenuTab::Font}
-                        on_activate={self.on_font_tab}
+                        active={self.tab == ReaderMenuTab::Text}
+                        on_activate={self.on_text_tab}
                     />
 
                     <MenuTab
@@ -145,17 +128,50 @@ impl Render for ReaderMenuView {
             .app
             .update(cx, |app, cx| ReaderMenuProps {
                 tab: app.reader.menu_tab(),
-                font_size: app.reader.menu_font_size(),
+                text: app.reader.menu_text_settings(),
                 on_close: cx.listener(InkPaperApp::activate_close_reader_menu),
-                on_font_tab: cx.listener(InkPaperApp::activate_reader_font_tab),
+                on_text_tab: cx.listener(InkPaperApp::activate_reader_text_tab),
                 on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),
-                on_decrease_font_size: cx.listener(InkPaperApp::activate_decrease_reader_font_size),
-                on_increase_font_size: cx.listener(InkPaperApp::activate_increase_reader_font_size),
+                on_text_row: cx.listener(InkPaperApp::activate_reader_text_row),
                 on_select_chapter: cx.listener(InkPaperApp::show_table_of_contents),
             })
             .expect("the app outlives its reader menu");
 
         ReaderMenu::from(props)
+    }
+}
+
+/// A Text panel row: the setting on the left, its value on the right, like
+/// crosspoint's panel rows.
+#[component]
+struct TextRow {
+    index: usize,
+    label: &'static str,
+    value: String,
+    on_activate: Listener<ActivateEvent>,
+}
+
+impl RenderOnce for TextRow {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        rsx! {
+            <div
+                id={("reader-menu-text-row", self.index)}
+                on:activate={self.on_activate}
+                class="w-full h-16 relative"
+            >
+                <div class="absolute left-8 top-0 w-[280px] h-16 flex items-center">
+                    <text class="text-xl no-wrap max-lines-1 text-ellipsis">
+                        {self.label}
+                    </text>
+                </div>
+
+                <div class="absolute right-8 top-0 w-[120px] h-16 flex items-center justify-end">
+                    <text class="text-xl font-bold no-wrap max-lines-1">
+                        {self.value}
+                    </text>
+                </div>
+            </div>
+        }
     }
 }
 

@@ -5,10 +5,7 @@ use inkpaper_reader::{Page, ReadingPosition};
 use crate::{
     ReaderChapter, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
     ReadingHistoryEntry,
-    reader::{
-        READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN, READER_FONT_SIZE_STEP, TableOfContents,
-        TextSettings, TocEntry, toc::current_toc_index,
-    },
+    reader::{TableOfContents, TextSetting, TextSettings, TocEntry, toc::current_toc_index},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +68,7 @@ struct PendingChapterRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum ReaderMenuTab {
     #[default]
-    Font,
+    Text,
     More,
 }
 
@@ -79,7 +76,8 @@ pub(crate) enum ReaderMenuTab {
 struct ReaderChromeState {
     menu_open: bool,
     menu_tab: ReaderMenuTab,
-    font_preview: Option<u16>,
+    /// the Text panel row whose picker is open
+    text_picker: Option<TextSetting>,
     page_label: String,
     progress_label: String,
 }
@@ -445,8 +443,8 @@ impl ReaderState {
         }
 
         self.chrome.menu_open = true;
-        self.chrome.menu_tab = ReaderMenuTab::Font;
-        self.chrome.font_preview = None;
+        self.chrome.menu_tab = ReaderMenuTab::Text;
+        self.chrome.text_picker = None;
 
         true
     }
@@ -457,7 +455,7 @@ impl ReaderState {
         }
 
         self.chrome.menu_open = false;
-        self.chrome.font_preview = None;
+        self.chrome.text_picker = None;
 
         true
     }
@@ -476,14 +474,41 @@ impl ReaderState {
         }
 
         self.chrome.menu_tab = tab;
-        self.chrome.font_preview = None;
+        self.chrome.text_picker = None;
 
         true
     }
 
-    /// Whether the drawer currently shows the font size slider.
-    pub(crate) fn font_slider_shown(&self) -> bool {
-        self.chrome.menu_open && self.chrome.menu_tab == ReaderMenuTab::Font
+    pub(crate) const fn text_picker(&self) -> Option<TextSetting> {
+        self.chrome.text_picker
+    }
+
+    pub(crate) fn open_text_picker(&mut self, setting: TextSetting) -> bool {
+        if !self.chrome.menu_open || self.chrome.text_picker.is_some() {
+            return false;
+        }
+
+        self.chrome.text_picker = Some(setting);
+
+        true
+    }
+
+    pub(crate) fn close_text_picker(&mut self) -> bool {
+        self.chrome.text_picker.take().is_some()
+    }
+
+    /// Applies option `index` of the open picker and closes it. The page under
+    /// the drawer repaginates, so it previews the choice.
+    pub(crate) fn choose_text_option(&mut self, index: usize) -> bool {
+        let Some(setting) = self.chrome.text_picker.take() else {
+            return false;
+        };
+
+        if let Some(text) = setting.choose(self.text, index) {
+            self.request_text_settings(text);
+        }
+
+        true
     }
 
     pub(crate) fn table_of_contents(&self) -> &TableOfContents {
@@ -538,40 +563,11 @@ impl ReaderState {
         true
     }
 
-    /// The font size the menu shows: a slider preview while dragging, then the
-    /// size being repaginated to, otherwise the current size.
-    pub(crate) fn menu_font_size(&self) -> u16 {
-        self.chrome
-            .font_preview
-            .or(self
-                .pending_repagination
-                .map(|request| request.text.font_size()))
-            .unwrap_or(self.text.font_size())
-    }
-
-    pub(crate) fn preview_font_size(&mut self, font_size: u16) -> bool {
-        if !self.chrome.menu_open || self.chrome.font_preview == Some(font_size) {
-            return false;
-        }
-
-        self.chrome.font_preview = Some(font_size);
-
-        true
-    }
-
-    /// Applies the previewed font size. Returns whether a preview was pending.
-    pub(crate) fn commit_font_preview(&mut self) -> bool {
-        let Some(font_size) = self.chrome.font_preview.take() else {
-            return false;
-        };
-
-        self.request_font_size(font_size);
-
-        true
-    }
-
-    pub(crate) fn set_font_size(&mut self, font_size: u16) -> bool {
-        self.request_font_size(font_size)
+    /// The settings the Text panel shows: the ones being repaginated to, then
+    /// the current ones.
+    pub(crate) fn menu_text_settings(&self) -> TextSettings {
+        self.pending_repagination
+            .map_or(self.text, |request| request.text)
     }
 
     #[cfg(test)]
@@ -698,34 +694,6 @@ impl ReaderState {
 
     pub(crate) fn document(&self) -> Option<&ReaderDocument> {
         self.document.as_ref()
-    }
-
-    pub(crate) fn decrease_font_size(&mut self) -> bool {
-        let target = self
-            .text
-            .font_size()
-            .saturating_sub(READER_FONT_SIZE_STEP)
-            .max(READER_FONT_SIZE_MIN);
-
-        self.request_font_size(target)
-    }
-
-    pub(crate) fn increase_font_size(&mut self) -> bool {
-        let target = self
-            .text
-            .font_size()
-            .saturating_add(READER_FONT_SIZE_STEP)
-            .min(READER_FONT_SIZE_MAX);
-
-        self.request_font_size(target)
-    }
-
-    fn request_font_size(&mut self, font_size: u16) -> bool {
-        let Some(text) = self.text.with_font_size(font_size) else {
-            return false;
-        };
-
-        self.request_text_settings(text)
     }
 
     /// Repaginates the current chapter with `text`, keeping the reading position.

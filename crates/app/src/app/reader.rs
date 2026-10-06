@@ -6,7 +6,7 @@ use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest,
-    reader::{ReaderMenuTab, TableOfContents, TextSettings, TocEntry},
+    reader::{ReaderMenuTab, TableOfContents, TextSetting, TextSettings, TocEntry},
     reader_page::paint_reader_page,
 };
 
@@ -110,12 +110,12 @@ impl InkPaperApp {
         }
     }
 
-    pub(crate) fn activate_reader_font_tab(
+    pub(crate) fn activate_reader_text_tab(
         &mut self,
         _: &ActivateEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.reader.select_menu_tab(ReaderMenuTab::Font) {
+        if self.reader.select_menu_tab(ReaderMenuTab::Text) {
             self.refresh_reader_menu(cx);
         }
     }
@@ -195,20 +195,44 @@ impl InkPaperApp {
         self.close_reader_menu(cx);
     }
 
-    pub(crate) fn activate_decrease_reader_font_size(
+    /// Opens the picker of a Text panel row.
+    pub(crate) fn activate_reader_text_row(
         &mut self,
-        _: &ActivateEvent,
-        _: &mut Context<'_, Self>,
+        event: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
     ) {
-        self.reader.decrease_font_size();
+        let Some(setting) = event.index().and_then(TextSetting::from_index) else {
+            return;
+        };
+
+        if self.reader.open_text_picker(setting) {
+            cx.notify();
+        }
     }
 
-    pub(crate) fn activate_increase_reader_font_size(
+    pub(crate) fn activate_reader_text_option(
+        &mut self,
+        event: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
+        if self.reader.choose_text_option(index) {
+            cx.notify();
+            self.refresh_reader_menu(cx);
+        }
+    }
+
+    pub(crate) fn activate_dismiss_reader_text_picker(
         &mut self,
         _: &ActivateEvent,
-        _: &mut Context<'_, Self>,
+        cx: &mut Context<'_, Self>,
     ) {
-        self.reader.increase_font_size();
+        if self.reader.close_text_picker() {
+            cx.notify();
+        }
     }
 
     pub(crate) fn apply_reader_repagination(

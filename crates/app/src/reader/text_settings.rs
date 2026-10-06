@@ -1,7 +1,14 @@
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+
 use inkpaper_reader::{ReaderSettings, Viewport};
 
 use super::{
     READER_BLOCK_SPACING, READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN,
+    READER_FONT_SIZE_STEP,
 };
 
 /// The screen the reader page sits on.
@@ -26,6 +33,17 @@ pub(crate) enum LineSpacing {
 }
 
 impl LineSpacing {
+    pub(crate) const ALL: [Self; 4] = [Self::Tight, Self::Normal, Self::Wide, Self::ExtraWide];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Tight => "Tight",
+            Self::Normal => "Normal",
+            Self::Wide => "Wide",
+            Self::ExtraWide => "Extra Wide",
+        }
+    }
+
     /// The line height, in percent of the font size.
     pub(crate) const fn percent(self) -> u16 {
         match self {
@@ -174,4 +192,86 @@ impl Default for TextSettings {
             margin: ScreenMargin::default(),
         }
     }
+}
+
+/// A row of the reader's Text panel, in the order they are listed. Like
+/// crosspoint's, each opens a picker of its values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextSetting {
+    FontSize,
+    LineSpacing,
+    ScreenMargin,
+}
+
+impl TextSetting {
+    pub(crate) const ALL: [Self; 3] = [Self::FontSize, Self::LineSpacing, Self::ScreenMargin];
+
+    pub(crate) fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::FontSize => "Font Size",
+            Self::LineSpacing => "Line Spacing",
+            Self::ScreenMargin => "Screen Margin",
+        }
+    }
+
+    /// The setting's value in `text`, as its row shows it.
+    pub(crate) fn value(self, text: TextSettings) -> String {
+        match self {
+            Self::FontSize => text.font_size.to_string(),
+            Self::LineSpacing => String::from(text.line_spacing.label()),
+            Self::ScreenMargin => text.margin.px().to_string(),
+        }
+    }
+
+    /// Every value the picker offers, in order.
+    pub(crate) fn options(self) -> Vec<String> {
+        match self {
+            Self::FontSize => font_sizes().map(|size| format!("{size}")).collect(),
+            Self::LineSpacing => LineSpacing::ALL
+                .iter()
+                .map(|spacing| String::from(spacing.label()))
+                .collect(),
+            Self::ScreenMargin => margins().map(|margin| format!("{}", margin.px())).collect(),
+        }
+    }
+
+    /// Which of [`Self::options`] `text` holds.
+    pub(crate) fn selected(self, text: TextSettings) -> Option<usize> {
+        match self {
+            Self::FontSize => font_sizes().position(|size| size == text.font_size),
+            Self::LineSpacing => LineSpacing::ALL
+                .iter()
+                .position(|&spacing| spacing == text.line_spacing),
+            Self::ScreenMargin => margins().position(|margin| margin == text.margin),
+        }
+    }
+
+    /// `text` with this setting changed to option `index`.
+    pub(crate) fn choose(self, text: TextSettings, index: usize) -> Option<TextSettings> {
+        match self {
+            Self::FontSize => text.with_font_size(font_sizes().nth(index)?),
+            Self::LineSpacing => Some(TextSettings {
+                line_spacing: *LineSpacing::ALL.get(index)?,
+                ..text
+            }),
+            Self::ScreenMargin => Some(TextSettings {
+                margin: margins().nth(index)?,
+                ..text
+            }),
+        }
+    }
+}
+
+fn font_sizes() -> impl Iterator<Item = u16> {
+    (READER_FONT_SIZE_MIN..=READER_FONT_SIZE_MAX).step_by(usize::from(READER_FONT_SIZE_STEP))
+}
+
+fn margins() -> impl Iterator<Item = ScreenMargin> {
+    (ScreenMargin::MIN..=ScreenMargin::MAX)
+        .step_by(usize::from(ScreenMargin::STEP))
+        .filter_map(ScreenMargin::new)
 }

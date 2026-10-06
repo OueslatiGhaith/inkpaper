@@ -6,9 +6,10 @@ use crate::{
     components::{
         header::battery_icon,
         icon::{Icon, IconKind, IconProps},
-        reader_menu::{self, ReaderMenuView},
+        option_picker::{OptionPicker, OptionPickerProps},
+        reader_menu::ReaderMenuView,
     },
-    reader::{PageBounds, font_size_from_slider},
+    reader::{PageBounds, TextSetting, TextSettings},
 };
 
 #[component]
@@ -28,6 +29,10 @@ pub(crate) struct ReaderScreen<'a> {
     menu_open: bool,
     /// where the page sits, from the screen margin
     page: PageBounds,
+    /// the open Text panel picker, with the settings it starts from
+    text_picker: Option<(TextSetting, TextSettings)>,
+    on_text_option: Listener<ActivateEvent>,
+    on_dismiss_text_picker: Listener<ActivateEvent>,
     menu: Entity<ReaderMenuView>,
 
     on_previous_page: Listener<ActivateEvent>,
@@ -94,6 +99,16 @@ impl RenderOnce for ReaderScreen<'_> {
                         />
 
                         {self.menu}
+
+                        {#if let Some((setting, text)) = self.text_picker}
+                            <OptionPicker
+                                title={setting.label()}
+                                options={setting.options()}
+                                selected={setting.selected(text)}
+                                on_option={self.on_text_option}
+                                on_dismiss={self.on_dismiss_text_picker}
+                            />
+                        {/if}
                     {/if}
                 {:else}
                     <div class="absolute left-5 top-[220px] w-[440px] flex flex-col items-center gap-2.5">
@@ -228,18 +243,6 @@ impl ScreenInput for ReaderRoute {
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> bool {
-        // dragging along the font slider previews a size; it applies on release
-        if app.reader.font_slider_shown() && reader_menu::font_slider_contains(origin) {
-            let value = reader_menu::font_slider_value_at(position.x.get());
-
-            // the preview shows only in the drawer
-            if app.reader.preview_font_size(font_size_from_slider(value)) {
-                app.refresh_reader_menu(cx);
-            }
-
-            return true;
-        }
-
         let dx = position.x.get() - origin.x.get();
         let dy = position.y.get() - origin.y.get();
 
@@ -261,36 +264,6 @@ impl ScreenInput for ReaderRoute {
         }
 
         true
-    }
-
-    fn release(
-        &self,
-        app: &mut InkPaperApp,
-        position: Point,
-        cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
-        if !app.reader.menu_open() {
-            return false;
-        }
-
-        // repaginating is too slow to follow a drag, so the size applies here
-        if app.reader.commit_font_preview() {
-            cx.notify();
-            return true;
-        }
-
-        // a tap on the track jumps to that size
-        if app.reader.font_slider_shown() && reader_menu::font_slider_contains(position) {
-            let value = reader_menu::font_slider_value_at(position.x.get());
-
-            if app.reader.set_font_size(font_size_from_slider(value)) {
-                cx.notify();
-            }
-
-            return true;
-        }
-
-        false
     }
 }
 
@@ -318,6 +291,12 @@ impl ScreenView for ReaderRoute {
             battery: app.reader_battery_icon,
             menu_open: app.reader.menu_open(),
             page: app.reader.text_settings().margin().page_bounds(),
+            text_picker: app
+                .reader
+                .text_picker()
+                .map(|setting| (setting, app.reader.menu_text_settings())),
+            on_text_option: cx.listener(InkPaperApp::activate_reader_text_option),
+            on_dismiss_text_picker: cx.listener(InkPaperApp::activate_dismiss_reader_text_picker),
             menu: app.reader_menu,
             on_close_menu: cx.listener(InkPaperApp::activate_close_reader_menu),
             on_previous_page: cx.listener(InkPaperApp::activate_previous_reader_page),

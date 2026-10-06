@@ -7,8 +7,7 @@ use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
     ReaderRequest, ReaderSession,
     reader::{
-        ReaderState, TableOfContents, TextSettings, font_size_from_slider, font_size_slider_value,
-        load_reader_document,
+        LineSpacing, ReaderState, TableOfContents, TextSetting, TextSettings, load_reader_document,
     },
 };
 
@@ -405,9 +404,9 @@ fn font_size_repagination_keeps_the_current_reading_position() {
 
     assert_eq!(state.font_size(), 20);
 
-    assert!(state.increase_font_size());
-
     let text = TextSettings::default().with_font_size(22).unwrap();
+
+    assert!(state.request_text_settings(text));
 
     assert_eq!(
         state.take_request(),
@@ -436,14 +435,16 @@ fn font_size_repagination_keeps_the_current_reading_position() {
 
 #[test]
 fn reader_font_size_stays_within_supported_bounds() {
+    let text = TextSettings::default();
+
+    assert_eq!(text.font_size(), 20);
+    assert!(text.with_font_size(12).is_none());
+    assert!(text.with_font_size(34).is_none());
+
+    // without a loaded document, changes cannot queue repagination.
     let mut state = ReaderState::default();
 
-    assert_eq!(state.font_size(), 20);
-
-    // without a loaded document, adjustments cannot queue repagination.
-    assert!(!state.decrease_font_size());
-    assert!(!state.increase_font_size());
-
+    assert!(!state.request_text_settings(text.with_font_size(22).unwrap()));
     assert_eq!(state.font_size(), 20);
 }
 
@@ -528,20 +529,31 @@ fn navigation_target_jump_opens_the_page_with_the_anchored_heading() {
 }
 
 #[test]
-fn font_slider_maps_every_supported_size_to_itself() {
-    assert_eq!(font_size_from_slider(0), 14);
-    assert_eq!(font_size_from_slider(100), 32);
+fn every_text_setting_option_chooses_the_value_it_shows() {
+    let text = TextSettings::default();
 
-    for font_size in (14..=32).step_by(2) {
-        assert_eq!(
-            font_size_from_slider(font_size_slider_value(font_size)),
-            font_size
-        );
+    for setting in TextSetting::ALL {
+        let options = setting.options();
+        let current = setting.selected(text).unwrap();
+
+        assert_eq!(options[current], setting.value(text));
+
+        for (index, option) in options.iter().enumerate() {
+            let chosen = setting.choose(text, index).unwrap();
+
+            assert_eq!(&setting.value(chosen), option);
+            assert_eq!(setting.selected(chosen), Some(index));
+        }
+
+        assert!(setting.choose(text, options.len()).is_none());
     }
+
+    assert_eq!(TextSetting::FontSize.options().len(), 10);
+    assert_eq!(TextSetting::ScreenMargin.options().len(), 8);
 }
 
 #[test]
-fn font_slider_preview_applies_on_commit_and_stays_shown_while_repaginating() {
+fn text_picker_choice_repaginates_and_shows_while_repaginating() {
     let path = String::from("/Fixtures/book-boundaries.epub");
     let source = SliceSource::new(include_bytes!("../../../../fixtures/book-boundaries.epub"));
     let document = future::block_on(load_reader_document(path.clone(), source)).unwrap();
@@ -551,20 +563,30 @@ fn font_slider_preview_applies_on_commit_and_stays_shown_while_repaginating() {
     assert!(state.apply_document(document));
     let _ = state.take_request();
 
-    // previews only exist while the menu is open
-    assert!(!state.preview_font_size(26));
+    // pickers only open from the drawer
+    assert!(!state.open_text_picker(TextSetting::LineSpacing));
     assert!(state.open_menu());
-    assert!(state.preview_font_size(26));
-    assert_eq!(state.menu_font_size(), 26);
+    assert!(state.open_text_picker(TextSetting::LineSpacing));
+    assert_eq!(state.text_picker(), Some(TextSetting::LineSpacing));
     assert!(state.take_request().is_none());
 
-    assert!(state.commit_font_preview());
+    assert!(state.choose_text_option(3));
+    assert_eq!(state.text_picker(), None);
     assert!(matches!(
         state.take_request(),
-        Some(ReaderRequest::RepaginateChapter { text, .. }) if text.font_size() == 26
+        Some(ReaderRequest::RepaginateChapter { text, .. })
+            if text.line_spacing() == LineSpacing::ExtraWide
     ));
-    assert_eq!(state.menu_font_size(), 26);
-    assert!(!state.commit_font_preview());
+    assert_eq!(
+        state.menu_text_settings().line_spacing(),
+        LineSpacing::ExtraWide
+    );
+    assert!(!state.choose_text_option(0));
+
+    // closing the drawer closes an open picker
+    assert!(state.open_text_picker(TextSetting::FontSize));
+    assert!(state.close_menu());
+    assert_eq!(state.text_picker(), None);
 }
 
 #[test]
