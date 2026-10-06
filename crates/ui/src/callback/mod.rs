@@ -2,9 +2,11 @@ use core::marker::PhantomData;
 
 mod arena;
 
+#[cfg(test)]
+pub(crate) use arena::CanvasInvokeError;
 #[cfg(feature = "alloc")]
 pub use arena::HeapCallbackArena;
-pub use arena::{CallbackAllocError, CanvasInvokeError, FixedCallbackArena, ListenerInvokeError};
+pub use arena::{CallbackAllocError, FixedCallbackArena, ListenerInvokeError};
 pub(crate) use arena::{CallbackMark, CallbackStore, register_canvas_callback, register_listener};
 
 // unit tests run against the storage the `alloc` feature implies

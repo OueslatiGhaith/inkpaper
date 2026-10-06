@@ -3,11 +3,8 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicU32, AtomicU64, Ordering},
-    },
-    task::{Context, Poll, Wake, Waker},
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    task::{Context, Poll, Waker},
 };
 
 use inkpaper_trace::{SpanKind, capture, init, instrument};
@@ -22,12 +19,6 @@ fn cycle_clock() -> u32 {
 
 fn monotonic_clock() -> u64 {
     MONOTONIC_CLOCK.load(Ordering::Relaxed)
-}
-
-struct NoopWake;
-
-impl Wake for NoopWake {
-    fn wake(self: Arc<Self>) {}
 }
 
 struct YieldOnce {
@@ -78,9 +69,7 @@ fn instrumented_async_function_crosses_capture_boundary() {
 
     let mut future = Box::pin(async_work(9));
 
-    let waker = Waker::from(Arc::new(NoopWake));
-
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
 
     assert_eq!(future.as_mut().poll(&mut context), Poll::Pending);
 

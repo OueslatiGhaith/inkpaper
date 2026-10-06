@@ -242,6 +242,7 @@ impl<F: FrameStorage> FrameArena<F> {
         self.nodes.len()
     }
 
+    #[cfg(all(test, feature = "alloc"))]
     pub fn node_capacity(&self) -> usize {
         self.nodes.capacity().min(self.node_cache.capacity())
     }
@@ -250,6 +251,7 @@ impl<F: FrameStorage> FrameArena<F> {
         self.text.len()
     }
 
+    #[cfg(all(test, feature = "alloc"))]
     pub fn text_capacity(&self) -> usize {
         self.text.capacity()
     }
@@ -293,6 +295,7 @@ impl<F: FrameStorage> FrameArena<F> {
         &mut self.nodes[id.index()]
     }
 
+    #[cfg(test)]
     /// the node an entity is mounted at, if it is in this frame
     pub(crate) fn entity_node(&self, entity: EntityId) -> Option<NodeId> {
         self.entity_node_position(entity)
@@ -349,6 +352,7 @@ impl<F: FrameStorage> FrameArena<F> {
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
 
+    #[cfg(test)]
     pub fn bounds(&self, id: NodeId) -> Rect {
         self.node(id).layout.bounds
     }

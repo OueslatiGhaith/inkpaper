@@ -773,10 +773,10 @@ impl Uc8279X4 {
             while offset < row_bytes {
                 let len = (row_bytes - offset).min(buffer.len());
 
-                for index in 0..len {
+                for (index, byte) in buffer[..len].iter_mut().enumerate() {
                     let source_index = row_start + offset + index;
 
-                    buffer[index] = lhs[source_index] & rhs[source_index];
+                    *byte = lhs[source_index] & rhs[source_index];
                 }
 
                 bus.data(&buffer[..len]).await.map_err(Error::Bus)?;

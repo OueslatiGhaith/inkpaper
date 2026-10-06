@@ -49,6 +49,8 @@ impl DamageRegion {
         self.full
     }
 
+    // a full region has no rects, so `is_none` is the emptiness check
+    #[allow(clippy::len_without_is_empty)]
     pub const fn len(self) -> usize {
         self.len as usize
     }

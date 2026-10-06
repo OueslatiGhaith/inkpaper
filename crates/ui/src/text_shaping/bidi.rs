@@ -121,6 +121,8 @@ impl SimpleShaper {
         )
     }
 
+    #[cfg(feature = "eink")]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn visual_order_with_pair_positioning_cache<
         'out,
         'font,
@@ -147,6 +149,7 @@ impl SimpleShaper {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn visual_order_impl<'out, 'font, const FONTS: usize, const SLOTS: usize>(
         &self,
         registry: &FontRegistry<'font, FONTS>,

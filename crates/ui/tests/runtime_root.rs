@@ -14,10 +14,6 @@ impl Render for TestApp {
     }
 }
 
-fn runtime() -> impl RuntimeApi {
-    TestRuntime::default()
-}
-
 #[test]
 fn rebuild_without_root_returns_error() {
     let mut runtime = TestRuntime::default();

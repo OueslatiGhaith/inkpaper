@@ -46,10 +46,4 @@ impl InkPaperApp {
 
         cx.notify();
     }
-
-    pub(crate) fn apply_reading_history_error(&mut self, cx: &mut Context<'_, Self>) {
-        self.reading_history.apply_error();
-
-        cx.notify();
-    }
 }

@@ -43,6 +43,7 @@ enum ImageSamplingCursorKind {
 }
 
 impl<'a> ImageSamplingRow<'a> {
+    #[cfg(test)]
     pub(crate) fn sample(self, x: u32) -> Option<Color> {
         self.cursor(x)?.sample_next()
     }

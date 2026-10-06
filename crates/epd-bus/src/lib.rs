@@ -87,7 +87,7 @@ where
         mut dc: DC,
         mut reset: RESET,
         busy: BUSY,
-    ) -> Result<Self, Error<SPI::Error, CS::Error, DC::Error, RESET::Error, BUSY::Error>> {
+    ) -> Result<Self, <Self as EpdInterface>::Error> {
         cs.set_high().map_err(Error::ChipSelect)?;
         dc.set_high().map_err(Error::DataCommand)?;
         reset.set_high().map_err(Error::Reset)?;
@@ -106,9 +106,7 @@ where
         (self.spi, self.cs, self.dc, self.reset, self.busy)
     }
 
-    fn ensure_no_stream(
-        &self,
-    ) -> Result<(), Error<SPI::Error, CS::Error, DC::Error, RESET::Error, BUSY::Error>> {
+    fn ensure_no_stream(&self) -> Result<(), <Self as EpdInterface>::Error> {
         if self.stream_open {
             return Err(Error::Protocol(ProtocolError::StreamAlreadyOpen));
         }
@@ -119,7 +117,7 @@ where
     fn finish_transaction(
         &mut self,
         spi_result: Result<(), SPI::Error>,
-    ) -> Result<(), Error<SPI::Error, CS::Error, DC::Error, RESET::Error, BUSY::Error>> {
+    ) -> Result<(), <Self as EpdInterface>::Error> {
         let cs_result = self.cs.set_high().map_err(Error::ChipSelect);
 
         match spi_result {
@@ -131,9 +129,7 @@ where
         }
     }
 
-    pub fn reset_high(
-        &mut self,
-    ) -> Result<(), Error<SPI::Error, CS::Error, DC::Error, RESET::Error, BUSY::Error>> {
+    pub fn reset_high(&mut self) -> Result<(), <Self as EpdInterface>::Error> {
         self.ensure_no_stream()?;
         self.reset.set_high().map_err(Error::Reset)
     }

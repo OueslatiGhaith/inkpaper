@@ -24,6 +24,7 @@ pub(super) struct RasterPoint {
 }
 
 impl RasterPoint {
+    #[cfg(test)]
     pub(super) const ZERO: Self = Self { x: 0.0, y: 0.0 };
 }
 

@@ -175,6 +175,7 @@ pub enum ValueKind {
 }
 
 impl ValueKind {
+    #[cfg(feature = "recording")]
     pub(crate) const fn from_bits(bits: u8) -> Option<Self> {
         match bits {
             0 => Some(Self::Unsigned),
@@ -246,6 +247,7 @@ impl Value {
         self.raw
     }
 
+    #[cfg(feature = "recording")]
     pub(crate) const fn from_raw(kind: ValueKind, raw: u32) -> Self {
         Self { raw, kind }
     }

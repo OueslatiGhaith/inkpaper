@@ -8,8 +8,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use roxmltree::{Document, Node};
 use svgtypes::{
-    Length, LengthUnit, NumberListParser, Paint, PathParser, PathSegment, SimplePathSegment,
-    SimplifyingPathParser,
+    Length, LengthUnit, NumberListParser, Paint, SimplePathSegment, SimplifyingPathParser,
 };
 use syn::LitStr;
 
@@ -699,7 +698,8 @@ fn parse_polyline(node: Node<'_, '_>, close: bool) -> Result<Vec<ParsedCommand>,
         return Ok(Vec::new());
     }
 
-    let mut pairs = numbers.chunks_exact(2);
+    let (pairs, _) = numbers.as_chunks::<2>();
+    let mut pairs = pairs.iter();
 
     let first = pairs.next().expect("points length checked above");
 

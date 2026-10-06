@@ -372,6 +372,8 @@ pub enum FontRasterError {
     Unsupported,
 }
 
+// ui doesn't allocate, so the prepared font can't be boxed
+#[allow(clippy::large_enum_variant)]
 enum PreparedFontKind<'font> {
     /// carries the lifetime for builds without a font backend
     Unprepared(PhantomData<&'font ()>),

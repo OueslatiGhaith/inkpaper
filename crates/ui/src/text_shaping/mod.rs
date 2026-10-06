@@ -107,26 +107,6 @@ impl ShapedGlyph {
         }
     }
 
-    const fn new_ligature(
-        font: FontId,
-        glyph: GlyphId,
-        cluster: usize,
-        base_advance: Pixels,
-        ligature_components: u16,
-        offset: Offset,
-        advance: Pixels,
-    ) -> Self {
-        Self::new_ligature_with_instance(
-            FontInstance::normal(font),
-            glyph,
-            cluster,
-            base_advance,
-            ligature_components,
-            offset,
-            advance,
-        )
-    }
-
     pub(crate) const fn new_ligature_with_instance(
         font: FontInstance,
         glyph: GlyphId,
@@ -146,24 +126,6 @@ impl ShapedGlyph {
             offset,
             advance,
         }
-    }
-
-    const fn new_mark(
-        font: FontId,
-        glyph: GlyphId,
-        cluster: usize,
-        base_advance: Pixels,
-        mark_placement: MarkPlacement,
-        offset: Offset,
-    ) -> Self {
-        Self::new_mark_with_instance(
-            FontInstance::normal(font),
-            glyph,
-            cluster,
-            base_advance,
-            mark_placement,
-            offset,
-        )
     }
 
     pub(crate) const fn new_mark_with_instance(
@@ -412,6 +374,7 @@ impl SimpleShaper {
         )
     }
 
+    #[cfg(feature = "eink")]
     pub(crate) fn shape_into_with_pair_positioning_cache<
         'out,
         'font,

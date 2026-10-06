@@ -443,6 +443,7 @@ impl<F: FrameStorage> FrameArena<F> {
         bounds.inset(border)
     }
 
+    #[cfg(test)]
     pub fn visual_bounds(&self, node: NodeId) -> Rect {
         let mut translation = Offset::ZERO;
         let mut current = self.node(node).parent;

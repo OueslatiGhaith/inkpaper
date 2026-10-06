@@ -572,6 +572,7 @@ impl ReaderState {
         self.request_font_size(font_size)
     }
 
+    #[cfg(test)]
     pub(crate) fn reading_position(&self) -> Option<ReadingPosition> {
         self.page().map(Page::position)
     }

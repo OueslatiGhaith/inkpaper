@@ -1085,10 +1085,10 @@ impl Uc8179 {
             while offset < row_bytes {
                 let len = (row_bytes - offset).min(buffer.len());
 
-                for index in 0..len {
+                for (index, byte) in buffer[..len].iter_mut().enumerate() {
                     let source_index = row_start + offset + index;
 
-                    buffer[index] = grayscale_base_byte(lhs[source_index], rhs[source_index]);
+                    *byte = grayscale_base_byte(lhs[source_index], rhs[source_index]);
                 }
 
                 if let Err(error) = bus.stream_data(&buffer[..len]).await.map_err(Error::Bus) {
@@ -1171,10 +1171,10 @@ impl Uc8179 {
             while offset < row_bytes {
                 let len = (row_bytes - offset).min(buffer.len());
 
-                for index in 0..len {
+                for (index, byte) in buffer[..len].iter_mut().enumerate() {
                     let source_index = row_start + offset + index;
 
-                    buffer[index] = grayscale_base_byte(lhs[source_index], rhs[source_index]);
+                    *byte = grayscale_base_byte(lhs[source_index], rhs[source_index]);
                 }
 
                 if let Err(error) = bus.stream_data(&buffer[..len]).await.map_err(Error::Bus) {
@@ -1427,6 +1427,7 @@ const fn grayscale_base_byte(lsb: u8, msb: u8) -> u8 {
     lsb & msb
 }
 
+#[cfg(test)]
 const fn region_buffer_len(region: Region) -> usize {
     region.width as usize * region.height as usize / 8
 }

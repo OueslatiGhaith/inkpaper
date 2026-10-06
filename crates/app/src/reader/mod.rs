@@ -14,10 +14,10 @@ mod toc;
 mod tests;
 
 pub(crate) use document::{ReaderChapter, ReaderDocument};
-pub(crate) use loader::{
-    ReaderLoadError, ReaderSession, load_adjacent_reader_chapter, load_reader_document,
-};
-pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesError, ReaderPreferencesRequest};
+pub(crate) use loader::ReaderSession;
+#[cfg(test)]
+pub(crate) use loader::load_reader_document;
+pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesRequest};
 pub(crate) use state::{ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState};
 pub(crate) use toc::{TableOfContents, TocEntry};
 

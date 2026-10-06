@@ -1389,8 +1389,10 @@ fn reappearing_element_gets_new_generation() {
     assert_ne!(old.generation(), new.generation());
 }
 
+#[cfg(not(feature = "alloc"))]
 struct TooManyStatesApp;
 
+#[cfg(not(feature = "alloc"))]
 impl Render for TooManyStatesApp {
     fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         div().child(div().id("a")).child(div().id("b"))

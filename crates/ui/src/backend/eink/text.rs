@@ -161,7 +161,6 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_text_run_to<
     D,
     const FONTS: usize,

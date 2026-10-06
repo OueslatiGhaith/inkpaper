@@ -349,10 +349,12 @@ where
         Ok(root_node)
     }
 
+    #[cfg(test)]
     pub(crate) fn root_node(&self) -> Option<NodeId> {
         self.root
     }
 
+    #[cfg(test)]
     pub(crate) fn frame(&self) -> &FrameArena<S::Frame> {
         &self.frame
     }
@@ -373,10 +375,12 @@ where
         self.frame.shrink_to_fit();
     }
 
+    #[cfg(test)]
     pub(crate) fn is_dirty(&self) -> bool {
         self.invalidation() != Invalidation::None
     }
 
+    #[cfg(test)]
     pub(crate) fn take_dirty(&self) -> bool {
         self.take_invalidation() != Invalidation::None
     }

@@ -2,7 +2,6 @@ use core::any::TypeId;
 
 use crate::{
     DamageRegion, FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect, count_metric,
-    element,
     element::state::ElementStateId,
     interaction::scroll::{ScrollAxes, ScrollStateTable},
     px,

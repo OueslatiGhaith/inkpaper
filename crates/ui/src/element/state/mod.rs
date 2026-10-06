@@ -191,6 +191,7 @@ impl<E: ElementStateStorage> ElementStateTable<E> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.slots
             .iter()
@@ -198,6 +199,7 @@ impl<E: ElementStateStorage> ElementStateTable<E> {
             .count()
     }
 
+    #[cfg(test)]
     pub(crate) fn contains(&self, id: ElementStateId) -> bool {
         let Some(slot) = self.slots.get(id.slot()) else {
             return false;

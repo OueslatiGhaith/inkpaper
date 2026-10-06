@@ -18,6 +18,7 @@ pub struct ReaderChapter {
 }
 
 impl ReaderChapter {
+    #[cfg(test)]
     pub(super) fn new(
         chapter_path: String,
         spine: SpineIndex,
@@ -126,10 +127,6 @@ impl ReaderDocument {
         &self.creators
     }
 
-    pub fn package_path(&self) -> &str {
-        &self.package_path
-    }
-
     pub fn chapter_path(&self) -> &str {
         self.chapter.chapter_path()
     }
@@ -146,6 +143,7 @@ impl ReaderDocument {
         self.chapter.page(index)
     }
 
+    #[cfg(test)]
     pub fn first_page(&self) -> &Page<'static> {
         self.page(0)
             .expect("reader document always contains a page")

@@ -1,12 +1,14 @@
 extern crate alloc;
 
-use embedded_graphics::{pixelcolor::GrayColor, prelude::DrawTarget as _};
+use embedded_graphics::prelude::DrawTarget as _;
 use inkpaper_ui::{
     CanvasPainter, Color, Painter, Point, Rect, Size,
     backend::{DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkPainter, EInkUiMode, Gray2},
     px,
 };
 
+// the test only exercises the blitter, not the rest of the firmware framebuffer
+#[allow(dead_code)]
 #[path = "../src/firmware/framebuffer.rs"]
 mod framebuffer;
 

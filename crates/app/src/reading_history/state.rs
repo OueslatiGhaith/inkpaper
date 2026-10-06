@@ -46,13 +46,6 @@ impl ReadingHistoryState {
         self.revision = self.revision.wrapping_add(1);
     }
 
-    pub(crate) fn apply_error(&mut self) {
-        // keep the previous snapshot if one exists.
-        // A transient storage failure should not erase already-known Home metadata.
-        self.error = true;
-        self.revision = self.revision.wrapping_add(1);
-    }
-
     pub(crate) fn entries(&self) -> &[ReadingHistoryEntry] {
         &self.entries
     }

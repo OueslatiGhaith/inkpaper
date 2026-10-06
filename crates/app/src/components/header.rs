@@ -109,7 +109,7 @@ impl RenderOnce for BatteryLabel {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let label = match self.battery {
             Some(battery) => format!("{}%", battery.percent()),
-            None => format!("--%"),
+            None => "--%".into(),
         };
 
         let icon = self.battery.map(battery_icon);

@@ -277,6 +277,7 @@ pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn for_each_text_line<'a, M, V>(
     text: &'a str,
     wrap: TextWrap,
@@ -466,6 +467,7 @@ pub(crate) fn for_each_visible_text_line_with_boundaries<'a, B, M, E, V>(
     }
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn for_each_visible_text_line<'a, M, E, V>(
     text: &'a str,

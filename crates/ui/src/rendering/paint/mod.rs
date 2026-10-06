@@ -550,6 +550,7 @@ impl<F: FrameStorage> FrameArena<F> {
         Ok(report)
     }
 
+    #[cfg(test)]
     pub fn paint<P>(&self, root: NodeId, painter: &mut P) -> Result<PaintReport, P::Error>
     where
         P: ResourcePainter,
@@ -558,6 +559,7 @@ impl<F: FrameStorage> FrameArena<F> {
         self.paint_internal(root, None, DamageRegion::full(), &mut resources, painter)
     }
 
+    #[cfg(test)]
     pub fn paint_with_damage<P>(
         &self,
         root: NodeId,

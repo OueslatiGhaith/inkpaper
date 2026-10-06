@@ -12,9 +12,9 @@ pub(crate) type TestEntityArena<const BYTES: usize, const SLOTS: usize> =
 #[cfg(all(test, feature = "alloc"))]
 pub(crate) type TestEntityArena<const BYTES: usize, const SLOTS: usize> = HeapEntityArena<SLOTS>;
 
-pub(crate) use store::{
-    EntityStore, RawEntityBorrow, RawEntityReservation, create_entity, drop_value,
-};
+#[cfg(test)]
+pub(crate) use store::drop_value;
+pub(crate) use store::{EntityStore, RawEntityBorrow, RawEntityReservation, create_entity};
 
 use core::{any::TypeId, marker::PhantomData};
 

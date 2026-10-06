@@ -223,15 +223,6 @@ impl MetadataField {
             _ => None,
         }
     }
-
-    const fn local_name(self) -> &'static str {
-        match self {
-            Self::Title => "title",
-            Self::Creator => "creator",
-            Self::Language => "language",
-            Self::Identifier => "identifier",
-        }
-    }
 }
 
 struct TextCapture {

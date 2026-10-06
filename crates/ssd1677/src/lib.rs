@@ -393,6 +393,7 @@ impl Ssd1677 {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn display_grayscale_window<B, D>(
         &mut self,
         bus: &mut B,
@@ -1065,10 +1066,10 @@ impl Ssd1677 {
             while offset < row_bytes {
                 let len = (row_bytes - offset).min(buffer.len());
 
-                for index in 0..len {
+                for (index, byte) in buffer[..len].iter_mut().enumerate() {
                     let source = start + offset + index;
 
-                    buffer[index] = transform(lsb[source], msb[source]);
+                    *byte = transform(lsb[source], msb[source]);
                 }
 
                 bus.data(&buffer[..len]).await.map_err(Error::Bus)?;
@@ -1112,17 +1113,16 @@ impl Ssd1677 {
             while x < stride {
                 let len = (stride - x).min(buffer.len());
 
-                for index in 0..len {
+                for (index, byte) in buffer[..len].iter_mut().enumerate() {
                     let byte_x = x + index;
 
-                    buffer[index] =
-                        if y >= y_start && y < y_end && byte_x >= x_start && byte_x < x_end {
-                            let source = row_start + byte_x;
+                    *byte = if y >= y_start && y < y_end && byte_x >= x_start && byte_x < x_end {
+                        let source = row_start + byte_x;
 
-                            transform(lsb[source], msb[source])
-                        } else {
-                            0x00
-                        };
+                        transform(lsb[source], msb[source])
+                    } else {
+                        0x00
+                    };
                 }
 
                 bus.data(&buffer[..len]).await.map_err(Error::Bus)?;

@@ -21,6 +21,7 @@ use super::{
     state::ReaderChapterDirection,
 };
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum ReaderLoadError<E> {
     Epub(EpubError<E>),
@@ -69,10 +70,6 @@ where
         self.epub.metadata().identifier()
     }
 
-    pub const fn font_size(&self) -> u16 {
-        self.settings.font_size()
-    }
-
     pub fn set_font_size(&mut self, font_size: u16) -> bool {
         let Some(settings) = reader_settings(font_size) else {
             return false;
@@ -83,6 +80,7 @@ where
         true
     }
 
+    #[cfg(test)]
     pub async fn load_document(&mut self) -> Result<ReaderDocument, ReaderLoadError<S::Error>> {
         self.load_document_at(None).await
     }
@@ -188,6 +186,7 @@ where
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn load_reader_document<S>(
     path: String,
     source: S,
@@ -198,20 +197,6 @@ where
     let mut session = ReaderSession::open(path, source).await?;
 
     session.load_document().await
-}
-
-pub(crate) async fn load_adjacent_reader_chapter<S>(
-    source: S,
-    from: SpineIndex,
-    direction: ReaderChapterDirection,
-) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
-where
-    S: EpubSource,
-{
-    let mut epub = Epub::open(source).await.map_err(ReaderLoadError::Epub)?;
-
-    load_adjacent_reader_chapter_from_epub(&mut epub, from, direction, default_reader_settings())
-        .await
 }
 
 #[inkpaper_trace::instrument(

@@ -29,10 +29,6 @@ impl BrowseEntry {
         }
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
     pub fn kind(&self) -> BrowseEntryKind {
         self.kind
     }
@@ -59,14 +55,6 @@ pub(crate) struct BrowseFile {
 }
 
 impl BrowseFile {
-    pub(crate) fn path(&self) -> &str {
-        &self.path
-    }
-
-    pub(crate) fn title(&self) -> &str {
-        split_name_extension(&self.name).0
-    }
-
     pub(crate) fn is_epub(&self) -> bool {
         split_name_extension(&self.name)
             .1

@@ -221,11 +221,12 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
         //
         // after clearing, every metadata slot is free and the entire byte arena is
         // available, so the glyph can go directly into its home slot.
-        let slot_index = if insertion_slot.is_none() || required > self.remaining_bytes() {
-            self.clear();
-            home_slot
-        } else {
-            insertion_slot.expect("a non-full glyph cache must have an insertion slot")
+        let slot_index = match insertion_slot {
+            Some(slot) if required <= self.remaining_bytes() => slot,
+            _ => {
+                self.clear();
+                home_slot
+            }
         };
 
         let offset = self.used;

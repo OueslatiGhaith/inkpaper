@@ -21,6 +21,7 @@ where
         }
     }
 
+    #[cfg(all(test, feature = "alloc"))]
     pub(super) fn capacity(&self) -> usize {
         self.values.capacity()
     }

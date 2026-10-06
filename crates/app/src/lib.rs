@@ -35,22 +35,17 @@ pub use wifi::{
 //
 // keep these available through `crate::...` so the existing internal modules don't need
 // artificial public APIs, while preventing platform wrappers from depending on them.
-pub(crate) use browser::{BrowseEntry, BrowseEntryKind, BrowseListing, BrowseRequest};
+pub(crate) use browser::{BrowseEntry, BrowseListing, BrowseRequest};
 pub use clock::ClockSyncFailure;
 pub(crate) use clock::{ClockPreferences, ClockState, ClockSyncStatus, UtcOffset};
 pub(crate) use file_transfer::{FileTransferRequest, FileTransferState, FileTransferStatus};
-pub(crate) use frontlight::{
-    FrontlightPreferences, FrontlightPreferencesError, FrontlightPreferencesRequest,
-    FrontlightState,
-};
+pub(crate) use frontlight::{FrontlightPreferences, FrontlightPreferencesRequest, FrontlightState};
 pub use input::{AppInputError, AppInputEvent, dispatch_input};
 pub(crate) use reader::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderLoadError, ReaderPreferences,
-    ReaderPreferencesError, ReaderPreferencesRequest, ReaderRequest, ReaderSession,
-    load_adjacent_reader_chapter, load_reader_document,
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
+    ReaderPreferencesRequest, ReaderRequest, ReaderSession,
 };
 pub(crate) use reading_history::{
-    BookProgress, MAX_READING_HISTORY_ENTRIES, ReadingHistory, ReadingHistoryEntry,
-    ReadingHistoryError, ReadingHistoryRequest,
+    BookProgress, ReadingHistory, ReadingHistoryEntry, ReadingHistoryRequest,
 };
 pub(crate) use wifi::{SavedNetworks, WifiScanStatus};

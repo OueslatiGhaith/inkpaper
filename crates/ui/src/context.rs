@@ -1,7 +1,7 @@
 use core::any::TypeId;
 
 use crate::{
-    Canvas, CanvasPainter, Entity, EntityAllocError, EntityId, Listener, PaintCx, Rect, RuntimeCx,
+    Canvas, Entity, EntityAllocError, EntityId, Listener, PaintCx, RuntimeCx,
     callback::{CallbackAllocError, register_canvas_callback, register_listener},
     entity::create_entity,
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},

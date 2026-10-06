@@ -5,8 +5,11 @@ use inkpaper_reader::PageItem;
 
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
-    ReaderRequest, ReaderSession, load_reader_document,
-    reader::{ReaderState, TableOfContents, font_size_from_slider, font_size_slider_value},
+    ReaderRequest, ReaderSession,
+    reader::{
+        ReaderState, TableOfContents, font_size_from_slider, font_size_slider_value,
+        load_reader_document,
+    },
 };
 
 #[test]

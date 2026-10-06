@@ -279,7 +279,7 @@ fn png_to_grayscale(
 
             let mut output = Vec::with_capacity(pixels);
 
-            for pixel in raw.chunks_exact(2) {
+            for pixel in raw.as_chunks::<2>().0 {
                 output.push(composite_on_white(pixel[0], pixel[1]));
             }
 
@@ -303,7 +303,7 @@ fn rgb_to_grayscale(raw: &[u8], pixels: usize, bgr: bool) -> Option<Vec<u8>> {
 
     let mut output = Vec::with_capacity(pixels);
 
-    for pixel in raw.chunks_exact(3) {
+    for pixel in raw.as_chunks::<3>().0 {
         let (r, g, b) = if bgr {
             (pixel[2], pixel[1], pixel[0])
         } else {
@@ -323,7 +323,7 @@ fn rgba_to_grayscale(raw: &[u8], pixels: usize, bgr: bool, alpha_first: bool) ->
 
     let mut output = Vec::with_capacity(pixels);
 
-    for pixel in raw.chunks_exact(4) {
+    for pixel in raw.as_chunks::<4>().0 {
         let (r, g, b, alpha) = if alpha_first {
             (pixel[1], pixel[2], pixel[3], pixel[0])
         } else if bgr {

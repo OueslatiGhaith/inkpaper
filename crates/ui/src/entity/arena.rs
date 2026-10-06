@@ -4,7 +4,11 @@ use core::{alloc::Layout, any::TypeId, ptr::NonNull};
 use crate::slot_table::HeapSlots;
 use crate::slot_table::{BorrowKind, FixedSlots, NotLive, ReserveError, SlotStorage, SlotTable};
 
-use super::{Entity, EntityId, EntityStore, RawEntityBorrow, RawEntityReservation, drop_value};
+#[cfg(all(test, feature = "alloc"))]
+use super::RawEntityBorrow;
+#[cfg(test)]
+use super::{Entity, drop_value};
+use super::{EntityId, EntityStore, RawEntityReservation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityAllocError {
@@ -77,11 +81,14 @@ impl<S: SlotStorage> Default for EntityArena<S> {
     }
 }
 
+#[cfg(test)]
 impl<S: SlotStorage> EntityArena<S> {
+    #[cfg(feature = "alloc")]
     pub(crate) fn len(&self) -> usize {
         self.slots.len()
     }
 
+    #[cfg(feature = "alloc")]
     pub(crate) fn used_bytes(&self) -> usize {
         self.slots.used_bytes()
     }
@@ -101,6 +108,7 @@ impl<S: SlotStorage> EntityArena<S> {
         Ok(Entity::from_id(reservation.id))
     }
 
+    #[cfg(feature = "alloc")]
     pub(crate) fn read<T, R>(
         &self,
         entity: Entity<T>,
@@ -120,6 +128,7 @@ impl<S: SlotStorage> EntityArena<S> {
         Ok(f(unsafe { &*borrow.ptr().cast::<T>().as_ptr() }))
     }
 
+    #[cfg(feature = "alloc")]
     pub(crate) fn update<T, R>(
         &self,
         entity: Entity<T>,

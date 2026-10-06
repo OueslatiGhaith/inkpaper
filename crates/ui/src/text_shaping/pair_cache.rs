@@ -2,6 +2,7 @@ use crate::{
     FontInstance, FontRegistry, GlyphId, PairPositioning, PreparedFont, increment_metric, px,
 };
 
+#[cfg(feature = "eink")]
 pub(crate) const PAIR_POSITIONING_CACHE_SLOTS: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +135,7 @@ impl<const SLOTS: usize> PairPositioningCache<SLOTS> {
         value
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn get_or_compute<const FONTS: usize>(
         &mut self,
         registry: &FontRegistry<'_, FONTS>,

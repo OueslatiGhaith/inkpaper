@@ -187,10 +187,10 @@ impl ControlCenterState {
             }
         }
 
-        if let Some(action) = pressed_action {
-            if action_at(position) == Some(action) {
-                return ControlCenterPointerResult::Action(action);
-            }
+        if let Some(action) = pressed_action
+            && action_at(position) == Some(action)
+        {
+            return ControlCenterPointerResult::Action(action);
         }
 
         ControlCenterPointerResult::Capture

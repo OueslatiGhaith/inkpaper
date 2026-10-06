@@ -9,6 +9,12 @@ pub struct RawEntityReservation {
     pub(crate) ptr: NonNull<u8>,
 }
 
+/// # Safety
+///
+/// a reservation must fit its layout, and values must not move once reserved. Only
+/// committed entities can be borrowed, `borrow` must check the registered type, and every
+/// returned pointer must stay valid until the matching `release`, with shared and
+/// exclusive borrows tracked so they never overlap.
 pub unsafe trait EntityStore {
     fn reserve(
         &self,

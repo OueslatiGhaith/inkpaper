@@ -187,6 +187,32 @@ pub fn summarize_performance(input: &Path) -> Result<()> {
     }
 
     println!();
+    println!("Render breakdown");
+    println!();
+
+    println!(
+        "{:>5}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}",
+        "frame", "rebuild", "layout", "clear", "paint", "damage",
+    );
+
+    println!(
+        "{:-<5}  {:-<9}  {:-<9}  {:-<9}  {:-<9}  {:-<9}",
+        "", "", "", "", "", "",
+    );
+
+    for frame in &capture.frames {
+        println!(
+            "{:>5}  {:>8.1}ms  {:>8.1}ms  {:>8.1}ms  {:>8.1}ms  {:>8.1}ms",
+            frame.id,
+            cycles_ms(frame.rebuild, capture.hz),
+            cycles_ms(frame.layout, capture.hz),
+            cycles_ms(frame.clear, capture.hz),
+            cycles_ms(frame.paint, capture.hz),
+            cycles_ms(frame.damage, capture.hz),
+        );
+    }
+
+    println!();
     println!("Present breakdown");
     println!();
 
@@ -548,14 +574,6 @@ fn span_duration(capture: &Capture, target: &str, name: &str) -> Result<Option<u
     Ok(find_unique_span(capture, target, name)?.map(|(span, _)| span.duration_cycles))
 }
 
-fn frame_id_from_span(capture: &Capture, target: &str, name: &str) -> Result<Option<u32>> {
-    let Some((span, callsite)) = find_unique_span(capture, target, name)? else {
-        return Ok(None);
-    };
-
-    span_u32_field(callsite, span, "frame").map(Some)
-}
-
 fn find_unique_span<'a>(
     capture: &'a Capture,
     target: &str,
@@ -729,7 +747,7 @@ fn delta_percent(before: u64, after: u64) -> f64 {
 mod tests {
     use indoc::indoc;
 
-    use super::{build_performance_capture, cycles_ms, io_kib_per_second};
+    use super::build_performance_capture;
 
     use crate::trace::parse_captures;
 
