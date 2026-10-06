@@ -142,7 +142,7 @@ impl Render for ReaderMenuView {
 }
 
 /// A Text panel row: the setting on the left, its value on the right, like
-/// crosspoint's panel rows. Rows are 52 px so all six fit above the tab bar.
+/// crosspoint's panel rows. Rows are 46 px so all seven fit above the tab bar.
 #[component]
 struct TextRow {
     index: usize,
@@ -157,15 +157,15 @@ impl RenderOnce for TextRow {
             <div
                 id={("reader-menu-text-row", self.index)}
                 on:activate={self.on_activate}
-                class="w-full h-[52px] relative"
+                class="w-full h-[46px] relative"
             >
-                <div class="absolute left-8 top-0 w-[280px] h-[52px] flex items-center">
+                <div class="absolute left-8 top-0 w-[280px] h-[46px] flex items-center">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.label}
                     </text>
                 </div>
 
-                <div class="absolute right-8 top-0 w-[120px] h-[52px] flex items-center justify-end">
+                <div class="absolute right-8 top-0 w-[120px] h-[46px] flex items-center justify-end">
                     <text class="text-xl font-bold no-wrap max-lines-1">
                         {self.value}
                     </text>

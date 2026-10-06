@@ -82,6 +82,8 @@ struct PendingText<'a> {
     link: Option<&'a LinkTarget>,
     x: u32,
     width: u32,
+    /// the extra pixels after each U+0020 space, or `None` without spaces
+    word_spacing: Option<u32>,
 }
 
 impl<'a> PendingText<'a> {
@@ -97,6 +99,18 @@ impl<'a> PendingText<'a> {
             && self.style == next.style
             && self.link == next.link
             && self.x.saturating_add(self.width) == next.x
+            && (self.word_spacing.is_none()
+                || next.word_spacing.is_none()
+                || self.word_spacing == next.word_spacing)
+    }
+
+    /// a single collapsed space between words, the gap justification stretches
+    fn is_gap(&self) -> bool {
+        self.text() == " "
+    }
+
+    fn is_whitespace(&self) -> bool {
+        self.text().chars().all(is_break_whitespace)
     }
 
     fn merge(&mut self, next: Self) {
@@ -104,7 +118,16 @@ impl<'a> PendingText<'a> {
 
         self.end = next.end;
         self.width = self.width.saturating_add(next.width);
+        self.word_spacing = self.word_spacing.or(next.word_spacing);
     }
+}
+
+/// why a line ended. Only wrapped lines are justified, so the last line of a
+/// paragraph, or one before a `<br>` or an image, keeps its natural spacing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineEnd {
+    Wrapped,
+    Last,
 }
 
 struct Paginator<'chapter, 'context, M> {
@@ -136,6 +159,7 @@ struct Paginator<'chapter, 'context, M> {
     line_items: Vec<PendingText<'chapter>>,
 
     block_laid_out: bool,
+    block_align: TextAlign,
     block_text_indent: u32,
     block_first_line: bool,
     block_line_height: LineHeight,
@@ -177,6 +201,7 @@ where
             line_indent: 0,
             line_items: Vec::new(),
             block_laid_out: false,
+            block_align: TextAlign::Start,
             block_text_indent: 0,
             block_first_line: false,
             block_line_height: LineHeight::NORMAL,
@@ -192,7 +217,7 @@ where
             }
         }
 
-        self.flush_line();
+        self.flush_line(LineEnd::Last);
 
         let end = self.cursor;
 
@@ -220,6 +245,7 @@ where
 
         let block_style = self.computed_style(block.style_node());
 
+        self.block_align = self.resolve_block_align(block.kind(), block_style);
         self.block_text_indent = self.resolve_text_indent(block.kind(), block_style)?;
         self.block_first_line = true;
         self.block_line_height = block_style.line_height();
@@ -243,8 +269,9 @@ where
             }
         }
 
-        self.flush_line();
+        self.flush_line(LineEnd::Last);
 
+        self.block_align = TextAlign::Start;
         self.block_text_indent = 0;
         self.block_first_line = false;
         self.block_line_height = LineHeight::NORMAL;
@@ -272,7 +299,7 @@ where
             computed.font_style(),
         );
 
-        self.layout_text_content(run.text(), style, run.link(), computed.text_align())
+        self.layout_text_content(run.text(), style, run.link(), self.block_align)
     }
 
     fn layout_image(&mut self, image: &'chapter ChapterImage) {
@@ -282,7 +309,7 @@ where
             return;
         }
 
-        self.flush_line();
+        self.flush_line(LineEnd::Last);
 
         let Some(intrinsic) = self.measurer.image_dimensions(image) else {
             return;
@@ -366,7 +393,7 @@ where
             .saturating_add(width);
 
         if occupied > self.viewport.width() {
-            self.flush_line();
+            self.flush_line(LineEnd::Wrapped);
 
             self.cursor = self.cursor.advance_text(whitespace);
 
@@ -396,7 +423,7 @@ where
                 .saturating_add(width);
 
             if occupied > self.viewport.width() {
-                self.flush_line();
+                self.flush_line(LineEnd::Wrapped);
             }
         }
 
@@ -479,7 +506,7 @@ where
             start = end;
 
             if start < word.len() {
-                self.flush_line();
+                self.flush_line(LineEnd::Wrapped);
             }
         }
 
@@ -524,6 +551,7 @@ where
             link,
             x: self.line_width,
             width,
+            word_spacing: text.contains(' ').then_some(0),
         });
 
         self.line_width = self.line_width.saturating_add(width);
@@ -544,7 +572,7 @@ where
         computed: ComputedStyle,
     ) -> Result<(), M::Error> {
         if self.line_active {
-            self.flush_line();
+            self.flush_line(LineEnd::Last);
 
             return Ok(());
         }
@@ -560,20 +588,25 @@ where
 
         self.line_active = true;
         self.line_start = self.cursor;
-        self.line_align = computed.text_align();
+        self.line_align = self.block_align;
         self.line_indent = indent;
         self.block_first_line = false;
         self.line_height = self.measured_line_height(style)?;
         self.block_laid_out = true;
 
-        self.flush_line();
+        self.flush_line(LineEnd::Last);
 
         Ok(())
     }
 
-    fn flush_line(&mut self) {
+    fn flush_line(&mut self, end: LineEnd) {
         if !self.line_active {
             return;
+        }
+
+        // spaces at the end of a line take no room
+        while let Some(item) = self.line_items.pop_if(|item| item.is_whitespace()) {
+            self.line_width = self.line_width.saturating_sub(item.width);
         }
 
         let height = self.line_height.max(1);
@@ -588,6 +621,14 @@ where
         let text_height = self.line_text_height.max(1);
 
         let line_width = self.viewport.width().saturating_sub(self.line_indent);
+
+        if end == LineEnd::Wrapped && self.line_align == TextAlign::Justify {
+            justify(
+                &mut self.line_items,
+                line_width.saturating_sub(self.line_width),
+            );
+        }
+
         let alignment = alignment_offset(self.line_align, line_width, self.line_width);
         let origin = self.line_indent.saturating_add(alignment);
 
@@ -631,6 +672,7 @@ where
             Rect::new(origin.saturating_add(item.x), y, item.width, height),
             item.style,
             item.link,
+            item.word_spacing.unwrap_or(0),
         )));
     }
 
@@ -735,7 +777,7 @@ where
         let resolved = match self.settings.paragraph_indent_spaces() {
             Some(spaces) if kind == BlockKind::Paragraph => {
                 let natural = matches!(
-                    style.text_align(),
+                    self.block_align,
                     TextAlign::Start | TextAlign::Left | TextAlign::Justify
                 );
 
@@ -768,10 +810,57 @@ where
         Ok(resolved.min(self.viewport.width().saturating_sub(1)))
     }
 
+    fn resolve_block_align(&self, kind: BlockKind, style: ComputedStyle) -> TextAlign {
+        if matches!(kind, BlockKind::Heading(_)) {
+            return style.text_align();
+        }
+
+        self.settings
+            .paragraph_align()
+            .or(style.declared_text_align())
+            .unwrap_or(self.settings.undeclared_paragraph_align())
+    }
+
     fn resolve_block_length(&self, length: CssLength) -> u32 {
         let resolved = length.resolve(u32::from(self.settings.font_size()), self.viewport.width());
 
         u32::try_from(resolved.max(0)).unwrap_or(u32::MAX)
+    }
+}
+
+/// spreads `spare` pixels over a line's gaps, the leftover pixels going to the
+/// first gaps. A line without gaps keeps its natural spacing
+fn justify(items: &mut [PendingText<'_>], spare: u32) {
+    let gaps = items.iter().filter(|item| item.is_gap()).count();
+    let Ok(gaps) = u32::try_from(gaps) else {
+        return;
+    };
+
+    if gaps == 0 || spare == 0 {
+        return;
+    }
+
+    let extra = spare / gaps;
+    let mut wider = spare % gaps;
+    let mut shift = 0u32;
+
+    for item in items {
+        item.x = item.x.saturating_add(shift);
+
+        if !item.is_gap() {
+            continue;
+        }
+
+        let stretch = if wider > 0 {
+            wider -= 1;
+            extra.saturating_add(1)
+        } else {
+            extra
+        };
+
+        item.width = item.width.saturating_add(stretch);
+        item.word_spacing = Some(stretch);
+        shift = shift.saturating_add(stretch);
     }
 }
 

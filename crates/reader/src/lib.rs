@@ -8,7 +8,7 @@ mod pagination;
 mod position;
 
 pub use inkpaper_epub::{
-    BlockKind, ChapterImage, FontStyle, FontWeight, ImageDimensions, SpineIndex,
+    BlockKind, ChapterImage, FontStyle, FontWeight, ImageDimensions, SpineIndex, TextAlign,
 };
 pub use metrics::{ImageMeasurer, TextMeasurer, TextStyle};
 pub use page::{ImageFragment, Page, PageItem, PageRange, Rect, TextFragment};
@@ -46,6 +46,8 @@ pub struct ReaderSettings {
     line_height_percent: Option<u16>,
     paragraph_indent_spaces: Option<u8>,
     extra_block_spacing: bool,
+    paragraph_align: Option<TextAlign>,
+    undeclared_paragraph_align: TextAlign,
 }
 
 impl ReaderSettings {
@@ -60,6 +62,8 @@ impl ReaderSettings {
             line_height_percent: None,
             paragraph_indent_spaces: None,
             extra_block_spacing: false,
+            paragraph_align: None,
+            undeclared_paragraph_align: TextAlign::Start,
         })
     }
 
@@ -112,5 +116,31 @@ impl ReaderSettings {
 
     pub const fn extra_block_spacing(self) -> bool {
         self.extra_block_spacing
+    }
+
+    /// Aligns paragraphs and list items with `align`, instead of the book's
+    /// CSS. Headings keep the book's alignment.
+    pub const fn with_paragraph_align(self, align: TextAlign) -> Self {
+        Self {
+            paragraph_align: Some(align),
+            ..self
+        }
+    }
+
+    pub const fn paragraph_align(self) -> Option<TextAlign> {
+        self.paragraph_align
+    }
+
+    /// Aligns paragraphs and list items with `align` where the book's CSS
+    /// sets no alignment. They are start-aligned otherwise.
+    pub const fn with_undeclared_paragraph_align(self, align: TextAlign) -> Self {
+        Self {
+            undeclared_paragraph_align: align,
+            ..self
+        }
+    }
+
+    pub const fn undeclared_paragraph_align(self) -> TextAlign {
+        self.undeclared_paragraph_align
     }
 }

@@ -65,6 +65,7 @@ pub struct TextFragment<'a> {
     bounds: Rect,
     style: TextStyle,
     link: Option<Cow<'a, LinkTarget>>,
+    word_spacing: u32,
 }
 
 impl<'a> TextFragment<'a> {
@@ -73,6 +74,7 @@ impl<'a> TextFragment<'a> {
         bounds: Rect,
         style: TextStyle,
         link: Option<&'a LinkTarget>,
+        word_spacing: u32,
     ) -> Self {
         Self {
             text: Cow::Borrowed(text),
@@ -82,6 +84,7 @@ impl<'a> TextFragment<'a> {
                 Some(link) => Some(Cow::Borrowed(link)),
                 None => None,
             },
+            word_spacing,
         }
     }
 
@@ -101,12 +104,19 @@ impl<'a> TextFragment<'a> {
         self.link.as_deref()
     }
 
+    /// extra pixels after each U+0020 space, which justified lines use to
+    /// reach the page's edge. `bounds` already include them
+    pub const fn word_spacing(&self) -> u32 {
+        self.word_spacing
+    }
+
     pub fn into_owned(self) -> TextFragment<'static> {
         TextFragment {
             text: Cow::Owned(self.text.into_owned()),
             bounds: self.bounds,
             style: self.style,
             link: self.link.map(|link| Cow::Owned(link.into_owned())),
+            word_spacing: self.word_spacing,
         }
     }
 }

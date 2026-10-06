@@ -166,7 +166,7 @@ impl Default for LineHeight {
 pub struct ComputedStyle {
     font_weight: FontWeight,
     font_style: FontStyle,
-    text_align: TextAlign,
+    text_align: Option<TextAlign>,
 
     // non-inherited block properties.
     margin_top: Option<CssLength>,
@@ -189,6 +189,14 @@ impl ComputedStyle {
     }
 
     pub const fn text_align(self) -> TextAlign {
+        match self.text_align {
+            Some(align) => align,
+            None => TextAlign::Start,
+        }
+    }
+
+    /// the alignment the book set on this element or an ancestor, if any
+    pub const fn declared_text_align(self) -> Option<TextAlign> {
         self.text_align
     }
 
@@ -341,7 +349,7 @@ pub(crate) fn resolve_chapter_styles(
         }
 
         if let Some(candidate) = cascade.text_align {
-            computed.text_align = candidate.value;
+            computed.text_align = Some(candidate.value);
         }
 
         if let Some(candidate) = cascade.margin_top {

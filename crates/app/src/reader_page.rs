@@ -30,7 +30,8 @@ fn paint_text_fragment(fragment: &TextFragment<'_>, paint: &mut PaintCx<'_>) {
             .font_family(READER_FAMILY)
             .font_weight(font_weight)
             .font_style(font_style)
-            .font_size(px(i32::from(style.font_size()))),
+            .font_size(px(i32::from(style.font_size())))
+            .word_spacing(reader_px(fragment.word_spacing())),
     );
 }
 

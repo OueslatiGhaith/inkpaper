@@ -18,7 +18,9 @@ pub(crate) use loader::ReaderSession;
 pub(crate) use loader::load_reader_document;
 pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesRequest};
 pub(crate) use state::{ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState};
-pub(crate) use text_settings::{LineSpacing, PageBounds, ScreenMargin, TextSetting, TextSettings};
+pub(crate) use text_settings::{
+    LineSpacing, PageBounds, ParagraphAlignment, ScreenMargin, TextSetting, TextSettings,
+};
 pub(crate) use toc::{TableOfContents, TocEntry};
 
 const READER_FONT_SIZE_DEFAULT: u16 = 20;

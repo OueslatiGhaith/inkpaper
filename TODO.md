@@ -24,7 +24,8 @@ New UI follows crosspoint/crossink's screens and layout.
 - [x] paragraph indent
 - [x] paragraph spacing
 - [x] Embedded Style switch for the book's own CSS
-- [ ] text alignment (book default/left/justified)
+- [x] paragraph alignment (justify/left/center/right/book's style)
+- [x] justified lines, stretching the spaces between words
 - [ ] full Text Settings screen (Font | Size | Layout | Style tabs with a live preview)
 
 ## Hyphenation: if it doesn't cost too much

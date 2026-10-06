@@ -3,7 +3,7 @@ use embedded_graphics::prelude::DrawTarget as EgDrawTarget;
 use crate::{
     Color, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
     ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
-    backend::EInkPaintReport,
+    backend::{EInkPaintReport, WordSpacing},
     pair_cache::PairPositioningCache,
     px,
     resources::RuntimeResources,
@@ -143,6 +143,7 @@ where
                 clip,
                 coverage_mode,
                 &mut pen_x,
+                WordSpacing::NONE,
             ) {
                 error = Some(draw_error);
                 return;
@@ -226,6 +227,7 @@ where
         clip,
         coverage_mode,
         &mut pen_x,
+        WordSpacing::new(text, style.word_spacing),
     )?;
 
     Ok(u64::try_from(glyph_count).unwrap_or(u64::MAX))
@@ -249,6 +251,7 @@ fn draw_shaped_run<
     clip: Rect,
     coverage_mode: EInkCoverageMode<D>,
     pen_x: &mut Pixels,
+    word_spacing: WordSpacing<'_>,
 ) -> Result<(), EInkError<D::Error>>
 where
     D: EgDrawTarget<Color = Gray2>,
@@ -268,7 +271,7 @@ where
 
         draw_coverage_bitmap(target, report, &bitmap, origin, color, clip, coverage_mode)?;
 
-        *pen_x += shaped.advance();
+        *pen_x += shaped.advance() + word_spacing.after(shaped);
     }
 
     Ok(())

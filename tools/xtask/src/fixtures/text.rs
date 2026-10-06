@@ -174,6 +174,22 @@ pub fn typography() -> Result<Epub> {
             .book p.centered {
                 text-align: center;
             }
+
+            .left {
+                text-align: left;
+            }
+
+            .right {
+                text-align: right;
+            }
+
+            .center {
+                text-align: center;
+            }
+
+            .justify {
+                text-align: justify;
+            }
         "#})
         .chapter("chapter-1.xhtml", "Plain Paragraphs", plain)
         .chapter(
@@ -240,6 +256,42 @@ pub fn typography() -> Result<Epub> {
                 <p>
                     Short lines like these show the spacing between lines and
                     paragraphs most clearly, since each paragraph is a single line.
+                </p>
+            "#},
+        )
+        .chapter(
+            "chapter-5.xhtml",
+            "Book Alignment",
+            indoc! {r#"
+                <h1 class="center">Book Alignment</h1>
+
+                <p>
+                    This paragraph sets no alignment, so Book's Style justifies it
+                    like crosspoint does. Its last line keeps its natural spacing.
+                </p>
+
+                <p class="left">
+                    This paragraph is left-aligned by the book's CSS. With Book's
+                    Style its right edge stays ragged, and the other settings
+                    replace its alignment with their own.
+                </p>
+
+                <p class="right">
+                    This paragraph is right-aligned by the book's CSS, so its lines
+                    end at the right margin and start wherever they fall.
+                </p>
+
+                <p class="center">
+                    This paragraph is centered by the book's CSS, with no indent,
+                    and each of its lines is centered on its own.
+                </p>
+
+                <p class="justify">
+                    This paragraph is justified by the book's CSS. A line ending at
+                    a break keeps its natural spacing,<br/>
+                    like the one above, and so does a line holding a single long
+                    word such as<br/>
+                    Pneumonoultramicroscopicsilicovolcanoconiosis.
                 </p>
             "#},
         )

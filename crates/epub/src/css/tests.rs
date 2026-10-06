@@ -376,3 +376,36 @@ fn default_styles_ignore_the_book_stylesheet_and_style_attributes() {
 
     assert!(!text_style(&chapter, &styles, "shown").hidden());
 }
+
+#[test]
+fn css_reports_whether_the_book_declared_an_alignment() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <style>
+            .centered {
+                text-align: center;
+            }
+        </style>
+    </head>
+
+    <body>
+        <p>plain</p>
+        <div class="centered">
+            <p>inherited</p>
+        </div>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+
+    let styles = resolve_embedded(&chapter);
+
+    let plain = styles.style(chapter.blocks()[0].style_node()).unwrap();
+    let inherited = styles.style(chapter.blocks()[1].style_node()).unwrap();
+
+    assert_eq!(plain.declared_text_align(), None);
+    assert_eq!(plain.text_align(), TextAlign::Start);
+    assert_eq!(inherited.declared_text_align(), Some(TextAlign::Center));
+}

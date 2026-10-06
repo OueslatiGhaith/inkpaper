@@ -2,9 +2,12 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use super::{LineSpacing, ScreenMargin, TextSettings};
+use super::{LineSpacing, ParagraphAlignment, ScreenMargin, TextSettings};
 
-const STORAGE_VERSION: u8 = 4;
+const STORAGE_VERSION: u8 = 5;
+
+/// version 4 had no paragraph alignment setting
+const STORAGE_VERSION_NO_ALIGNMENT: u8 = 4;
 
 /// version 3 had no embedded style setting
 const STORAGE_VERSION_NO_EMBEDDED_STYLE: u8 = 3;
@@ -35,6 +38,7 @@ impl ReaderPreferences {
             font_size: self.text.font_size(),
             line_spacing: self.text.line_spacing().index(),
             margin: self.text.margin().px(),
+            alignment: self.text.alignment().index(),
             paragraph_indent: self.text.paragraph_indent(),
             paragraph_spacing: self.text.paragraph_spacing(),
             embedded_style: self.text.embedded_style(),
@@ -51,6 +55,21 @@ impl ReaderPreferences {
         let stored = match bytes.first() {
             Some(&STORAGE_VERSION) => take_all::<StoredReaderPreferences>(bytes)?,
 
+            Some(&STORAGE_VERSION_NO_ALIGNMENT) => {
+                let stored = take_all::<StoredNoAlignment>(bytes)?;
+
+                StoredReaderPreferences {
+                    version: stored.version,
+                    font_size: stored.font_size,
+                    line_spacing: stored.line_spacing,
+                    margin: stored.margin,
+                    alignment: defaults.alignment().index(),
+                    paragraph_indent: stored.paragraph_indent,
+                    paragraph_spacing: stored.paragraph_spacing,
+                    embedded_style: stored.embedded_style,
+                }
+            }
+
             Some(&STORAGE_VERSION_NO_EMBEDDED_STYLE) => {
                 let stored = take_all::<StoredNoEmbeddedStyle>(bytes)?;
 
@@ -59,6 +78,7 @@ impl ReaderPreferences {
                     font_size: stored.font_size,
                     line_spacing: stored.line_spacing,
                     margin: stored.margin,
+                    alignment: defaults.alignment().index(),
                     paragraph_indent: stored.paragraph_indent,
                     paragraph_spacing: stored.paragraph_spacing,
                     embedded_style: defaults.embedded_style(),
@@ -73,6 +93,7 @@ impl ReaderPreferences {
                     font_size: stored.font_size,
                     line_spacing: stored.line_spacing,
                     margin: stored.margin,
+                    alignment: defaults.alignment().index(),
                     paragraph_indent: defaults.paragraph_indent(),
                     paragraph_spacing: defaults.paragraph_spacing(),
                     embedded_style: defaults.embedded_style(),
@@ -87,6 +108,7 @@ impl ReaderPreferences {
                     font_size: stored.font_size,
                     line_spacing: defaults.line_spacing().index(),
                     margin: defaults.margin().px(),
+                    alignment: defaults.alignment().index(),
                     paragraph_indent: defaults.paragraph_indent(),
                     paragraph_spacing: defaults.paragraph_spacing(),
                     embedded_style: defaults.embedded_style(),
@@ -105,8 +127,12 @@ impl ReaderPreferences {
         let margin = ScreenMargin::new(stored.margin)
             .ok_or(ReaderPreferencesError::InvalidMargin(stored.margin))?;
 
+        let alignment = ParagraphAlignment::from_index(stored.alignment)
+            .ok_or(ReaderPreferencesError::InvalidAlignment(stored.alignment))?;
+
         let text = TextSettings::new(stored.font_size, line_spacing, margin)
             .ok_or(ReaderPreferencesError::InvalidFontSize(stored.font_size))?
+            .with_alignment(alignment)
             .with_paragraph_indent(stored.paragraph_indent)
             .ok_or(ReaderPreferencesError::InvalidParagraphIndent(
                 stored.paragraph_indent,
@@ -143,12 +169,25 @@ pub enum ReaderPreferencesError {
     InvalidFontSize(u16),
     InvalidLineSpacing(u8),
     InvalidMargin(u8),
+    InvalidAlignment(u8),
     InvalidParagraphIndent(u8),
     TrailingData,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredReaderPreferences {
+    version: u8,
+    font_size: u16,
+    line_spacing: u8,
+    margin: u8,
+    alignment: u8,
+    paragraph_indent: u8,
+    paragraph_spacing: bool,
+    embedded_style: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredNoAlignment {
     version: u8,
     font_size: u16,
     line_spacing: u8,

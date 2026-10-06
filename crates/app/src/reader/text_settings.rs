@@ -4,7 +4,7 @@ use alloc::{
     vec::Vec,
 };
 
-use inkpaper_reader::{ReaderSettings, Viewport};
+use inkpaper_reader::{ReaderSettings, TextAlign, Viewport};
 
 use super::{
     READER_BLOCK_SPACING, READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN,
@@ -75,6 +75,73 @@ impl LineSpacing {
     }
 }
 
+/// How paragraphs line up, like crosspoint's paragraph alignment. Every choice
+/// but Book's Style overrides the book's CSS; headings always keep the book's.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ParagraphAlignment {
+    #[default]
+    Justify,
+    Left,
+    Center,
+    Right,
+    /// the book's CSS, justified where it sets no alignment
+    BookStyle,
+}
+
+impl ParagraphAlignment {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Justify,
+        Self::Left,
+        Self::Center,
+        Self::Right,
+        Self::BookStyle,
+    ];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Justify => "Justify",
+            Self::Left => "Left",
+            Self::Center => "Center",
+            Self::Right => "Right",
+            Self::BookStyle => "Book's Style",
+        }
+    }
+
+    /// The stored form, in crosspoint's order.
+    pub(crate) const fn index(self) -> u8 {
+        match self {
+            Self::Justify => 0,
+            Self::Left => 1,
+            Self::Center => 2,
+            Self::Right => 3,
+            Self::BookStyle => 4,
+        }
+    }
+
+    pub(crate) const fn from_index(index: u8) -> Option<Self> {
+        match index {
+            0 => Some(Self::Justify),
+            1 => Some(Self::Left),
+            2 => Some(Self::Center),
+            3 => Some(Self::Right),
+            4 => Some(Self::BookStyle),
+            _ => None,
+        }
+    }
+
+    fn apply(self, settings: ReaderSettings) -> ReaderSettings {
+        let align = match self {
+            Self::Justify => TextAlign::Justify,
+            Self::Left => TextAlign::Left,
+            Self::Center => TextAlign::Center,
+            Self::Right => TextAlign::Right,
+            Self::BookStyle => return settings.with_undeclared_paragraph_align(TextAlign::Justify),
+        };
+
+        settings.with_paragraph_align(align)
+    }
+}
+
 /// The space around the page, like crosspoint's screen margin: 5 to 40 px in
 /// steps of 5. It sets the left and right edges, and the top with a little extra.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +209,7 @@ pub(crate) struct TextSettings {
     font_size: u16,
     line_spacing: LineSpacing,
     margin: ScreenMargin,
+    alignment: ParagraphAlignment,
     /// first-line indent of paragraphs, in spaces; 0 turns it off
     paragraph_indent: u8,
     /// half a line after every paragraph, like crosspoint's extra spacing
@@ -164,6 +232,7 @@ impl TextSettings {
             font_size,
             line_spacing,
             margin,
+            alignment: ParagraphAlignment::Justify,
             paragraph_indent: PARAGRAPH_INDENT_DEFAULT,
             paragraph_spacing: true,
             embedded_style: true,
@@ -180,6 +249,14 @@ impl TextSettings {
 
     pub(crate) const fn margin(self) -> ScreenMargin {
         self.margin
+    }
+
+    pub(crate) const fn alignment(self) -> ParagraphAlignment {
+        self.alignment
+    }
+
+    pub(crate) const fn with_alignment(self, alignment: ParagraphAlignment) -> Self {
+        Self { alignment, ..self }
     }
 
     pub(crate) const fn paragraph_indent(self) -> u8 {
@@ -229,11 +306,13 @@ impl TextSettings {
     }
 
     pub(crate) fn reader_settings(self) -> ReaderSettings {
-        ReaderSettings::new(self.font_size, READER_BLOCK_SPACING)
+        let settings = ReaderSettings::new(self.font_size, READER_BLOCK_SPACING)
             .and_then(|settings| settings.with_line_height_percent(self.line_spacing.percent()))
             .expect("text settings only hold valid font sizes")
             .with_paragraph_indent(self.paragraph_indent)
-            .with_extra_block_spacing(self.paragraph_spacing)
+            .with_extra_block_spacing(self.paragraph_spacing);
+
+        self.alignment.apply(settings)
     }
 
     pub(crate) fn viewport(self) -> Viewport {
@@ -247,6 +326,7 @@ impl Default for TextSettings {
             font_size: READER_FONT_SIZE_DEFAULT,
             line_spacing: LineSpacing::default(),
             margin: ScreenMargin::default(),
+            alignment: ParagraphAlignment::default(),
             paragraph_indent: PARAGRAPH_INDENT_DEFAULT,
             paragraph_spacing: true,
             embedded_style: true,
@@ -260,6 +340,7 @@ impl Default for TextSettings {
 pub(crate) enum TextSetting {
     FontSize,
     LineSpacing,
+    ParagraphAlignment,
     ScreenMargin,
     ParagraphIndent,
     ParagraphSpacing,
@@ -267,9 +348,10 @@ pub(crate) enum TextSetting {
 }
 
 impl TextSetting {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::FontSize,
         Self::LineSpacing,
+        Self::ParagraphAlignment,
         Self::ScreenMargin,
         Self::ParagraphIndent,
         Self::ParagraphSpacing,
@@ -284,6 +366,7 @@ impl TextSetting {
         match self {
             Self::FontSize => "Font Size",
             Self::LineSpacing => "Line Spacing",
+            Self::ParagraphAlignment => "Paragraph Alignment",
             Self::ScreenMargin => "Screen Margin",
             Self::ParagraphIndent => "Paragraph Indentation",
             Self::ParagraphSpacing => "Extra Paragraph Spacing",
@@ -302,6 +385,7 @@ impl TextSetting {
         match self {
             Self::FontSize => text.font_size.to_string(),
             Self::LineSpacing => String::from(text.line_spacing.label()),
+            Self::ParagraphAlignment => String::from(text.alignment.label()),
             Self::ScreenMargin => text.margin.px().to_string(),
             Self::ParagraphIndent => indent_label(text.paragraph_indent),
             Self::ParagraphSpacing => String::from(on_off(text.paragraph_spacing)),
@@ -316,6 +400,10 @@ impl TextSetting {
             Self::LineSpacing => LineSpacing::ALL
                 .iter()
                 .map(|spacing| String::from(spacing.label()))
+                .collect(),
+            Self::ParagraphAlignment => ParagraphAlignment::ALL
+                .iter()
+                .map(|alignment| String::from(alignment.label()))
                 .collect(),
             Self::ScreenMargin => margins().map(|margin| format!("{}", margin.px())).collect(),
             Self::ParagraphIndent => (0..=PARAGRAPH_INDENT_MAX).map(indent_label).collect(),
@@ -333,6 +421,9 @@ impl TextSetting {
             Self::LineSpacing => LineSpacing::ALL
                 .iter()
                 .position(|&spacing| spacing == text.line_spacing),
+            Self::ParagraphAlignment => ParagraphAlignment::ALL
+                .iter()
+                .position(|&alignment| alignment == text.alignment),
             Self::ScreenMargin => margins().position(|margin| margin == text.margin),
             Self::ParagraphIndent => Some(usize::from(text.paragraph_indent)),
             Self::ParagraphSpacing => Some(usize::from(text.paragraph_spacing)),
@@ -348,6 +439,9 @@ impl TextSetting {
                 line_spacing: *LineSpacing::ALL.get(index)?,
                 ..text
             }),
+            Self::ParagraphAlignment => {
+                Some(text.with_alignment(*ParagraphAlignment::ALL.get(index)?))
+            }
             Self::ScreenMargin => Some(TextSettings {
                 margin: margins().nth(index)?,
                 ..text

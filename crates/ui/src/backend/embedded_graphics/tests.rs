@@ -633,6 +633,42 @@ fn embedded_graphics_backend_draws_text_through_font_resources() {
     assert!(has_black_pixel);
 }
 
+fn text_run_ink_columns(word_spacing: Pixels) -> impl Iterator<Item = i32> {
+    let mut display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut resources = test_resources::<0>();
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
+
+        painter
+            .draw_text_run(
+                &mut resources,
+                "A A",
+                Rect::new(Point::ZERO, Size::new(px(40), px(10))),
+                ResolvedTextStyle {
+                    word_spacing,
+                    ..ResolvedTextStyle::default()
+                },
+                None,
+            )
+            .unwrap();
+    }
+
+    (0..64).filter(move |&x| {
+        (0..10).any(|y| display.get_pixel(EgPoint::new(x, y)) == Some(Rgb888::new(0, 0, 0)))
+    })
+}
+
+#[test]
+fn text_run_word_spacing_widens_each_space() {
+    // the second glyph starts one 6 px glyph and one 6 px space in
+    let natural = text_run_ink_columns(px(0)).filter(|&x| x >= 6).min();
+    let spaced = text_run_ink_columns(px(10)).filter(|&x| x >= 6).min();
+
+    assert!(natural.is_some());
+    assert_eq!(spaced, natural.map(|x| x + 10));
+}
+
 #[test]
 fn alpha_blending_preserves_coverage_endpoints() {
     let black = Rgb888::new(0, 0, 0);

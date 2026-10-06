@@ -291,6 +291,12 @@ macro_rules! inkpaper_style_schema {
                             text_center => TextAlign::Center;
                             text_end => TextAlign::End;
                         },
+
+                        // extra advance after each U+0020 space. Only text runs
+                        // apply it, since their layout was decided by the caller
+                        word_spacing: Pixels = px(0) => {
+                            word_spacing(spacing: impl Into<Pixels>) => spacing.into();
+                        },
                     }
                 }
             }

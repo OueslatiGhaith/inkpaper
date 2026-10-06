@@ -1,8 +1,9 @@
 use embedded_graphics::{pixelcolor::Rgb888 as EgRgb888, prelude::DrawTarget as EgDrawTarget};
 
 use crate::{
-    FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
-    ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
+    FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont, ResolvedTextStyle,
+    ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
+    backend::WordSpacing,
     px,
     resources::RuntimeResources,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
@@ -136,6 +137,7 @@ where
                 clip,
                 coverage_mode,
                 &mut pen_x,
+                WordSpacing::NONE,
             ) {
                 error = Some(draw_error);
                 return;
@@ -203,6 +205,7 @@ where
         clip,
         coverage_mode,
         &mut pen_x,
+        WordSpacing::new(text, style.word_spacing),
     )
 }
 
@@ -223,6 +226,7 @@ fn draw_shaped_run<
     clip: Rect,
     coverage_mode: CoverageMode<D>,
     pen_x: &mut Pixels,
+    word_spacing: WordSpacing<'_>,
 ) -> Result<(), EmbeddedGraphicsError<D::Error>>
 where
     D: EgDrawTarget,
@@ -243,7 +247,7 @@ where
 
         draw_coverage_bitmap(target, &bitmap, origin, color, clip, coverage_mode)?;
 
-        *pen_x += shaped.advance();
+        *pen_x += shaped.advance() + word_spacing.after(shaped);
     }
 
     Ok(())

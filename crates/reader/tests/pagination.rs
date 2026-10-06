@@ -6,8 +6,8 @@ use inkpaper_epub::{
     SpineIndex,
 };
 use inkpaper_reader::{
-    ImageMeasurer, PageItem, PageRange, ReaderSettings, Rect, TextMeasurer, TextStyle, Viewport,
-    paginate_chapter,
+    ImageMeasurer, PageItem, PageRange, ReaderSettings, Rect, TextAlign, TextMeasurer, TextStyle,
+    Viewport, paginate_chapter,
 };
 
 #[derive(Default)]
@@ -859,8 +859,9 @@ fn css_text_indent_applies_only_to_first_line_of_block() {
 
     assert_eq!(texts.len(), 2);
 
-    assert_eq!(texts[0].text(), "one ");
-    assert_eq!(texts[0].bounds(), Rect::new(3, 0, 4, 1));
+    // the space ending the line takes no room
+    assert_eq!(texts[0].text(), "one");
+    assert_eq!(texts[0].bounds(), Rect::new(3, 0, 3, 1));
 
     assert_eq!(texts[1].text(), "two");
 
@@ -1133,4 +1134,139 @@ fn extra_block_spacing_adds_half_a_line_between_blocks() {
         settings.with_extra_block_spacing(true),
     );
     assert_eq!(bounds, [Rect::new(0, 1, 3, 1), Rect::new(0, 7, 3, 1)]);
+}
+
+/// each text fragment of the first page, with its bounds and word spacing
+fn line_fragments(body: &str, settings: ReaderSettings) -> Vec<(String, Rect, u32)> {
+    let bytes = build_test_epub(body);
+
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+
+    let chapter = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+
+    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+    let mut measurer = MonoMeasurer::default();
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(20, 40).unwrap(),
+        settings,
+        &mut measurer,
+    )
+    .unwrap();
+
+    pagination.pages()[0]
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            PageItem::Text(text) => Some((text.text().into(), text.bounds(), text.word_spacing())),
+            PageItem::Image(_) => None,
+        })
+        .collect()
+}
+
+fn fragment(text: &str, bounds: Rect, word_spacing: u32) -> (String, Rect, u32) {
+    (text.into(), bounds, word_spacing)
+}
+
+#[test]
+fn justified_lines_spread_their_spare_width_over_the_gaps() {
+    let settings = ReaderSettings::new(1, 0)
+        .unwrap()
+        .with_paragraph_align(TextAlign::Justify);
+
+    // the first line is 18 wide with 3 gaps, so its first 2 gaps take one
+    // more pixel each. The paragraph's last line keeps its natural spacing
+    assert_eq!(
+        line_fragments("<p>one two three four five six</p>", settings),
+        [
+            fragment("one two three", Rect::new(0, 0, 15, 1), 1),
+            fragment(" four", Rect::new(15, 0, 5, 1), 0),
+            fragment("five six", Rect::new(0, 1, 8, 1), 0),
+        ],
+    );
+}
+
+#[test]
+fn justification_skips_lines_before_breaks_and_single_word_lines() {
+    let settings = ReaderSettings::new(1, 0)
+        .unwrap()
+        .with_paragraph_align(TextAlign::Justify);
+
+    assert_eq!(
+        line_fragments("<p>one two<br/>three</p>", settings),
+        [
+            fragment("one two", Rect::new(0, 0, 7, 1), 0),
+            fragment("three", Rect::new(0, 1, 5, 1), 0),
+        ],
+    );
+
+    assert_eq!(
+        line_fragments("<p>abcdefghijklmnop qrstu</p>", settings),
+        [
+            fragment("abcdefghijklmnop", Rect::new(0, 0, 16, 1), 0),
+            fragment("qrstu", Rect::new(0, 1, 5, 1), 0),
+        ],
+    );
+}
+
+#[test]
+fn paragraph_align_setting_overrides_the_book_but_not_headings() {
+    let settings = ReaderSettings::new(1, 0)
+        .unwrap()
+        .with_paragraph_align(TextAlign::Left);
+
+    let bounds = line_bounds(r#"<p style="text-align: center">one</p>"#, settings);
+    assert_eq!(bounds, [Rect::new(0, 0, 3, 1)]);
+
+    let bounds = line_bounds(r#"<li style="text-align: right">one</li>"#, settings);
+    assert_eq!(bounds, [Rect::new(0, 0, 3, 1)]);
+
+    let bounds = line_bounds(r#"<h1 style="text-align: center">one</h1>"#, settings);
+    assert_eq!(bounds, [Rect::new(8, 0, 3, 1)]);
+}
+
+#[test]
+fn undeclared_paragraph_align_applies_where_the_book_sets_none() {
+    let settings = ReaderSettings::new(1, 0)
+        .unwrap()
+        .with_undeclared_paragraph_align(TextAlign::Justify);
+
+    let fragments = line_fragments("<p>one two three four five six</p>", settings);
+    assert_eq!(
+        fragments[0],
+        fragment("one two three", Rect::new(0, 0, 15, 1), 1)
+    );
+
+    let fragments = line_fragments(
+        r#"<p style="text-align: left">one two three four five six</p>"#,
+        settings,
+    );
+    assert_eq!(
+        fragments[0],
+        fragment("one two three four", Rect::new(0, 0, 18, 1), 0)
+    );
+}
+
+#[test]
+fn spaces_ending_a_line_do_not_shift_its_alignment() {
+    let settings = ReaderSettings::new(1, 0).unwrap();
+
+    let fragments = line_fragments(
+        r#"<p style="text-align: right">one two three four five six</p>"#,
+        settings,
+    );
+
+    assert_eq!(
+        fragments,
+        [
+            fragment("one two three four", Rect::new(2, 0, 18, 1), 0),
+            fragment("five six", Rect::new(12, 1, 8, 1), 0),
+        ],
+    );
 }
