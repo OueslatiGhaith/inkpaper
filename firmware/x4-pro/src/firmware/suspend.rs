@@ -3,7 +3,6 @@ use embedded_hal_async::delay::DelayNs;
 use epd_bus::EpdInterface;
 use inkpaper_app::{AppService, InkPaperApp};
 use inkpaper_ui::prelude::*;
-use xteink_display_probe::ProbeIo;
 
 use crate::firmware::{
     display::{X4Panel, power::DisplayPowerManager},
@@ -116,6 +115,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn prepare_sleep_screen<B, D>(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,

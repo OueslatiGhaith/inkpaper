@@ -60,9 +60,6 @@ struct RenderedFrame {
     physical_damage: Region,
     eink_report: EInkPaintReport,
     paint_report: PaintReport,
-
-    #[cfg(feature = "trace")]
-    framebuffer_draw_iter_pixels: u64,
 }
 
 impl RenderedFrame {
@@ -79,15 +76,6 @@ pub enum PresentationMode {
     Binary,
     BinaryPreservingGray,
     Gray4,
-}
-
-impl PresentationMode {
-    pub const fn tone(self) -> EInkTone {
-        match self {
-            Self::Binary | Self::BinaryPreservingGray => EInkTone::Binary,
-            Self::Gray4 => EInkTone::Gray4,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,14 +125,6 @@ impl FrameUpdate {
 
     pub const fn presentation(self) -> PresentationMode {
         self.presentation
-    }
-
-    pub const fn presentation_tone(self) -> EInkTone {
-        self.presentation.tone()
-    }
-
-    pub const fn paint_report(self) -> PaintReport {
-        self.paint_report
     }
 
     pub const fn is_full_damage(self) -> bool {
@@ -477,9 +457,6 @@ fn render_invalidation(
         physical_damage,
         eink_report,
         paint_report,
-
-        #[cfg(feature = "trace")]
-        framebuffer_draw_iter_pixels,
     })
 }
 
@@ -588,14 +565,12 @@ fn make_frame_update(
     refresh: RefreshRequest,
     presentation: PresentationMode,
 ) -> FrameUpdate {
-    let update = FrameUpdate::new(
+    FrameUpdate::new(
         rendered.frame_id,
         refresh,
         rendered.physical_damage,
         rendered.eink_report,
         presentation,
         rendered.paint_report,
-    );
-
-    update
+    )
 }

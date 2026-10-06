@@ -9,7 +9,7 @@ mod types;
 pub use mount::storage_task;
 
 pub use service::{
-    enter_usb_drive_and_wait, list_directory_and_wait, list_root_and_wait, load_state_and_wait,
+    enter_usb_drive_and_wait, list_directory_and_wait, load_state_and_wait,
     open_random_access_and_wait, read_random_access_and_wait, save_state_and_wait,
     shutdown_and_wait, wait_ready,
 };

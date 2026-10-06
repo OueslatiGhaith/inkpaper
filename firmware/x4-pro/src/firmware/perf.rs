@@ -449,52 +449,6 @@ fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RenderTimings {
-    pub(crate) rebuild_cycles: u32,
-    pub(crate) layout_cycles: u32,
-    pub(crate) clear_cycles: u32,
-    pub(crate) paint_cycles: u32,
-    pub(crate) damage_cycles: u32,
-}
-
-pub(crate) fn record_render_metrics(timings: RenderTimings) {
-    inkpaper_trace::gauge!(
-        target: "ui.render",
-        "rebuild_cycles",
-        timings.rebuild_cycles,
-        unit: "cycles",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.render",
-        "layout_cycles",
-        timings.layout_cycles,
-        unit: "cycles",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.render",
-        "clear_cycles",
-        timings.clear_cycles,
-        unit: "cycles",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.render",
-        "paint_cycles",
-        timings.paint_cycles,
-        unit: "cycles",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.render",
-        "damage_cycles",
-        timings.damage_cycles,
-        unit: "cycles",
-    );
-}
-
 pub(crate) fn record_present_metrics(metrics: PresentMetrics) {
     inkpaper_trace::gauge!(
         target: "display.present",

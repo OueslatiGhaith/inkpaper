@@ -62,24 +62,12 @@ impl EInkCapabilities {
         }
     }
 
-    pub const fn binary_update(self) -> BinaryUpdateMode {
-        self.binary_update
-    }
-
     pub const fn binary_over_gray(self) -> BinaryOverGrayMode {
         self.binary_over_gray
     }
 
-    pub const fn grayscale_update(self) -> GrayscaleUpdateMode {
-        self.grayscale_update
-    }
-
     pub const fn supports_partial_grayscale(self) -> bool {
         matches!(self.grayscale_update, GrayscaleUpdateMode::Window)
-    }
-
-    pub const fn can_binary_update_over_grayscale(self) -> bool {
-        !matches!(self.binary_over_gray, BinaryOverGrayMode::Unsupported)
     }
 }
 
@@ -156,29 +144,26 @@ impl RefreshPolicy {
             // periodically re-establish the panel using the complete waveform, regardless
             // of whether the current content is binary or grayscale.
             RefreshRequest::Full
-        } else if context.binary_differential_eligible() {
+        } else if context.binary_differential_eligible() || context.grayscale_window_eligible() {
             // DTM1/controller state already represents the preceding binary frame.
             // A complete repaint does not require a complete waveform:
             // the controller can transition previous -> current with FAST.
-            RefreshRequest::Fast
-        } else if context.grayscale_window_eligible() {
+            //
             // once a valid grayscale baseline exists, large/full Gray4 damage is still
             // eligible for the controller's fast grayscale path.
             RefreshRequest::Fast
-        } else if context.full_damage {
-            RefreshRequest::Full
-        } else if ratio_at_least(
-            context.damaged_pixels,
-            context.total_pixels,
-            LARGE_DAMAGE_PERCENT,
-        ) {
-            RefreshRequest::Full
-        } else if context.continuous_tone_images
-            && ratio_at_least(
+        } else if context.full_damage
+            || ratio_at_least(
                 context.damaged_pixels,
                 context.total_pixels,
-                CONTINUOUS_TONE_DAMAGE_PERCENT,
+                LARGE_DAMAGE_PERCENT,
             )
+            || (context.continuous_tone_images
+                && ratio_at_least(
+                    context.damaged_pixels,
+                    context.total_pixels,
+                    CONTINUOUS_TONE_DAMAGE_PERCENT,
+                ))
         {
             RefreshRequest::Full
         } else {
@@ -192,10 +177,6 @@ impl RefreshPolicy {
 
     pub(crate) fn record_full_refresh(&mut self) {
         self.record(RefreshRequest::Full);
-    }
-
-    pub(crate) const fn consecutive_fast_refreshes(&self) -> u8 {
-        self.consecutive_fast_refreshes
     }
 
     fn record(&mut self, request: RefreshRequest) {

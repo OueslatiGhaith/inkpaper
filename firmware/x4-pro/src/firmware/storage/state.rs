@@ -1,4 +1,4 @@
-use alloc::{format, string::String, vec::Vec};
+use alloc::{format, string::String, vec, vec::Vec};
 
 use defmt::{info, warn};
 use hadris_fat::r#async::{FatVolume, FatVolumeWriteExt};
@@ -45,8 +45,7 @@ where
         return Err(StorageError::StateTooLarge);
     }
 
-    let mut bytes = Vec::new();
-    bytes.resize(size, 0);
+    let mut bytes = vec![0; size];
 
     let mut read = 0usize;
 

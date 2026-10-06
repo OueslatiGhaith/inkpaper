@@ -1,3 +1,7 @@
+// `storage_task` takes every SD and USB peripheral, and embassy's task macro doesn't
+// forward an `allow` to the function it generates
+#![allow(clippy::too_many_arguments)]
+
 use aligned::{A4, Aligned};
 use block_device_driver::BlockDevice as RawBlockDevice;
 use defmt::{Debug2Format, debug, error, info, warn};

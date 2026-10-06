@@ -8,7 +8,7 @@ use hadris_fat::r#async::FatVolume;
 use hadris_io::r#async::{Read as HadrisRead, Seek as HadrisSeek, Write as HadrisWrite};
 
 use super::{
-    filesystem::{list_directory, list_root},
+    filesystem::list_directory,
     random_access::OpenRandomAccessFile,
     state::{load_state, save_state},
     types::{
@@ -22,8 +22,6 @@ const COMMAND_CAPACITY: usize = 4;
 static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = Channel::new();
 
 static READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
-
-static ROOT_LIST_DONE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 static SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
@@ -55,8 +53,6 @@ pub(super) enum FilesystemExit {
 
 #[derive(Debug)]
 enum Command {
-    ListRoot,
-
     ListDirectory(String),
 
     OpenRandomAccess(String),
@@ -84,12 +80,6 @@ enum Command {
 
 pub async fn wait_ready() -> bool {
     READY.wait().await
-}
-
-pub async fn list_root_and_wait() -> bool {
-    ROOT_LIST_DONE.reset();
-    COMMANDS.send(Command::ListRoot).await;
-    ROOT_LIST_DONE.wait().await
 }
 
 pub async fn list_directory_and_wait(path: &str) -> Result<Vec<StorageEntry>, StorageError> {
@@ -196,11 +186,6 @@ where
 
     loop {
         match COMMANDS.receive().await {
-            Command::ListRoot => {
-                let success = list_root(filesystem).await;
-                ROOT_LIST_DONE.signal(success);
-            }
-
             Command::ListDirectory(path) => {
                 let result = list_directory(filesystem, &path).await;
                 DIRECTORY_LIST_DONE.signal(result);
@@ -282,7 +267,6 @@ pub(super) async fn serve_unavailable_requests() {
 
     loop {
         match COMMANDS.receive().await {
-            Command::ListRoot => ROOT_LIST_DONE.signal(false),
             Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(Err(StorageError::Unavailable)),
             Command::OpenRandomAccess(_) => {
                 RANDOM_ACCESS_OPEN_DONE.signal(Err(StorageError::Unavailable));
@@ -314,10 +298,6 @@ fn next_handle(last: &mut u32) -> u32 {
 pub(super) async fn serve_usb_drive_requests() {
     loop {
         match COMMANDS.receive().await {
-            Command::ListRoot => {
-                ROOT_LIST_DONE.signal(false);
-            }
-
             Command::ListDirectory(_) => {
                 DIRECTORY_LIST_DONE.signal(Err(StorageError::Unavailable));
             }

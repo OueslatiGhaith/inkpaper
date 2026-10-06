@@ -36,15 +36,12 @@ impl FramebufferStorage {
         }
     }
 
-    pub fn clear_white(&mut self) {
-        self.lsb.fill(0xff);
-        self.msb.fill(0xff);
-    }
-
+    #[cfg(test)]
     pub fn lsb(&self) -> &[u8] {
         &self.lsb
     }
 
+    #[cfg(test)]
     pub fn msb(&self) -> &[u8] {
         &self.msb
     }
@@ -62,66 +59,13 @@ impl FramebufferStorage {
     pub fn has_grayscale(&self) -> bool {
         self.lsb != self.msb
     }
-
-    pub fn has_grayscale_in(&self, region: Region) -> bool {
-        let Some(region) = region.clip_to(PHYSICAL_WIDTH as u16, PHYSICAL_HEIGHT as u16) else {
-            return false;
-        };
-
-        let x_start = region.x as usize;
-        let x_end = x_start + region.width as usize;
-
-        let first_byte = x_start / 8;
-        let last_byte = (x_end - 1) / 8;
-
-        let first_offset = x_start % 8;
-        let last_offset = (x_end - 1) % 8;
-
-        let first_mask = 0xffu8 >> first_offset;
-        let last_mask = 0xffu8 << (7 - last_offset);
-
-        for y in region.y as usize..region.y as usize + region.height as usize {
-            let row_start = y * PHYSICAL_STRIDE;
-
-            if first_byte == last_byte {
-                let mask = first_mask & last_mask;
-                let index = row_start + first_byte;
-
-                if (self.lsb[index] ^ self.msb[index]) & mask != 0 {
-                    return true;
-                }
-
-                continue;
-            }
-
-            let first_index = row_start + first_byte;
-
-            if (self.lsb[first_index] ^ self.msb[first_index]) & first_mask != 0 {
-                return true;
-            }
-
-            for byte in first_byte + 1..last_byte {
-                let index = row_start + byte;
-
-                if self.lsb[index] != self.msb[index] {
-                    return true;
-                }
-            }
-
-            let last_index = row_start + last_byte;
-
-            if (self.lsb[last_index] ^ self.msb[last_index]) & last_mask != 0 {
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Orientation {
     Portrait,
+    // nothing selects it yet, but the blitter and its tests already handle it
+    #[allow(dead_code)]
     PortraitInverted,
 }
 
@@ -239,14 +183,6 @@ impl<'a> Framebuffer<'a> {
         }
     }
 
-    pub const fn orientation(&self) -> Orientation {
-        self.orientation
-    }
-
-    pub fn set_orientation(&mut self, orientation: Orientation) {
-        self.orientation = orientation;
-    }
-
     #[cfg(feature = "trace")]
     pub const fn coverage_blitter_calls(&self) -> u64 {
         self.coverage_blitter_calls
@@ -262,37 +198,11 @@ impl<'a> Framebuffer<'a> {
         self.coverage_blitter_cycles
     }
 
-    pub fn clear_white(&mut self) {
-        self.storage.lsb.fill(0xff);
-        self.storage.msb.fill(0xff);
-    }
-
     pub fn physical_damage_region(&self, logical: Region) -> Option<Region> {
         let logical = logical.clip_to(LOGICAL_WIDTH as u16, LOGICAL_HEIGHT as u16)?;
         let physical = self.orientation.map_region(logical);
 
         Some(physical.align_x_to_byte())
-    }
-
-    pub fn get_pixel(&self, point: Point) -> Option<Gray2> {
-        if !contains_logical_pixel(point) {
-            return None;
-        }
-
-        let x = point.x as u16;
-        let y = point.y as u16;
-
-        let (physical_x, physical_y) = self.orientation.map_point(x, y);
-
-        let index = physical_y as usize * PHYSICAL_STRIDE + physical_x as usize / 8;
-        let mask = 0x80u8 >> (physical_x as usize % 8);
-
-        let lsb = self.storage.lsb[index] & mask != 0;
-        let msb = self.storage.msb[index] & mask != 0;
-
-        let level = u8::from(lsb) | (u8::from(msb) << 1);
-
-        Some(Gray2::new(level))
     }
 
     fn set_pixel(&mut self, x: u16, y: u16, color: Gray2) {

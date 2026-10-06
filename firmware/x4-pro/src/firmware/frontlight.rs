@@ -28,17 +28,12 @@ const PWM_FULL_SCALE: u16 = 1023;
 const COMMAND_CAPACITY: usize = 4;
 
 static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = Channel::new();
-static READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static OFF_APPLIED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Command {
     Set(Setting),
     Off,
-}
-
-pub async fn wait_ready() {
-    READY.wait().await;
 }
 
 pub async fn set(setting: Setting) {
@@ -98,7 +93,6 @@ pub async fn frontlight_task(
         "frontlight ready cool_gpio=8 warm_gpio=9 frequency_khz={} resolution_bits=10",
         PWM_FREQUENCY_KHZ
     );
-    READY.signal(());
 
     loop {
         match COMMANDS.receive().await {
