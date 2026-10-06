@@ -1,7 +1,7 @@
 use alloc::{string::String, vec::Vec};
 
 use inkpaper_epub::{
-    BookLocation, ContentOffset, Epub, EpubSource, Error as EpubError, SpineIndex,
+    BookLocation, ChapterStyles, ContentOffset, Epub, EpubSource, Error as EpubError, SpineIndex,
 };
 use inkpaper_reader::{ReadingPosition, paginate_chapter};
 use inkpaper_trace::{async_span, span};
@@ -407,9 +407,13 @@ where
             spine = index,
         );
 
-        epub.load_chapter_styles(&chapter)
-            .await
-            .map_err(ReaderLoadError::Epub)?
+        if text.embedded_style() {
+            epub.load_chapter_styles(&chapter)
+                .await
+                .map_err(ReaderLoadError::Epub)?
+        } else {
+            ChapterStyles::defaults(&chapter)
+        }
     };
 
     let loaded_images = {

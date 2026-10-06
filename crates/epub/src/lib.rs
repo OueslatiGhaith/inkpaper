@@ -248,7 +248,7 @@ where
             }
         }
 
-        Ok(resolve_chapter_styles(chapter, &stylesheet))
+        Ok(resolve_chapter_styles(chapter, Some(&stylesheet)))
     }
 
     pub async fn image_dimensions(

@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{LineSpacing, ScreenMargin, TextSettings};
 
-const STORAGE_VERSION: u8 = 3;
+const STORAGE_VERSION: u8 = 4;
+
+/// version 3 had no embedded style setting
+const STORAGE_VERSION_NO_EMBEDDED_STYLE: u8 = 3;
 
 /// version 2 had no paragraph settings
 const STORAGE_VERSION_NO_PARAGRAPHS: u8 = 2;
@@ -34,6 +37,7 @@ impl ReaderPreferences {
             margin: self.text.margin().px(),
             paragraph_indent: self.text.paragraph_indent(),
             paragraph_spacing: self.text.paragraph_spacing(),
+            embedded_style: self.text.embedded_style(),
         };
 
         postcard::to_allocvec(&stored).map_err(|_| ReaderPreferencesError::Encode)
@@ -47,6 +51,20 @@ impl ReaderPreferences {
         let stored = match bytes.first() {
             Some(&STORAGE_VERSION) => take_all::<StoredReaderPreferences>(bytes)?,
 
+            Some(&STORAGE_VERSION_NO_EMBEDDED_STYLE) => {
+                let stored = take_all::<StoredNoEmbeddedStyle>(bytes)?;
+
+                StoredReaderPreferences {
+                    version: stored.version,
+                    font_size: stored.font_size,
+                    line_spacing: stored.line_spacing,
+                    margin: stored.margin,
+                    paragraph_indent: stored.paragraph_indent,
+                    paragraph_spacing: stored.paragraph_spacing,
+                    embedded_style: defaults.embedded_style(),
+                }
+            }
+
             Some(&STORAGE_VERSION_NO_PARAGRAPHS) => {
                 let stored = take_all::<StoredNoParagraphs>(bytes)?;
 
@@ -57,6 +75,7 @@ impl ReaderPreferences {
                     margin: stored.margin,
                     paragraph_indent: defaults.paragraph_indent(),
                     paragraph_spacing: defaults.paragraph_spacing(),
+                    embedded_style: defaults.embedded_style(),
                 }
             }
 
@@ -70,6 +89,7 @@ impl ReaderPreferences {
                     margin: defaults.margin().px(),
                     paragraph_indent: defaults.paragraph_indent(),
                     paragraph_spacing: defaults.paragraph_spacing(),
+                    embedded_style: defaults.embedded_style(),
                 }
             }
 
@@ -91,7 +111,8 @@ impl ReaderPreferences {
             .ok_or(ReaderPreferencesError::InvalidParagraphIndent(
                 stored.paragraph_indent,
             ))?
-            .with_paragraph_spacing(stored.paragraph_spacing);
+            .with_paragraph_spacing(stored.paragraph_spacing)
+            .with_embedded_style(stored.embedded_style);
 
         Ok(Self::new(text))
     }
@@ -128,6 +149,17 @@ pub enum ReaderPreferencesError {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredReaderPreferences {
+    version: u8,
+    font_size: u16,
+    line_spacing: u8,
+    margin: u8,
+    paragraph_indent: u8,
+    paragraph_spacing: bool,
+    embedded_style: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredNoEmbeddedStyle {
     version: u8,
     font_size: u16,
     line_spacing: u8,

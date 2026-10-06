@@ -219,6 +219,12 @@ pub struct ChapterStyles {
 }
 
 impl ChapterStyles {
+    /// The chapter's styles from its markup alone, such as bold headings and
+    /// italic `<em>`, ignoring the book's stylesheets and `style` attributes.
+    pub fn defaults(chapter: &Chapter) -> Self {
+        resolve_chapter_styles(chapter, None)
+    }
+
     pub fn style(&self, node: StyleNodeId) -> Option<ComputedStyle> {
         self.styles.get(node.index()).copied()
     }
@@ -274,7 +280,11 @@ struct CascadedStyle {
     display: Option<Candidate<DisplayValue>>,
 }
 
-pub(crate) fn resolve_chapter_styles(chapter: &Chapter, stylesheet: &Stylesheet) -> ChapterStyles {
+/// `None` leaves out the book's styles: its stylesheets and `style` attributes.
+pub(crate) fn resolve_chapter_styles(
+    chapter: &Chapter,
+    stylesheet: Option<&Stylesheet>,
+) -> ChapterStyles {
     let nodes = chapter.style_nodes();
     let mut styles = Vec::with_capacity(nodes.len());
 
@@ -304,7 +314,9 @@ pub(crate) fn resolve_chapter_styles(chapter: &Chapter, stylesheet: &Stylesheet)
 
         let mut cascade = CascadedStyle::default();
 
-        for rule in &stylesheet.rules {
+        let rules = stylesheet.map_or(&[][..], |stylesheet| &stylesheet.rules);
+
+        for rule in rules {
             if !rule.matches(node, nodes) {
                 continue;
             }
@@ -314,7 +326,7 @@ pub(crate) fn resolve_chapter_styles(chapter: &Chapter, stylesheet: &Stylesheet)
             }
         }
 
-        if let Some(inline) = node.inline_style() {
+        if let Some(inline) = node.inline_style().filter(|_| stylesheet.is_some()) {
             for declaration in parse_inline_declarations(inline) {
                 apply_declaration(&mut cascade, declaration, Specificity::INLINE, usize::MAX);
             }

@@ -23,8 +23,8 @@ New UI follows crosspoint/crossink's screens and layout.
 - [x] Text panel in the reader drawer, with crosspoint's option picker
 - [x] paragraph indent
 - [x] paragraph spacing
+- [x] Embedded Style switch for the book's own CSS
 - [ ] text alignment (book default/left/justified)
-- [ ] option to override the book's CSS with these settings
 - [ ] full Text Settings screen (Font | Size | Layout | Style tabs with a live preview)
 
 ## Hyphenation: if it doesn't cost too much

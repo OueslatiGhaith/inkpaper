@@ -11,7 +11,7 @@ fn resolve_embedded(chapter: &Chapter) -> ChapterStyles {
         }
     }
 
-    resolve_chapter_styles(chapter, &stylesheet)
+    resolve_chapter_styles(chapter, Some(&stylesheet))
 }
 
 fn text_style(chapter: &Chapter, styles: &ChapterStyles, text: &str) -> ComputedStyle {
@@ -320,4 +320,59 @@ fn css_ignores_unsupported_selectors_without_dropping_the_rest_of_the_list() {
         text_style(&chapter, &styles, "text").font_weight(),
         FontWeight::Bold
     );
+}
+
+#[test]
+fn default_styles_ignore_the_book_stylesheet_and_style_attributes() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <style>
+            p {
+                font-style: italic;
+                text-align: center;
+                text-indent: 2em;
+                margin-bottom: 1em;
+            }
+
+            .hidden {
+                display: none;
+            }
+        </style>
+    </head>
+
+    <body>
+        <p style="font-weight: bold">plain <em>emphasis</em> <strong>strong</strong></p>
+        <h2>heading</h2>
+        <p class="hidden">shown</p>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+
+    let styles = ChapterStyles::defaults(&chapter);
+
+    let plain = text_style(&chapter, &styles, "plain ");
+
+    assert_eq!(plain.font_weight(), FontWeight::Normal);
+    assert_eq!(plain.font_style(), FontStyle::Normal);
+    assert_eq!(plain.text_align(), TextAlign::Start);
+    assert_eq!(plain.margin_bottom(), None);
+
+    // the markup's own meaning stays
+    assert_eq!(
+        text_style(&chapter, &styles, "emphasis").font_style(),
+        FontStyle::Italic
+    );
+    assert_eq!(
+        text_style(&chapter, &styles, "strong").font_weight(),
+        FontWeight::Bold
+    );
+    assert_eq!(
+        text_style(&chapter, &styles, "heading").font_weight(),
+        FontWeight::Bold
+    );
+
+    assert!(!text_style(&chapter, &styles, "shown").hidden());
 }

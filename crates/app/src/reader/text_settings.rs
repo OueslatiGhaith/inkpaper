@@ -146,6 +146,8 @@ pub(crate) struct TextSettings {
     paragraph_indent: u8,
     /// half a line after every paragraph, like crosspoint's extra spacing
     paragraph_spacing: bool,
+    /// whether the book's own CSS applies, like crosspoint's embedded style
+    embedded_style: bool,
 }
 
 impl TextSettings {
@@ -164,6 +166,7 @@ impl TextSettings {
             margin,
             paragraph_indent: PARAGRAPH_INDENT_DEFAULT,
             paragraph_spacing: true,
+            embedded_style: true,
         })
     }
 
@@ -185,6 +188,17 @@ impl TextSettings {
 
     pub(crate) const fn paragraph_spacing(self) -> bool {
         self.paragraph_spacing
+    }
+
+    pub(crate) const fn embedded_style(self) -> bool {
+        self.embedded_style
+    }
+
+    pub(crate) const fn with_embedded_style(self, embedded_style: bool) -> Self {
+        Self {
+            embedded_style,
+            ..self
+        }
     }
 
     pub(crate) const fn with_font_size(self, font_size: u16) -> Option<Self> {
@@ -235,6 +249,7 @@ impl Default for TextSettings {
             margin: ScreenMargin::default(),
             paragraph_indent: PARAGRAPH_INDENT_DEFAULT,
             paragraph_spacing: true,
+            embedded_style: true,
         }
     }
 }
@@ -248,15 +263,17 @@ pub(crate) enum TextSetting {
     ScreenMargin,
     ParagraphIndent,
     ParagraphSpacing,
+    EmbeddedStyle,
 }
 
 impl TextSetting {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::FontSize,
         Self::LineSpacing,
         Self::ScreenMargin,
         Self::ParagraphIndent,
         Self::ParagraphSpacing,
+        Self::EmbeddedStyle,
     ];
 
     pub(crate) fn from_index(index: usize) -> Option<Self> {
@@ -270,13 +287,14 @@ impl TextSetting {
             Self::ScreenMargin => "Screen Margin",
             Self::ParagraphIndent => "Paragraph Indentation",
             Self::ParagraphSpacing => "Extra Paragraph Spacing",
+            Self::EmbeddedStyle => "Embedded Style",
         }
     }
 
     /// Whether a tap flips the setting instead of opening a picker, like
     /// crosspoint's checkbox rows.
     pub(crate) const fn is_toggle(self) -> bool {
-        matches!(self, Self::ParagraphSpacing)
+        matches!(self, Self::ParagraphSpacing | Self::EmbeddedStyle)
     }
 
     /// The setting's value in `text`, as its row shows it.
@@ -287,6 +305,7 @@ impl TextSetting {
             Self::ScreenMargin => text.margin.px().to_string(),
             Self::ParagraphIndent => indent_label(text.paragraph_indent),
             Self::ParagraphSpacing => String::from(on_off(text.paragraph_spacing)),
+            Self::EmbeddedStyle => String::from(on_off(text.embedded_style)),
         }
     }
 
@@ -300,7 +319,7 @@ impl TextSetting {
                 .collect(),
             Self::ScreenMargin => margins().map(|margin| format!("{}", margin.px())).collect(),
             Self::ParagraphIndent => (0..=PARAGRAPH_INDENT_MAX).map(indent_label).collect(),
-            Self::ParagraphSpacing => [false, true]
+            Self::ParagraphSpacing | Self::EmbeddedStyle => [false, true]
                 .iter()
                 .map(|&on| String::from(on_off(on)))
                 .collect(),
@@ -317,6 +336,7 @@ impl TextSetting {
             Self::ScreenMargin => margins().position(|margin| margin == text.margin),
             Self::ParagraphIndent => Some(usize::from(text.paragraph_indent)),
             Self::ParagraphSpacing => Some(usize::from(text.paragraph_spacing)),
+            Self::EmbeddedStyle => Some(usize::from(text.embedded_style)),
         }
     }
 
@@ -338,6 +358,11 @@ impl TextSetting {
                 1 => Some(text.with_paragraph_spacing(true)),
                 _ => None,
             },
+            Self::EmbeddedStyle => match index {
+                0 => Some(text.with_embedded_style(false)),
+                1 => Some(text.with_embedded_style(true)),
+                _ => None,
+            },
         }
     }
 
@@ -345,6 +370,7 @@ impl TextSetting {
     pub(crate) fn toggle(self, text: TextSettings) -> Option<TextSettings> {
         match self {
             Self::ParagraphSpacing => Some(text.with_paragraph_spacing(!text.paragraph_spacing)),
+            Self::EmbeddedStyle => Some(text.with_embedded_style(!text.embedded_style)),
             _ => None,
         }
     }
