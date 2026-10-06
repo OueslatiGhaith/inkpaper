@@ -29,7 +29,7 @@ use inkpaper_ui::{
 /// the reader's font. Keep in sync with `crates/app/src/typography.rs`
 static READER_FONT: TtfFont<'static> = TtfFont::from_data(
     FontData::new(include_bytes!(
-        "../../../../crates/app/assets/fonts/InterVariable.ttf"
+        "../../../../crates/app/assets/fonts/Libron-Regular.ttf"
     )),
     0,
 );

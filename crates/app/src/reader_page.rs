@@ -3,7 +3,7 @@ use inkpaper_reader::{
 };
 use inkpaper_ui::prelude::*;
 
-use crate::ReaderDocument;
+use crate::{ReaderDocument, typography::READER_FAMILY};
 
 pub(crate) fn paint_reader_page(
     page: &Page<'static>,
@@ -25,6 +25,7 @@ fn paint_text_fragment(fragment: &TextFragment<'_>, paint: &mut PaintCx<'_>) {
     paint.draw_text_run(
         reader_rect(bounds),
         text(fragment.text())
+            .font_family(READER_FAMILY)
             .font_weight(reader_font_weight(style.font_weight()))
             .font_size(px(i32::from(style.font_size()))),
     );

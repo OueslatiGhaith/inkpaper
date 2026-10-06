@@ -1,22 +1,25 @@
 use inkpaper_epub::{ChapterImage, FontWeight as ReaderFontWeight, ImageDimensions};
 use inkpaper_reader::{ImageMeasurer, TextMeasurer, TextStyle as ReaderTextStyle};
 use inkpaper_ui::{
-    FontFamilyId, FontRegistry, FontRegistryError, FontWeight as UiFontWeight,
-    PreparedSimpleShaper, ResolvedFont, ShapeError, ShapedGlyph, SimpleShaper,
+    FontRegistry, FontRegistryError, FontWeight as UiFontWeight, PreparedSimpleShaper,
+    ResolvedFont, ShapeError, ShapedGlyph, SimpleShaper,
 };
 
-use crate::reader::{
-    images::ChapterImageMetrics,
-    measure_cache::{
-        READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES, ReaderMeasureCache,
-        ReaderMeasureCacheLookup,
+use crate::{
+    reader::{
+        images::ChapterImageMetrics,
+        measure_cache::{
+            READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES, ReaderMeasureCache,
+            ReaderMeasureCacheLookup,
+        },
     },
+    typography::{self, FONT_FACES, READER_FAMILY},
 };
 
 const READER_SHAPING_GLYPHS: usize = 128;
 
 pub(super) struct ReaderMeasurer {
-    fonts: FontRegistry<'static, 1>,
+    fonts: FontRegistry<'static, FONT_FACES>,
 
     normal_shaper: PreparedSimpleShaper<'static>,
     bold_shaper: PreparedSimpleShaper<'static>,
@@ -31,17 +34,15 @@ impl ReaderMeasurer {
     pub(super) fn new(images: ChapterImageMetrics) -> Result<Self, FontRegistryError> {
         let mut fonts = FontRegistry::default();
 
-        let family = fonts.register_family()?;
-
-        fonts.register_face(family, crate::typography::ui_font())?;
+        typography::register_in(&mut fonts)?;
 
         let normal_font = fonts
-            .resolve_family_weight(FontFamilyId::DEFAULT, UiFontWeight::NORMAL)
-            .expect("reader measurer always registers the UI font");
+            .resolve_family_weight(READER_FAMILY, UiFontWeight::NORMAL)
+            .expect("reader measurer always registers the reader fonts");
 
         let bold_font = fonts
-            .resolve_family_weight(FontFamilyId::DEFAULT, UiFontWeight::BOLD)
-            .expect("reader measurer always registers the UI font");
+            .resolve_family_weight(READER_FAMILY, UiFontWeight::BOLD)
+            .expect("reader measurer always registers the reader fonts");
 
         let normal_shaper = SimpleShaper::with_properties(normal_font.properties())
             .prepare(&fonts, normal_font.id());
@@ -66,8 +67,8 @@ impl ReaderMeasurer {
         };
 
         self.fonts
-            .resolve_family_weight(FontFamilyId::DEFAULT, weight)
-            .expect("reader measurer always registers the UI font")
+            .resolve_family_weight(READER_FAMILY, weight)
+            .expect("reader measurer always registers the reader fonts")
     }
 }
 
