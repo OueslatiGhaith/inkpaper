@@ -44,6 +44,8 @@ pub struct ReaderSettings {
     font_size: u16,
     block_spacing: u16,
     line_height_percent: Option<u16>,
+    paragraph_indent_spaces: Option<u8>,
+    extra_block_spacing: bool,
 }
 
 impl ReaderSettings {
@@ -56,6 +58,8 @@ impl ReaderSettings {
             font_size,
             block_spacing,
             line_height_percent: None,
+            paragraph_indent_spaces: None,
+            extra_block_spacing: false,
         })
     }
 
@@ -82,5 +86,31 @@ impl ReaderSettings {
 
     pub const fn line_height_percent(self) -> Option<u16> {
         self.line_height_percent
+    }
+
+    /// Indents the first line of start-aligned and justified paragraphs by
+    /// `spaces` space widths, instead of the book's CSS `text-indent`. Centered
+    /// and end-aligned paragraphs are not indented.
+    pub const fn with_paragraph_indent(self, spaces: u8) -> Self {
+        Self {
+            paragraph_indent_spaces: Some(spaces),
+            ..self
+        }
+    }
+
+    pub const fn paragraph_indent_spaces(self) -> Option<u8> {
+        self.paragraph_indent_spaces
+    }
+
+    /// Adds half a line after every block, on top of its margins.
+    pub const fn with_extra_block_spacing(self, extra: bool) -> Self {
+        Self {
+            extra_block_spacing: extra,
+            ..self
+        }
+    }
+
+    pub const fn extra_block_spacing(self) -> bool {
+        self.extra_block_spacing
     }
 }

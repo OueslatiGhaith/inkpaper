@@ -26,4 +26,6 @@ const READER_FONT_SIZE_MIN: u16 = 14;
 const READER_FONT_SIZE_MAX: u16 = 32;
 const READER_FONT_SIZE_STEP: u16 = 2;
 
-const READER_BLOCK_SPACING: u16 = 8;
+/// Like crosspoint, blocks without margins of their own are not spaced apart;
+/// the extra paragraph spacing setting adds space instead.
+const READER_BLOCK_SPACING: u16 = 0;

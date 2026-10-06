@@ -493,6 +493,17 @@ impl ReaderState {
         true
     }
 
+    /// Flips a toggle row of the Text panel.
+    pub(crate) fn toggle_text_setting(&mut self, setting: TextSetting) -> bool {
+        if !self.chrome.menu_open {
+            return false;
+        }
+
+        setting
+            .toggle(self.text)
+            .is_some_and(|text| self.request_text_settings(text))
+    }
+
     pub(crate) fn close_text_picker(&mut self) -> bool {
         self.chrome.text_picker.take().is_some()
     }

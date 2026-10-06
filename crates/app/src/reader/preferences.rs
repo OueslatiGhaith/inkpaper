@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{LineSpacing, ScreenMargin, TextSettings};
 
-const STORAGE_VERSION: u8 = 2;
+const STORAGE_VERSION: u8 = 3;
+
+/// version 2 had no paragraph settings
+const STORAGE_VERSION_NO_PARAGRAPHS: u8 = 2;
 
 /// version 1 stored only the font size
 const STORAGE_VERSION_FONT_SIZE_ONLY: u8 = 1;
@@ -29,25 +32,44 @@ impl ReaderPreferences {
             font_size: self.text.font_size(),
             line_spacing: self.text.line_spacing().index(),
             margin: self.text.margin().px(),
+            paragraph_indent: self.text.paragraph_indent(),
+            paragraph_spacing: self.text.paragraph_spacing(),
         };
 
         postcard::to_allocvec(&stored).map_err(|_| ReaderPreferencesError::Encode)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, ReaderPreferencesError> {
-        // postcard writes a u8 as one byte, so the version comes first
+        let defaults = TextSettings::default();
+
+        // postcard writes a u8 as one byte, so the version comes first. Older
+        // versions take the defaults of what they did not store
         let stored = match bytes.first() {
             Some(&STORAGE_VERSION) => take_all::<StoredReaderPreferences>(bytes)?,
 
+            Some(&STORAGE_VERSION_NO_PARAGRAPHS) => {
+                let stored = take_all::<StoredNoParagraphs>(bytes)?;
+
+                StoredReaderPreferences {
+                    version: stored.version,
+                    font_size: stored.font_size,
+                    line_spacing: stored.line_spacing,
+                    margin: stored.margin,
+                    paragraph_indent: defaults.paragraph_indent(),
+                    paragraph_spacing: defaults.paragraph_spacing(),
+                }
+            }
+
             Some(&STORAGE_VERSION_FONT_SIZE_ONLY) => {
                 let stored = take_all::<StoredFontSizeOnly>(bytes)?;
-                let defaults = TextSettings::default();
 
                 StoredReaderPreferences {
                     version: stored.version,
                     font_size: stored.font_size,
                     line_spacing: defaults.line_spacing().index(),
                     margin: defaults.margin().px(),
+                    paragraph_indent: defaults.paragraph_indent(),
+                    paragraph_spacing: defaults.paragraph_spacing(),
                 }
             }
 
@@ -64,7 +86,12 @@ impl ReaderPreferences {
             .ok_or(ReaderPreferencesError::InvalidMargin(stored.margin))?;
 
         let text = TextSettings::new(stored.font_size, line_spacing, margin)
-            .ok_or(ReaderPreferencesError::InvalidFontSize(stored.font_size))?;
+            .ok_or(ReaderPreferencesError::InvalidFontSize(stored.font_size))?
+            .with_paragraph_indent(stored.paragraph_indent)
+            .ok_or(ReaderPreferencesError::InvalidParagraphIndent(
+                stored.paragraph_indent,
+            ))?
+            .with_paragraph_spacing(stored.paragraph_spacing);
 
         Ok(Self::new(text))
     }
@@ -95,11 +122,22 @@ pub enum ReaderPreferencesError {
     InvalidFontSize(u16),
     InvalidLineSpacing(u8),
     InvalidMargin(u8),
+    InvalidParagraphIndent(u8),
     TrailingData,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredReaderPreferences {
+    version: u8,
+    font_size: u16,
+    line_spacing: u8,
+    margin: u8,
+    paragraph_indent: u8,
+    paragraph_spacing: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredNoParagraphs {
     version: u8,
     font_size: u16,
     line_spacing: u8,

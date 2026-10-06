@@ -132,12 +132,20 @@ impl PageBounds {
     }
 }
 
+/// Like crosspoint: indentation is off or 1 to 5 spaces, 2 by default.
+const PARAGRAPH_INDENT_MAX: u8 = 5;
+const PARAGRAPH_INDENT_DEFAULT: u8 = 2;
+
 /// The reader settings that lay out text: changing any of them repaginates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TextSettings {
     font_size: u16,
     line_spacing: LineSpacing,
     margin: ScreenMargin,
+    /// first-line indent of paragraphs, in spaces; 0 turns it off
+    paragraph_indent: u8,
+    /// half a line after every paragraph, like crosspoint's extra spacing
+    paragraph_spacing: bool,
 }
 
 impl TextSettings {
@@ -154,6 +162,8 @@ impl TextSettings {
             font_size,
             line_spacing,
             margin,
+            paragraph_indent: PARAGRAPH_INDENT_DEFAULT,
+            paragraph_spacing: true,
         })
     }
 
@@ -169,14 +179,47 @@ impl TextSettings {
         self.margin
     }
 
+    pub(crate) const fn paragraph_indent(self) -> u8 {
+        self.paragraph_indent
+    }
+
+    pub(crate) const fn paragraph_spacing(self) -> bool {
+        self.paragraph_spacing
+    }
+
     pub(crate) const fn with_font_size(self, font_size: u16) -> Option<Self> {
-        Self::new(font_size, self.line_spacing, self.margin)
+        if font_size < READER_FONT_SIZE_MIN || font_size > READER_FONT_SIZE_MAX {
+            return None;
+        }
+
+        Some(Self { font_size, ..self })
+    }
+
+    /// `spaces` from 0, which turns indentation off, to 5
+    pub(crate) const fn with_paragraph_indent(self, spaces: u8) -> Option<Self> {
+        if spaces > PARAGRAPH_INDENT_MAX {
+            return None;
+        }
+
+        Some(Self {
+            paragraph_indent: spaces,
+            ..self
+        })
+    }
+
+    pub(crate) const fn with_paragraph_spacing(self, paragraph_spacing: bool) -> Self {
+        Self {
+            paragraph_spacing,
+            ..self
+        }
     }
 
     pub(crate) fn reader_settings(self) -> ReaderSettings {
         ReaderSettings::new(self.font_size, READER_BLOCK_SPACING)
             .and_then(|settings| settings.with_line_height_percent(self.line_spacing.percent()))
             .expect("text settings only hold valid font sizes")
+            .with_paragraph_indent(self.paragraph_indent)
+            .with_extra_block_spacing(self.paragraph_spacing)
     }
 
     pub(crate) fn viewport(self) -> Viewport {
@@ -190,6 +233,8 @@ impl Default for TextSettings {
             font_size: READER_FONT_SIZE_DEFAULT,
             line_spacing: LineSpacing::default(),
             margin: ScreenMargin::default(),
+            paragraph_indent: PARAGRAPH_INDENT_DEFAULT,
+            paragraph_spacing: true,
         }
     }
 }
@@ -201,10 +246,18 @@ pub(crate) enum TextSetting {
     FontSize,
     LineSpacing,
     ScreenMargin,
+    ParagraphIndent,
+    ParagraphSpacing,
 }
 
 impl TextSetting {
-    pub(crate) const ALL: [Self; 3] = [Self::FontSize, Self::LineSpacing, Self::ScreenMargin];
+    pub(crate) const ALL: [Self; 5] = [
+        Self::FontSize,
+        Self::LineSpacing,
+        Self::ScreenMargin,
+        Self::ParagraphIndent,
+        Self::ParagraphSpacing,
+    ];
 
     pub(crate) fn from_index(index: usize) -> Option<Self> {
         Self::ALL.get(index).copied()
@@ -215,7 +268,15 @@ impl TextSetting {
             Self::FontSize => "Font Size",
             Self::LineSpacing => "Line Spacing",
             Self::ScreenMargin => "Screen Margin",
+            Self::ParagraphIndent => "Paragraph Indentation",
+            Self::ParagraphSpacing => "Extra Paragraph Spacing",
         }
+    }
+
+    /// Whether a tap flips the setting instead of opening a picker, like
+    /// crosspoint's checkbox rows.
+    pub(crate) const fn is_toggle(self) -> bool {
+        matches!(self, Self::ParagraphSpacing)
     }
 
     /// The setting's value in `text`, as its row shows it.
@@ -224,6 +285,8 @@ impl TextSetting {
             Self::FontSize => text.font_size.to_string(),
             Self::LineSpacing => String::from(text.line_spacing.label()),
             Self::ScreenMargin => text.margin.px().to_string(),
+            Self::ParagraphIndent => indent_label(text.paragraph_indent),
+            Self::ParagraphSpacing => String::from(on_off(text.paragraph_spacing)),
         }
     }
 
@@ -236,6 +299,11 @@ impl TextSetting {
                 .map(|spacing| String::from(spacing.label()))
                 .collect(),
             Self::ScreenMargin => margins().map(|margin| format!("{}", margin.px())).collect(),
+            Self::ParagraphIndent => (0..=PARAGRAPH_INDENT_MAX).map(indent_label).collect(),
+            Self::ParagraphSpacing => [false, true]
+                .iter()
+                .map(|&on| String::from(on_off(on)))
+                .collect(),
         }
     }
 
@@ -247,6 +315,8 @@ impl TextSetting {
                 .iter()
                 .position(|&spacing| spacing == text.line_spacing),
             Self::ScreenMargin => margins().position(|margin| margin == text.margin),
+            Self::ParagraphIndent => Some(usize::from(text.paragraph_indent)),
+            Self::ParagraphSpacing => Some(usize::from(text.paragraph_spacing)),
         }
     }
 
@@ -262,6 +332,20 @@ impl TextSetting {
                 margin: margins().nth(index)?,
                 ..text
             }),
+            Self::ParagraphIndent => text.with_paragraph_indent(u8::try_from(index).ok()?),
+            Self::ParagraphSpacing => match index {
+                0 => Some(text.with_paragraph_spacing(false)),
+                1 => Some(text.with_paragraph_spacing(true)),
+                _ => None,
+            },
+        }
+    }
+
+    /// `text` with a toggle row flipped.
+    pub(crate) fn toggle(self, text: TextSettings) -> Option<TextSettings> {
+        match self {
+            Self::ParagraphSpacing => Some(text.with_paragraph_spacing(!text.paragraph_spacing)),
+            _ => None,
         }
     }
 }
@@ -274,4 +358,16 @@ fn margins() -> impl Iterator<Item = ScreenMargin> {
     (ScreenMargin::MIN..=ScreenMargin::MAX)
         .step_by(usize::from(ScreenMargin::STEP))
         .filter_map(ScreenMargin::new)
+}
+
+fn indent_label(spaces: u8) -> String {
+    if spaces == 0 {
+        String::from(on_off(false))
+    } else {
+        spaces.to_string()
+    }
+}
+
+const fn on_off(on: bool) -> &'static str {
+    if on { "On" } else { "Off" }
 }

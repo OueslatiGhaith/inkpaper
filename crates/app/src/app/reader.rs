@@ -195,7 +195,7 @@ impl InkPaperApp {
         self.close_reader_menu(cx);
     }
 
-    /// Opens the picker of a Text panel row.
+    /// Opens the picker of a Text panel row, or flips a toggle row.
     pub(crate) fn activate_reader_text_row(
         &mut self,
         event: &ActivateEvent,
@@ -205,8 +205,16 @@ impl InkPaperApp {
             return;
         };
 
-        if self.reader.open_text_picker(setting) {
+        // like crosspoint's checkbox rows, toggles flip in place
+        let changed = if setting.is_toggle() {
+            self.reader.toggle_text_setting(setting)
+        } else {
+            self.reader.open_text_picker(setting)
+        };
+
+        if changed {
             cx.notify();
+            self.refresh_reader_menu(cx);
         }
     }
 

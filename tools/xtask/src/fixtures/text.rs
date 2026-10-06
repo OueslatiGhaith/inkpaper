@@ -165,6 +165,15 @@ pub fn typography() -> Result<Epub> {
             .loose {
                 line-height: 2.5;
             }
+
+            .book p {
+                margin: 0;
+                text-indent: 3em;
+            }
+
+            .book p.centered {
+                text-align: center;
+            }
         "#})
         .chapter("chapter-1.xhtml", "Plain Paragraphs", plain)
         .chapter(
@@ -193,6 +202,32 @@ pub fn typography() -> Result<Epub> {
         )
         .chapter(
             "chapter-3.xhtml",
+            "Book Paragraphs",
+            indoc! {r#"
+                <h1>Book Paragraphs</h1>
+
+                <div class="book">
+                    <p>
+                        Like many books, this chapter's CSS indents each paragraph
+                        by 3 em and removes the space between them. The paragraph
+                        indentation setting replaces that indent with its own, and
+                        extra paragraph spacing adds half a line after each one.
+                    </p>
+                    <p>
+                        A second paragraph shows both settings at once: its first
+                        line starts at the reader's indent, and the gap above it is
+                        the extra spacing alone, since the book asks for none.
+                    </p>
+                    <p class="centered">A centered paragraph is never indented.</p>
+                    <p>
+                        A last paragraph closes the chapter, so the spacing after
+                        the centered one can be compared with the rest.
+                    </p>
+                </div>
+            "#},
+        )
+        .chapter(
+            "chapter-4.xhtml",
             "Dialogue",
             indoc! {r#"
                 <h1>Dialogue</h1>

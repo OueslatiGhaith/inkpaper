@@ -1094,3 +1094,43 @@ fn pagination_breaks_lines_between_ideographs() {
         ],
     );
 }
+
+#[test]
+fn paragraph_indent_setting_replaces_css_indent_on_start_aligned_paragraphs() {
+    let settings = ReaderSettings::new(1, 0).unwrap().with_paragraph_indent(2);
+
+    // two one-wide spaces, instead of the book's five
+    let bounds = line_bounds(r#"<p style="text-indent: 5px">one</p>"#, settings);
+    assert_eq!(bounds, [Rect::new(2, 0, 3, 1)]);
+
+    // centered paragraphs are not indented
+    let bounds = line_bounds(r#"<p style="text-align: center">one</p>"#, settings);
+    assert_eq!(bounds, [Rect::new(8, 0, 3, 1)]);
+
+    // headings keep the book's indent
+    let bounds = line_bounds(r#"<h1 style="text-indent: 5px">one</h1>"#, settings);
+    assert_eq!(bounds, [Rect::new(5, 0, 3, 1)]);
+
+    // zero spaces turns indentation off
+    let off = ReaderSettings::new(1, 0).unwrap().with_paragraph_indent(0);
+    let bounds = line_bounds(r#"<p style="text-indent: 5px">one</p>"#, off);
+    assert_eq!(bounds, [Rect::new(0, 0, 3, 1)]);
+}
+
+#[test]
+fn extra_block_spacing_adds_half_a_line_between_blocks() {
+    let settings = ReaderSettings::new(1, 0)
+        .unwrap()
+        .with_line_height_percent(400)
+        .unwrap();
+
+    // four-tall lines with the text one below each line's top
+    let bounds = line_bounds("<p>one</p><p>two</p>", settings);
+    assert_eq!(bounds, [Rect::new(0, 1, 3, 1), Rect::new(0, 5, 3, 1)]);
+
+    let bounds = line_bounds(
+        "<p>one</p><p>two</p>",
+        settings.with_extra_block_spacing(true),
+    );
+    assert_eq!(bounds, [Rect::new(0, 1, 3, 1), Rect::new(0, 7, 3, 1)]);
+}

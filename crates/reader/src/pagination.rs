@@ -3,8 +3,8 @@ use core::mem;
 
 use inkpaper_epub::{
     BlockKind, BookLocation, Chapter, ChapterBlock, ChapterImage, ChapterStyles, ComputedStyle,
-    ContentOffset, CssLength, ImageDimensions, Inline, LineHeight, LinkTarget, SpineIndex,
-    StyleNodeId, TextAlign, TextRun,
+    ContentOffset, CssLength, FontStyle, FontWeight, ImageDimensions, Inline, LineHeight,
+    LinkTarget, SpineIndex, StyleNodeId, TextAlign, TextRun,
 };
 use unicode_linebreak::linebreaks;
 
@@ -125,6 +125,8 @@ struct Paginator<'chapter, 'context, M> {
     line_start: ReadingPosition,
     line_width: u32,
     line_height: u32,
+    /// the height of the last line laid out, which sizes extra block spacing
+    last_line_height: u32,
     /// how far below the line's top the text starts: half the space the line
     /// adds around the font's own height, like CSS half-leading
     line_text_offset: u32,
@@ -168,6 +170,7 @@ where
             line_start: start,
             line_width: 0,
             line_height: 0,
+            last_line_height: 0,
             line_text_offset: 0,
             line_text_height: 0,
             line_align: TextAlign::Start,
@@ -217,7 +220,7 @@ where
 
         let block_style = self.computed_style(block.style_node());
 
-        self.block_text_indent = self.resolve_text_indent(block_style);
+        self.block_text_indent = self.resolve_text_indent(block.kind(), block_style)?;
         self.block_first_line = true;
         self.block_line_height = block_style.line_height();
 
@@ -605,6 +608,7 @@ where
         }
 
         self.used_height = self.used_height.saturating_add(height);
+        self.last_line_height = height;
         self.line_active = false;
         self.line_start = self.cursor;
         self.line_width = 0;
@@ -644,6 +648,12 @@ where
             (Some(bottom), Some(top)) => self
                 .resolve_block_length(bottom)
                 .max(self.resolve_block_length(top)),
+        };
+
+        let spacing = if self.settings.extra_block_spacing() {
+            spacing.saturating_add(self.last_line_height / 2)
+        } else {
+            spacing
         };
 
         if spacing == 0 || self.used_height == 0 {
@@ -717,15 +727,45 @@ where
         }
     }
 
-    fn resolve_text_indent(&self, style: ComputedStyle) -> u32 {
-        let resolved = style
-            .text_indent()
-            .resolve(u32::from(self.settings.font_size()), self.viewport.width());
+    fn resolve_text_indent(
+        &mut self,
+        kind: BlockKind,
+        style: ComputedStyle,
+    ) -> Result<u32, M::Error> {
+        let resolved = match self.settings.paragraph_indent_spaces() {
+            Some(spaces) if kind == BlockKind::Paragraph => {
+                let natural = matches!(
+                    style.text_align(),
+                    TextAlign::Start | TextAlign::Left | TextAlign::Justify
+                );
 
-        let resolved = u32::try_from(resolved.max(0)).unwrap_or(u32::MAX);
+                if spaces == 0 || !natural {
+                    0
+                } else {
+                    let space = TextStyle::new(
+                        self.settings.font_size(),
+                        kind,
+                        FontWeight::Normal,
+                        FontStyle::Normal,
+                    );
+
+                    self.measurer
+                        .measure_text(" ", space)?
+                        .saturating_mul(u32::from(spaces))
+                }
+            }
+
+            _ => {
+                let resolved = style
+                    .text_indent()
+                    .resolve(u32::from(self.settings.font_size()), self.viewport.width());
+
+                u32::try_from(resolved.max(0)).unwrap_or(u32::MAX)
+            }
+        };
 
         // always leave at least one horizontal pixel available.
-        resolved.min(self.viewport.width().saturating_sub(1))
+        Ok(resolved.min(self.viewport.width().saturating_sub(1)))
     }
 
     fn resolve_block_length(&self, length: CssLength) -> u32 {
