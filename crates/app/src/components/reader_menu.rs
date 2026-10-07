@@ -21,6 +21,8 @@ const ELLIPSIS: SvgSource = include_svg!("assets/icons/lucide/ellipsis.svg");
 pub(crate) struct ReaderMenu {
     tab: ReaderMenuTab,
     text: TextSettings,
+    /// the Font row's value: the family's name
+    font_name: String,
     on_close: Listener<ActivateEvent>,
     on_text_tab: Listener<ActivateEvent>,
     on_more_tab: Listener<ActivateEvent>,
@@ -35,6 +37,7 @@ pub(crate) struct ReaderMenu {
 impl RenderOnce for ReaderMenu {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let text = self.text;
+        let font_name = self.font_name;
         let on_text_row = self.on_text_row;
 
         // crosspoint's Text panel: one row per setting, its value on the right
@@ -45,7 +48,11 @@ impl RenderOnce for ReaderMenu {
                 TextRow::from(TextRowProps {
                     index,
                     label: setting.label(),
-                    value: setting.value(text),
+                    value: if setting == TextSetting::Font {
+                        font_name.clone()
+                    } else {
+                        setting.value(text)
+                    },
                     on_activate: on_text_row,
                 })
             });
@@ -144,6 +151,7 @@ impl Render for ReaderMenuView {
             .update(cx, |app, cx| ReaderMenuProps {
                 tab: app.reader.menu_tab(),
                 text: app.reader.menu_text_settings(),
+                font_name: app.reader_font_name(),
                 on_close: cx.listener(InkPaperApp::activate_close_reader_menu),
                 on_text_tab: cx.listener(InkPaperApp::activate_reader_text_tab),
                 on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),

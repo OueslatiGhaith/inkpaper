@@ -14,7 +14,6 @@ use crate::{
         PREVIEW_PADDING, PREVIEW_TEXT_HEIGHT, TextSetting, TextSettings, TextSettingsRow,
         TextSettingsTab, preview_text_left,
     },
-    typography::READER_FONT_NAME,
 };
 
 /// The preview sits between the header and the tabs, 30% of the screen below
@@ -33,6 +32,8 @@ const TAB_WIDTH: i32 = 120;
 pub(crate) struct TextSettingsScreen {
     tab: TextSettingsTab,
     text: TextSettings,
+    /// the chosen family's name
+    font_name: String,
     rows: Vec<TextSettingsRow>,
     picker: Option<TextSetting>,
     preview: Canvas,
@@ -55,7 +56,7 @@ impl RenderOnce for TextSettingsScreen {
             px(PREVIEW_TEXT_HEIGHT as i32),
         );
         let label_top = px(PREVIEW_HEIGHT - PREVIEW_PADDING as i32 - 20);
-        let label = format!("Preview \"{READER_FONT_NAME}, {}\"", text.font_size());
+        let label = format!("Preview \"{}, {}\"", self.font_name, text.font_size());
 
         let tab = self.tab;
         let on_tab = self.on_tab;
@@ -143,11 +144,7 @@ fn setting_row(
     let id = ("text-settings-row", index);
 
     let (label, value) = match row {
-        TextSettingsRow::Font(name) => {
-            let current = name == READER_FONT_NAME;
-
-            (name, selected(current))
-        }
+        TextSettingsRow::Font { font, name } => (name, selected(font == text.font())),
 
         TextSettingsRow::Size(size) => (format!("{size}"), selected(size == text.font_size())),
 
@@ -291,6 +288,7 @@ impl ScreenView for TextSettingsRoute {
         TextSettingsScreen::from(TextSettingsScreenProps {
             tab: state.tab(),
             text: state.draft(),
+            font_name: state.font_name(state.draft().font()),
             rows: state.rows(),
             picker: state.picker(),
             preview: cx.canvas(|app: &InkPaperApp, paint| app.paint_text_settings_preview(paint)),

@@ -4,11 +4,14 @@ use inkpaper_epub::{ArchivePath, Chapter, ChapterStyles, SpineIndex};
 use inkpaper_reader::{Page, Viewport, paginate_chapter};
 
 use super::{
-    TextSetting, TextSettings,
-    measurer::{ReaderMeasurer, reader_fonts},
+    ReaderFont, TextSetting, TextSettings,
+    measurer::{ReaderFonts, ReaderMeasurer},
     text_settings::font_sizes,
 };
-use crate::typography::READER_FONT_NAME;
+use crate::{
+    fonts::{CardFont, card_for},
+    typography::READER_FONT_NAME,
+};
 
 /// The preview's inner padding, like crosspoint's.
 pub(crate) const PREVIEW_PADDING: u32 = 12;
@@ -57,7 +60,10 @@ impl TextSettingsTab {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TextSettingsRow {
     /// a font family: the built-in one, then the card's
-    Font(String),
+    Font {
+        font: ReaderFont,
+        name: String,
+    },
     Size(u16),
     Setting(TextSetting),
 }
@@ -72,6 +78,8 @@ pub(crate) struct TextSettingsState {
     preview: Option<Page<'static>>,
     /// the font families on the card, by name
     families: Vec<String>,
+    /// the card font read into memory, if any
+    card: Option<CardFont>,
 }
 
 impl TextSettingsState {
@@ -80,7 +88,7 @@ impl TextSettingsState {
         self.tab = TextSettingsTab::Font;
         self.picker = None;
         self.draft = text;
-        self.preview = layout_preview(text);
+        self.preview = layout_preview(text, self.card.as_ref());
     }
 
     pub(crate) const fn tab(&self) -> TextSettingsTab {
@@ -107,6 +115,37 @@ impl TextSettingsState {
         true
     }
 
+    /// The name `font` goes by in the settings.
+    pub(crate) fn font_name(&self, font: ReaderFont) -> String {
+        match font {
+            ReaderFont::Card(index) => self
+                .families
+                .get(usize::from(index))
+                .map_or(READER_FONT_NAME, String::as_str)
+                .into(),
+            ReaderFont::BuiltIn => String::from(READER_FONT_NAME),
+        }
+    }
+
+    pub(crate) fn card_font(&self) -> Option<&CardFont> {
+        self.card.as_ref()
+    }
+
+    /// Keeps the card font read into memory, and lays the preview out again
+    /// when it is the one being previewed.
+    pub(crate) fn set_card_font(&mut self, card: Option<CardFont>) -> bool {
+        let previewed = |card: Option<&CardFont>| card_for(self.draft.font(), card).is_some();
+        let changed = previewed(self.card.as_ref()) || previewed(card.as_ref());
+
+        self.card = card;
+
+        if changed {
+            self.preview = layout_preview(self.draft, self.card.as_ref());
+        }
+
+        changed
+    }
+
     pub(crate) fn preview(&self) -> Option<&Page<'static>> {
         self.preview.as_ref()
     }
@@ -124,9 +163,15 @@ impl TextSettingsState {
 
     pub(crate) fn rows(&self) -> Vec<TextSettingsRow> {
         match self.tab {
-            TextSettingsTab::Font => core::iter::once(READER_FONT_NAME)
-                .chain(self.families.iter().map(String::as_str))
-                .map(|name| TextSettingsRow::Font(String::from(name)))
+            TextSettingsTab::Font => core::iter::once(ReaderFont::BuiltIn)
+                .chain(
+                    (0..self.families.len())
+                        .filter_map(|index| u8::try_from(index).ok().map(ReaderFont::Card)),
+                )
+                .map(|font| TextSettingsRow::Font {
+                    font,
+                    name: self.font_name(font),
+                })
                 .collect(),
             TextSettingsTab::Size => font_sizes().map(TextSettingsRow::Size).collect(),
             TextSettingsTab::Layout => TextSetting::LAYOUT
@@ -148,6 +193,8 @@ impl TextSettingsState {
         }
 
         match self.rows().get(index) {
+            Some(&TextSettingsRow::Font { font, .. }) => self.set_draft(self.draft.with_font(font)),
+
             Some(&TextSettingsRow::Size(size)) => self
                 .draft
                 .with_font_size(size)
@@ -162,7 +209,7 @@ impl TextSettingsState {
                 true
             }
 
-            Some(TextSettingsRow::Font(_)) | None => false,
+            None => false,
         }
     }
 
@@ -189,7 +236,7 @@ impl TextSettingsState {
         }
 
         self.draft = text;
-        self.preview = layout_preview(text);
+        self.preview = layout_preview(text, self.card.as_ref());
 
         true
     }
@@ -210,13 +257,14 @@ fn preview_viewport(text: TextSettings) -> Option<Viewport> {
     )
 }
 
-/// The preview's first page, laid out by the reader like a book's.
-fn layout_preview(text: TextSettings) -> Option<Page<'static>> {
+/// The preview's first page, laid out by the reader like a book's, in the
+/// card font when it is the one chosen and has loaded.
+fn layout_preview(text: TextSettings, card: Option<&CardFont>) -> Option<Page<'static>> {
     let path = ArchivePath::new("preview.xhtml").ok()?;
     let chapter = Chapter::parse(PREVIEW_XHTML, path).ok()?;
     let styles = ChapterStyles::defaults(&chapter);
 
-    let fonts = reader_fonts().ok()?;
+    let fonts = ReaderFonts::new(card_for(text.font(), card)).ok()?;
     let mut measurer = ReaderMeasurer::new(&fonts, Default::default());
 
     let pagination = paginate_chapter(

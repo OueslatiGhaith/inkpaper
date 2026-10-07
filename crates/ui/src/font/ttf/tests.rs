@@ -242,3 +242,36 @@ mod hinting {
         }
     }
 }
+
+mod owned {
+    use alloc::vec::Vec;
+
+    use crate::{FontData, FontFace, FontStyle, OwnedTtfFont, TtfFont, TtfFontError};
+
+    const ITALIC: &[u8] = include_bytes!("../../../../app/assets/fonts/Libron-Italic.ttf");
+
+    #[test]
+    fn owned_font_reads_like_the_borrowed_one() {
+        let borrowed = TtfFont::from_data(FontData::new(ITALIC), 0);
+        let owned = OwnedTtfFont::parse(Vec::from(ITALIC), 0).unwrap();
+
+        let glyph = borrowed.glyph_id('g').unwrap();
+
+        assert_eq!(owned.glyph_id('g'), Some(glyph));
+        assert_eq!(owned.style(), FontStyle::Italic);
+        assert_eq!(owned.weight_range(), borrowed.weight_range());
+        assert_eq!(owned.metrics(20), borrowed.metrics(20));
+        assert_eq!(
+            owned.glyph_metrics(glyph, 20),
+            borrowed.glyph_metrics(glyph, 20)
+        );
+    }
+
+    #[test]
+    fn owned_font_rejects_bytes_that_are_not_a_font() {
+        assert_eq!(
+            OwnedTtfFont::parse(Vec::from(&b"not a font"[..]), 0).err(),
+            Some(TtfFontError::InvalidFont)
+        );
+    }
+}

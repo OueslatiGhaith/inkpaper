@@ -4,26 +4,29 @@ use inkpaper_reader::{
 };
 use inkpaper_ui::prelude::*;
 
-use crate::{ReaderDocument, typography::READER_FAMILY};
+use crate::ReaderDocument;
 
 pub(crate) fn paint_reader_page(
     page: &Page<'static>,
     document: &ReaderDocument,
+    family: FontFamilyId,
     paint: &mut PaintCx<'_>,
 ) {
-    paint_page(page, Some(document), paint);
+    paint_page(page, Some(document), family, paint);
 }
 
-/// A laid out page. Its images come from `document`, so a page without one,
-/// like a settings preview, draws only its text.
+/// A laid out page, its text in `family`, the one it was laid out in. Its
+/// images come from `document`, so a page without one, like a settings
+/// preview, draws only its text.
 pub(crate) fn paint_page(
     page: &Page<'static>,
     document: Option<&ReaderDocument>,
+    family: FontFamilyId,
     paint: &mut PaintCx<'_>,
 ) {
     for item in page.items() {
         match item {
-            PageItem::Text(fragment) => paint_text_fragment(fragment, paint),
+            PageItem::Text(fragment) => paint_text_fragment(fragment, family, paint),
             PageItem::Image(fragment) => {
                 if let Some(document) = document {
                     paint_image_fragment(fragment, document, paint);
@@ -33,13 +36,13 @@ pub(crate) fn paint_page(
     }
 }
 
-fn paint_text_fragment(fragment: &TextFragment<'_>, paint: &mut PaintCx<'_>) {
+fn paint_text_fragment(fragment: &TextFragment<'_>, family: FontFamilyId, paint: &mut PaintCx<'_>) {
     let bounds = fragment.bounds();
     let style = fragment.style();
     let (font_weight, font_style) = reader_font(style.font_weight(), style.font_style());
 
     let run = text(fragment.text())
-        .font_family(READER_FAMILY)
+        .font_family(family)
         .font_weight(font_weight)
         .font_style(font_style)
         .font_size(px(i32::from(style.font_size())))

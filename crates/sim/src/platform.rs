@@ -8,7 +8,11 @@ use inkpaper_app::{
     AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials, WifiJoinPlan,
 };
 
-use crate::{fake_fs::simulator_listing, host_epub::HostFileSource, radio::SimulatedRadio};
+use crate::{
+    fake_fs::{fonts_path, simulator_listing},
+    host_epub::HostFileSource,
+    radio::SimulatedRadio,
+};
 
 pub(super) struct SimulatorPlatform {
     state_directory: PathBuf,
@@ -54,6 +58,21 @@ impl AppPlatform for SimulatorPlatform {
         })?;
 
         HostFileSource::open(&host_path)
+    }
+
+    async fn read_file(&mut self, path: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
+        let host_path = fonts_path(path).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "simulated file does not exist")
+        })?;
+
+        if fs::metadata(&host_path)?.len() > max_bytes as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file is too large",
+            ));
+        }
+
+        fs::read(host_path)
     }
 
     async fn set_frontlight(&mut self, _: FrontlightSetting) -> Result<(), Self::Error> {

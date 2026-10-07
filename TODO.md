@@ -12,8 +12,10 @@ New UI follows crosspoint/crossink's screens and layout.
 - [x] bold reader face
 - [x] italic reader faces
 - [x] find font families in `/.fonts` and `/fonts` like crosspoint, and list them in the Font tab
-- [ ] custom reader fonts loaded from storage
-- [ ] font picker in the reader settings
+- [x] custom reader fonts loaded from storage (TTF/OTF, a collection's first face, up to 4 MB a family)
+- [x] font picker in the reader settings
+- [ ] derive bold and italic for card families without them, like crosspoint
+- [ ] stream fonts too large to read whole, such as CJK ones
 
 ## Typography settings
 

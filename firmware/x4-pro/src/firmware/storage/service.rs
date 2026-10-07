@@ -8,7 +8,7 @@ use hadris_fat::r#async::FatVolume;
 use hadris_io::r#async::{Read as HadrisRead, Seek as HadrisSeek, Write as HadrisWrite};
 
 use super::{
-    filesystem::list_directory,
+    filesystem::{list_directory, read_file},
     random_access::OpenRandomAccessFile,
     state::{load_state, save_state},
     types::{
@@ -40,6 +40,9 @@ static RANDOM_ACCESS_OPEN_DONE: Signal<
 static RANDOM_ACCESS_READ_DONE: Signal<CriticalSectionRawMutex, Result<Vec<u8>, StorageError>> =
     Signal::new();
 
+static FILE_READ_DONE: Signal<CriticalSectionRawMutex, Result<Vec<u8>, StorageError>> =
+    Signal::new();
+
 static STATE_LOAD_DONE: Signal<CriticalSectionRawMutex, Result<Option<Vec<u8>>, StorageError>> =
     Signal::new();
 
@@ -61,6 +64,11 @@ enum Command {
         handle: u32,
         offset: u64,
         len: usize,
+    },
+
+    ReadFile {
+        path: String,
+        max_bytes: usize,
     },
 
     LoadState {
@@ -116,6 +124,18 @@ pub async fn read_random_access_and_wait(
         })
         .await;
     RANDOM_ACCESS_READ_DONE.wait().await
+}
+
+/// Reads a whole file, apart from the open random-access file.
+pub async fn read_file_and_wait(path: &str, max_bytes: usize) -> Result<Vec<u8>, StorageError> {
+    FILE_READ_DONE.reset();
+    COMMANDS
+        .send(Command::ReadFile {
+            path: String::from(path),
+            max_bytes,
+        })
+        .await;
+    FILE_READ_DONE.wait().await
 }
 
 pub async fn load_state_and_wait(
@@ -228,6 +248,11 @@ where
                 RANDOM_ACCESS_READ_DONE.signal(result);
             }
 
+            Command::ReadFile { path, max_bytes } => {
+                let result = read_file(filesystem, &path, max_bytes).await;
+                FILE_READ_DONE.signal(result);
+            }
+
             Command::LoadState { name, max_bytes } => {
                 let result = load_state(filesystem, &name, max_bytes).await;
                 STATE_LOAD_DONE.signal(result);
@@ -274,6 +299,7 @@ pub(super) async fn serve_unavailable_requests() {
             Command::ReadRandomAccess { .. } => {
                 RANDOM_ACCESS_READ_DONE.signal(Err(StorageError::Unavailable));
             }
+            Command::ReadFile { .. } => FILE_READ_DONE.signal(Err(StorageError::Unavailable)),
             Command::LoadState { .. } => STATE_LOAD_DONE.signal(Err(StorageError::Unavailable)),
             Command::SaveState { .. } => STATE_SAVE_DONE.signal(Err(StorageError::Unavailable)),
             Command::EnterUsbDrive => USB_DRIVE_READY.signal(false),
@@ -308,6 +334,10 @@ pub(super) async fn serve_usb_drive_requests() {
 
             Command::ReadRandomAccess { .. } => {
                 RANDOM_ACCESS_READ_DONE.signal(Err(StorageError::Unavailable));
+            }
+
+            Command::ReadFile { .. } => {
+                FILE_READ_DONE.signal(Err(StorageError::Unavailable));
             }
 
             Command::LoadState { .. } => {

@@ -205,9 +205,19 @@ impl PageBounds {
 const PARAGRAPH_INDENT_MAX: u8 = 5;
 const PARAGRAPH_INDENT_DEFAULT: u8 = 2;
 
+/// The reader's font family: the built-in one, or a family from the card by
+/// its index in the families found at startup.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReaderFont {
+    #[default]
+    BuiltIn,
+    Card(u8),
+}
+
 /// The reader settings that lay out text: changing any of them repaginates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TextSettings {
+    font: ReaderFont,
     font_size: u16,
     line_spacing: LineSpacing,
     margin: ScreenMargin,
@@ -233,6 +243,7 @@ impl TextSettings {
         }
 
         Some(Self {
+            font: ReaderFont::BuiltIn,
             font_size,
             line_spacing,
             margin,
@@ -242,6 +253,14 @@ impl TextSettings {
             embedded_style: true,
             hyphenation: true,
         })
+    }
+
+    pub(crate) const fn font(self) -> ReaderFont {
+        self.font
+    }
+
+    pub(crate) const fn with_font(self, font: ReaderFont) -> Self {
+        Self { font, ..self }
     }
 
     pub(crate) const fn font_size(self) -> u16 {
@@ -346,6 +365,7 @@ impl TextSettings {
 impl Default for TextSettings {
     fn default() -> Self {
         Self {
+            font: ReaderFont::BuiltIn,
             font_size: READER_FONT_SIZE_DEFAULT,
             line_spacing: LineSpacing::default(),
             margin: ScreenMargin::default(),

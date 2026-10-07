@@ -93,7 +93,7 @@ fn fixtures_directory() -> PathBuf {
 
 /// `/fonts` is the repository's font fixtures, so the reader has card fonts
 /// to offer
-fn fonts_path(path: &str) -> Option<PathBuf> {
+pub(super) fn fonts_path(path: &str) -> Option<PathBuf> {
     let relative = path.strip_prefix("/fonts")?;
 
     if !(relative.is_empty() || relative.starts_with('/')) {

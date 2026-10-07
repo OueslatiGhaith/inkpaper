@@ -9,6 +9,7 @@ pub enum StorageError {
     Io,
     InvalidStateName,
     StateTooLarge,
+    FileTooLarge,
     StaleHandle,
     ReadTooLarge,
     OutOfBounds,

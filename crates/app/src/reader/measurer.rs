@@ -3,11 +3,12 @@ use inkpaper_epub::{
 };
 use inkpaper_reader::{ImageMeasurer, TextMeasurer, TextStyle as ReaderTextStyle};
 use inkpaper_ui::{
-    FontRegistry, FontRegistryError, PreparedSimpleShaper, ResolvedFont, ShapeError, ShapedGlyph,
-    SimpleShaper,
+    FontFamilyId, FontRegistry, FontRegistryError, PreparedSimpleShaper, ResolvedFont, ShapeError,
+    ShapedGlyph, SimpleShaper,
 };
 
 use crate::{
+    fonts::CardFont,
     reader::{
         images::ChapterImageMetrics,
         measure_cache::{
@@ -16,20 +17,35 @@ use crate::{
         },
     },
     reader_page::reader_font,
-    typography::{self, FONT_FACES, READER_FAMILY},
+    typography::{self, CARD_FAMILY, FONT_FACES, READER_FAMILY},
 };
 
 const READER_SHAPING_GLYPHS: usize = 128;
 
-/// The faces the reader measures with, registered like the runtime's.
-pub(super) type ReaderFonts = FontRegistry<'static, FONT_FACES>;
+/// The faces the reader measures with, registered like the runtime's, and
+/// the family it measures in.
+pub(crate) struct ReaderFonts {
+    registry: FontRegistry<'static, FONT_FACES>,
+    family: FontFamilyId,
+}
 
-pub(super) fn reader_fonts() -> Result<ReaderFonts, FontRegistryError> {
-    let mut fonts = FontRegistry::default();
+impl ReaderFonts {
+    /// The built-in faces, and `card`'s when the reader uses a card font.
+    pub(crate) fn new(card: Option<&CardFont>) -> Result<Self, FontRegistryError> {
+        let mut registry = FontRegistry::default();
 
-    typography::register_in(&mut fonts)?;
+        typography::register_in(&mut registry)?;
 
-    Ok(fonts)
+        let family = match card {
+            Some(card) => {
+                typography::register_card_font_in(&mut registry, card)?;
+                CARD_FAMILY
+            }
+            None => READER_FAMILY,
+        };
+
+        Ok(Self { registry, family })
+    }
 }
 
 /// Measures with shapers prepared from `fonts`, which it borrows since what
@@ -57,7 +73,7 @@ impl<'fonts> ReaderMeasurer<'fonts> {
         .map(|(weight, style)| {
             let font = resolve_font(fonts, weight, style);
 
-            SimpleShaper::with_properties(font.properties()).prepare(fonts, font.id())
+            SimpleShaper::with_properties(font.properties()).prepare(&fonts.registry, font.id())
         });
 
         Self {
@@ -85,7 +101,8 @@ fn resolve_font(
     let (weight, style) = reader_font(weight, style);
 
     fonts
-        .resolve_family_font(READER_FAMILY, weight, style)
+        .registry
+        .resolve_family_font(fonts.family, weight, style)
         .expect("reader measurer always registers the reader fonts")
 }
 
@@ -105,7 +122,12 @@ impl TextMeasurer for ReaderMeasurer<'_> {
 
         let shaper = &self.shapers[shaper_index(style.font_weight(), style.font_style())];
 
-        let summary = shaper.measure(self.fonts, style.font_size(), text, &mut self.glyphs)?;
+        let summary = shaper.measure(
+            &self.fonts.registry,
+            style.font_size(),
+            text,
+            &mut self.glyphs,
+        )?;
 
         let width = u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX);
 
@@ -136,7 +158,7 @@ impl TextMeasurer for ReaderMeasurer<'_> {
     ) -> Result<Option<usize>, Self::Error> {
         let shaper = &self.shapers[shaper_index(style.font_weight(), style.font_style())];
 
-        Ok(shaper.next_cluster_boundary(self.fonts, style.font_size(), text, from))
+        Ok(shaper.next_cluster_boundary(&self.fonts.registry, style.font_size(), text, from))
     }
 }
 

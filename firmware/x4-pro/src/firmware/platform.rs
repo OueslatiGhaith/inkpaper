@@ -109,6 +109,10 @@ impl AppPlatform for X4Platform {
         Ok(X4RandomAccessSource::from_handle(handle))
     }
 
+    async fn read_file(&mut self, path: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
+        storage::read_file_and_wait(path, max_bytes).await
+    }
+
     async fn set_frontlight(&mut self, setting: FrontlightSetting) -> Result<(), Self::Error> {
         let brightness = if setting.is_on() {
             setting.brightness()

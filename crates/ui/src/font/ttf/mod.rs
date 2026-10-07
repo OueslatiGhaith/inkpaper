@@ -11,6 +11,7 @@ mod gsub;
 #[cfg(feature = "hinting")]
 mod hinted;
 mod metrics;
+mod owned;
 mod raster;
 
 use gpos::{
@@ -23,6 +24,7 @@ use raster::{SUPERSAMPLE_Y, ScanlineBuilder, accumulate_scanline, normalize_cove
 
 #[cfg(feature = "hinting")]
 pub use hinted::HintedTtfFont;
+pub use owned::OwnedTtfFont;
 
 #[cfg(test)]
 mod tests;

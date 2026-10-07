@@ -3,7 +3,11 @@ use alloc::{string::String, vec::Vec};
 use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
-use crate::{reader::TextSettingsTab, reader_page::paint_page};
+use crate::{
+    fonts::{CardFont, reader_family},
+    reader::{ReaderFont, TextSettingsTab},
+    reader_page::paint_page,
+};
 
 impl InkPaperApp {
     pub(crate) fn show_text_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
@@ -85,7 +89,36 @@ impl InkPaperApp {
 
     pub(crate) fn paint_text_settings_preview(&self, paint: &mut PaintCx<'_>) {
         if let Some(page) = self.text_settings.preview() {
-            paint_page(page, None, paint);
+            let family = reader_family(
+                self.text_settings.draft().font(),
+                self.text_settings.card_font(),
+            );
+
+            paint_page(page, None, family, paint);
         }
+    }
+
+    /// The font the service should have loaded: the one Text Settings is
+    /// previewing, or else the reader's.
+    pub(crate) fn wanted_reader_font(&self) -> ReaderFont {
+        if self.screen() == Screen::TextSettings {
+            self.text_settings.draft().font()
+        } else {
+            self.reader.menu_text_settings().font()
+        }
+    }
+
+    /// The card font read into memory, or none after it is freed.
+    pub(crate) fn apply_card_font(&mut self, card: Option<CardFont>, cx: &mut Context<'_, Self>) {
+        self.text_settings.set_card_font(card);
+
+        // the reader's page paints in the font too
+        cx.notify();
+    }
+
+    /// The name of the font the reader uses, for the drawer.
+    pub(crate) fn reader_font_name(&self) -> String {
+        self.text_settings
+            .font_name(self.reader.menu_text_settings().font())
     }
 }

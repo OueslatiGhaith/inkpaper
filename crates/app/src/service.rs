@@ -12,8 +12,9 @@ use crate::{
     ReaderSession, ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials,
     WifiJoinFailure, WifiJoinPlan, WifiScanError,
     cover::read_cover_image,
-    fonts::find_font_families,
-    reader::{GrayImage, TextSettings},
+    fonts::{CardFont, FontFamily, card_for, find_font_families, load_card_font},
+    reader::{GrayImage, ReaderFont, TextSettings},
+    typography::register_card_font,
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
@@ -86,6 +87,9 @@ pub trait AppPlatform {
         path: &str,
     ) -> Result<Self::RandomAccessSource, Self::Error>;
 
+    /// Reads the whole file at `path`, refusing one over `max_bytes`.
+    async fn read_file(&mut self, path: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error>;
+
     async fn set_frontlight(&mut self, setting: FrontlightSetting) -> Result<(), Self::Error>;
 
     async fn load_state(
@@ -142,6 +146,14 @@ where
     /// the cover's registration, until the reader's images clear it
     cover_source: Option<ImageSource>,
 
+    /// the font families on the card, found at startup
+    font_families: Vec<FontFamily>,
+    /// the card font read into memory and registered for the screen
+    card_font: Option<CardFont>,
+    /// a card family that couldn't be loaded, not tried again until another
+    /// font is wanted
+    failed_font: Option<u8>,
+
     history: ReadingHistory,
     preferences: ReaderPreferences,
     frontlight_preferences: FrontlightPreferences,
@@ -165,6 +177,10 @@ where
             reader_session: None,
             cover: None,
             cover_source: None,
+
+            font_families: Vec::new(),
+            card_font: None,
+            failed_font: None,
 
             history: ReadingHistory::default(),
             preferences: ReaderPreferences::default(),
@@ -191,6 +207,13 @@ where
         self.ensure_initialized(runtime, app).await?;
 
         loop {
+            // before the reader's requests, which lay out with the font
+            let font = runtime.update(app, |app, _| app.wanted_reader_font())?;
+
+            if self.service_reader_font(runtime, app, font).await? {
+                continue;
+            }
+
             let frontlight_request =
                 runtime.update(app, |app, cx| app.take_frontlight_request(cx))?;
 
@@ -344,15 +367,22 @@ where
             return Ok(());
         }
 
+        // the saved font is looked up among the families
+        self.font_families = find_font_families(&mut self.platform).await;
+
         self.history = self.load_history().await;
         self.preferences = self.load_preferences().await;
         self.frontlight_preferences = self.load_frontlight_preferences().await;
         self.clock_preferences = self.load_clock_preferences().await;
         let wifi_networks = self.load_wifi_networks().await;
-        let font_families = find_font_families(&mut self.platform).await;
 
         let entries = self.history.entries().to_vec();
         let preferences = self.preferences;
+        let font_names = self
+            .font_families
+            .iter()
+            .map(|family| String::from(family.name()))
+            .collect();
         let frontlight_preferences = self.frontlight_preferences;
         let clock_preferences = self.clock_preferences;
 
@@ -362,7 +392,7 @@ where
             app.apply_wifi_networks(wifi_networks, cx);
             app.apply_reader_preferences(preferences, cx);
             app.apply_reading_history(entries, cx);
-            app.apply_font_families(font_families, cx);
+            app.apply_font_families(font_names, cx);
         })?;
 
         self.initialized = true;
@@ -397,7 +427,14 @@ where
             }
         };
 
-        ReaderPreferences::decode(&bytes).unwrap_or_default()
+        let families = &self.font_families;
+
+        ReaderPreferences::decode(&bytes, |name| {
+            let index = families.iter().position(|family| family.name() == name)?;
+
+            u8::try_from(index).ok().map(ReaderFont::Card)
+        })
+        .unwrap_or_default()
     }
 
     async fn load_frontlight_preferences(&mut self) -> FrontlightPreferences {
@@ -545,7 +582,13 @@ where
             ReaderRequest::RepaginateChapter { path, spine, text } => {
                 let chapter = match self.reader_session.as_mut() {
                     Some(session) if session.path() == path => {
-                        session.repaginate_chapter(spine, text).await.ok().flatten()
+                        let card = card_for(text.font(), self.card_font.as_ref());
+
+                        session
+                            .repaginate_chapter(spine, text, card)
+                            .await
+                            .ok()
+                            .flatten()
                     }
 
                     _ => None,
@@ -670,7 +713,11 @@ where
                 return Ok(());
             };
 
-            session.set_text_settings(text);
+            let card = card_for(text.font(), self.card_font.as_ref());
+
+            if session.set_text_settings(text, card).is_err() {
+                return Ok(());
+            }
 
             let resume = self.history.resume_position(&path, session.identifier());
 
@@ -764,6 +811,64 @@ where
         let mut epub = Epub::open(source).await.ok()?;
 
         read_cover_image(&mut epub).await.ok()
+    }
+
+    /// Loads the card font the app wants, or frees the loaded one when it
+    /// wants the built-in font, and registers it for the screen. Returns
+    /// whether the fonts changed.
+    async fn service_reader_font<'resource, R>(
+        &mut self,
+        runtime: &mut R,
+        app: Entity<InkPaperApp>,
+        font: ReaderFont,
+    ) -> Result<bool, AppServiceError>
+    where
+        R: RuntimeApi + ResourceRuntimeApi<'resource>,
+    {
+        if self
+            .failed_font
+            .is_some_and(|failed| font != ReaderFont::Card(failed))
+        {
+            self.failed_font = None;
+        }
+
+        let loaded = self.card_font.as_ref().map(CardFont::family);
+
+        let index = match font {
+            ReaderFont::BuiltIn if loaded.is_none() => return Ok(false),
+            ReaderFont::BuiltIn => None,
+
+            ReaderFont::Card(index) if loaded == Some(index) => return Ok(false),
+            ReaderFont::Card(index) if self.failed_font == Some(index) => return Ok(false),
+            ReaderFont::Card(index) => Some(index),
+        };
+
+        // the old faces go before the new ones are read, so two families
+        // aren't in memory at once
+        if self.card_font.take().is_some() {
+            let _ = register_card_font(runtime, None);
+            runtime.update(app, |app, cx| app.apply_card_font(None, cx))?;
+        }
+
+        let Some(index) = index else {
+            return Ok(true);
+        };
+
+        let card = match load_card_font(&mut self.platform, &self.font_families, index).await {
+            Ok(card) if register_card_font(runtime, Some(&card)).is_ok() => card,
+
+            _ => {
+                let _ = register_card_font(runtime, None);
+                self.failed_font = Some(index);
+
+                return Ok(true);
+            }
+        };
+
+        self.card_font = Some(card.clone());
+        runtime.update(app, move |app, cx| app.apply_card_font(Some(card), cx))?;
+
+        Ok(true)
     }
 
     async fn service_reader_preferences_request<R>(
@@ -865,7 +970,15 @@ where
             return true;
         }
 
-        let Ok(bytes) = self.preferences.encode() else {
+        let font_name = match self.preferences.text().font() {
+            ReaderFont::Card(index) => self
+                .font_families
+                .get(usize::from(index))
+                .map(FontFamily::name),
+            ReaderFont::BuiltIn => None,
+        };
+
+        let Ok(bytes) = self.preferences.encode(font_name) else {
             return false;
         };
 

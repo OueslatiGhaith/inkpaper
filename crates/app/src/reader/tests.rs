@@ -418,7 +418,7 @@ fn font_size_repagination_keeps_the_current_reading_position() {
         }),
     );
 
-    let chapter = future::block_on(session.repaginate_chapter(spine, text))
+    let chapter = future::block_on(session.repaginate_chapter(spine, text, None))
         .unwrap()
         .unwrap();
 

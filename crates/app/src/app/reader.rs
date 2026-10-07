@@ -6,6 +6,7 @@ use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest,
+    fonts::reader_family,
     reader::{JumpTarget, ReaderMenuTab, TableOfContents, TextSetting, TextSettings, TocEntry},
     reader_page::paint_reader_page,
 };
@@ -376,6 +377,11 @@ impl InkPaperApp {
             return;
         };
 
-        paint_reader_page(page, document, paint);
+        let family = reader_family(
+            self.reader.text_settings().font(),
+            self.text_settings.card_font(),
+        );
+
+        paint_reader_page(page, document, family, paint);
     }
 }

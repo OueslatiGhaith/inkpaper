@@ -23,7 +23,8 @@ pub(crate) use state::{
     JumpTarget, ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState,
 };
 pub(crate) use text_settings::{
-    LineSpacing, PageBounds, ParagraphAlignment, ScreenMargin, TextSetting, TextSettings,
+    LineSpacing, PageBounds, ParagraphAlignment, ReaderFont, ScreenMargin, TextSetting,
+    TextSettings,
 };
 pub(crate) use text_settings_screen::{
     PREVIEW_PADDING, PREVIEW_TEXT_HEIGHT, TextSettingsRow, TextSettingsState, TextSettingsTab,
