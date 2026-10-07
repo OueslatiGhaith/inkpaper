@@ -115,6 +115,10 @@ pub struct Package {
     metadata: Metadata,
     manifest: Vec<ManifestItem>,
     spine: Spine,
+    /// the manifest id an EPUB 2 `<meta name="cover">` names
+    cover_id: Option<String>,
+    /// the page a `<guide>` reference of type `cover` points at
+    guide_cover: Option<ArchivePath>,
 }
 
 impl Package {
@@ -182,6 +186,29 @@ impl Package {
         Some(item)
     }
 
+    /// The items that may hold the book's cover, in crosspoint's order: the
+    /// EPUB 3 `cover-image` item, the EPUB 2 `<meta name="cover">` item, then
+    /// the `<guide>` cover. Each is an image or a page showing one. Names of
+    /// items missing from the manifest are skipped.
+    pub fn cover_candidates(&self) -> impl Iterator<Item = &ManifestItem> {
+        let property = self
+            .manifest
+            .iter()
+            .find(|item| item.has_property("cover-image"));
+
+        let meta = self
+            .cover_id
+            .as_deref()
+            .and_then(|id| self.manifest_item(id));
+
+        let guide = self
+            .guide_cover
+            .as_ref()
+            .and_then(|path| self.manifest_item_by_path(path));
+
+        property.into_iter().chain(meta).chain(guide)
+    }
+
     /// Finds the spine entry that renders the resource at `path`, such as a
     /// navigation target. Matches the spine's own item or its resolved fallback.
     pub fn spine_index_for_path(&self, path: &ArchivePath) -> Option<usize> {
@@ -203,6 +230,7 @@ enum Section {
     Metadata,
     Manifest,
     Spine,
+    Guide,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,9 +326,19 @@ enum StartTag {
     Other,
     Package,
     ManifestItem(PendingManifestItem),
-    Spine { toc: Option<String> },
+    Spine {
+        toc: Option<String>,
+    },
     SpineItem(PendingSpineItem),
     MetadataField(MetadataField),
+    Meta {
+        name: Option<String>,
+        content: Option<String>,
+    },
+    GuideReference {
+        kind: Option<String>,
+        href: Option<String>,
+    },
 }
 
 struct PackageParser {
@@ -314,6 +352,9 @@ struct PackageParser {
 
     spine_toc: Option<String>,
     spine_items: Vec<SpineItem>,
+
+    cover_id: Option<String>,
+    guide_cover: Option<ArchivePath>,
 
     section: Section,
     start: StartTag,
@@ -330,6 +371,8 @@ impl PackageParser {
             manifest: Vec::new(),
             spine_toc: None,
             spine_items: Vec::new(),
+            cover_id: None,
+            guide_cover: None,
             section: Section::None,
             start: StartTag::Other,
             capture: None,
@@ -357,6 +400,18 @@ impl PackageParser {
             "itemref" if self.section == Section::Spine => {
                 StartTag::SpineItem(PendingSpineItem::default())
             }
+            "guide" => {
+                self.section = Section::Guide;
+                StartTag::Other
+            }
+            "reference" if self.section == Section::Guide => StartTag::GuideReference {
+                kind: None,
+                href: None,
+            },
+            "meta" if self.section == Section::Metadata => StartTag::Meta {
+                name: None,
+                content: None,
+            },
             name if self.section == Section::Metadata => {
                 match MetadataField::from_local_name(name) {
                     Some(field) => {
@@ -403,6 +458,20 @@ impl PackageParser {
                 _ => {}
             },
 
+            StartTag::Meta {
+                name: meta,
+                content,
+            } => match name {
+                "name" => *meta = Some(decode_xml_value(value)),
+                "content" => *content = Some(decode_xml_value(value)),
+                _ => {}
+            },
+            StartTag::GuideReference { kind, href } => match name {
+                "type" => *kind = Some(decode_xml_value(value)),
+                "href" => *href = Some(decode_xml_value(value)),
+                _ => {}
+            },
+
             StartTag::Other | StartTag::MetadataField(_) => {}
         }
     }
@@ -415,6 +484,19 @@ impl PackageParser {
             StartTag::Spine { toc } => self.spine_toc = toc,
             StartTag::SpineItem(item) => self.spine_items.push(item.finish()?),
             StartTag::MetadataField(field) if empty => self.finish_capture(field),
+            StartTag::Meta {
+                name: Some(name),
+                content: Some(content),
+            } if name == "cover" && self.cover_id.is_none() => {
+                self.cover_id = Some(String::from(content.trim()));
+            }
+            // crosspoint takes either type for the cover page
+            StartTag::GuideReference {
+                kind: Some(kind),
+                href: Some(href),
+            } if matches!(kind.as_str(), "cover" | "cover-page") && self.guide_cover.is_none() => {
+                self.guide_cover = self.path.resolve(&href).ok();
+            }
             _ => {}
         }
 
@@ -427,7 +509,7 @@ impl PackageParser {
         }
 
         match name {
-            "metadata" | "manifest" | "spine" => self.section = Section::None,
+            "metadata" | "manifest" | "spine" | "guide" => self.section = Section::None,
             _ => {}
         }
     }
@@ -493,6 +575,8 @@ impl PackageParser {
                 toc: self.spine_toc,
                 items: self.spine_items,
             },
+            cover_id: self.cover_id,
+            guide_cover: self.guide_cover,
         }
     }
 }
@@ -613,5 +697,77 @@ mod tests {
         assert_eq!(index("OEBPS/two.txt"), Some(1));
         assert_eq!(index("OEBPS/two.xhtml"), Some(1));
         assert_eq!(index("OEBPS/notes.xhtml"), None);
+    }
+
+    fn cover_ids(metadata: &str, manifest: &str, guide: &str) -> Vec<String> {
+        let xml = alloc::format!(
+            r#"<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+                <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">{metadata}</metadata>
+                <manifest>{manifest}</manifest>
+                <spine><itemref idref="text"/></spine>
+                <guide>{guide}</guide>
+            </package>"#
+        );
+        let package = parse_package(&xml, ArchivePath::new("OEBPS/content.opf").unwrap()).unwrap();
+
+        package
+            .cover_candidates()
+            .map(|item| String::from(item.id()))
+            .collect()
+    }
+
+    #[test]
+    fn cover_candidates_follow_crosspoints_order() {
+        let manifest = r#"
+            <item id="text" href="text.xhtml" media-type="application/xhtml+xml"/>
+            <item id="art" href="art.png" media-type="image/png" properties="cover-image"/>
+            <item id="meta-art" href="meta.jpg" media-type="image/jpeg"/>
+            <item id="page" href="cover.xhtml" media-type="application/xhtml+xml"/>
+        "#;
+
+        assert_eq!(
+            cover_ids(
+                r#"<meta name="cover" content="meta-art"/>"#,
+                manifest,
+                r#"<reference type="cover" href="cover.xhtml#start"/>"#,
+            ),
+            ["art", "meta-art", "page"],
+        );
+
+        // crosspoint takes a cover-page reference too
+        assert_eq!(
+            cover_ids(
+                "",
+                manifest,
+                r#"<reference type="cover-page" href="cover.xhtml"/>"#
+            ),
+            ["art", "page"],
+        );
+    }
+
+    #[test]
+    fn cover_candidates_skip_missing_items_and_other_references() {
+        let manifest = r#"
+            <item id="text" href="text.xhtml" media-type="application/xhtml+xml"/>
+            <item id="page" href="cover.xhtml" media-type="application/xhtml+xml"/>
+        "#;
+
+        assert_eq!(
+            cover_ids(
+                r#"<meta name="cover" content="missing"/>"#,
+                manifest,
+                r#"<reference type="toc" href="cover.xhtml"/>"#,
+            ),
+            Vec::<String>::new(),
+        );
+
+        assert_eq!(
+            cover_ids(
+                r#"<meta name="cover" content="missing"/>"#,
+                manifest,
+                r#"<reference type="cover" href="cover.xhtml"/>"#,
+            ),
+            ["page"],
+        );
     }
 }

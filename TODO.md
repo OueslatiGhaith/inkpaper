@@ -46,6 +46,7 @@ New UI follows crosspoint/crossink's screens and layout.
 
 ## Home
 
+- [x] find the cover a book declares (EPUB 3 cover-image, EPUB 2 meta, guide)
 - [ ] extract and cache the current book's cover
 - [ ] show the cover on the home screen instead of the placeholder
 

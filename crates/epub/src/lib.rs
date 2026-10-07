@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 
 mod archive;
 mod container;
+mod cover;
 mod css;
 mod error;
 mod image;

@@ -40,6 +40,17 @@ pub struct Book {
     omitted: Vec<String>,
     stylesheet: String,
     language: String,
+    cover: Option<Cover>,
+}
+
+/// how a book declares its cover, each naming a chapter or image by file name
+pub enum Cover {
+    /// EPUB 3: the image's manifest item has `properties="cover-image"`
+    Property(&'static str),
+    /// EPUB 2: `<meta name="cover">` names the item, an image or a cover page
+    Meta(&'static str),
+    /// a `<guide>` reference of type `cover`, to a cover page
+    Guide(&'static str),
 }
 
 struct Chapter {
@@ -87,6 +98,7 @@ impl Book {
             omitted: Vec::new(),
             stylesheet: String::from(STYLESHEET),
             language: String::from("en"),
+            cover: None,
         }
     }
 
@@ -133,6 +145,11 @@ impl Book {
         self
     }
 
+    pub fn cover(mut self, cover: Cover) -> Self {
+        self.cover = Some(cover);
+        self
+    }
+
     /// keeps a file listed in the package but leaves it out of the archive
     pub fn omit(mut self, path: impl Into<String>) -> Self {
         self.omitted.push(path.into());
@@ -140,6 +157,8 @@ impl Book {
     }
 
     pub fn build(self) -> Epub {
+        let package = package_document(&self);
+
         let toc = self.toc.unwrap_or_else(|| {
             self.chapters
                 .iter()
@@ -150,16 +169,7 @@ impl Book {
         let mut epub = Epub::new(&self.name)
             .file("META-INF/container.xml", container("OEBPS/content.opf"))
             .file("OEBPS/styles.css", self.stylesheet.as_str())
-            .file(
-                "OEBPS/content.opf",
-                package_document(
-                    &self.title,
-                    &self.name,
-                    &self.language,
-                    &self.chapters,
-                    &self.images,
-                ),
-            )
+            .file("OEBPS/content.opf", package)
             .file("OEBPS/nav.xhtml", navigation_document(&self.title, &toc));
 
         for chapter in &self.chapters {
@@ -216,13 +226,7 @@ const STYLESHEET: &str = indoc! {r#"
     }
 "#};
 
-fn package_document(
-    title: &str,
-    identifier: &str,
-    language: &str,
-    chapters: &[Chapter],
-    images: &[Image],
-) -> String {
+fn package_document(book: &Book) -> String {
     let mut manifest = String::from(indoc! {r#"
         <item
             id="style"
@@ -240,7 +244,12 @@ fn package_document(
 
     let mut spine = String::new();
 
-    for (index, chapter) in chapters.iter().enumerate() {
+    let cover_property = |name: &str| match book.cover {
+        Some(Cover::Property(cover)) if cover == name => "\n    properties=\"cover-image\"",
+        _ => "",
+    };
+
+    for (index, chapter) in book.chapters.iter().enumerate() {
         manifest.push_str(&formatdoc! {r#"
             <item
                 id="chapter-{index}"
@@ -254,17 +263,54 @@ fn package_document(
         spine.push_str(&format!(r#"<itemref idref="chapter-{index}"/>"#));
     }
 
-    for (index, image) in images.iter().enumerate() {
+    for (index, image) in book.images.iter().enumerate() {
         manifest.push_str(&formatdoc! {r#"
             <item
                 id="image-{index}"
                 href="{}"
-                media-type="image/png"
+                media-type="image/png"{}
             />
             "#,
-            image.name
+            image.name,
+            cover_property(&image.name),
         });
     }
+
+    let item_id = |name: &str| {
+        let chapter = book
+            .chapters
+            .iter()
+            .position(|chapter| chapter.name == name);
+        let image = book.images.iter().position(|image| image.name == name);
+
+        match (chapter, image) {
+            (Some(index), _) => format!("chapter-{index}"),
+            (None, Some(index)) => format!("image-{index}"),
+            (None, None) => String::from(name),
+        }
+    };
+
+    let cover_meta = match book.cover {
+        Some(Cover::Meta(name)) => format!(
+            "\n        <meta name=\"cover\" content=\"{}\"/>",
+            item_id(name)
+        ),
+        _ => String::new(),
+    };
+
+    let guide = match book.cover {
+        Some(Cover::Guide(href)) => format!(
+            "\n\n    <guide>\n        <reference type=\"cover\" title=\"Cover\" href=\"{href}\"/>\n    </guide>"
+        ),
+        _ => String::new(),
+    };
+
+    let Book {
+        title,
+        name: identifier,
+        language,
+        ..
+    } = book;
 
     formatdoc! {r#"
         <?xml version="1.0" encoding="UTF-8"?>
@@ -284,7 +330,7 @@ fn package_document(
 
                 <meta property="dcterms:modified">
                     2026-09-17T00:00:00Z
-                </meta>
+                </meta>{cover_meta}
             </metadata>
 
             <manifest>
@@ -293,7 +339,7 @@ fn package_document(
 
             <spine>
                 {spine}
-            </spine>
+            </spine>{guide}
         </package>
 "#}
 }

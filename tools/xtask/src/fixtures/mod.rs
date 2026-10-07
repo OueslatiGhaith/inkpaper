@@ -14,6 +14,7 @@ use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 mod book;
 mod compat;
+mod covers;
 mod images;
 mod navigation;
 mod pixels;
@@ -36,6 +37,9 @@ const FIXTURES: &[fn() -> Result<Epub>] = &[
     images::many_images,
     images::image_only,
     images::broken_image,
+    covers::cover,
+    covers::cover_epub2,
+    covers::cover_guide,
     navigation::navigation_anchors,
     navigation::book_boundaries,
     navigation::broken_chapter,
