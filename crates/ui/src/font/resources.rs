@@ -1,3 +1,6 @@
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
 #[cfg(feature = "metrics")]
 use crate::GlyphCacheMetrics;
 use crate::{FontFamilyId, FontInstance, FontStyle, FontWeight, ResolvedFont};
@@ -32,8 +35,8 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
 impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize>
     FontResources<'font, FONTS, GLYPH_SLOTS, GLYPH_BYTES>
 {
-    pub fn registry(&self) -> FontRegistry<'font, FONTS> {
-        self.registry
+    pub const fn registry(&self) -> &FontRegistry<'font, FONTS> {
+        &self.registry
     }
 
     pub const fn len(&self) -> usize {
@@ -60,11 +63,25 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
         self.registry.register_face(family, font)
     }
 
-    pub fn resolve(&self, id: FontId) -> Option<(FontId, &'font dyn FontFace)> {
+    #[cfg(feature = "alloc")]
+    pub fn register_owned_face(
+        &mut self,
+        family: FontFamilyId,
+        font: Box<dyn FontFace>,
+    ) -> Result<FontId, FontRegistryError> {
+        self.registry.register_owned_face(family, font)
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn clear_owned_faces(&mut self) {
+        self.registry.clear_owned_faces();
+    }
+
+    pub fn resolve(&self, id: FontId) -> Option<(FontId, &dyn FontFace)> {
         self.registry.resolve_with_id(id)
     }
 
-    pub fn resolve_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'font>> {
+    pub fn resolve_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'_>> {
         self.registry.resolve_weight(weight)
     }
 
@@ -72,7 +89,7 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
         &self,
         family: FontFamilyId,
         weight: FontWeight,
-    ) -> Option<ResolvedFont<'font>> {
+    ) -> Option<ResolvedFont<'_>> {
         self.registry.resolve_family_weight(family, weight)
     }
 
@@ -81,7 +98,7 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
         family: FontFamilyId,
         weight: FontWeight,
         style: FontStyle,
-    ) -> Option<ResolvedFont<'font>> {
+    ) -> Option<ResolvedFont<'_>> {
         self.registry.resolve_family_font(family, weight, style)
     }
 
@@ -93,6 +110,17 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
     ) -> Result<GlyphBitmap<'_>, GlyphCacheError> {
         self.cache
             .get_or_rasterize(&self.registry, font, glyph, size_px)
+    }
+
+    /// The registry with the glyph cache, so glyphs resolved from the
+    /// registry can be rasterized while they're borrowed.
+    pub fn registry_and_glyph_cache(
+        &mut self,
+    ) -> (
+        &FontRegistry<'font, FONTS>,
+        &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
+    ) {
+        (&self.registry, &mut self.cache)
     }
 
     pub fn clear_glyph_cache(&mut self) {
@@ -107,11 +135,7 @@ impl<'font, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usi
         self.cache.used_bytes()
     }
 
-    pub fn resolve_glyph(
-        &self,
-        preferred: FontId,
-        character: char,
-    ) -> Option<ResolvedGlyph<'font>> {
+    pub fn resolve_glyph(&self, preferred: FontId, character: char) -> Option<ResolvedGlyph<'_>> {
         self.registry.resolve_glyph(preferred, character)
     }
 

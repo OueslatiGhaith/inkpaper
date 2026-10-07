@@ -532,3 +532,105 @@ fn prepared_font_delegates_for_non_ttf_face() {
         PairPositioning::Kerning(px(0)),
     );
 }
+
+#[cfg(feature = "alloc")]
+#[test]
+fn owned_faces_resolve_in_their_family_until_cleared() {
+    let ui = TestFont { fill: 10 };
+    let mut registry = FontRegistry::<2>::default();
+
+    let ui_family = registry.register_family().unwrap();
+    let custom_family = registry.register_family().unwrap();
+
+    let ui_id = registry.register_face(ui_family, &ui).unwrap();
+    let custom_id = registry
+        .register_owned_face(
+            custom_family,
+            alloc::boxed::Box::new(TestFont { fill: 200 }),
+        )
+        .unwrap();
+
+    let resolved = registry
+        .resolve_family_font(custom_family, FontWeight::NORMAL, FontStyle::Normal)
+        .unwrap();
+
+    assert_eq!(resolved.id(), custom_id);
+
+    registry.clear_owned_faces();
+
+    assert_eq!(registry.len(), 1);
+    assert!(registry.get(custom_id).is_none());
+    assert!(registry.get(ui_id).is_some());
+
+    // the family falls back to the default family, and so do its glyphs
+    let resolved = registry
+        .resolve_family_font(custom_family, FontWeight::NORMAL, FontStyle::Normal)
+        .unwrap();
+
+    assert_eq!(resolved.id(), ui_id);
+    assert_eq!(
+        registry.resolve_glyph(custom_id, 'A').unwrap().font(),
+        ui_id
+    );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn clearing_owned_faces_frees_their_ids_for_the_next_faces() {
+    let ui = TestFont { fill: 10 };
+    let mut registry = FontRegistry::<3>::default();
+
+    let family = registry.register_family().unwrap();
+    registry.register_face(family, &ui).unwrap();
+
+    let first = registry
+        .register_owned_face(family, alloc::boxed::Box::new(TestFont { fill: 1 }))
+        .unwrap();
+    registry
+        .register_owned_face(family, alloc::boxed::Box::new(TestFont { fill: 2 }))
+        .unwrap();
+
+    assert_eq!(
+        registry.register_owned_face(family, alloc::boxed::Box::new(TestFont { fill: 3 })),
+        Err(FontRegistryError::Full),
+    );
+
+    registry.clear_owned_faces();
+
+    assert_eq!(
+        registry.register_owned_face(family, alloc::boxed::Box::new(TestFont { fill: 4 })),
+        Ok(first),
+    );
+    assert_eq!(registry.len(), 2);
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn glyph_cache_forgets_glyphs_of_cleared_faces() {
+    let ui = TestFont { fill: 10 };
+    let mut registry = FontRegistry::<2>::default();
+
+    let family = registry.register_family().unwrap();
+    registry.register_face(family, &ui).unwrap();
+
+    let old = registry
+        .register_owned_face(family, alloc::boxed::Box::new(TestFont { fill: 200 }))
+        .unwrap();
+
+    let mut cache = GlyphCache::<4, 16>::default();
+    let glyph = GlyphId::new(65);
+
+    let bitmap = cache.get_or_rasterize(&registry, old, glyph, 16).unwrap();
+    assert_eq!(bitmap.coverage(), &[200; 4]);
+
+    registry.clear_owned_faces();
+
+    let new = registry
+        .register_owned_face(family, alloc::boxed::Box::new(TestFont { fill: 99 }))
+        .unwrap();
+
+    assert_eq!(new, old);
+
+    let bitmap = cache.get_or_rasterize(&registry, new, glyph, 16).unwrap();
+    assert_eq!(bitmap.coverage(), &[99; 4]);
+}

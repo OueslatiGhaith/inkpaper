@@ -37,10 +37,10 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
             style.max_lines,
             style.overflow,
             |line, from| {
-                shaper.next_cluster_boundary(&registry, font_instance.font(), size_px, line, from)
+                shaper.next_cluster_boundary(registry, font_instance.font(), size_px, line, from)
             },
-            |line| measure_shaped_line(&registry, font_instance, size_px, line),
-            |line| measure_shaped_line_with_ellipsis(&registry, font_instance, size_px, line),
+            |line| measure_shaped_line(registry, font_instance, size_px, line),
+            |line| measure_shaped_line_with_ellipsis(registry, font_instance, size_px, line),
             |line| {
                 longest_line = longest_line.max(line.width);
                 line_count = line_count.saturating_add(1);

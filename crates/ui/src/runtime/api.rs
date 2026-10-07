@@ -56,6 +56,16 @@ pub trait ResourceRuntimeApi<'resource> {
         font: &'resource dyn FontFace,
     ) -> Result<FontId, FontRegistryError>;
 
+    #[cfg(feature = "alloc")]
+    fn register_owned_font_face(
+        &mut self,
+        family: FontFamilyId,
+        font: Box<dyn FontFace>,
+    ) -> Result<FontId, FontRegistryError>;
+
+    #[cfg(feature = "alloc")]
+    fn clear_owned_font_faces(&mut self);
+
     fn register_image(
         &mut self,
         image: &'resource dyn ImageResource,
@@ -179,6 +189,20 @@ where
         font: &'resource dyn FontFace,
     ) -> Result<FontId, FontRegistryError> {
         self.register_font_face(family, font)
+    }
+
+    #[cfg(feature = "alloc")]
+    fn register_owned_font_face(
+        &mut self,
+        family: FontFamilyId,
+        font: Box<dyn FontFace>,
+    ) -> Result<FontId, FontRegistryError> {
+        self.register_owned_font_face(family, font)
+    }
+
+    #[cfg(feature = "alloc")]
+    fn clear_owned_font_faces(&mut self) {
+        self.clear_owned_font_faces();
     }
 
     fn register_image(

@@ -8,7 +8,7 @@ use super::{ShapedGlyph, bidi::DirectionalRun, marks::MarkPlacement};
 const MARK_GAP: Pixels = px(1);
 
 pub(super) fn apply_visual_positioning<'font, const FONTS: usize, const SLOTS: usize>(
-    registry: &FontRegistry<'font, FONTS>,
+    registry: &'font FontRegistry<'_, FONTS>,
     size_px: u16,
     glyphs: &mut [ShapedGlyph],
     runs: &[DirectionalRun],
@@ -39,7 +39,7 @@ pub(super) fn apply_visual_positioning<'font, const FONTS: usize, const SLOTS: u
 }
 
 fn apply_visual_run_positioning<'font, const FONTS: usize, const SLOTS: usize>(
-    registry: &FontRegistry<'font, FONTS>,
+    registry: &'font FontRegistry<'_, FONTS>,
     size_px: u16,
     glyphs: &mut [ShapedGlyph],
     right_to_left: bool,
@@ -164,8 +164,8 @@ fn apply_visual_run_positioning<'font, const FONTS: usize, const SLOTS: usize>(
     visual_advance
 }
 
-fn position_cluster_marks<'font, const FONTS: usize>(
-    registry: &FontRegistry<'font, FONTS>,
+fn position_cluster_marks<const FONTS: usize>(
+    registry: &FontRegistry<'_, FONTS>,
     size_px: u16,
     base: ShapedGlyph,
     marks: &mut [ShapedGlyph],
@@ -180,8 +180,8 @@ fn position_cluster_marks<'font, const FONTS: usize>(
     position_cluster_marks_with_metrics(registry, size_px, base, marks);
 }
 
-fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
-    registry: &FontRegistry<'font, FONTS>,
+fn position_cluster_marks_with_font_anchors<const FONTS: usize>(
+    registry: &FontRegistry<'_, FONTS>,
     size_px: u16,
     base: ShapedGlyph,
     marks: &mut [ShapedGlyph],
@@ -258,8 +258,8 @@ fn position_cluster_marks_with_font_anchors<'font, const FONTS: usize>(
     true
 }
 
-fn position_cluster_marks_with_metrics<'font, const FONTS: usize>(
-    registry: &FontRegistry<'font, FONTS>,
+fn position_cluster_marks_with_metrics<const FONTS: usize>(
+    registry: &FontRegistry<'_, FONTS>,
     size_px: u16,
     base: ShapedGlyph,
     marks: &mut [ShapedGlyph],

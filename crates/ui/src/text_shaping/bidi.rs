@@ -82,9 +82,9 @@ impl BracketPair {
 }
 
 impl SimpleShaper {
-    pub fn visual_order<'out, 'font, const FONTS: usize>(
+    pub fn visual_order<'out, const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &FontRegistry<'_, FONTS>,
         size_px: u16,
         text: &str,
         text_glyph_count: usize,
@@ -103,7 +103,7 @@ impl SimpleShaper {
 
     pub(super) fn visual_order_with_prepared_font<'out, 'font, const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         size_px: u16,
         text: &str,
         text_glyph_count: usize,
@@ -130,7 +130,7 @@ impl SimpleShaper {
         const SLOTS: usize,
     >(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         size_px: u16,
         text: &str,
         text_glyph_count: usize,
@@ -152,7 +152,7 @@ impl SimpleShaper {
     #[allow(clippy::too_many_arguments)]
     fn visual_order_impl<'out, 'font, const FONTS: usize, const SLOTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         size_px: u16,
         text: &str,
         text_glyph_count: usize,
@@ -545,8 +545,8 @@ fn resolve_directional_run_levels(runs: &mut [DirectionalRun], paragraph_directi
     }
 }
 
-fn mirror_odd_level_glyphs<'font, const FONTS: usize>(
-    registry: &FontRegistry<'font, FONTS>,
+fn mirror_odd_level_glyphs<const FONTS: usize>(
+    registry: &FontRegistry<'_, FONTS>,
     size_px: u16,
     text: &str,
     text_glyph_count: usize,

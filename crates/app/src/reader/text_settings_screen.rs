@@ -3,7 +3,11 @@ use alloc::{vec, vec::Vec};
 use inkpaper_epub::{ArchivePath, Chapter, ChapterStyles, SpineIndex};
 use inkpaper_reader::{Page, Viewport, paginate_chapter};
 
-use super::{TextSetting, TextSettings, measurer::ReaderMeasurer, text_settings::font_sizes};
+use super::{
+    TextSetting, TextSettings,
+    measurer::{ReaderMeasurer, reader_fonts},
+    text_settings::font_sizes,
+};
 
 /// The preview's inner padding, like crosspoint's.
 pub(crate) const PREVIEW_PADDING: u32 = 12;
@@ -194,7 +198,8 @@ fn layout_preview(text: TextSettings) -> Option<Page<'static>> {
     let chapter = Chapter::parse(PREVIEW_XHTML, path).ok()?;
     let styles = ChapterStyles::defaults(&chapter);
 
-    let mut measurer = ReaderMeasurer::new(Default::default()).ok()?;
+    let fonts = reader_fonts().ok()?;
+    let mut measurer = ReaderMeasurer::new(&fonts, Default::default());
 
     let pagination = paginate_chapter(
         &chapter,

@@ -19,7 +19,7 @@ use crate::{
 
 use super::{
     document::{ReaderChapter, ReaderDocument},
-    measurer::ReaderMeasurer,
+    measurer::{ReaderMeasurer, reader_fonts},
     state::{JumpTarget, ReaderChapterDirection},
 };
 
@@ -477,7 +477,8 @@ where
 
     let chapter_path = String::from(chapter.path().as_str());
 
-    let mut measurer = ReaderMeasurer::new(image_metrics).map_err(ReaderLoadError::FontRegistry)?;
+    let fonts = reader_fonts().map_err(ReaderLoadError::FontRegistry)?;
+    let mut measurer = ReaderMeasurer::new(&fonts, image_metrics);
 
     let pagination = {
         let _trace = inkpaper_trace::span!(

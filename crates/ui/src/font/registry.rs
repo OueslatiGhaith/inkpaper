@@ -1,3 +1,6 @@
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
 use crate::{
     FontFamilyId, FontInstance, FontProperties, FontStyle, FontWeight, FontWeightRange, Pixels,
     PreparedFont, ResolvedFont,
@@ -52,27 +55,53 @@ pub enum FontRegistryError {
     InvalidFamily,
 }
 
-#[derive(Clone, Copy)]
+enum RegisteredFace<'font> {
+    Borrowed(&'font dyn FontFace),
+    #[cfg(feature = "alloc")]
+    Owned(Box<dyn FontFace>),
+}
+
+impl RegisteredFace<'_> {
+    fn face(&self) -> &dyn FontFace {
+        match self {
+            Self::Borrowed(face) => *face,
+            #[cfg(feature = "alloc")]
+            Self::Owned(face) => face.as_ref(),
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    const fn is_owned(&self) -> bool {
+        matches!(self, Self::Owned(_))
+    }
+}
+
 struct RegisteredFont<'font> {
     family: FontFamilyId,
     weights: FontWeightRange,
     style: FontStyle,
-    face: &'font dyn FontFace,
+    face: RegisteredFace<'font>,
 }
 
-#[derive(Clone, Copy)]
+/// The registered faces, by [`FontId`]. Faces are borrowed for the
+/// registry's lifetime, or owned when the `alloc` feature can free them
+/// again, so what the registry hands out borrows the registry.
 pub struct FontRegistry<'font, const FONTS: usize> {
     fonts: [Option<RegisteredFont<'font>>; FONTS],
     len: usize,
     family_count: usize,
+    /// bumped whenever a face goes away, so caches keyed by [`FontId`] know
+    /// their entries may belong to another face now
+    revision: u16,
 }
 
 impl<const FONTS: usize> Default for FontRegistry<'_, FONTS> {
     fn default() -> Self {
         Self {
-            fonts: [None; FONTS],
+            fonts: core::array::from_fn(|_| None),
             len: 0,
             family_count: 0,
+            revision: 0,
         }
     }
 }
@@ -92,6 +121,10 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
     pub const fn family_count(&self) -> usize {
         self.family_count
+    }
+
+    pub(crate) const fn revision(&self) -> u16 {
+        self.revision
     }
 
     pub fn register_family(&mut self) -> Result<FontFamilyId, FontRegistryError> {
@@ -136,37 +169,87 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         weights: FontWeightRange,
         font: &'font dyn FontFace,
     ) -> Result<FontId, FontRegistryError> {
+        self.insert(family, weights, RegisteredFace::Borrowed(font))
+    }
+
+    /// Registers a face the registry owns, so [`Self::clear_owned_faces`]
+    /// can free it again.
+    #[cfg(feature = "alloc")]
+    pub fn register_owned_face(
+        &mut self,
+        family: FontFamilyId,
+        font: Box<dyn FontFace>,
+    ) -> Result<FontId, FontRegistryError> {
+        self.insert(family, font.weight_range(), RegisteredFace::Owned(font))
+    }
+
+    /// Frees every owned face. Their ids go to the next faces registered.
+    #[cfg(feature = "alloc")]
+    pub fn clear_owned_faces(&mut self) {
+        let mut cleared = false;
+
+        for font in &mut self.fonts {
+            if font.as_ref().is_some_and(|font| font.face.is_owned()) {
+                *font = None;
+                self.len -= 1;
+                cleared = true;
+            }
+        }
+
+        if cleared {
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
+    /// Fills the first free slot, so ids freed by clearing owned faces are
+    /// reused and the borrowed faces keep their ids.
+    fn insert(
+        &mut self,
+        family: FontFamilyId,
+        weights: FontWeightRange,
+        face: RegisteredFace<'font>,
+    ) -> Result<FontId, FontRegistryError> {
         if family.index() >= self.family_count {
             return Err(FontRegistryError::InvalidFamily);
         }
 
-        if self.len >= FONTS {
-            return Err(FontRegistryError::Full);
-        }
+        let index = self
+            .fonts
+            .iter()
+            .position(Option::is_none)
+            .ok_or(FontRegistryError::Full)?;
+        let id = FontId::new(u16::try_from(index).map_err(|_| FontRegistryError::Full)?);
 
-        let index = u16::try_from(self.len).map_err(|_| FontRegistryError::Full)?;
-        let id = FontId::new(index);
-
-        self.fonts[self.len] = Some(RegisteredFont {
+        self.fonts[index] = Some(RegisteredFont {
             family,
             weights,
-            style: font.style(),
-            face: font,
+            style: face.face().style(),
+            face,
         });
         self.len += 1;
 
         Ok(id)
     }
 
-    fn entry(&self, id: FontId) -> Option<RegisteredFont<'font>> {
-        self.fonts.get(id.index()).copied().flatten()
+    fn entry(&self, id: FontId) -> Option<&RegisteredFont<'font>> {
+        self.fonts.get(id.index())?.as_ref()
     }
 
-    pub fn get(&self, id: FontId) -> Option<&'font dyn FontFace> {
-        self.entry(id).map(|entry| entry.face)
+    /// The registered fonts with their ids, in id order.
+    fn entries(&self) -> impl Iterator<Item = (FontId, &RegisteredFont<'font>)> {
+        self.fonts.iter().enumerate().filter_map(|(index, font)| {
+            let font = font.as_ref()?;
+            let index = u16::try_from(index).ok()?;
+
+            Some((FontId::new(index), font))
+        })
     }
 
-    pub fn default_font(&self) -> Option<&'font dyn FontFace> {
+    pub fn get(&self, id: FontId) -> Option<&dyn FontFace> {
+        self.entry(id).map(|entry| entry.face.face())
+    }
+
+    pub fn default_font(&self) -> Option<&dyn FontFace> {
         self.get(FontId::DEFAULT)
     }
 
@@ -180,32 +263,32 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         }
     }
 
-    pub fn resolve_with_id(&self, id: FontId) -> Option<(FontId, &'font dyn FontFace)> {
+    pub fn resolve_with_id(&self, id: FontId) -> Option<(FontId, &dyn FontFace)> {
         let resolved = self.resolve_id(id)?;
         let font = self.get(resolved)?;
 
         Some((resolved, font))
     }
 
-    pub fn resolve(&self, id: FontId) -> Option<&'font dyn FontFace> {
+    pub fn resolve(&self, id: FontId) -> Option<&dyn FontFace> {
         self.resolve_with_id(id).map(|(_, font)| font)
     }
 
-    pub fn resolve_instance(&self, instance: FontInstance) -> Option<ResolvedFont<'font>> {
+    pub fn resolve_instance(&self, instance: FontInstance) -> Option<ResolvedFont<'_>> {
         let entry = self.entry(instance.font())?;
         let weight = entry.weights.resolve(instance.weight());
 
         Some(ResolvedFont::new(
             FontInstance::new(instance.font(), FontProperties::new(weight)),
-            entry.face,
+            entry.face.face(),
         ))
     }
 
-    pub(crate) fn prepare_instance(&self, instance: FontInstance) -> Option<PreparedFont<'font>> {
+    pub(crate) fn prepare_instance(&self, instance: FontInstance) -> Option<PreparedFont<'_>> {
         self.resolve_instance(instance).map(ResolvedFont::prepare)
     }
 
-    pub fn resolve_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'font>> {
+    pub fn resolve_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'_>> {
         self.resolve_family_weight(FontFamilyId::DEFAULT, weight)
     }
 
@@ -213,7 +296,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         &self,
         family: FontFamilyId,
         weight: FontWeight,
-    ) -> Option<ResolvedFont<'font>> {
+    ) -> Option<ResolvedFont<'_>> {
         self.resolve_family_font(family, weight, FontStyle::Normal)
     }
 
@@ -224,7 +307,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         family: FontFamilyId,
         weight: FontWeight,
         style: FontStyle,
-    ) -> Option<ResolvedFont<'font>> {
+    ) -> Option<ResolvedFont<'_>> {
         if let Some(resolved) = self.resolve_family_font_exact(family, weight, style) {
             return Some(resolved);
         }
@@ -241,7 +324,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
         Some(ResolvedFont::new(
             FontInstance::new(FontId::DEFAULT, FontProperties::new(weight)),
-            entry.face,
+            entry.face.face(),
         ))
     }
 
@@ -250,20 +333,13 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         family: FontFamilyId,
         requested: FontWeight,
         style: FontStyle,
-    ) -> Option<ResolvedFont<'font>> {
+    ) -> Option<ResolvedFont<'_>> {
         let mut best: Option<(FontId, FontWeight, (bool, u8), u16)> = None;
 
-        for index in 0..self.len {
-            let Some(entry) = self.fonts[index] else {
-                continue;
-            };
-
+        for (id, entry) in self.entries() {
             if entry.family != family {
                 continue;
             }
-
-            let index = u16::try_from(index).ok()?;
-            let id = FontId::new(index);
 
             let effective = entry.weights.resolve(requested);
             let distance = entry.weights.distance(requested);
@@ -297,11 +373,11 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
         Some(ResolvedFont::new(
             FontInstance::new(id, FontProperties::new(effective)),
-            entry.face,
+            entry.face.face(),
         ))
     }
 
-    fn glyph_in_font(&self, font: FontInstance, character: char) -> Option<ResolvedGlyph<'font>> {
+    fn glyph_in_font(&self, font: FontInstance, character: char) -> Option<ResolvedGlyph<'_>> {
         let font = self.resolve_instance(font)?;
         let glyph = font.glyph_id(character)?;
 
@@ -313,7 +389,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         font: FontInstance,
         character: char,
         size_px: u16,
-    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+    ) -> Option<(ResolvedGlyph<'_>, Pixels)> {
         let font = self.resolve_instance(font)?;
         let (glyph, advance) = font.glyph_id_and_advance(character, size_px)?;
 
@@ -323,10 +399,10 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
     fn glyph_with_advance_in_font_prepared(
         &self,
         font: FontInstance,
-        prepared: Option<&PreparedFont<'font>>,
+        prepared: Option<&PreparedFont<'_>>,
         character: char,
         size_px: u16,
-    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+    ) -> Option<(ResolvedGlyph<'_>, Pixels)> {
         let resolved = self.resolve_instance(font)?;
 
         let (glyph, advance) = match prepared {
@@ -344,7 +420,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         &self,
         preferred: impl Into<FontInstance>,
         character: char,
-    ) -> Option<ResolvedGlyph<'font>> {
+    ) -> Option<ResolvedGlyph<'_>> {
         let preferred = preferred.into();
 
         if let Some(glyph) = self.glyph_in_font(preferred, character) {
@@ -356,17 +432,10 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         // preserve the existing registration-order fallback semantics.
         // each fallback face gets the closest instance it can represent for the originally
         // requested weight.
-        for index in 0..self.len {
-            let index = u16::try_from(index).ok()?;
-            let id = FontId::new(index);
-
+        for (id, entry) in self.entries() {
             if id == preferred.font() {
                 continue;
             }
-
-            let Some(entry) = self.entry(id) else {
-                continue;
-            };
 
             let effective_weight = entry.weights.resolve(requested_weight);
             let candidate = FontInstance::new(id, FontProperties::new(effective_weight));
@@ -384,7 +453,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         preferred: impl Into<FontInstance>,
         character: char,
         size_px: u16,
-    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+    ) -> Option<(ResolvedGlyph<'_>, Pixels)> {
         let preferred = preferred.into();
 
         if let Some(glyph) = self.glyph_with_advance_in_font(preferred, character, size_px) {
@@ -393,17 +462,10 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
         let requested_weight = preferred.weight();
 
-        for index in 0..self.len {
-            let index = u16::try_from(index).ok()?;
-            let id = FontId::new(index);
-
+        for (id, entry) in self.entries() {
             if id == preferred.font() {
                 continue;
             }
-
-            let Some(entry) = self.entry(id) else {
-                continue;
-            };
 
             let effective_weight = entry.weights.resolve(requested_weight);
             let candidate = FontInstance::new(id, FontProperties::new(effective_weight));
@@ -419,10 +481,10 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
     pub(crate) fn resolve_character_with_advance_exact_prepared(
         &self,
         preferred: FontInstance,
-        prepared: Option<&PreparedFont<'font>>,
+        prepared: Option<&PreparedFont<'_>>,
         character: char,
         size_px: u16,
-    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+    ) -> Option<(ResolvedGlyph<'_>, Pixels)> {
         if let Some(glyph) =
             self.glyph_with_advance_in_font_prepared(preferred, prepared, character, size_px)
         {
@@ -431,17 +493,10 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
 
         let requested_weight = preferred.weight();
 
-        for index in 0..self.len {
-            let index = u16::try_from(index).ok()?;
-            let id = FontId::new(index);
-
+        for (id, entry) in self.entries() {
             if id == preferred.font() {
                 continue;
             }
-
-            let Some(entry) = self.entry(id) else {
-                continue;
-            };
 
             let effective_weight = entry.weights.resolve(requested_weight);
             let candidate = FontInstance::new(id, FontProperties::new(effective_weight));
@@ -458,7 +513,7 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         &self,
         preferred: impl Into<FontInstance>,
         character: char,
-    ) -> Option<ResolvedGlyph<'font>> {
+    ) -> Option<ResolvedGlyph<'_>> {
         let preferred = preferred.into();
 
         if let Some(glyph) = self.resolve_character_exact(preferred, character) {
@@ -487,17 +542,17 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         preferred: impl Into<FontInstance>,
         character: char,
         size_px: u16,
-    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+    ) -> Option<(ResolvedGlyph<'_>, Pixels)> {
         self.resolve_glyph_with_advance_prepared(preferred.into(), None, character, size_px)
     }
 
     pub(crate) fn resolve_glyph_with_advance_prepared(
         &self,
         preferred: FontInstance,
-        prepared: Option<&PreparedFont<'font>>,
+        prepared: Option<&PreparedFont<'_>>,
         character: char,
         size_px: u16,
-    ) -> Option<(ResolvedGlyph<'font>, Pixels)> {
+    ) -> Option<(ResolvedGlyph<'_>, Pixels)> {
         if let Some(glyph) = self
             .resolve_character_with_advance_exact_prepared(preferred, prepared, character, size_px)
         {

@@ -20,8 +20,8 @@ use embedded_graphics::{
     primitives::Rectangle,
 };
 use inkpaper_ui::{
-    FontData, FontFace, FontWeight, GlyphId, HintedTtfFont, ResolvedFont, RuntimeResources,
-    ShapedGlyph, SimpleShaper, TtfFont,
+    FontData, FontFace, FontInstance, FontWeight, GlyphId, HintedTtfFont, ResolvedFont,
+    RuntimeResources, ShapedGlyph, SimpleShaper, TtfFont,
     backend::{DEFAULT_MIN_INK_COVERAGE, EInkPainter, EInkUiMode, Gray2, inks},
     prelude::*,
 };
@@ -122,7 +122,7 @@ pub fn render(
     let (mut resources, font) = font_resources(&READER_FONT)?;
     let (mut glyph_resources, glyph_font) = font_resources(drawn_font)?;
 
-    let metrics = font.metrics(size);
+    let metrics = resolve(&resources, font)?.metrics(size);
     let line_height = metrics.line_height().get();
     let ascent = metrics.ascent.get();
 
@@ -181,9 +181,9 @@ pub fn render(
         "compositing the placements does not reproduce the painted page"
     );
 
-    let x_glyph = glyph_id(font, 'x')?;
+    let x_glyph = glyph_id(resolve(&resources, font)?, 'x')?;
     let x_height = -glyph_resources
-        .glyph_bitmap(glyph_font.instance(), x_glyph, size)
+        .glyph_bitmap(glyph_font, x_glyph, size)
         .map_err(|error| anyhow!("{error:?}"))?
         .metrics()
         .bearing_y
@@ -199,7 +199,7 @@ pub fn render(
         ('r', 1),
     ]
     .into_iter()
-    .map(|(character, stems)| Ok((glyph_id(font, character)?, stems)))
+    .map(|(character, stems)| Ok((glyph_id(resolve(&resources, font)?, character)?, stems)))
     .collect::<Result<_>>()?;
 
     for value in &mut ideal {
@@ -229,18 +229,13 @@ fn glyph_id(font: ResolvedFont<'_>, character: char) -> Result<GlyphId> {
         .ok_or_else(|| anyhow!("reader font has no glyph for {character:?}"))
 }
 
-fn measure(
-    resources: &MeasureResources,
-    font: ResolvedFont<'_>,
-    size: u16,
-    text: &str,
-) -> Result<i32> {
+fn measure(resources: &MeasureResources, font: FontInstance, size: u16, text: &str) -> Result<i32> {
     let registry = resources.font_registry();
     let shaper = SimpleShaper::with_properties(font.properties());
     let mut output = [ShapedGlyph::EMPTY; SHAPED_GLYPHS];
 
     let summary = shaper
-        .measure(&registry, font.id(), size, text, &mut output)
+        .measure(registry, font.font(), size, text, &mut output)
         .map_err(|error| anyhow!("{error:?}"))?;
 
     Ok(summary.advance().get())
@@ -281,9 +276,8 @@ fn wrap(corpus: &str, mut measure: impl FnMut(&str) -> Result<i32>) -> Result<Ve
     Ok(lines)
 }
 
-fn font_resources(
-    face: &'static dyn FontFace,
-) -> Result<(Box<MeasureResources>, ResolvedFont<'static>)> {
+/// The resources measuring with `face`, and the instance it resolves to.
+fn font_resources(face: &'static dyn FontFace) -> Result<(Box<MeasureResources>, FontInstance)> {
     let mut resources = Box::new(MeasureResources::default());
     let family = resources
         .register_font_family()
@@ -294,9 +288,17 @@ fn font_resources(
 
     let font = resources
         .resolve_font_family_weight(family, FontWeight::NORMAL)
-        .ok_or_else(|| anyhow!("reader font did not resolve"))?;
+        .ok_or_else(|| anyhow!("reader font did not resolve"))?
+        .instance();
 
     Ok((resources, font))
+}
+
+fn resolve(resources: &MeasureResources, font: FontInstance) -> Result<ResolvedFont<'_>> {
+    resources
+        .font_registry()
+        .resolve_instance(font)
+        .ok_or_else(|| anyhow!("reader font did not resolve"))
 }
 
 /// the page `EInkPainter` draws for black text on white in `BinaryDither` mode
@@ -325,8 +327,8 @@ fn composite(glyphs: &[Placement], width: usize, height: usize, min_coverage: u8
 fn place_line(
     resources: &mut MeasureResources,
     glyph_resources: &mut MeasureResources,
-    font: ResolvedFont<'_>,
-    glyph_font: ResolvedFont<'_>,
+    font: FontInstance,
+    glyph_font: FontInstance,
     size: u16,
     text: &str,
     baseline: i32,
@@ -340,7 +342,7 @@ fn place_line(
 
     let mut actual = [ShapedGlyph::EMPTY; SHAPED_GLYPHS];
     let actual = shaper
-        .shape_into(&registry, font.id(), size, text, &mut actual)
+        .shape_into(registry, font.font(), size, text, &mut actual)
         .map_err(|error| anyhow!("{error:?}"))?
         .glyphs()
         .to_vec();
@@ -348,8 +350,8 @@ fn place_line(
     let mut scaled = [ShapedGlyph::EMPTY; SHAPED_GLYPHS];
     let scaled = shaper
         .shape_into(
-            &registry,
-            font.id(),
+            registry,
+            font.font(),
             size * IDEAL_POSITION_SCALE,
             text,
             &mut scaled,
@@ -378,7 +380,7 @@ fn place_line(
     for (index, (shaped, scaled)) in actual.iter().zip(&scaled).enumerate() {
         // mirrors draw_shaped_run in crates/ui/src/backend/eink/text.rs
         let bitmap = glyph_resources
-            .glyph_bitmap(glyph_font.instance(), shaped.glyph(), size)
+            .glyph_bitmap(glyph_font, shaped.glyph(), size)
             .map_err(|error| anyhow!("{error:?}"))?;
         let metrics = bitmap.metrics();
         let offset = shaped.offset();

@@ -5,9 +5,9 @@ use alloc::boxed::Box;
 use crate::GlyphCacheMetrics;
 use crate::{
     FontFace, FontFamilyId, FontId, FontInstance, FontRegistry, FontRegistryError, FontResources,
-    FontStyle, FontWeight, GlyphBitmap, GlyphCacheError, GlyphId, ImageId, ImageRegistry,
-    ImageRegistryError, ImageResource, ImageSource, ResolvedFont, ResolvedTextStyle, Size,
-    TextMeasurer,
+    FontStyle, FontWeight, GlyphBitmap, GlyphCache, GlyphCacheError, GlyphId, ImageId,
+    ImageRegistry, ImageRegistryError, ImageResource, ImageSource, ResolvedFont, ResolvedTextStyle,
+    Size, TextMeasurer,
 };
 
 pub struct RuntimeResources<
@@ -59,6 +59,20 @@ impl<
         self.fonts.register_face(family, font)
     }
 
+    #[cfg(feature = "alloc")]
+    pub fn register_owned_font_face(
+        &mut self,
+        family: FontFamilyId,
+        font: Box<dyn FontFace>,
+    ) -> Result<FontId, FontRegistryError> {
+        self.fonts.register_owned_face(family, font)
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn clear_owned_font_faces(&mut self) {
+        self.fonts.clear_owned_faces();
+    }
+
     pub fn register_image(
         &mut self,
         image: &'resource dyn ImageResource,
@@ -79,15 +93,24 @@ impl<
         self.images.clear_owned();
     }
 
-    pub fn font_registry(&self) -> FontRegistry<'resource, FONTS> {
+    pub fn fonts_and_glyph_cache(
+        &mut self,
+    ) -> (
+        &FontRegistry<'resource, FONTS>,
+        &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
+    ) {
+        self.fonts.registry_and_glyph_cache()
+    }
+
+    pub const fn font_registry(&self) -> &FontRegistry<'resource, FONTS> {
         self.fonts.registry()
     }
 
-    pub fn resolve_font(&self, id: FontId) -> Option<(FontId, &'resource dyn FontFace)> {
+    pub fn resolve_font(&self, id: FontId) -> Option<(FontId, &dyn FontFace)> {
         self.fonts.resolve(id)
     }
 
-    pub fn resolve_font_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'resource>> {
+    pub fn resolve_font_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'_>> {
         self.fonts.resolve_weight(weight)
     }
 
@@ -95,7 +118,7 @@ impl<
         &self,
         family: FontFamilyId,
         weight: FontWeight,
-    ) -> Option<ResolvedFont<'resource>> {
+    ) -> Option<ResolvedFont<'_>> {
         self.fonts.resolve_family_weight(family, weight)
     }
 
@@ -104,7 +127,7 @@ impl<
         family: FontFamilyId,
         weight: FontWeight,
         style: FontStyle,
-    ) -> Option<ResolvedFont<'resource>> {
+    ) -> Option<ResolvedFont<'_>> {
         self.fonts.resolve_family_font(family, weight, style)
     }
 

@@ -327,9 +327,9 @@ impl SimpleShaper {
         FontInstance::new(font, self.properties)
     }
 
-    pub fn measure<'font, const FONTS: usize>(
+    pub fn measure<const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &FontRegistry<'_, FONTS>,
         preferred_font: FontId,
         size_px: u16,
         text: &str,
@@ -339,9 +339,9 @@ impl SimpleShaper {
             .measure(registry, size_px, text, output)
     }
 
-    pub fn shape_into<'out, 'font, const FONTS: usize>(
+    pub fn shape_into<'out, const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &FontRegistry<'_, FONTS>,
         preferred_font: FontId,
         size_px: u16,
         text: &str,
@@ -377,12 +377,11 @@ impl SimpleShaper {
     #[cfg(feature = "eink")]
     pub(crate) fn shape_into_with_pair_positioning_cache<
         'out,
-        'font,
         const FONTS: usize,
         const SLOTS: usize,
     >(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &FontRegistry<'_, FONTS>,
         preferred_font: FontId,
         size_px: u16,
         text: &str,
@@ -419,7 +418,7 @@ impl SimpleShaper {
 
     pub fn prepare<'font, const FONTS: usize>(
         self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         preferred_font: FontId,
     ) -> PreparedSimpleShaper<'font> {
         let preferred_font = self.font_instance(preferred_font);
@@ -442,7 +441,7 @@ pub struct PreparedSimpleShaper<'font> {
 impl<'font> PreparedSimpleShaper<'font> {
     pub fn measure<const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         size_px: u16,
         text: &str,
         output: &mut [ShapedGlyph],
@@ -454,7 +453,7 @@ impl<'font> PreparedSimpleShaper<'font> {
 
     pub fn shape_into<'out, const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         size_px: u16,
         text: &str,
         output: &'out mut [ShapedGlyph],
@@ -485,7 +484,7 @@ impl<'font> PreparedSimpleShaper<'font> {
 
     pub fn next_cluster_boundary<const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         size_px: u16,
         text: &str,
         from: usize,

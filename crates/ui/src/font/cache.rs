@@ -87,6 +87,8 @@ pub struct GlyphCache<const SLOTS: usize, const BYTES: usize> {
     storage: [u8; BYTES],
     used: usize,
     slots: [GlyphCacheSlot; SLOTS],
+    /// the registry revision the glyphs were rasterized from
+    revision: u16,
     #[cfg(feature = "metrics")]
     metrics: GlyphCacheMetrics,
 }
@@ -99,6 +101,7 @@ impl<const SLOTS: usize, const BYTES: usize> Default for GlyphCache<SLOTS, BYTES
             storage: [0; BYTES],
             used: 0,
             slots: [GlyphCacheSlot::EMPTY; SLOTS],
+            revision: 0,
             #[cfg(feature = "metrics")]
             metrics: GlyphCacheMetrics::default(),
         }
@@ -158,6 +161,12 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
         glyph: GlyphId,
         size_px: u16,
     ) -> Result<GlyphBitmap<'_>, GlyphCacheError> {
+        // freed faces' ids may belong to other faces now
+        if self.revision != registry.revision() {
+            self.clear();
+            self.revision = registry.revision();
+        }
+
         let font = registry
             .resolve_instance(font.into())
             .ok_or(GlyphCacheError::MissingFont)?;

@@ -284,11 +284,11 @@ where
             return Ok(());
         };
 
-        let font = resources
-            .resolve_font_family_style(style.font_family, style.font_weight, style.font_style)
-            .expect("EInkPainter requires a default font");
+        let (registry, glyph_cache) = resources.fonts_and_glyph_cache();
 
-        let registry = resources.font_registry();
+        let font = registry
+            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
+            .expect("EInkPainter requires a default font");
 
         let coverage_mode = self.effective_coverage_mode();
 
@@ -308,8 +308,8 @@ where
             text,
             bounds,
             clip,
-            &registry,
-            resources,
+            registry,
+            glyph_cache,
             font,
             style,
             coverage_mode,
@@ -340,11 +340,11 @@ where
         // glyph ink may overflow a run, so only the caller's clip applies
         let clip = clip.unwrap_or(bounds);
 
-        let font = resources
-            .resolve_font_family_style(style.font_family, style.font_weight, style.font_style)
-            .expect("EInkPainter requires a default font");
+        let (registry, glyph_cache) = resources.fonts_and_glyph_cache();
 
-        let registry = resources.font_registry();
+        let font = registry
+            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
+            .expect("EInkPainter requires a default font");
 
         let coverage_mode = self.effective_coverage_mode();
 
@@ -365,8 +365,8 @@ where
             text,
             bounds,
             clip,
-            &registry,
-            resources,
+            registry,
+            glyph_cache,
             font,
             style,
             coverage_mode,

@@ -43,6 +43,8 @@ impl PairPositioningCacheMetrics {
 
 pub(crate) struct PairPositioningCache<const SLOTS: usize> {
     slots: [Option<PairPositioningCacheEntry>; SLOTS],
+    /// the registry revision the pairs were positioned with
+    revision: u16,
 
     #[cfg(feature = "metrics")]
     metrics: PairPositioningCacheMetrics,
@@ -57,6 +59,7 @@ impl<const SLOTS: usize> Default for PairPositioningCache<SLOTS> {
 
         Self {
             slots: [None; SLOTS],
+            revision: 0,
 
             #[cfg(feature = "metrics")]
             metrics: PairPositioningCacheMetrics::default(),
@@ -146,6 +149,12 @@ impl<const SLOTS: usize> PairPositioningCache<SLOTS> {
         size_px: u16,
         right_to_left: bool,
     ) -> PairPositioning {
+        // freed faces' ids may belong to other faces now
+        if self.revision != registry.revision() {
+            self.slots.fill(None);
+            self.revision = registry.revision();
+        }
+
         let key = PairPositioningCacheKey {
             font,
             visual_left,
@@ -287,5 +296,77 @@ mod tests {
         assert_eq!(second_again, PairPositioning::Kerning(px(7)));
 
         assert_eq!(computes.get(), 2);
+    }
+
+    #[cfg(feature = "alloc")]
+    struct KerningFont(i32);
+
+    #[cfg(feature = "alloc")]
+    impl crate::FontFace for KerningFont {
+        fn glyph_id(&self, character: char) -> Option<GlyphId> {
+            u16::try_from(u32::from(character)).ok().map(GlyphId::new)
+        }
+
+        fn metrics(&self, size_px: u16) -> crate::FontMetrics {
+            crate::FontMetrics::new(px(i32::from(size_px)), px(0), px(0))
+        }
+
+        fn glyph_metrics(&self, _glyph: GlyphId, _size_px: u16) -> Option<crate::GlyphMetrics> {
+            None
+        }
+
+        fn kerning(&self, _left: GlyphId, _right: GlyphId, _size_px: u16) -> crate::Pixels {
+            px(self.0)
+        }
+
+        fn rasterize(
+            &self,
+            _glyph: GlyphId,
+            _size_px: u16,
+            _coverage: &mut [u8],
+        ) -> Result<(), crate::FontRasterError> {
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn pairs_of_cleared_faces_are_positioned_again() {
+        use alloc::boxed::Box;
+
+        let mut registry = FontRegistry::<1>::default();
+        let family = registry.register_family().unwrap();
+        let mut cache = PairPositioningCache::<8>::default();
+
+        let old = registry
+            .register_owned_face(family, Box::new(KerningFont(-2)))
+            .unwrap();
+        let position = |cache: &mut PairPositioningCache<8>, registry: &FontRegistry<'_, 1>| {
+            cache.get_or_compute(
+                registry,
+                None,
+                FontInstance::normal(old),
+                GlyphId::new(1),
+                GlyphId::new(2),
+                16,
+                false,
+            )
+        };
+
+        assert_eq!(
+            position(&mut cache, &registry),
+            PairPositioning::Kerning(px(-2))
+        );
+
+        registry.clear_owned_faces();
+        let new = registry
+            .register_owned_face(family, Box::new(KerningFont(-5)))
+            .unwrap();
+
+        assert_eq!(new, old);
+        assert_eq!(
+            position(&mut cache, &registry),
+            PairPositioning::Kerning(px(-5))
+        );
     }
 }

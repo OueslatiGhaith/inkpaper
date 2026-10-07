@@ -21,11 +21,24 @@ use crate::{
 
 const READER_SHAPING_GLYPHS: usize = 128;
 
-pub(super) struct ReaderMeasurer {
-    fonts: FontRegistry<'static, FONT_FACES>,
+/// The faces the reader measures with, registered like the runtime's.
+pub(super) type ReaderFonts = FontRegistry<'static, FONT_FACES>;
+
+pub(super) fn reader_fonts() -> Result<ReaderFonts, FontRegistryError> {
+    let mut fonts = FontRegistry::default();
+
+    typography::register_in(&mut fonts)?;
+
+    Ok(fonts)
+}
+
+/// Measures with shapers prepared from `fonts`, which it borrows since what
+/// a registry resolves borrows the registry.
+pub(super) struct ReaderMeasurer<'fonts> {
+    fonts: &'fonts ReaderFonts,
 
     /// indexed by [`shaper_index`]
-    shapers: [PreparedSimpleShaper<'static>; 4],
+    shapers: [PreparedSimpleShaper<'fonts>; 4],
 
     glyphs: [ShapedGlyph; READER_SHAPING_GLYPHS],
     images: ChapterImageMetrics,
@@ -33,12 +46,8 @@ pub(super) struct ReaderMeasurer {
     measure_cache: ReaderMeasureCache<READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES>,
 }
 
-impl ReaderMeasurer {
-    pub(super) fn new(images: ChapterImageMetrics) -> Result<Self, FontRegistryError> {
-        let mut fonts = FontRegistry::default();
-
-        typography::register_in(&mut fonts)?;
-
+impl<'fonts> ReaderMeasurer<'fonts> {
+    pub(super) fn new(fonts: &'fonts ReaderFonts, images: ChapterImageMetrics) -> Self {
         let shapers = [
             (ReaderFontWeight::Normal, ReaderFontStyle::Normal),
             (ReaderFontWeight::Bold, ReaderFontStyle::Normal),
@@ -46,18 +55,18 @@ impl ReaderMeasurer {
             (ReaderFontWeight::Bold, ReaderFontStyle::Italic),
         ]
         .map(|(weight, style)| {
-            let font = resolve_font(&fonts, weight, style);
+            let font = resolve_font(fonts, weight, style);
 
-            SimpleShaper::with_properties(font.properties()).prepare(&fonts, font.id())
+            SimpleShaper::with_properties(font.properties()).prepare(fonts, font.id())
         });
 
-        Ok(Self {
+        Self {
             fonts,
             shapers,
             glyphs: [ShapedGlyph::EMPTY; READER_SHAPING_GLYPHS],
             images,
             measure_cache: ReaderMeasureCache::default(),
-        })
+        }
     }
 }
 
@@ -69,10 +78,10 @@ fn shaper_index(weight: ReaderFontWeight, style: ReaderFontStyle) -> usize {
 }
 
 fn resolve_font(
-    fonts: &FontRegistry<'static, FONT_FACES>,
+    fonts: &ReaderFonts,
     weight: ReaderFontWeight,
     style: ReaderFontStyle,
-) -> ResolvedFont<'static> {
+) -> ResolvedFont<'_> {
     let (weight, style) = reader_font(weight, style);
 
     fonts
@@ -80,7 +89,7 @@ fn resolve_font(
         .expect("reader measurer always registers the reader fonts")
 }
 
-impl TextMeasurer for ReaderMeasurer {
+impl TextMeasurer for ReaderMeasurer<'_> {
     type Error = ShapeError;
 
     fn measure_text(&mut self, text: &str, style: ReaderTextStyle) -> Result<u32, Self::Error> {
@@ -96,7 +105,7 @@ impl TextMeasurer for ReaderMeasurer {
 
         let shaper = &self.shapers[shaper_index(style.font_weight(), style.font_style())];
 
-        let summary = shaper.measure(&self.fonts, style.font_size(), text, &mut self.glyphs)?;
+        let summary = shaper.measure(self.fonts, style.font_size(), text, &mut self.glyphs)?;
 
         let width = u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX);
 
@@ -108,7 +117,7 @@ impl TextMeasurer for ReaderMeasurer {
     }
 
     fn line_height(&mut self, style: ReaderTextStyle) -> Result<u32, Self::Error> {
-        let font = resolve_font(&self.fonts, style.font_weight(), style.font_style());
+        let font = resolve_font(self.fonts, style.font_weight(), style.font_style());
 
         Ok(u32::try_from(
             font.metrics(style.font_size())
@@ -127,11 +136,11 @@ impl TextMeasurer for ReaderMeasurer {
     ) -> Result<Option<usize>, Self::Error> {
         let shaper = &self.shapers[shaper_index(style.font_weight(), style.font_style())];
 
-        Ok(shaper.next_cluster_boundary(&self.fonts, style.font_size(), text, from))
+        Ok(shaper.next_cluster_boundary(self.fonts, style.font_size(), text, from))
     }
 }
 
-impl ImageMeasurer for ReaderMeasurer {
+impl ImageMeasurer for ReaderMeasurer<'_> {
     fn image_dimensions(&mut self, image: &ChapterImage) -> Option<ImageDimensions> {
         self.images.dimensions(image.path())
     }

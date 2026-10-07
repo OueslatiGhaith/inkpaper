@@ -1155,6 +1155,28 @@ where
         self.resources.register_font_face(family, font)
     }
 
+    /// Registers a face the runtime owns. Everything is painted again, since
+    /// text may now resolve to it.
+    #[cfg(feature = "alloc")]
+    pub fn register_owned_font_face(
+        &mut self,
+        family: FontFamilyId,
+        font: Box<dyn FontFace>,
+    ) -> Result<FontId, FontRegistryError> {
+        let id = self.resources.register_owned_font_face(family, font)?;
+
+        self.all_dirty.set(true);
+
+        Ok(id)
+    }
+
+    /// Frees every owned face, and paints everything again without them.
+    #[cfg(feature = "alloc")]
+    pub fn clear_owned_font_faces(&mut self) {
+        self.resources.clear_owned_font_faces();
+        self.all_dirty.set(true);
+    }
+
     pub fn register_image(
         &mut self,
         image: &'resource dyn ImageResource,

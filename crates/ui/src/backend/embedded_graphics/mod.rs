@@ -206,19 +206,19 @@ where
             return Ok(());
         };
 
-        let font = resources
-            .resolve_font_family_style(style.font_family, style.font_weight, style.font_style)
-            .expect("EmbeddedGraphicsPainter requires a default font");
+        let (registry, glyph_cache) = resources.fonts_and_glyph_cache();
 
-        let registry = resources.font_registry();
+        let font = registry
+            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
+            .expect("EmbeddedGraphicsPainter requires a default font");
 
         draw_text_to(
             self.target,
             text,
             bounds,
             text_clip,
-            &registry,
-            resources,
+            registry,
+            glyph_cache,
             font,
             style,
             self.coverage_mode,
@@ -241,19 +241,19 @@ where
         // glyph ink may overflow a run, so only the caller's clip applies
         let text_clip = clip.unwrap_or(bounds);
 
-        let font = resources
-            .resolve_font_family_style(style.font_family, style.font_weight, style.font_style)
-            .expect("EmbeddedGraphicsPainter requires a default font");
+        let (registry, glyph_cache) = resources.fonts_and_glyph_cache();
 
-        let registry = resources.font_registry();
+        let font = registry
+            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
+            .expect("EmbeddedGraphicsPainter requires a default font");
 
         draw_text_run_to(
             self.target,
             text,
             bounds,
             text_clip,
-            &registry,
-            resources,
+            registry,
+            glyph_cache,
             font,
             style,
             self.coverage_mode,

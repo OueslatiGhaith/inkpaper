@@ -6,12 +6,11 @@ use embedded_graphics::{
 };
 
 use crate::{
-    Color, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
+    Color, FontInstance, FontRegistry, GlyphCache, LineHeight, Pixels, Point, Rect, ResolvedFont,
     ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
     backend::{EInkPaintReport, WordSpacing, underline_rect},
     pair_cache::PairPositioningCache,
     px,
-    resources::RuntimeResources,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
 
@@ -29,7 +28,6 @@ pub(super) fn draw_text_to<
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
-    const IMAGES: usize,
 >(
     target: &mut D,
     report: &mut EInkPaintReport,
@@ -37,7 +35,7 @@ pub(super) fn draw_text_to<
     bounds: Rect,
     clip: Rect,
     registry: &FontRegistry<'_, FONTS>,
-    resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+    glyph_cache: &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
     font: ResolvedFont<'_>,
     style: ResolvedTextStyle,
     coverage_mode: EInkCoverageMode<D>,
@@ -144,7 +142,8 @@ where
             if let Err(draw_error) = draw_shaped_run(
                 target,
                 report,
-                resources,
+                registry,
+                glyph_cache,
                 size_px,
                 &run,
                 baseline,
@@ -176,7 +175,6 @@ pub(super) fn draw_text_run_to<
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
-    const IMAGES: usize,
     const PAIR_SLOTS: usize,
 >(
     target: &mut D,
@@ -185,7 +183,7 @@ pub(super) fn draw_text_run_to<
     bounds: Rect,
     clip: Rect,
     registry: &FontRegistry<'_, FONTS>,
-    resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+    glyph_cache: &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
     font: ResolvedFont<'_>,
     style: ResolvedTextStyle,
     coverage_mode: EInkCoverageMode<D>,
@@ -228,7 +226,8 @@ where
     draw_shaped_run(
         target,
         report,
-        resources,
+        registry,
+        glyph_cache,
         size_px,
         &run,
         baseline,
@@ -252,16 +251,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_shaped_run<
-    D,
-    const FONTS: usize,
-    const GLYPH_SLOTS: usize,
-    const GLYPH_BYTES: usize,
-    const IMAGES: usize,
->(
+fn draw_shaped_run<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize>(
     target: &mut D,
     report: &mut EInkPaintReport,
-    resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
+    registry: &FontRegistry<'_, FONTS>,
+    glyph_cache: &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
     size_px: u16,
     run: &ShapedRun<'_>,
     baseline: Pixels,
@@ -275,8 +269,8 @@ where
     D: EgDrawTarget<Color = Gray2>,
 {
     for shaped in run.glyphs().iter().copied() {
-        let bitmap = resources
-            .glyph_bitmap(shaped.font_instance(), shaped.glyph(), size_px)
+        let bitmap = glyph_cache
+            .get_or_rasterize(registry, shaped.font_instance(), shaped.glyph(), size_px)
             .map_err(EInkError::Font)?;
 
         let metrics = bitmap.metrics();

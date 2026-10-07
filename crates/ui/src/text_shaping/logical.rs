@@ -27,9 +27,9 @@ const DEFAULT_IGNORABLES: CodePointSetDataBorrowed<'static> =
     CodePointSetData::new::<DefaultIgnorableCodePoint>();
 
 impl SimpleShaper {
-    pub fn try_shape_piece_with<'font, const FONTS: usize, F, E>(
+    pub fn try_shape_piece_with<const FONTS: usize, F, E>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &FontRegistry<'_, FONTS>,
         preferred_font: FontId,
         size_px: u16,
         text: &str,
@@ -56,7 +56,7 @@ impl SimpleShaper {
     #[allow(clippy::too_many_arguments)]
     fn try_shape_piece_with_prepared_font<'font, const FONTS: usize, F, E>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         preferred_font: FontInstance,
         prepared_font: Option<&PreparedFont<'font>>,
         size_px: u16,
@@ -204,9 +204,9 @@ impl SimpleShaper {
         Ok(ShapeSummary::new(glyph_count, advance))
     }
 
-    pub fn shape_piece_with<'font, const FONTS: usize, F>(
+    pub fn shape_piece_with<const FONTS: usize, F>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &FontRegistry<'_, FONTS>,
         preferred_font: FontId,
         size_px: u16,
         text: &str,
@@ -228,9 +228,9 @@ impl SimpleShaper {
         }
     }
 
-    pub fn shape_piece_into<'font, const FONTS: usize>(
+    pub fn shape_piece_into<const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &FontRegistry<'_, FONTS>,
         preferred_font: FontId,
         size_px: u16,
         text: &str,
@@ -254,7 +254,7 @@ impl SimpleShaper {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn shape_piece_into_with_prepared_font<'font, const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         preferred_font: FontInstance,
         prepared_font: Option<&PreparedFont<'font>>,
         size_px: u16,
@@ -284,9 +284,9 @@ impl SimpleShaper {
         )
     }
 
-    pub fn next_cluster_boundary<'font, const FONTS: usize>(
+    pub fn next_cluster_boundary<const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &FontRegistry<'_, FONTS>,
         preferred_font: FontId,
         size_px: u16,
         text: &str,
@@ -307,7 +307,7 @@ impl SimpleShaper {
 
     pub(super) fn next_cluster_boundary_with_prepared_font<'font, const FONTS: usize>(
         &self,
-        registry: &FontRegistry<'font, FONTS>,
+        registry: &'font FontRegistry<'_, FONTS>,
         preferred_font: FontInstance,
         prepared_font: Option<&PreparedFont<'font>>,
         size_px: u16,
@@ -367,7 +367,7 @@ fn next_non_transparent_accepts_previous(characters: &CharIndices<'_>) -> bool {
 }
 
 fn resolve_contextual_glyph<'font, const FONTS: usize>(
-    registry: &FontRegistry<'font, FONTS>,
+    registry: &'font FontRegistry<'_, FONTS>,
     preferred_font: FontInstance,
     prepared_font: Option<&PreparedFont<'font>>,
     base_character: char,
@@ -422,7 +422,7 @@ fn resolve_contextual_glyph<'font, const FONTS: usize>(
 }
 
 fn resolve_lam_alef_ligature<'font, const FONTS: usize>(
-    registry: &FontRegistry<'font, FONTS>,
+    registry: &'font FontRegistry<'_, FONTS>,
     preferred_font: FontInstance,
     alef: char,
     joins_previous: bool,
