@@ -41,3 +41,26 @@ impl<'a> WordSpacing<'a> {
         }
     }
 }
+
+/// A text run's underline, from `start` to `end` just below the baseline like
+/// crosspoint's, thickening with the font size.
+#[cfg(any(feature = "eink", feature = "embedded-graphics"))]
+fn underline_rect(
+    start: crate::Pixels,
+    end: crate::Pixels,
+    baseline: crate::Pixels,
+    size_px: u16,
+) -> Option<crate::Rect> {
+    let width = end - start;
+
+    if width.is_non_positive() {
+        return None;
+    }
+
+    let thickness = crate::px(i32::from((size_px / 20).max(1)));
+
+    Some(crate::Rect::new(
+        crate::Point::new(start, baseline + crate::px(2)),
+        crate::Size::new(width, thickness),
+    ))
+}

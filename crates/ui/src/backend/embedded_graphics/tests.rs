@@ -669,6 +669,48 @@ fn text_run_word_spacing_widens_each_space() {
     assert_eq!(spaced, natural.map(|x| x + 10));
 }
 
+/// the rows of a 12 × 16 "AA" run that are black all the way across
+fn text_run_solid_rows(underline: bool) -> alloc::vec::Vec<i32> {
+    let mut display = MockDisplay::<Rgb888>::new();
+    display.set_allow_overdraw(true);
+
+    {
+        let mut resources = test_resources::<0>();
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
+
+        painter
+            .draw_text_run(
+                &mut resources,
+                "AA",
+                Rect::new(Point::ZERO, Size::new(px(12), px(16))),
+                ResolvedTextStyle {
+                    underline,
+                    ..ResolvedTextStyle::default()
+                },
+                None,
+            )
+            .unwrap();
+    }
+
+    (0..16)
+        .filter(|&y| {
+            (0..12).all(|x| display.get_pixel(EgPoint::new(x, y)) == Some(Rgb888::new(0, 0, 0)))
+        })
+        .collect()
+}
+
+#[test]
+fn text_run_underline_spans_the_run_below_the_baseline() {
+    assert!(text_run_solid_rows(false).is_empty());
+
+    let rows = text_run_solid_rows(true);
+    assert_eq!(rows.len(), 1);
+
+    // two pixels below the 6 × 10 font's baseline
+    let baseline = TEST_FONT_FACE.metrics(10).ascent;
+    assert_eq!(px(rows[0]), baseline + px(2));
+}
+
 #[test]
 fn alpha_blending_preserves_coverage_endpoints() {
     let black = Rgb888::new(0, 0, 0);

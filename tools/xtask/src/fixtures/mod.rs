@@ -43,6 +43,7 @@ const FIXTURES: &[fn() -> Result<Epub>] = &[
     navigation::navigation_anchors,
     navigation::book_boundaries,
     navigation::broken_chapter,
+    navigation::links,
     compat::encoded_container_path,
     compat::epub2_entities,
     compat::manifest_fallback,

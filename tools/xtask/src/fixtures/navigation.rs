@@ -82,3 +82,82 @@ pub fn broken_chapter() -> Result<Epub> {
         .omit("OEBPS/missing.xhtml")
         .build())
 }
+
+/// footnotes at the end of a chapter and in a chapter of their own, links to
+/// another chapter and to an anchor inside it, and an external link
+pub fn links() -> Result<Epub> {
+    let mut first = String::from(indoc! {r##"
+        <h1>Links</h1>
+
+        <p>
+            Internal links are underlined. This sentence has a footnote<a
+            id="ref-1" href="#note-1">[1]</a>, and so does this one<a id="ref-2"
+            href="#note-2">[2]</a>. A third note lives in the endnotes
+            chapter<a id="ref-3" href="endnotes.xhtml#note-3">[3]</a>.
+        </p>
+
+        <p>
+            Links can open <a href="destinations.xhtml">the next chapter</a>
+            or <a href="destinations.xhtml#middle">the middle of it</a>. An
+            external link to <a href="https://example.com">example.com</a> is
+            not underlined, since the reader can't open it.
+        </p>
+    "##});
+
+    // push the notes onto a later page, as at the end of a real chapter
+    for index in 1..=10 {
+        first.push_str(&formatdoc! {r##"
+            <p>
+                Filler paragraph {index}. Following a footnote and coming back
+                should return to the page with its marker, not to the start of
+                the chapter.
+            </p>
+        "##});
+    }
+
+    first.push_str(indoc! {r##"
+        <h2>Notes</h2>
+
+        <p id="note-1">
+            <a href="#ref-1">1.</a> The first note, at the end of its chapter.
+            Its number links back to the marker.
+        </p>
+
+        <p id="note-2">
+            <a href="#ref-2">2.</a> The second note.
+        </p>
+    "##});
+
+    let mut destinations = String::from("<h1>Destinations</h1>\n");
+
+    for index in 1..=12 {
+        destinations.push_str(&formatdoc! {r##"
+            <p>
+                Destinations paragraph {index}. A link to this chapter opens
+                at its start; the anchor below is a few pages in.
+            </p>
+        "##});
+    }
+
+    destinations.push_str(indoc! {r##"
+        <h2 id="middle">The Middle</h2>
+        <p>The link to the middle of this chapter lands on this heading.</p>
+    "##});
+
+    Ok(Book::new("links", "Links")
+        .chapter("links.xhtml", "Links", first)
+        .chapter("destinations.xhtml", "Destinations", destinations)
+        .chapter(
+            "endnotes.xhtml",
+            "Endnotes",
+            indoc! {r##"
+                <h1>Endnotes</h1>
+
+                <p id="note-3">
+                    <a href="links.xhtml#ref-3">3.</a> The third note, in a
+                    chapter of its own. Its number links back across chapters.
+                </p>
+            "##},
+        )
+        .build())
+}

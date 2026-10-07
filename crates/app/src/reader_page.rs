@@ -38,15 +38,22 @@ fn paint_text_fragment(fragment: &TextFragment<'_>, paint: &mut PaintCx<'_>) {
     let style = fragment.style();
     let (font_weight, font_style) = reader_font(style.font_weight(), style.font_style());
 
-    paint.draw_text_run(
-        reader_rect(bounds),
-        text(fragment.text())
-            .font_family(READER_FAMILY)
-            .font_weight(font_weight)
-            .font_style(font_style)
-            .font_size(px(i32::from(style.font_size())))
-            .word_spacing(reader_px(fragment.word_spacing())),
-    );
+    let run = text(fragment.text())
+        .font_family(READER_FAMILY)
+        .font_weight(font_weight)
+        .font_style(font_style)
+        .font_size(px(i32::from(style.font_size())))
+        .word_spacing(reader_px(fragment.word_spacing()));
+
+    // like crosspoint, links into the book are underlined; the device can't
+    // open the web, so external ones aren't
+    let run = if fragment.link().is_some_and(|link| !link.is_external()) {
+        run.underline()
+    } else {
+        run
+    };
+
+    paint.draw_text_run(reader_rect(bounds), run);
 }
 
 fn paint_image_fragment(

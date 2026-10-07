@@ -1,15 +1,24 @@
-use embedded_graphics::{pixelcolor::Rgb888 as EgRgb888, prelude::DrawTarget as EgDrawTarget};
+use embedded_graphics::{
+    Drawable,
+    draw_target::DrawTargetExt,
+    pixelcolor::Rgb888 as EgRgb888,
+    prelude::DrawTarget as EgDrawTarget,
+    primitives::{Primitive, PrimitiveStyle as EgPrimitiveStyle},
+};
 
 use crate::{
     FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont, ResolvedTextStyle,
     ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
-    backend::WordSpacing,
+    backend::{WordSpacing, underline_rect},
     px,
     resources::RuntimeResources,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
 
-use super::{CoverageMode, EmbeddedGraphicsError, coverage::draw_coverage_bitmap, to_rgb888};
+use super::{
+    CoverageMode, EmbeddedGraphicsError, coverage::draw_coverage_bitmap, to_embedded_rect,
+    to_rgb888,
+};
 
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
 
@@ -206,7 +215,20 @@ where
         coverage_mode,
         &mut pen_x,
         WordSpacing::new(text, style.word_spacing),
-    )
+    )?;
+
+    if style.underline
+        && let Some(underline) = underline_rect(bounds.origin.x, pen_x, baseline, size_px)
+    {
+        let mut target = target.color_converted::<EgRgb888>();
+
+        to_embedded_rect(underline)
+            .into_styled(EgPrimitiveStyle::with_fill(to_rgb888(style.color)))
+            .draw(&mut target.clipped(&to_embedded_rect(clip)))
+            .map_err(EmbeddedGraphicsError::Target)?;
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

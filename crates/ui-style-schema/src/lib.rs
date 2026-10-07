@@ -297,6 +297,12 @@ macro_rules! inkpaper_style_schema {
                         word_spacing: Pixels = px(0) => {
                             word_spacing(spacing: impl Into<Pixels>) => spacing.into();
                         },
+
+                        // a line just below the baseline. Only text runs draw it
+                        underline: bool = false => {
+                            underline => true;
+                            no_underline => false;
+                        },
                     }
                 }
             }

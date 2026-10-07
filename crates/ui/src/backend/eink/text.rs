@@ -1,16 +1,25 @@
-use embedded_graphics::prelude::DrawTarget as EgDrawTarget;
+use embedded_graphics::{
+    Drawable,
+    draw_target::DrawTargetExt,
+    prelude::DrawTarget as EgDrawTarget,
+    primitives::{Primitive, PrimitiveStyle as EgPrimitiveStyle},
+};
 
 use crate::{
     Color, FontInstance, FontRegistry, LineHeight, Pixels, Point, Rect, ResolvedFont,
     ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign, TextDirection,
-    backend::{EInkPaintReport, WordSpacing},
+    backend::{EInkPaintReport, WordSpacing, underline_rect},
     pair_cache::PairPositioningCache,
     px,
     resources::RuntimeResources,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
 
-use super::{EInkCoverageMode, EInkError, Gray2, coverage::draw_coverage_bitmap};
+use super::{
+    EInkCoverageMode, EInkError, Gray2,
+    coverage::{color_to_gray2, draw_coverage_bitmap},
+    to_embedded_rect,
+};
 
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
 
@@ -229,6 +238,15 @@ where
         &mut pen_x,
         WordSpacing::new(text, style.word_spacing),
     )?;
+
+    if style.underline
+        && let Some(underline) = underline_rect(bounds.origin.x, pen_x, baseline, size_px)
+    {
+        to_embedded_rect(underline)
+            .into_styled(EgPrimitiveStyle::with_fill(color_to_gray2(style.color)))
+            .draw(&mut target.clipped(&to_embedded_rect(clip)))
+            .map_err(EInkError::Target)?;
+    }
 
     Ok(u64::try_from(glyph_count).unwrap_or(u64::MAX))
 }

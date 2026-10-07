@@ -40,6 +40,7 @@ New UI follows crosspoint/crossink's screens and layout.
 
 ## Links
 
+- [x] underline internal links
 - [ ] internal links between chapters and anchors
 - [ ] footnotes
 - [ ] return to the previous position after following a link
