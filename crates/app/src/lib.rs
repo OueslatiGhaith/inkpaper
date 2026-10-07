@@ -7,6 +7,7 @@ mod browser;
 mod clock;
 mod components;
 mod control_center;
+mod cover;
 mod file_transfer;
 mod frontlight;
 mod gesture;
@@ -40,6 +41,7 @@ pub use wifi::{
 pub(crate) use browser::{BrowseEntry, BrowseListing, BrowseRequest};
 pub use clock::ClockSyncFailure;
 pub(crate) use clock::{ClockPreferences, ClockState, ClockSyncStatus, UtcOffset};
+pub(crate) use cover::{BookCover, CoverState};
 pub(crate) use file_transfer::{FileTransferRequest, FileTransferState, FileTransferStatus};
 pub(crate) use frontlight::{FrontlightPreferences, FrontlightPreferencesRequest, FrontlightState};
 pub use input::{AppInputError, AppInputEvent, dispatch_input};

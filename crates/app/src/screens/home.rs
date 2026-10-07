@@ -13,6 +13,7 @@ use crate::{
 #[component]
 pub(crate) struct HomeScreen<'a> {
     current_book: Option<&'a ReadingHistoryEntry>,
+    cover: Option<ImageSource>,
     battery: Entity<BatteryIndicator>,
     on_current_book: Listener<ActivateEvent>,
     on_browse_files: Listener<ActivateEvent>,
@@ -35,6 +36,7 @@ impl RenderOnce for HomeScreen<'_> {
                             title={book.display_title()}
                             subtitle={book.display_subtitle()}
                             progress={book.progress()}
+                            cover={self.cover}
                             on_activate={self.on_current_book}
                         />
                     {:else}
@@ -68,6 +70,7 @@ pub(crate) struct HomeRoute;
 impl ScreenLifecycle for HomeRoute {
     fn enter(&self, app: &mut InkPaperApp, _: Entry) {
         app.reading_history.request_load();
+        app.request_current_cover();
     }
 }
 
@@ -81,6 +84,10 @@ impl ScreenView for HomeRoute {
     ) -> AnyElement<'a> {
         HomeScreen::from(HomeScreenProps {
             current_book: app.reading_history.current(),
+            cover: app
+                .reading_history
+                .current()
+                .and_then(|book| app.cover.source(book.path())),
             battery: app.battery_indicator,
             on_current_book: cx.listener(InkPaperApp::activate_current_book),
             on_browse_files: cx.listener(InkPaperApp::show_browse_files),

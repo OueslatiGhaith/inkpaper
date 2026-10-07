@@ -1,14 +1,18 @@
 use alloc::{string::String, vec::Vec};
 
-use inkpaper_epub::EpubSource;
-use inkpaper_ui::{Entity, EntityAccessError, ResourceRuntimeApi, RuntimeApi};
+use alloc::boxed::Box;
+
+use inkpaper_epub::{Epub, EpubSource};
+use inkpaper_ui::{Entity, EntityAccessError, ImageSource, ResourceRuntimeApi, RuntimeApi};
 
 use crate::{
-    BrowseEntry, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure, DeviceKey,
-    FileTransferRequest, FrontlightPreferences, FrontlightPreferencesRequest, FrontlightSetting,
-    InkPaperApp, ReaderPreferences, ReaderPreferencesRequest, ReaderRequest, ReaderSession,
-    ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials, WifiJoinFailure,
-    WifiJoinPlan, WifiScanError, reader::TextSettings,
+    BookCover, BrowseEntry, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure,
+    DeviceKey, FileTransferRequest, FrontlightPreferences, FrontlightPreferencesRequest,
+    FrontlightSetting, InkPaperApp, ReaderPreferences, ReaderPreferencesRequest, ReaderRequest,
+    ReaderSession, ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials,
+    WifiJoinFailure, WifiJoinPlan, WifiScanError,
+    cover::read_cover_image,
+    reader::{GrayImage, TextSettings},
 };
 
 const READING_HISTORY_STATE: &str = "reading-history.dat";
@@ -19,6 +23,9 @@ const CLOCK_PREFERENCES_STATE: &str = "clock-preferences.dat";
 const MAX_CLOCK_PREFERENCES_BYTES: usize = 64;
 const WIFI_NETWORKS_STATE: &str = "wifi-networks.dat";
 const MAX_WIFI_NETWORKS_BYTES: usize = 1024;
+/// the current book's cover thumbnail
+const COVER_STATE: &str = "cover.dat";
+const MAX_COVER_BYTES: usize = 48 * 1024;
 
 const MAX_READING_HISTORY_BYTES: usize = 64 * 1024;
 const MAX_READER_PREFERENCES_BYTES: usize = 256;
@@ -120,6 +127,12 @@ where
 
     reader_session: Option<ReaderSession<P::RandomAccessSource>>,
 
+    /// the current book's cover, kept to register again after the reader
+    /// clears its images
+    cover: Option<BookCover>,
+    /// the cover's registration, until the reader's images clear it
+    cover_source: Option<ImageSource>,
+
     history: ReadingHistory,
     preferences: ReaderPreferences,
     frontlight_preferences: FrontlightPreferences,
@@ -141,6 +154,8 @@ where
         Self {
             platform,
             reader_session: None,
+            cover: None,
+            cover_source: None,
 
             history: ReadingHistory::default(),
             preferences: ReaderPreferences::default(),
@@ -242,6 +257,13 @@ where
                 self.service_reader_preferences_request(runtime, app, request)
                     .await?;
 
+                continue;
+            }
+
+            let cover_request = runtime.update(app, |app, _| app.take_cover_request())?;
+
+            if let Some(path) = cover_request {
+                self.service_cover_request(runtime, app, path).await?;
                 continue;
             }
 
@@ -494,6 +516,7 @@ where
                 match chapter {
                     Some(mut chapter) => {
                         chapter.register_images(runtime);
+                        self.cover_source = None;
 
                         runtime.update(app, move |app, cx| {
                             app.apply_reader_chapter(path, from, direction, chapter, cx)
@@ -520,6 +543,7 @@ where
                 match chapter {
                     Some(mut chapter) => {
                         chapter.register_images(runtime);
+                        self.cover_source = None;
 
                         runtime.update(app, move |app, cx| {
                             app.apply_reader_repagination(path, spine, text, chapter, cx);
@@ -552,6 +576,7 @@ where
                 match target {
                     Some((mut chapter, page_index)) => {
                         chapter.register_images(runtime);
+                        self.cover_source = None;
 
                         runtime.update(app, move |app, cx| {
                             app.apply_reader_jump(path, spine, anchor, chapter, page_index, cx);
@@ -650,6 +675,7 @@ where
         match document {
             Some(mut document) => {
                 document.register_images(runtime);
+                self.cover_source = None;
 
                 runtime.update(app, move |app, cx| {
                     app.apply_reader_document(document, cx);
@@ -664,6 +690,75 @@ where
         }
 
         Ok(())
+    }
+
+    /// Shows the cover of the book at `path`: the one already registered, the
+    /// cached thumbnail, or one made from the book and cached.
+    async fn service_cover_request<'resource, R>(
+        &mut self,
+        runtime: &mut R,
+        app: Entity<InkPaperApp>,
+        path: String,
+    ) -> Result<(), AppServiceError>
+    where
+        R: RuntimeApi + ResourceRuntimeApi<'resource>,
+    {
+        if self.cover.as_ref().is_none_or(|cover| cover.path() != path) {
+            self.cover_source = None;
+            self.cover = self.load_cover(&path).await;
+        }
+
+        let image = self.cover.as_ref().and_then(BookCover::image);
+
+        if self.cover_source.is_none()
+            && let Some(image) = image
+        {
+            self.cover_source = runtime.register_owned_image(Box::new(image.clone())).ok();
+        }
+
+        let source = self.cover_source;
+
+        runtime.update(app, move |app, cx| app.apply_cover(path, source, cx))?;
+
+        Ok(())
+    }
+
+    /// The cover of the book at `path`, from the cache or made from the book.
+    /// `None` when the book couldn't be read, so it is tried again next time.
+    async fn load_cover(&mut self, path: &str) -> Option<BookCover> {
+        if let Ok(Some(bytes)) = self.platform.load_state(COVER_STATE, MAX_COVER_BYTES).await
+            && let Ok(cover) = BookCover::decode(&bytes)
+            && cover.path() == path
+        {
+            return Some(cover);
+        }
+
+        let image = self.read_cover_image(path).await?;
+        let cover = BookCover::new(String::from(path), image.as_ref());
+
+        if let Ok(bytes) = cover.encode() {
+            let _ = self.platform.save_state(COVER_STATE, &bytes).await;
+        }
+
+        Some(cover)
+    }
+
+    async fn read_cover_image(&mut self, path: &str) -> Option<Option<GrayImage>> {
+        // the platform may keep only one file open, so read through the
+        // reader's book when it is this one
+        if let Some(session) = self.reader_session.as_mut()
+            && session.path() == path
+        {
+            return session.cover_image().await.ok();
+        }
+
+        // opening another file closes the reader's, so its session goes too
+        self.reader_session = None;
+
+        let source = self.platform.open_random_access(path).await.ok()?;
+        let mut epub = Epub::open(source).await.ok()?;
+
+        read_cover_image(&mut epub).await.ok()
     }
 
     async fn service_reader_preferences_request<R>(

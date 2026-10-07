@@ -7,11 +7,14 @@ use inkpaper_reader::{ReadingPosition, paginate_chapter};
 use inkpaper_trace::{async_span, span};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
-use crate::reader::{
-    TextSettings,
-    images::load_chapter_images,
-    progress::BookProgressMap,
-    toc::{TocEntry, toc_entries},
+use crate::{
+    cover::read_cover_image,
+    reader::{
+        GrayImage, TextSettings,
+        images::load_chapter_images,
+        progress::BookProgressMap,
+        toc::{TocEntry, toc_entries},
+    },
 };
 
 use super::{
@@ -66,6 +69,12 @@ where
 
     pub fn identifier(&self) -> Option<&str> {
         self.epub.metadata().identifier()
+    }
+
+    /// The book's cover, through the open book: a platform may keep only one
+    /// file open, so opening it again would close this session's.
+    pub async fn cover_image(&mut self) -> Result<Option<GrayImage>, EpubError<S::Error>> {
+        read_cover_image(&mut self.epub).await
     }
 
     pub fn set_text_settings(&mut self, text: TextSettings) {

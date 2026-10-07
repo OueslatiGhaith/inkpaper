@@ -36,14 +36,14 @@ impl ChapterImageMetrics {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct GrayImage {
+pub(crate) struct GrayImage {
     width: u32,
     height: u32,
     pixels: Vec<u8>,
 }
 
 impl GrayImage {
-    fn new(width: usize, height: usize, pixels: Vec<u8>) -> Option<Self> {
+    pub(crate) fn new(width: usize, height: usize, pixels: Vec<u8>) -> Option<Self> {
         if width == 0 || height == 0 {
             return None;
         }
@@ -63,6 +63,68 @@ impl GrayImage {
 
     const fn dimensions(&self) -> ImageDimensions {
         ImageDimensions::new(self.width, self.height)
+    }
+
+    pub(crate) const fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub(crate) const fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub(crate) fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+
+    /// The image scaled to fit within `max_width` × `max_height`, keeping its
+    /// shape. Each pixel averages the source pixels it covers.
+    pub(crate) fn fit_within(&self, max_width: u32, max_height: u32) -> Option<Self> {
+        let (source_width, source_height) = (u64::from(self.width), u64::from(self.height));
+
+        // the smaller of the two scales, as width × height ratios
+        let (width, height) =
+            if source_width * u64::from(max_height) > source_height * u64::from(max_width) {
+                let width = u64::from(max_width);
+                (width, (source_height * width / source_width).max(1))
+            } else {
+                let height = u64::from(max_height);
+                ((source_width * height / source_height).max(1), height)
+            };
+
+        let mut pixels = Vec::with_capacity(usize::try_from(width * height).ok()?);
+
+        for y in 0..height {
+            let top = y * source_height / height;
+            let bottom = ((y + 1) * source_height / height).max(top + 1);
+
+            for x in 0..width {
+                let left = x * source_width / width;
+                let right = ((x + 1) * source_width / width).max(left + 1);
+
+                let mut sum = 0u64;
+
+                for source_y in top..bottom {
+                    let row = usize::try_from(source_y * source_width).ok()?;
+                    let start = row + usize::try_from(left).ok()?;
+                    let end = row + usize::try_from(right).ok()?;
+
+                    sum += self.pixels[start..end]
+                        .iter()
+                        .map(|&value| u64::from(value))
+                        .sum::<u64>();
+                }
+
+                let count = (bottom - top) * (right - left);
+                pixels.push(u8::try_from(sum / count).unwrap_or(u8::MAX));
+            }
+        }
+
+        Self::new(
+            usize::try_from(width).ok()?,
+            usize::try_from(height).ok()?,
+            pixels,
+        )
     }
 }
 
@@ -215,7 +277,8 @@ where
     loaded
 }
 
-fn decode_image(bytes: &[u8]) -> Option<GrayImage> {
+/// A PNG or JPEG decoded to gray.
+pub(crate) fn decode_image(bytes: &[u8]) -> Option<GrayImage> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return decode_png(bytes);
     }

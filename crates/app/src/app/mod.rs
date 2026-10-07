@@ -1,7 +1,7 @@
 use inkpaper_ui::{FontRegistryError, prelude::*};
 
 use crate::{
-    ClockState, FileTransferState, FrontlightState,
+    ClockState, CoverState, FileTransferState, FrontlightState,
     browser::BrowserState,
     components::header::BatteryIndicator,
     components::{
@@ -97,6 +97,8 @@ pub struct InkPaperApp {
     /// the Text Settings screen
     pub(crate) text_settings: TextSettingsState,
     pub(crate) reading_history: ReadingHistoryState,
+    /// the current book's cover on the home screen
+    pub(crate) cover: CoverState,
     pub(crate) battery: Entity<BatteryState>,
     pub(crate) rtc: Entity<RtcState>,
     /// the battery in screen headers
@@ -142,6 +144,7 @@ impl InkPaperApp {
             reader: ReaderState::default(),
             text_settings: TextSettingsState::default(),
             reading_history: ReadingHistoryState::default(),
+            cover: CoverState::default(),
             battery,
             rtc,
             battery_indicator,

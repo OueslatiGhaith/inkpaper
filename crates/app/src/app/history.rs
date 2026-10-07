@@ -1,5 +1,5 @@
 use alloc::{string::String, vec::Vec};
-use inkpaper_ui::prelude::*;
+use inkpaper_ui::{ImageSource, prelude::*};
 
 use super::{InkPaperApp, Screen};
 use crate::{ReadingHistoryEntry, ReadingHistoryRequest};
@@ -44,6 +44,32 @@ impl InkPaperApp {
     ) {
         self.reading_history.apply_entries(entries);
 
+        if self.screen() == Screen::Home {
+            self.request_current_cover();
+        }
+
         cx.notify();
+    }
+
+    /// Asks for the current book's cover, for the home screen.
+    pub(crate) fn request_current_cover(&mut self) {
+        if let Some(entry) = self.reading_history.current() {
+            self.cover.request(entry.path());
+        }
+    }
+
+    pub(crate) fn take_cover_request(&mut self) -> Option<String> {
+        self.cover.take_request()
+    }
+
+    pub(crate) fn apply_cover(
+        &mut self,
+        path: String,
+        source: Option<ImageSource>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.cover.apply(path, source) {
+            cx.notify();
+        }
     }
 }

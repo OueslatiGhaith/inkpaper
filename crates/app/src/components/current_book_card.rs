@@ -12,6 +12,8 @@ pub(crate) struct CurrentBookCard<'a> {
     title: &'a str,
     subtitle: &'a str,
     progress: BookProgress,
+    /// the book's cover thumbnail; a placeholder shows without one
+    cover: Option<ImageSource>,
     on_activate: Listener<ActivateEvent>,
 }
 
@@ -30,14 +32,25 @@ impl RenderOnce for CurrentBookCard<'_> {
                 class="w-full h-full relative rounded-md"
             >
                 <div class="absolute left-2 top-2 w-[150px] h-[226px] bg-white border-px border-black">
-                    <div class="absolute left-0 top-[75px] w-[150px] h-[150px] bg-black" />
+                    {#if let Some(cover) = self.cover}
+                        // crossink fits the whole cover inside the box
+                        <div class="absolute left-0 top-0 w-[148px] h-[224px]">
+                            {
+                                image(cover)
+                                    .size(Size::new(px(148), px(224)))
+                                    .contain()
+                            }
+                        </div>
+                    {:else}
+                        <div class="absolute left-0 top-[75px] w-[150px] h-[150px] bg-black" />
 
-                    <div class="absolute left-6 top-6 w-8 h-8">
-                        <Icon
-                            kind={IconKind::BookOpen}
-                            size={px(32)}
-                        />
-                    </div>
+                        <div class="absolute left-6 top-6 w-8 h-8">
+                            <Icon
+                                kind={IconKind::BookOpen}
+                                size={px(32)}
+                            />
+                        </div>
+                    {/if}
                 </div>
 
                 <div class="absolute left-[174px] top-0 w-[258px] h-[242px] flex flex-col justify-center gap-2">
