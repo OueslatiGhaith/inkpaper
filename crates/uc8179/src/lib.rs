@@ -393,7 +393,11 @@ impl Uc8179 {
         }
 
         if fast {
-            self.command(bus, Command::PartialIn).await?;
+            // PTL keeps the last window a windowed update programmed, so the
+            // whole-plane refresh sets the full panel again
+            let full = Region::new(0, 0, self.config.width, self.config.visible_height);
+
+            self.enter_partial_window(bus, full).await?;
         }
 
         self.command(bus, Command::DisplayRefresh).await?;
