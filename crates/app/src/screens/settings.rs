@@ -16,6 +16,7 @@ pub(crate) struct SettingsScreen {
     clock: Option<ClockStatus>,
     on_back: Listener<ActivateEvent>,
     on_clock: Listener<ActivateEvent>,
+    on_text: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for SettingsScreen {
@@ -48,7 +49,16 @@ impl RenderOnce for SettingsScreen {
                     </div>
                 </div>
 
-                <div class="absolute left-0 top-[98px] w-[480px]">
+                <div class="absolute left-0 top-[98px] w-[480px] flex flex-col">
+                    <ListRow
+                        id={("settings-text", 0)}
+                        label="Text Settings"
+                        depth={0}
+                        selected={false}
+                        chevron={true}
+                        on_activate={Some(self.on_text)}
+                    />
+
                     <ListRow
                         id={("settings-clock", 0)}
                         label="Clock"
@@ -80,6 +90,7 @@ impl ScreenView for SettingsRoute {
             clock: app.local_clock(cx),
             on_back: cx.listener(InkPaperApp::activate_back),
             on_clock: cx.listener(InkPaperApp::show_clock_settings),
+            on_text: cx.listener(InkPaperApp::show_text_settings),
         })
         .into_any_element()
     }

@@ -7,6 +7,7 @@ mod preferences;
 mod progress;
 mod state;
 mod text_settings;
+mod text_settings_screen;
 mod toc;
 
 #[cfg(test)]
@@ -20,6 +21,10 @@ pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesRequest};
 pub(crate) use state::{ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState};
 pub(crate) use text_settings::{
     LineSpacing, PageBounds, ParagraphAlignment, ScreenMargin, TextSetting, TextSettings,
+};
+pub(crate) use text_settings_screen::{
+    PREVIEW_PADDING, PREVIEW_TEXT_HEIGHT, TextSettingsRow, TextSettingsState, TextSettingsTab,
+    preview_text_left,
 };
 pub(crate) use toc::{TableOfContents, TocEntry};
 

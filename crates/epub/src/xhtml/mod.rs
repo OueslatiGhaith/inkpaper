@@ -20,6 +20,12 @@ pub struct Chapter {
 }
 
 impl Chapter {
+    /// A chapter from its XHTML outside any book, like a settings preview.
+    /// `path` resolves its relative links and images.
+    pub fn parse(xhtml: &str, path: ArchivePath) -> Result<Self, crate::XhtmlError> {
+        parse_xhtml(xhtml, path)
+    }
+
     pub fn path(&self) -> &ArchivePath {
         &self.path
     }

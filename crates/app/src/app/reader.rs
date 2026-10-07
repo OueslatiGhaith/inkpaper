@@ -195,15 +195,25 @@ impl InkPaperApp {
         self.close_reader_menu(cx);
     }
 
-    /// Opens the picker of a Text panel row, or flips a toggle row.
+    /// Opens the picker of a Text panel row, or flips a toggle row. The Font
+    /// row opens the Text Settings screen, like crosspoint's.
     pub(crate) fn activate_reader_text_row(
         &mut self,
         event: &ActivateEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(setting) = event.index().and_then(TextSetting::from_index) else {
+        let Some(&setting) = event
+            .index()
+            .and_then(|index| TextSetting::PANEL.get(index))
+        else {
             return;
         };
+
+        if setting == TextSetting::Font {
+            self.reader.close_menu();
+            self.open_screen(Screen::TextSettings, cx);
+            return;
+        }
 
         // like crosspoint's checkbox rows, toggles flip in place
         let changed = if setting.is_toggle() {

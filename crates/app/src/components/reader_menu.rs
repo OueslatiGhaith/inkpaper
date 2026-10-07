@@ -24,7 +24,7 @@ pub(crate) struct ReaderMenu {
     on_close: Listener<ActivateEvent>,
     on_text_tab: Listener<ActivateEvent>,
     on_more_tab: Listener<ActivateEvent>,
-    /// a Text panel row; its index in [`TextSetting::ALL`] is its element id
+    /// a Text panel row; its index in [`TextSetting::PANEL`] is its element id
     on_text_row: Listener<ActivateEvent>,
     on_select_chapter: Listener<ActivateEvent>,
 }
@@ -35,7 +35,7 @@ impl RenderOnce for ReaderMenu {
         let on_text_row = self.on_text_row;
 
         // crosspoint's Text panel: one row per setting, its value on the right
-        let text_rows = TextSetting::ALL
+        let text_rows = TextSetting::PANEL
             .iter()
             .enumerate()
             .map(move |(index, &setting)| {
@@ -142,7 +142,7 @@ impl Render for ReaderMenuView {
 }
 
 /// A Text panel row: the setting on the left, its value on the right, like
-/// crosspoint's panel rows. Rows are 46 px so all seven fit above the tab bar.
+/// crosspoint's panel rows.
 #[component]
 struct TextRow {
     index: usize,
@@ -157,15 +157,15 @@ impl RenderOnce for TextRow {
             <div
                 id={("reader-menu-text-row", self.index)}
                 on:activate={self.on_activate}
-                class="w-full h-[46px] relative"
+                class="w-full h-16 relative"
             >
-                <div class="absolute left-8 top-0 w-[280px] h-[46px] flex items-center">
+                <div class="absolute left-8 top-0 w-[280px] h-16 flex items-center">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.label}
                     </text>
                 </div>
 
-                <div class="absolute right-8 top-0 w-[120px] h-[46px] flex items-center justify-end">
+                <div class="absolute right-8 top-0 w-[120px] h-16 flex items-center justify-end">
                     <text class="text-xl font-bold no-wrap max-lines-1">
                         {self.value}
                     </text>

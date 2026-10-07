@@ -101,3 +101,60 @@ impl RenderOnce for SettingsValueRow<'_> {
         }
     }
 }
+
+/// A list row with a label and crossink's switch on the right, for settings
+/// that a tap turns on and off.
+#[component]
+pub(crate) struct SettingsToggleRow<'a> {
+    id: (&'static str, usize),
+    label: &'a str,
+    on: bool,
+    on_activate: Listener<ActivateEvent>,
+}
+
+impl RenderOnce for SettingsToggleRow<'_> {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        rsx! {
+            <div class="w-full h-16 relative">
+                <div
+                    id={self.id}
+                    on:activate={self.on_activate}
+                    class="absolute left-5 top-0 w-[440px] h-16 rounded-md"
+                />
+
+                <div class="absolute left-7 top-0 w-[340px] h-16 flex items-center">
+                    <text class="text-xl no-wrap max-lines-1 text-ellipsis">
+                        {self.label}
+                    </text>
+                </div>
+
+                <div class="absolute right-7 top-5">
+                    <Switch on={self.on} />
+                </div>
+            </div>
+        }
+    }
+}
+
+/// crossink's switch: a 40 × 24 pill with its knob at the right and filled
+/// black when on.
+#[component]
+struct Switch {
+    on: bool,
+}
+
+impl RenderOnce for Switch {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let (track, knob, knob_left) = if self.on {
+            (Color::BLACK, Color::WHITE, px(18))
+        } else {
+            (Color::WHITE, Color::BLACK, px(2))
+        };
+
+        rsx! {
+            <div class="relative w-10 h-6 rounded-[12px] border-2 border-black bg-{track}">
+                <div class="absolute left-{knob_left} top-[2px] w-4 h-4 rounded-[8px] bg-{knob}" />
+            </div>
+        }
+    }
+}

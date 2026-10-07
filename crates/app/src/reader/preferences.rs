@@ -28,6 +28,7 @@ impl ReaderPreferences {
             paragraph_indent: self.text.paragraph_indent(),
             paragraph_spacing: self.text.paragraph_spacing(),
             embedded_style: self.text.embedded_style(),
+            hyphenation: Some(self.text.hyphenation()),
         };
 
         Ok(storage::encode(&stored)?)
@@ -54,7 +55,12 @@ impl ReaderPreferences {
                 stored.paragraph_indent,
             ))?
             .with_paragraph_spacing(stored.paragraph_spacing)
-            .with_embedded_style(stored.embedded_style);
+            .with_embedded_style(stored.embedded_style)
+            .with_hyphenation(
+                stored
+                    .hyphenation
+                    .unwrap_or(TextSettings::default().hyphenation()),
+            );
 
         Ok(Self::new(text))
     }
@@ -98,4 +104,7 @@ struct StoredReaderPreferences {
     paragraph_spacing: bool,
     #[n(6)]
     embedded_style: bool,
+    /// on when missing, from before the setting existed
+    #[n(7)]
+    hyphenation: Option<bool>,
 }

@@ -9,7 +9,7 @@ use crate::{
         reader_menu::ReaderMenuView,
     },
     control_center::ControlCenterState,
-    reader::ReaderState,
+    reader::{ReaderState, TextSettingsState},
     reading_history::ReadingHistoryState,
     screens::{
         clock_settings::TimezoneView,
@@ -30,6 +30,7 @@ mod input;
 mod navigation;
 mod reader;
 mod system;
+mod text_settings;
 mod wifi;
 
 pub(crate) use input::{ScreenInput, SideButton};
@@ -40,8 +41,8 @@ use crate::screens::{
     browse_files::BrowseFilesRoute, clock_settings::ClockSettingsRoute,
     file_transfer::FileTransferRoute, home::HomeRoute, reader::ReaderRoute,
     recent_books::RecentBooksRoute, settings::SettingsRoute,
-    table_of_contents::TableOfContentsRoute, wifi_networks::WifiNetworksRoute,
-    wifi_password::WifiPasswordRoute,
+    table_of_contents::TableOfContentsRoute, text_settings::TextSettingsRoute,
+    wifi_networks::WifiNetworksRoute, wifi_password::WifiPasswordRoute,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +57,7 @@ enum Screen {
     WifiNetworks,
     WifiPassword,
     TableOfContents,
+    TextSettings,
 }
 
 /// How a screen draws itself.
@@ -82,6 +84,7 @@ impl Screen {
             Self::WifiNetworks => &WifiNetworksRoute,
             Self::WifiPassword => &WifiPasswordRoute,
             Self::TableOfContents => &TableOfContentsRoute,
+            Self::TextSettings => &TextSettingsRoute,
         }
     }
 }
@@ -91,6 +94,8 @@ pub struct InkPaperApp {
     sleeping: bool,
     pub(crate) browser: BrowserState,
     pub(crate) reader: ReaderState,
+    /// the Text Settings screen
+    pub(crate) text_settings: TextSettingsState,
     pub(crate) reading_history: ReadingHistoryState,
     pub(crate) battery: Entity<BatteryState>,
     pub(crate) rtc: Entity<RtcState>,
@@ -135,6 +140,7 @@ impl InkPaperApp {
             sleeping: false,
             browser: BrowserState::default(),
             reader: ReaderState::default(),
+            text_settings: TextSettingsState::default(),
             reading_history: ReadingHistoryState::default(),
             battery,
             rtc,

@@ -447,7 +447,7 @@ where
             &styles,
             spine,
             text.viewport(),
-            text.reader_settings(),
+            text.reader_settings(epub.metadata().language()),
             &mut measurer,
         )
         .map_err(ReaderLoadError::Shape)?

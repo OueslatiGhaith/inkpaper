@@ -26,14 +26,17 @@ New UI follows crosspoint/crossink's screens and layout.
 - [x] Embedded Style switch for the book's own CSS
 - [x] paragraph alignment (justify/left/center/right/book's style)
 - [x] justified lines, stretching the spaces between words
-- [ ] full Text Settings screen (Font | Size | Layout | Style tabs with a live preview)
+- [x] full Text Settings screen (Font | Size | Layout | Style tabs with a live preview)
+- [ ] word spacing and character spacing, crosspoint's other Layout rows
 
-## Hyphenation: if it doesn't cost too much
+## Hyphenation
 
-- [ ] hyphenation dictionaries
-- [ ] break words at hyphenation points during line layout
-- [ ] hyphenation setting (on/off)
-- [ ] pick the dictionary from the book's language
+- [x] hyphenation dictionaries (English)
+- [x] break words at hyphenation points during line layout
+- [x] hyphenation setting (on/off)
+- [x] pick the dictionary from the book's language
+- [ ] more languages: crosspoint's French, German, Russian, Spanish, Italian, Polish, Swedish, Ukrainian, Finnish and Portuguese
+- [ ] draw a hyphen where a line breaks at a book's own soft hyphen
 
 ## Links
 

@@ -55,6 +55,9 @@ pub(crate) const UI_FAMILY: FontFamilyId = FontFamilyId::DEFAULT;
 
 pub(crate) const READER_FAMILY: FontFamilyId = FontFamilyId::new(1);
 
+/// the reader family's name, as the font settings show it
+pub(crate) const READER_FONT_NAME: &str = "Libron";
+
 /// Every registered face, in registration order.
 pub(crate) const FONT_FACES: usize = 5;
 

@@ -821,6 +821,18 @@ impl ReaderState {
         self.text
     }
 
+    /// Keeps `text` from the Text Settings screen. It is saved right away; an
+    /// open book is laid out with it once the screen closes.
+    pub(crate) fn save_text_settings(&mut self, text: TextSettings) {
+        if self.document.is_none() {
+            self.text = text;
+        }
+
+        let preferences = ReaderPreferences::new(text);
+
+        self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
+    }
+
     fn queue_preferences_update(&mut self) {
         let preferences = ReaderPreferences::new(self.text);
 

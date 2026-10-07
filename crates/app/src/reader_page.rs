@@ -11,10 +11,24 @@ pub(crate) fn paint_reader_page(
     document: &ReaderDocument,
     paint: &mut PaintCx<'_>,
 ) {
+    paint_page(page, Some(document), paint);
+}
+
+/// A laid out page. Its images come from `document`, so a page without one,
+/// like a settings preview, draws only its text.
+pub(crate) fn paint_page(
+    page: &Page<'static>,
+    document: Option<&ReaderDocument>,
+    paint: &mut PaintCx<'_>,
+) {
     for item in page.items() {
         match item {
             PageItem::Text(fragment) => paint_text_fragment(fragment, paint),
-            PageItem::Image(fragment) => paint_image_fragment(fragment, document, paint),
+            PageItem::Image(fragment) => {
+                if let Some(document) = document {
+                    paint_image_fragment(fragment, document, paint);
+                }
+            }
         }
     }
 }

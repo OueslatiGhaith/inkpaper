@@ -532,7 +532,12 @@ fn navigation_target_jump_opens_the_page_with_the_anchored_heading() {
 fn every_text_setting_option_chooses_the_value_it_shows() {
     let text = TextSettings::default();
 
-    for setting in TextSetting::ALL {
+    let settings = TextSetting::PANEL
+        .into_iter()
+        .chain(TextSetting::LAYOUT)
+        .chain(TextSetting::STYLE);
+
+    for setting in settings {
         let options = setting.options();
         let current = setting.selected(text).unwrap();
 

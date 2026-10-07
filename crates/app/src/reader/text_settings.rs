@@ -4,7 +4,9 @@ use alloc::{
     vec::Vec,
 };
 
-use inkpaper_reader::{ReaderSettings, TextAlign, Viewport};
+use inkpaper_reader::{HyphenationLanguage, ReaderSettings, TextAlign, Viewport};
+
+use crate::typography::READER_FONT_NAME;
 
 use super::{
     READER_BLOCK_SPACING, READER_FONT_SIZE_DEFAULT, READER_FONT_SIZE_MAX, READER_FONT_SIZE_MIN,
@@ -216,6 +218,8 @@ pub(crate) struct TextSettings {
     paragraph_spacing: bool,
     /// whether the book's own CSS applies, like crosspoint's embedded style
     embedded_style: bool,
+    /// whether words break at the end of a line, in the book's language
+    hyphenation: bool,
 }
 
 impl TextSettings {
@@ -236,6 +240,7 @@ impl TextSettings {
             paragraph_indent: PARAGRAPH_INDENT_DEFAULT,
             paragraph_spacing: true,
             embedded_style: true,
+            hyphenation: true,
         })
     }
 
@@ -269,6 +274,17 @@ impl TextSettings {
 
     pub(crate) const fn embedded_style(self) -> bool {
         self.embedded_style
+    }
+
+    pub(crate) const fn hyphenation(self) -> bool {
+        self.hyphenation
+    }
+
+    pub(crate) const fn with_hyphenation(self, hyphenation: bool) -> Self {
+        Self {
+            hyphenation,
+            ..self
+        }
     }
 
     pub(crate) const fn with_embedded_style(self, embedded_style: bool) -> Self {
@@ -305,14 +321,21 @@ impl TextSettings {
         }
     }
 
-    pub(crate) fn reader_settings(self) -> ReaderSettings {
+    /// The layout of a book in `language`, its `dc:language` tag, which picks
+    /// the hyphenation patterns.
+    pub(crate) fn reader_settings(self, language: Option<&str>) -> ReaderSettings {
         let settings = ReaderSettings::new(self.font_size, READER_BLOCK_SPACING)
             .and_then(|settings| settings.with_line_height_percent(self.line_spacing.percent()))
             .expect("text settings only hold valid font sizes")
             .with_paragraph_indent(self.paragraph_indent)
             .with_extra_block_spacing(self.paragraph_spacing);
 
-        self.alignment.apply(settings)
+        let settings = self.alignment.apply(settings);
+
+        match language.and_then(HyphenationLanguage::from_tag) {
+            Some(language) if self.hyphenation => settings.with_hyphenation(language),
+            _ => settings,
+        }
     }
 
     pub(crate) fn viewport(self) -> Viewport {
@@ -330,14 +353,16 @@ impl Default for TextSettings {
             paragraph_indent: PARAGRAPH_INDENT_DEFAULT,
             paragraph_spacing: true,
             embedded_style: true,
+            hyphenation: true,
         }
     }
 }
 
-/// A row of the reader's Text panel, in the order they are listed. Like
-/// crosspoint's, each opens a picker of its values.
+/// A text setting as a row of the reader's Text panel or the Text Settings
+/// screen. Like crosspoint's, each opens a picker of its values, or flips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TextSetting {
+    Font,
     FontSize,
     LineSpacing,
     ParagraphAlignment,
@@ -345,25 +370,34 @@ pub(crate) enum TextSetting {
     ParagraphIndent,
     ParagraphSpacing,
     EmbeddedStyle,
+    Hyphenation,
 }
 
 impl TextSetting {
-    pub(crate) const ALL: [Self; 7] = [
+    /// The reader drawer's Text panel, crosspoint's rows. Font opens the Text
+    /// Settings screen.
+    pub(crate) const PANEL: [Self; 4] = [
+        Self::Font,
         Self::FontSize,
         Self::LineSpacing,
         Self::ParagraphAlignment,
-        Self::ScreenMargin,
-        Self::ParagraphIndent,
-        Self::ParagraphSpacing,
-        Self::EmbeddedStyle,
     ];
 
-    pub(crate) fn from_index(index: usize) -> Option<Self> {
-        Self::ALL.get(index).copied()
-    }
+    /// The Text Settings screen's Layout tab, in crosspoint's order.
+    pub(crate) const LAYOUT: [Self; 5] = [
+        Self::LineSpacing,
+        Self::ParagraphSpacing,
+        Self::ParagraphIndent,
+        Self::ParagraphAlignment,
+        Self::ScreenMargin,
+    ];
+
+    /// The Text Settings screen's Style tab, in crosspoint's order.
+    pub(crate) const STYLE: [Self; 2] = [Self::Hyphenation, Self::EmbeddedStyle];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
+            Self::Font => "Font",
             Self::FontSize => "Font Size",
             Self::LineSpacing => "Line Spacing",
             Self::ParagraphAlignment => "Paragraph Alignment",
@@ -371,18 +405,42 @@ impl TextSetting {
             Self::ParagraphIndent => "Paragraph Indentation",
             Self::ParagraphSpacing => "Extra Paragraph Spacing",
             Self::EmbeddedStyle => "Embedded Style",
+            Self::Hyphenation => "Hyphenation",
+        }
+    }
+
+    /// The label on the Text Settings screen, where the Layout tab already
+    /// says what aligns.
+    pub(crate) const fn screen_label(self) -> &'static str {
+        match self {
+            Self::ParagraphAlignment => "Alignment",
+            _ => self.label(),
         }
     }
 
     /// Whether a tap flips the setting instead of opening a picker, like
     /// crosspoint's checkbox rows.
     pub(crate) const fn is_toggle(self) -> bool {
-        matches!(self, Self::ParagraphSpacing | Self::EmbeddedStyle)
+        matches!(
+            self,
+            Self::ParagraphSpacing | Self::EmbeddedStyle | Self::Hyphenation
+        )
+    }
+
+    /// Whether `text` has a toggle row on.
+    pub(crate) const fn is_on(self, text: TextSettings) -> bool {
+        match self {
+            Self::ParagraphSpacing => text.paragraph_spacing,
+            Self::EmbeddedStyle => text.embedded_style,
+            Self::Hyphenation => text.hyphenation,
+            _ => false,
+        }
     }
 
     /// The setting's value in `text`, as its row shows it.
     pub(crate) fn value(self, text: TextSettings) -> String {
         match self {
+            Self::Font => String::from(READER_FONT_NAME),
             Self::FontSize => text.font_size.to_string(),
             Self::LineSpacing => String::from(text.line_spacing.label()),
             Self::ParagraphAlignment => String::from(text.alignment.label()),
@@ -390,12 +448,14 @@ impl TextSetting {
             Self::ParagraphIndent => indent_label(text.paragraph_indent),
             Self::ParagraphSpacing => String::from(on_off(text.paragraph_spacing)),
             Self::EmbeddedStyle => String::from(on_off(text.embedded_style)),
+            Self::Hyphenation => String::from(on_off(text.hyphenation)),
         }
     }
 
     /// Every value the picker offers, in order.
     pub(crate) fn options(self) -> Vec<String> {
         match self {
+            Self::Font => [String::from(READER_FONT_NAME)].into(),
             Self::FontSize => font_sizes().map(|size| format!("{size}")).collect(),
             Self::LineSpacing => LineSpacing::ALL
                 .iter()
@@ -407,7 +467,7 @@ impl TextSetting {
                 .collect(),
             Self::ScreenMargin => margins().map(|margin| format!("{}", margin.px())).collect(),
             Self::ParagraphIndent => (0..=PARAGRAPH_INDENT_MAX).map(indent_label).collect(),
-            Self::ParagraphSpacing | Self::EmbeddedStyle => [false, true]
+            Self::ParagraphSpacing | Self::EmbeddedStyle | Self::Hyphenation => [false, true]
                 .iter()
                 .map(|&on| String::from(on_off(on)))
                 .collect(),
@@ -417,6 +477,7 @@ impl TextSetting {
     /// Which of [`Self::options`] `text` holds.
     pub(crate) fn selected(self, text: TextSettings) -> Option<usize> {
         match self {
+            Self::Font => Some(0),
             Self::FontSize => font_sizes().position(|size| size == text.font_size),
             Self::LineSpacing => LineSpacing::ALL
                 .iter()
@@ -428,12 +489,14 @@ impl TextSetting {
             Self::ParagraphIndent => Some(usize::from(text.paragraph_indent)),
             Self::ParagraphSpacing => Some(usize::from(text.paragraph_spacing)),
             Self::EmbeddedStyle => Some(usize::from(text.embedded_style)),
+            Self::Hyphenation => Some(usize::from(text.hyphenation)),
         }
     }
 
     /// `text` with this setting changed to option `index`.
     pub(crate) fn choose(self, text: TextSettings, index: usize) -> Option<TextSettings> {
         match self {
+            Self::Font => (index == 0).then_some(text),
             Self::FontSize => text.with_font_size(font_sizes().nth(index)?),
             Self::LineSpacing => Some(TextSettings {
                 line_spacing: *LineSpacing::ALL.get(index)?,
@@ -457,6 +520,11 @@ impl TextSetting {
                 1 => Some(text.with_embedded_style(true)),
                 _ => None,
             },
+            Self::Hyphenation => match index {
+                0 => Some(text.with_hyphenation(false)),
+                1 => Some(text.with_hyphenation(true)),
+                _ => None,
+            },
         }
     }
 
@@ -465,12 +533,13 @@ impl TextSetting {
         match self {
             Self::ParagraphSpacing => Some(text.with_paragraph_spacing(!text.paragraph_spacing)),
             Self::EmbeddedStyle => Some(text.with_embedded_style(!text.embedded_style)),
+            Self::Hyphenation => Some(text.with_hyphenation(!text.hyphenation)),
             _ => None,
         }
     }
 }
 
-fn font_sizes() -> impl Iterator<Item = u16> {
+pub(crate) fn font_sizes() -> impl Iterator<Item = u16> {
     (READER_FONT_SIZE_MIN..=READER_FONT_SIZE_MAX).step_by(usize::from(READER_FONT_SIZE_STEP))
 }
 
