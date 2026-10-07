@@ -70,14 +70,14 @@ pub struct TextFragment<'a> {
 
 impl<'a> TextFragment<'a> {
     pub(crate) const fn new(
-        text: &'a str,
+        text: Cow<'a, str>,
         bounds: Rect,
         style: TextStyle,
         link: Option<&'a LinkTarget>,
         word_spacing: u32,
     ) -> Self {
         Self {
-            text: Cow::Borrowed(text),
+            text,
             bounds,
             style,
             link: match link {

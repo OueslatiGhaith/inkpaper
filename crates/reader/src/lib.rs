@@ -2,11 +2,13 @@
 
 extern crate alloc;
 
+mod hyphenation;
 mod metrics;
 mod page;
 mod pagination;
 mod position;
 
+pub use hyphenation::HyphenationLanguage;
 pub use inkpaper_epub::{
     BlockKind, ChapterImage, FontStyle, FontWeight, ImageDimensions, SpineIndex, TextAlign,
 };
@@ -48,6 +50,7 @@ pub struct ReaderSettings {
     extra_block_spacing: bool,
     paragraph_align: Option<TextAlign>,
     undeclared_paragraph_align: TextAlign,
+    hyphenation: Option<HyphenationLanguage>,
 }
 
 impl ReaderSettings {
@@ -64,6 +67,7 @@ impl ReaderSettings {
             extra_block_spacing: false,
             paragraph_align: None,
             undeclared_paragraph_align: TextAlign::Start,
+            hyphenation: None,
         })
     }
 
@@ -142,5 +146,18 @@ impl ReaderSettings {
 
     pub const fn undeclared_paragraph_align(self) -> TextAlign {
         self.undeclared_paragraph_align
+    }
+
+    /// Breaks words that end a line at their hyphenation points in
+    /// `language`, adding a hyphen.
+    pub const fn with_hyphenation(self, language: HyphenationLanguage) -> Self {
+        Self {
+            hyphenation: Some(language),
+            ..self
+        }
+    }
+
+    pub const fn hyphenation(self) -> Option<HyphenationLanguage> {
+        self.hyphenation
     }
 }

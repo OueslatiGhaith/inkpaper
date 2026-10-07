@@ -28,6 +28,8 @@ const FIXTURES: &[fn() -> Result<Epub>] = &[
     text::chapters,
     text::italics,
     text::typography,
+    text::hyphenation,
+    text::hyphenation_unsupported,
     images::mixed_content,
     images::image_layout,
     images::transparent_image,

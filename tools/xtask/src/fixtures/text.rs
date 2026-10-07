@@ -297,3 +297,77 @@ pub fn typography() -> Result<Epub> {
         )
         .build())
 }
+
+pub fn hyphenation() -> Result<Epub> {
+    Ok(Book::new("hyphenation", "Hyphenation")
+        .language("en-US")
+        .chapter(
+            "chapter-1.xhtml",
+            "Long Words",
+            indoc! {r#"
+                <h1>Long Words</h1>
+
+                <p>
+                    Uncharacteristically, the administration's representatives
+                    acknowledged that institutionalization of the
+                    recommendations was extraordinarily complicated, and that
+                    the incomprehensibility of the accompanying documentation
+                    disproportionately inconvenienced conscientious
+                    participants.
+                </p>
+
+                <p>
+                    Hyphenation breaks words like internationalization,
+                    responsibilities and characterization at the end of a line,
+                    so justified text keeps even gaps between its words.
+                </p>
+
+                <p>
+                    Punctuation stays with its word: (unquestionably),
+                    “notwithstanding” and counterproductive; are broken only
+                    between their letters.
+                </p>
+            "#},
+        )
+        .chapter(
+            "chapter-2.xhtml",
+            "Long Words in Short Lines",
+            indoc! {r#"
+                <h1>Long Words in Short Lines</h1>
+
+                <p>Electroencephalographically.</p>
+                <p>Psychophysicotherapeutics.</p>
+                <p>Antidisestablishmentarianism.</p>
+                <p>Hippopotomonstrosesquippedaliophobia.</p>
+                <p>
+                    At large font sizes these words are wider than a line, so they
+                    break at their hyphenation points rather than between any two
+                    letters.
+                </p>
+            "#},
+        )
+        .build())
+}
+
+/// a French book, which has no hyphenation patterns built in yet
+pub fn hyphenation_unsupported() -> Result<Epub> {
+    Ok(
+        Book::new("hyphenation-unsupported", "Unsupported Hyphenation")
+            .language("fr")
+            .chapter(
+                "chapter-1.xhtml",
+                "Mots longs",
+                indoc! {r#"
+                <h1>Mots longs</h1>
+
+                <p>
+                    Les anticonstitutionnellement et les intergouvernementales
+                    ne sont pas coupés : le français n'a pas encore de motifs de
+                    césure, donc ces mots passent entiers à la ligne suivante,
+                    comme les incompréhensibilités et les particularités.
+                </p>
+            "#},
+            )
+            .build(),
+    )
+}

@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{borrow::Cow, format, string::String, vec::Vec};
 use core::mem;
 
 use inkpaper_epub::{
@@ -84,6 +84,8 @@ struct PendingText<'a> {
     width: u32,
     /// the extra pixels after each U+0020 space, or `None` without spaces
     word_spacing: Option<u32>,
+    /// the start of a word broken at the end of its line, drawn with a hyphen
+    hyphen: bool,
 }
 
 impl<'a> PendingText<'a> {
@@ -99,6 +101,7 @@ impl<'a> PendingText<'a> {
             && self.style == next.style
             && self.link == next.link
             && self.x.saturating_add(self.width) == next.x
+            && !self.hyphen
             && (self.word_spacing.is_none()
                 || next.word_spacing.is_none()
                 || self.word_spacing == next.word_spacing)
@@ -119,6 +122,7 @@ impl<'a> PendingText<'a> {
         self.end = next.end;
         self.width = self.width.saturating_add(next.width);
         self.word_spacing = self.word_spacing.or(next.word_spacing);
+        self.hyphen = next.hyphen;
     }
 }
 
@@ -157,6 +161,8 @@ struct Paginator<'chapter, 'context, M> {
     line_align: TextAlign,
     line_indent: u32,
     line_items: Vec<PendingText<'chapter>>,
+    /// reused to measure a word's start with its hyphen
+    hyphen_scratch: String,
 
     block_laid_out: bool,
     block_align: TextAlign,
@@ -200,6 +206,7 @@ where
             line_align: TextAlign::Start,
             line_indent: 0,
             line_items: Vec::new(),
+            hyphen_scratch: String::new(),
             block_laid_out: false,
             block_align: TextAlign::Start,
             block_text_indent: 0,
@@ -412,30 +419,108 @@ where
         link: Option<&'chapter LinkTarget>,
         align: TextAlign,
     ) -> Result<(), M::Error> {
-        let word = &source[start..end];
+        let mut start = start;
 
-        let width = self.measurer.measure_text(word, style)?;
+        loop {
+            let word = &source[start..end];
 
-        if self.line_active {
-            let occupied = self
-                .line_indent
-                .saturating_add(self.line_width)
-                .saturating_add(width);
+            let width = self.measurer.measure_text(word, style)?;
 
-            if occupied > self.viewport.width() {
-                self.flush_line(LineEnd::Wrapped);
+            let used = if self.line_active {
+                self.line_indent.saturating_add(self.line_width)
+            } else {
+                self.prospective_line_indent()
+            };
+
+            let available = self.viewport.width().saturating_sub(used);
+
+            if width <= available {
+                return self.add_text_piece(source, start, end, width, style, link, align);
             }
+
+            // fill the line with the word's start and a hyphen, and carry the
+            // rest over to the next line
+            if let Some((split, width)) = self.hyphenation_break(word, available, style)? {
+                let split = start.saturating_add(split);
+
+                self.add_text_piece(source, start, split, width, style, link, align)?;
+
+                if let Some(piece) = self.line_items.last_mut() {
+                    piece.hyphen = true;
+                }
+
+                self.flush_line(LineEnd::Wrapped);
+
+                start = split;
+
+                continue;
+            }
+
+            if !self.line_active {
+                return self.layout_oversized_word(source, start, end, style, link, align);
+            }
+
+            self.flush_line(LineEnd::Wrapped);
+        }
+    }
+
+    /// The longest start of `word` that fits in `available` with a hyphen, as
+    /// its length in bytes and its width with the hyphen. Only the letters
+    /// between any leading and trailing punctuation are hyphenated.
+    fn hyphenation_break(
+        &mut self,
+        word: &str,
+        available: u32,
+        style: TextStyle,
+    ) -> Result<Option<(usize, u32)>, M::Error> {
+        let Some(language) = self.settings.hyphenation() else {
+            return Ok(None);
+        };
+
+        let Some(letters_start) = word.find(char::is_alphabetic) else {
+            return Ok(None);
+        };
+        let letters_end = word
+            .rfind(char::is_alphabetic)
+            .and_then(|index| Some(index + word[index..].chars().next()?.len_utf8()))
+            .unwrap_or(word.len());
+
+        let letters = &word[letters_start..letters_end];
+
+        if !letters.chars().all(char::is_alphabetic) {
+            return Ok(None);
         }
 
-        let indent = self.prospective_line_indent();
+        let mut scratch = mem::take(&mut self.hyphen_scratch);
+        let mut best = None;
 
-        let available = self.viewport.width().saturating_sub(indent);
+        for offset in language.breaks(letters) {
+            let split = letters_start + offset;
 
-        if width <= available {
-            return self.add_text_piece(source, start, end, width, style, link, align);
+            scratch.clear();
+            scratch.push_str(&word[..split]);
+            scratch.push('-');
+
+            let width = match self.measurer.measure_text(&scratch, style) {
+                Ok(width) => width,
+                Err(error) => {
+                    self.hyphen_scratch = scratch;
+
+                    return Err(error);
+                }
+            };
+
+            // a longer start is never narrower
+            if width > available {
+                break;
+            }
+
+            best = Some((split, width));
         }
 
-        self.layout_oversized_word(source, start, end, style, link, align)
+        self.hyphen_scratch = scratch;
+
+        Ok(best)
     }
 
     fn layout_oversized_word(
@@ -552,6 +637,7 @@ where
             x: self.line_width,
             width,
             word_spacing: text.contains(' ').then_some(0),
+            hyphen: false,
         });
 
         self.line_width = self.line_width.saturating_add(width);
@@ -667,8 +753,14 @@ where
         y: u32,
         height: u32,
     ) {
+        let text = if item.hyphen {
+            Cow::Owned(format!("{}-", item.text()))
+        } else {
+            Cow::Borrowed(item.text())
+        };
+
         self.page_items.push(PageItem::Text(TextFragment::new(
-            item.text(),
+            text,
             Rect::new(origin.saturating_add(item.x), y, item.width, height),
             item.style,
             item.link,

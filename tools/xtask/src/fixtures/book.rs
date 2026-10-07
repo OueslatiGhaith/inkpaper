@@ -39,6 +39,7 @@ pub struct Book {
     toc: Option<Vec<TocEntry>>,
     omitted: Vec<String>,
     stylesheet: String,
+    language: String,
 }
 
 struct Chapter {
@@ -85,6 +86,7 @@ impl Book {
             toc: None,
             omitted: Vec::new(),
             stylesheet: String::from(STYLESHEET),
+            language: String::from("en"),
         }
     }
 
@@ -125,6 +127,12 @@ impl Book {
         self
     }
 
+    /// the book's `dc:language`, `en` by default
+    pub fn language(mut self, language: &str) -> Self {
+        self.language = String::from(language);
+        self
+    }
+
     /// keeps a file listed in the package but leaves it out of the archive
     pub fn omit(mut self, path: impl Into<String>) -> Self {
         self.omitted.push(path.into());
@@ -144,7 +152,13 @@ impl Book {
             .file("OEBPS/styles.css", self.stylesheet.as_str())
             .file(
                 "OEBPS/content.opf",
-                package_document(&self.title, &self.name, &self.chapters, &self.images),
+                package_document(
+                    &self.title,
+                    &self.name,
+                    &self.language,
+                    &self.chapters,
+                    &self.images,
+                ),
             )
             .file("OEBPS/nav.xhtml", navigation_document(&self.title, &toc));
 
@@ -205,6 +219,7 @@ const STYLESHEET: &str = indoc! {r#"
 fn package_document(
     title: &str,
     identifier: &str,
+    language: &str,
     chapters: &[Chapter],
     images: &[Image],
 ) -> String {
@@ -265,7 +280,7 @@ fn package_document(
 
                 <dc:title>{title}</dc:title>
                 <dc:creator>InkPaper Fixtures</dc:creator>
-                <dc:language>en</dc:language>
+                <dc:language>{language}</dc:language>
 
                 <meta property="dcterms:modified">
                     2026-09-17T00:00:00Z

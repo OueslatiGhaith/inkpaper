@@ -6,8 +6,8 @@ use inkpaper_epub::{
     SpineIndex,
 };
 use inkpaper_reader::{
-    ImageMeasurer, PageItem, PageRange, ReaderSettings, Rect, TextAlign, TextMeasurer, TextStyle,
-    Viewport, paginate_chapter,
+    HyphenationLanguage, ImageMeasurer, PageItem, PageRange, ReaderSettings, Rect, TextAlign,
+    TextMeasurer, TextStyle, Viewport, paginate_chapter,
 };
 
 #[derive(Default)]
@@ -1269,4 +1269,95 @@ fn spaces_ending_a_line_do_not_shift_its_alignment() {
             fragment("five six", Rect::new(12, 1, 8, 1), 0),
         ],
     );
+}
+
+fn hyphenating() -> ReaderSettings {
+    ReaderSettings::new(1, 0)
+        .unwrap()
+        .with_hyphenation(HyphenationLanguage::ENGLISH)
+}
+
+#[test]
+fn hyphenation_language_comes_from_the_primary_language_tag() {
+    for tag in ["en", "en-US", "EN_gb", " en "] {
+        assert_eq!(
+            HyphenationLanguage::from_tag(tag),
+            Some(HyphenationLanguage::ENGLISH),
+        );
+    }
+
+    // only English patterns are built in for now
+    for tag in ["fr", "", "eng", "x"] {
+        assert_eq!(HyphenationLanguage::from_tag(tag), None);
+    }
+}
+
+#[test]
+fn hyphenation_fills_the_line_with_the_longest_start_that_fits() {
+    // "extraordinary" breaks as extra-or-di-nary, and 12 columns are left
+    assert_eq!(
+        line_fragments("<p>this is extraordinary</p>", hyphenating()),
+        [
+            fragment("this is extraordi-", Rect::new(0, 0, 18, 1), 0),
+            fragment("nary", Rect::new(0, 1, 4, 1), 0),
+        ],
+    );
+
+    let settings = ReaderSettings::new(1, 0).unwrap();
+    assert_eq!(
+        line_fragments("<p>this is extraordinary</p>", settings),
+        [
+            fragment("this is", Rect::new(0, 0, 7, 1), 0),
+            fragment("extraordinary", Rect::new(0, 1, 13, 1), 0),
+        ],
+    );
+}
+
+#[test]
+fn hyphenation_keeps_punctuation_outside_the_letters() {
+    assert_eq!(
+        line_fragments("<p>this is (extraordinary),</p>", hyphenating()),
+        [
+            fragment("this is (extraordi-", Rect::new(0, 0, 19, 1), 0),
+            fragment("nary),", Rect::new(0, 1, 6, 1), 0),
+        ],
+    );
+}
+
+#[test]
+fn hyphenation_moves_the_word_when_no_start_fits() {
+    // "read-" needs 5 columns and only 4 are left
+    assert_eq!(
+        line_fragments("<p>aaaaaaaaaaaaaaa reading</p>", hyphenating()),
+        [
+            fragment("aaaaaaaaaaaaaaa", Rect::new(0, 0, 15, 1), 0),
+            fragment("reading", Rect::new(0, 1, 7, 1), 0),
+        ],
+    );
+}
+
+#[test]
+fn hyphenated_lines_are_justified() {
+    let settings = hyphenating().with_paragraph_align(TextAlign::Justify);
+
+    assert_eq!(
+        line_fragments("<p>this is extraordinary</p>", settings)[0],
+        fragment("this is extraordi-", Rect::new(0, 0, 20, 1), 1),
+    );
+}
+
+#[test]
+fn words_longer_than_a_line_break_at_hyphenation_points() {
+    let word = "incomprehensibilities";
+    let fragments = line_fragments(&format!("<p>{word}</p>"), hyphenating());
+
+    assert!(fragments.len() > 1);
+    assert!(fragments[0].0.ends_with('-'));
+    assert!(fragments.iter().all(|(_, bounds, _)| bounds.width() <= 20));
+
+    let joined: String = fragments
+        .iter()
+        .map(|(text, _, _)| text.trim_end_matches('-'))
+        .collect();
+    assert_eq!(joined, word);
 }
