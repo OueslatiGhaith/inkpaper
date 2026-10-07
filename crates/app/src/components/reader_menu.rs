@@ -27,6 +27,9 @@ pub(crate) struct ReaderMenu {
     /// a Text panel row; its index in [`TextSetting::PANEL`] is its element id
     on_text_row: Listener<ActivateEvent>,
     on_select_chapter: Listener<ActivateEvent>,
+    /// whether the page has links, which Links and footnotes lists
+    has_links: bool,
+    on_links: Listener<ActivateEvent>,
 }
 
 impl RenderOnce for ReaderMenu {
@@ -77,6 +80,18 @@ impl RenderOnce for ReaderMenu {
                             chevron={true}
                             on_activate={Some(self.on_select_chapter)}
                         />
+
+                        // like crosspoint, only on pages with links
+                        {#if self.has_links}
+                            <ListRow
+                                id={("reader-menu-links", 0)}
+                                label="Links and footnotes"
+                                depth={0}
+                                selected={false}
+                                chevron={true}
+                                on_activate={Some(self.on_links)}
+                            />
+                        {/if}
                     </div>
                 {/if}
 
@@ -134,6 +149,8 @@ impl Render for ReaderMenuView {
                 on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),
                 on_text_row: cx.listener(InkPaperApp::activate_reader_text_row),
                 on_select_chapter: cx.listener(InkPaperApp::show_table_of_contents),
+                has_links: !app.reader.page_links().is_empty(),
+                on_links: cx.listener(InkPaperApp::activate_reader_links),
             })
             .expect("the app outlives its reader menu");
 

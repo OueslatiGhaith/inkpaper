@@ -302,6 +302,38 @@ impl InkPaperApp {
         self.reader.finish_jump_request(&path, target)
     }
 
+    /// Opens Links and footnotes from the drawer's More tab.
+    pub(crate) fn activate_reader_links(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        if self.reader.open_links() {
+            cx.notify();
+            self.refresh_reader_menu(cx);
+        }
+    }
+
+    pub(crate) fn activate_reader_link_option(
+        &mut self,
+        event: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
+        if self.reader.choose_link(index) {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn activate_dismiss_reader_link_picker(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.reader.close_link_picker() {
+            cx.notify();
+        }
+    }
+
     /// Follows a link tapped on the page; the element's index says which.
     pub(crate) fn activate_reader_link(
         &mut self,

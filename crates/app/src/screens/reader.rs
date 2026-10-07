@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use inkpaper_ui::prelude::*;
 
@@ -40,6 +40,10 @@ pub(crate) struct ReaderScreen<'a> {
     text_picker: Option<(TextSetting, TextSettings)>,
     on_text_option: Listener<ActivateEvent>,
     on_dismiss_text_picker: Listener<ActivateEvent>,
+    /// the open Links and footnotes picker's options
+    link_picker: Option<Vec<String>>,
+    on_link_option: Listener<ActivateEvent>,
+    on_dismiss_link_picker: Listener<ActivateEvent>,
     menu: Entity<ReaderMenuView>,
 
     /// the tap boxes of the page's links, on screen
@@ -135,6 +139,16 @@ impl RenderOnce for ReaderScreen<'_> {
                                 selected={setting.selected(text)}
                                 on_option={self.on_text_option}
                                 on_dismiss={self.on_dismiss_text_picker}
+                            />
+                        {/if}
+
+                        {#if let Some(options) = self.link_picker}
+                            <OptionPicker
+                                title="Links and footnotes"
+                                options={options}
+                                selected={None}
+                                on_option={self.on_link_option}
+                                on_dismiss={self.on_dismiss_link_picker}
                             />
                         {/if}
                     {/if}
@@ -373,6 +387,9 @@ impl ScreenView for ReaderRoute {
                 .map(|setting| (setting, app.reader.menu_text_settings())),
             on_text_option: cx.listener(InkPaperApp::activate_reader_text_option),
             on_dismiss_text_picker: cx.listener(InkPaperApp::activate_dismiss_reader_text_picker),
+            link_picker: app.reader.link_picker(),
+            on_link_option: cx.listener(InkPaperApp::activate_reader_link_option),
+            on_dismiss_link_picker: cx.listener(InkPaperApp::activate_dismiss_reader_link_picker),
             menu: app.reader_menu,
             on_close_menu: cx.listener(InkPaperApp::activate_close_reader_menu),
             on_previous_page: cx.listener(InkPaperApp::activate_previous_reader_page),

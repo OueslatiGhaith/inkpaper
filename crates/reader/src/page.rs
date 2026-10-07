@@ -66,6 +66,7 @@ pub struct TextFragment<'a> {
     style: TextStyle,
     link: Option<Cow<'a, LinkTarget>>,
     word_spacing: u32,
+    hyphenated: bool,
 }
 
 impl<'a> TextFragment<'a> {
@@ -75,6 +76,7 @@ impl<'a> TextFragment<'a> {
         style: TextStyle,
         link: Option<&'a LinkTarget>,
         word_spacing: u32,
+        hyphenated: bool,
     ) -> Self {
         Self {
             text,
@@ -85,6 +87,7 @@ impl<'a> TextFragment<'a> {
                 None => None,
             },
             word_spacing,
+            hyphenated,
         }
     }
 
@@ -110,6 +113,12 @@ impl<'a> TextFragment<'a> {
         self.word_spacing
     }
 
+    /// Whether the text ends in a hyphen the line break added, not one from
+    /// the book.
+    pub const fn hyphenated(&self) -> bool {
+        self.hyphenated
+    }
+
     pub fn into_owned(self) -> TextFragment<'static> {
         TextFragment {
             text: Cow::Owned(self.text.into_owned()),
@@ -117,6 +126,7 @@ impl<'a> TextFragment<'a> {
             style: self.style,
             link: self.link.map(|link| Cow::Owned(link.into_owned())),
             word_spacing: self.word_spacing,
+            hyphenated: self.hyphenated,
         }
     }
 }

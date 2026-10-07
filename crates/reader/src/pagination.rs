@@ -765,6 +765,7 @@ where
             item.style,
             item.link,
             item.word_spacing.unwrap_or(0),
+            item.hyphen,
         )));
     }
 

@@ -1361,3 +1361,48 @@ fn words_longer_than_a_line_break_at_hyphenation_points() {
         .collect();
     assert_eq!(joined, word);
 }
+
+#[test]
+fn fragments_say_whether_the_line_break_added_their_hyphen() {
+    let hyphenated = |body: &str, settings: ReaderSettings| -> Vec<(String, bool)> {
+        let bytes = build_test_epub(body);
+        let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+        let chapter = future::block_on(epub.load_spine_chapter(0))
+            .unwrap()
+            .unwrap();
+        let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+
+        let pagination = paginate_chapter(
+            &chapter,
+            &styles,
+            SpineIndex::ZERO,
+            Viewport::new(20, 40).unwrap(),
+            settings,
+            &mut MonoMeasurer::default(),
+        )
+        .unwrap();
+
+        pagination.pages()[0]
+            .items()
+            .iter()
+            .filter_map(|item| match item {
+                PageItem::Text(text) => Some((text.text().into(), text.hyphenated())),
+                PageItem::Image(_) => None,
+            })
+            .collect()
+    };
+
+    assert_eq!(
+        hyphenated("<p>this is extraordinary</p>", hyphenating()),
+        [
+            (String::from("this is extraordi-"), true),
+            (String::from("nary"), false),
+        ],
+    );
+
+    // the book's own hyphen, where the line breaks after it
+    assert_eq!(
+        hyphenated("<p>aaaaaaaaaaaaaa well-known</p>", hyphenating())[0],
+        (String::from("aaaaaaaaaaaaaa well-"), false),
+    );
+}
