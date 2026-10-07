@@ -12,6 +12,7 @@ use crate::{
     ReaderSession, ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials,
     WifiJoinFailure, WifiJoinPlan, WifiScanError,
     cover::read_cover_image,
+    fonts::find_font_families,
     reader::{GrayImage, TextSettings},
 };
 
@@ -55,6 +56,14 @@ impl PlatformEntry {
             name: name.into(),
             kind: PlatformEntryKind::File,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn is_directory(&self) -> bool {
+        matches!(self.kind, PlatformEntryKind::Directory)
     }
 
     fn into_browse_entry(self) -> BrowseEntry {
@@ -340,6 +349,7 @@ where
         self.frontlight_preferences = self.load_frontlight_preferences().await;
         self.clock_preferences = self.load_clock_preferences().await;
         let wifi_networks = self.load_wifi_networks().await;
+        let font_families = find_font_families(&mut self.platform).await;
 
         let entries = self.history.entries().to_vec();
         let preferences = self.preferences;
@@ -352,6 +362,7 @@ where
             app.apply_wifi_networks(wifi_networks, cx);
             app.apply_reader_preferences(preferences, cx);
             app.apply_reading_history(entries, cx);
+            app.apply_font_families(font_families, cx);
         })?;
 
         self.initialized = true;

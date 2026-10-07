@@ -1,11 +1,15 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use inkpaper_app::PlatformEntry;
 
 pub(super) fn simulator_listing(path: &str) -> Option<Vec<PlatformEntry>> {
+    if let Some(fonts) = fonts_path(path) {
+        return host_listing(&fonts);
+    }
+
     let entries = match path {
         "/" => vec![
             PlatformEntry::directory("Books"),
@@ -85,4 +89,46 @@ fn fixture_entries() -> Vec<PlatformEntry> {
 
 fn fixtures_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
+}
+
+/// `/fonts` is the repository's font fixtures, so the reader has card fonts
+/// to offer
+fn fonts_path(path: &str) -> Option<PathBuf> {
+    let relative = path.strip_prefix("/fonts")?;
+
+    if !(relative.is_empty() || relative.starts_with('/')) {
+        return None;
+    }
+
+    let relative = Path::new(relative.trim_start_matches('/'));
+
+    if !relative
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+
+    Some(fixtures_directory().join("fonts").join(relative))
+}
+
+fn host_listing(directory: &Path) -> Option<Vec<PlatformEntry>> {
+    let mut entries: Vec<PlatformEntry> = fs::read_dir(directory)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let file_type = entry.file_type().ok()?;
+
+            Some(if file_type.is_dir() {
+                PlatformEntry::directory(name)
+            } else {
+                PlatformEntry::file(name)
+            })
+        })
+        .collect();
+
+    entries.sort_by(|left, right| left.name().cmp(right.name()));
+
+    Some(entries)
 }

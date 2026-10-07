@@ -1,4 +1,4 @@
-use alloc::{vec, vec::Vec};
+use alloc::{string::String, vec::Vec};
 
 use inkpaper_epub::{ArchivePath, Chapter, ChapterStyles, SpineIndex};
 use inkpaper_reader::{Page, Viewport, paginate_chapter};
@@ -8,6 +8,7 @@ use super::{
     measurer::{ReaderMeasurer, reader_fonts},
     text_settings::font_sizes,
 };
+use crate::typography::READER_FONT_NAME;
 
 /// The preview's inner padding, like crosspoint's.
 pub(crate) const PREVIEW_PADDING: u32 = 12;
@@ -53,10 +54,10 @@ impl TextSettingsTab {
 }
 
 /// A row of a Text Settings tab.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TextSettingsRow {
-    /// the reader font, the only one until custom fonts
-    Font,
+    /// a font family: the built-in one, then the card's
+    Font(String),
     Size(u16),
     Setting(TextSetting),
 }
@@ -69,6 +70,8 @@ pub(crate) struct TextSettingsState {
     draft: TextSettings,
     picker: Option<TextSetting>,
     preview: Option<Page<'static>>,
+    /// the font families on the card, by name
+    families: Vec<String>,
 }
 
 impl TextSettingsState {
@@ -92,6 +95,18 @@ impl TextSettingsState {
         self.picker
     }
 
+    /// Lists the card's font families after the built-in one. Returns
+    /// whether they changed.
+    pub(crate) fn set_families(&mut self, families: Vec<String>) -> bool {
+        if self.families == families {
+            return false;
+        }
+
+        self.families = families;
+
+        true
+    }
+
     pub(crate) fn preview(&self) -> Option<&Page<'static>> {
         self.preview.as_ref()
     }
@@ -109,7 +124,10 @@ impl TextSettingsState {
 
     pub(crate) fn rows(&self) -> Vec<TextSettingsRow> {
         match self.tab {
-            TextSettingsTab::Font => vec![TextSettingsRow::Font],
+            TextSettingsTab::Font => core::iter::once(READER_FONT_NAME)
+                .chain(self.families.iter().map(String::as_str))
+                .map(|name| TextSettingsRow::Font(String::from(name)))
+                .collect(),
             TextSettingsTab::Size => font_sizes().map(TextSettingsRow::Size).collect(),
             TextSettingsTab::Layout => TextSetting::LAYOUT
                 .iter()
@@ -144,7 +162,7 @@ impl TextSettingsState {
                 true
             }
 
-            Some(TextSettingsRow::Font) | None => false,
+            Some(TextSettingsRow::Font(_)) | None => false,
         }
     }
 

@@ -143,7 +143,11 @@ fn setting_row(
     let id = ("text-settings-row", index);
 
     let (label, value) = match row {
-        TextSettingsRow::Font => (String::from(READER_FONT_NAME), selected(true)),
+        TextSettingsRow::Font(name) => {
+            let current = name == READER_FONT_NAME;
+
+            (name, selected(current))
+        }
 
         TextSettingsRow::Size(size) => (format!("{size}"), selected(size == text.font_size())),
 

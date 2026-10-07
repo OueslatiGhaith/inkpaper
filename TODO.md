@@ -11,6 +11,7 @@ New UI follows crosspoint/crossink's screens and layout.
 - [x] use Libron for the reader
 - [x] bold reader face
 - [x] italic reader faces
+- [x] find font families in `/.fonts` and `/fonts` like crosspoint, and list them in the Font tab
 - [ ] custom reader fonts loaded from storage
 - [ ] font picker in the reader settings
 

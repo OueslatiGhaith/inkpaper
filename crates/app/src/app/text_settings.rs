@@ -1,3 +1,5 @@
+use alloc::{string::String, vec::Vec};
+
 use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
@@ -6,6 +8,17 @@ use crate::{reader::TextSettingsTab, reader_page::paint_page};
 impl InkPaperApp {
     pub(crate) fn show_text_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.open_screen(Screen::TextSettings, cx);
+    }
+
+    /// The font families found on the card.
+    pub(crate) fn apply_font_families(
+        &mut self,
+        families: Vec<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.text_settings.set_families(families) {
+            cx.notify();
+        }
     }
 
     pub(crate) fn activate_text_settings_tab(

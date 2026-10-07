@@ -9,6 +9,7 @@ mod components;
 mod control_center;
 mod cover;
 mod file_transfer;
+mod fonts;
 mod frontlight;
 mod gesture;
 mod input;
