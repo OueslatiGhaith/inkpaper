@@ -6,7 +6,7 @@ use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest,
-    reader::{ReaderMenuTab, TableOfContents, TextSetting, TextSettings, TocEntry},
+    reader::{JumpTarget, ReaderMenuTab, TableOfContents, TextSetting, TextSettings, TocEntry},
     reader_page::paint_reader_page,
 };
 
@@ -284,15 +284,12 @@ impl InkPaperApp {
     pub(crate) fn apply_reader_jump(
         &mut self,
         path: String,
-        spine: SpineIndex,
-        anchor: Option<String>,
+        target: JumpTarget,
         chapter: ReaderChapter,
         page_index: usize,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        let changed = self
-            .reader
-            .apply_jump(&path, spine, anchor, chapter, page_index);
+        let changed = self.reader.apply_jump(&path, target, chapter, page_index);
 
         if changed {
             cx.notify();
@@ -301,13 +298,23 @@ impl InkPaperApp {
         changed
     }
 
-    pub(crate) fn finish_reader_jump_request(
+    pub(crate) fn finish_reader_jump_request(&mut self, path: String, target: JumpTarget) -> bool {
+        self.reader.finish_jump_request(&path, target)
+    }
+
+    /// Follows a link tapped on the page; the element's index says which.
+    pub(crate) fn activate_reader_link(
         &mut self,
-        path: String,
-        spine: SpineIndex,
-        anchor: Option<String>,
-    ) -> bool {
-        self.reader.finish_jump_request(&path, spine, anchor)
+        event: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
+        if self.reader.follow_link(index) {
+            cx.notify();
+        }
     }
 
     pub(crate) fn take_reader_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {

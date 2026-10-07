@@ -7,7 +7,8 @@ use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
     ReaderRequest, ReaderSession,
     reader::{
-        LineSpacing, ReaderState, TableOfContents, TextSetting, TextSettings, load_reader_document,
+        JumpTarget, LineSpacing, ReaderState, TableOfContents, TextSetting, TextSettings,
+        load_reader_document,
     },
 };
 
@@ -501,8 +502,10 @@ fn navigation_target_jump_opens_the_page_with_the_anchored_heading() {
         state.take_request(),
         Some(ReaderRequest::JumpTo {
             path: path.clone(),
-            spine,
-            anchor: anchor.clone(),
+            target: JumpTarget::Chapter {
+                spine,
+                anchor: anchor.clone(),
+            },
         }),
     );
 
@@ -512,7 +515,11 @@ fn navigation_target_jump_opens_the_page_with_the_anchored_heading() {
 
     // the heading sits past the first page of its chapter
     assert!(page_index > 0);
-    assert!(state.apply_jump(&path, spine, anchor.clone(), chapter, page_index));
+    let target = JumpTarget::Chapter {
+        spine,
+        anchor: anchor.clone(),
+    };
+    assert!(state.apply_jump(&path, target.clone(), chapter, page_index));
 
     let page = state.page().unwrap();
     assert!(page.items().iter().any(|item| matches!(
@@ -525,7 +532,7 @@ fn navigation_target_jump_opens_the_page_with_the_anchored_heading() {
         state.take_request(),
         Some(ReaderRequest::UpdateProgress(_))
     ));
-    assert!(!state.finish_jump_request(&path, spine, anchor));
+    assert!(!state.finish_jump_request(&path, target));
 }
 
 #[test]
@@ -655,6 +662,10 @@ fn table_of_contents_loads_once_flattened_with_targets_and_marks_the_current_cha
     let (chapter, page_index) = future::block_on(session.load_chapter_at(spine, None))
         .unwrap()
         .unwrap();
-    assert!(state.apply_jump(&path, spine, None, chapter, page_index));
+    let target = JumpTarget::Chapter {
+        spine,
+        anchor: None,
+    };
+    assert!(state.apply_jump(&path, target, chapter, page_index));
     assert_eq!(state.current_toc_index(), Some(1));
 }

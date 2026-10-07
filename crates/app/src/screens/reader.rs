@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use inkpaper_ui::prelude::*;
 
 use crate::{
@@ -11,6 +13,11 @@ use crate::{
     },
     reader::{PageBounds, TextSetting, TextSettings},
 };
+
+/// crosspoint's link tap box: the link's text with 6 px of slack, and at
+/// least 28 px wide so a one-digit note marker is easy to hit
+const LINK_SLOP: i32 = 6;
+const LINK_MIN_WIDTH: i32 = 28;
 
 #[component]
 pub(crate) struct ReaderScreen<'a> {
@@ -35,6 +42,10 @@ pub(crate) struct ReaderScreen<'a> {
     on_dismiss_text_picker: Listener<ActivateEvent>,
     menu: Entity<ReaderMenuView>,
 
+    /// the tap boxes of the page's links, on screen
+    links: Vec<Rect>,
+    on_link: Listener<ActivateEvent>,
+
     on_previous_page: Listener<ActivateEvent>,
     on_open_menu: Listener<ActivateEvent>,
     on_next_page: Listener<ActivateEvent>,
@@ -48,6 +59,20 @@ impl RenderOnce for ReaderScreen<'_> {
         let page_left = px(page.left as i32);
         let page_top = px(page.top as i32);
         let page_size = Size::new(px(page.width as i32), px(page.height as i32));
+
+        let on_link = self.on_link;
+        let link_boxes = self
+            .links
+            .into_iter()
+            .enumerate()
+            .map(move |(index, bounds)| {
+                LinkBox::from(LinkBoxProps {
+                    index,
+                    bounds,
+                    on_activate: on_link,
+                })
+            });
+        let link_boxes = div().absolute().left(px(0)).top(px(0)).children(link_boxes);
 
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
@@ -81,6 +106,9 @@ impl RenderOnce for ReaderScreen<'_> {
                             on:activate={self.on_next_page}
                             class="absolute left-[320px] top-0 w-[160px] h-[720px]"
                         />
+
+                        // links take taps before the page-turn zones under them
+                        {link_boxes}
                     {/if}
 
                     <ReaderStatusBar
@@ -267,6 +295,44 @@ impl ScreenInput for ReaderRoute {
     }
 }
 
+#[component]
+struct LinkBox {
+    index: usize,
+    bounds: Rect,
+    on_activate: Listener<ActivateEvent>,
+}
+
+impl RenderOnce for LinkBox {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let bounds = self.bounds;
+
+        rsx! {
+            <div
+                id={("reader-link", self.index)}
+                on:activate={self.on_activate}
+                class="absolute left-{bounds.origin.x} top-{bounds.origin.y} w-{bounds.size.width} h-{bounds.size.height}"
+            />
+        }
+    }
+}
+
+/// A link's tap box on screen, from its text's bounds on the page.
+fn link_box(text: inkpaper_reader::Rect, page: PageBounds) -> Rect {
+    let width = text.width() as i32;
+    let horizontal = LINK_SLOP.max((LINK_MIN_WIDTH - width) / 2);
+
+    let left = page.left as i32 + text.x() as i32 - horizontal;
+    let top = page.top as i32 + text.y() as i32 - LINK_SLOP;
+
+    Rect::new(
+        Point::new(px(left), px(top)),
+        Size::new(
+            px(width + 2 * horizontal),
+            px(text.height() as i32 + 2 * LINK_SLOP),
+        ),
+    )
+}
+
 impl ScreenView for ReaderRoute {
     fn render<'a>(
         &self,
@@ -291,6 +357,16 @@ impl ScreenView for ReaderRoute {
             battery: app.reader_battery_icon,
             menu_open: app.reader.menu_open(),
             page: app.reader.text_settings().margin().page_bounds(),
+            links: {
+                let page = app.reader.text_settings().margin().page_bounds();
+
+                app.reader
+                    .page_links()
+                    .into_iter()
+                    .map(|(bounds, _)| link_box(bounds, page))
+                    .collect()
+            },
+            on_link: cx.listener(InkPaperApp::activate_reader_link),
             text_picker: app
                 .reader
                 .text_picker()

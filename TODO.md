@@ -41,9 +41,9 @@ New UI follows crosspoint/crossink's screens and layout.
 ## Links
 
 - [x] underline internal links
-- [ ] internal links between chapters and anchors
-- [ ] footnotes
-- [ ] return to the previous position after following a link
+- [x] follow internal links by tapping them, between chapters and to anchors
+- [x] return to the previous position after following a link (Home, up to 3 back)
+- [ ] footnotes: "Links and footnotes" in the drawer's More tab
 
 ## Home
 

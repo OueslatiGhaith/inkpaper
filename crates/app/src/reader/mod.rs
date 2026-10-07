@@ -19,7 +19,9 @@ pub(crate) use loader::ReaderSession;
 #[cfg(test)]
 pub(crate) use loader::load_reader_document;
 pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesRequest};
-pub(crate) use state::{ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState};
+pub(crate) use state::{
+    JumpTarget, ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState,
+};
 pub(crate) use text_settings::{
     LineSpacing, PageBounds, ParagraphAlignment, ScreenMargin, TextSetting, TextSettings,
 };

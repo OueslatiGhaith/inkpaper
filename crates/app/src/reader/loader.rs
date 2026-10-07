@@ -20,7 +20,7 @@ use crate::{
 use super::{
     document::{ReaderChapter, ReaderDocument},
     measurer::ReaderMeasurer,
-    state::ReaderChapterDirection,
+    state::{JumpTarget, ReaderChapterDirection},
 };
 
 #[allow(dead_code)]
@@ -155,6 +155,42 @@ where
             .unwrap_or(0);
 
         Ok(Some((chapter, page_index)))
+    }
+
+    /// The chapter `target` lands in and the index of its page there. `None`
+    /// when the target is not a readable chapter of the book.
+    pub async fn load_jump_target(
+        &mut self,
+        target: &JumpTarget,
+    ) -> Result<Option<(ReaderChapter, usize)>, ReaderLoadError<S::Error>> {
+        match target {
+            JumpTarget::Chapter { spine, anchor } => {
+                self.load_chapter_at(*spine, anchor.as_deref()).await
+            }
+
+            JumpTarget::Link { resource, anchor } => {
+                let Some(index) = self.epub.package().spine_index_for_path(resource) else {
+                    return Ok(None);
+                };
+
+                let spine =
+                    SpineIndex::try_from_usize(index).ok_or(ReaderLoadError::SpineIndexOverflow)?;
+
+                self.load_chapter_at(spine, anchor.as_deref()).await
+            }
+
+            JumpTarget::Position(position) => {
+                let spine = position.location().spine();
+
+                let Some((chapter, _)) = self.load_chapter_at(spine, None).await? else {
+                    return Ok(None);
+                };
+
+                let page_index = chapter.page_at_position(*position).unwrap_or(0);
+
+                Ok(Some((chapter, page_index)))
+            }
+        }
     }
 
     #[inkpaper_trace::instrument(

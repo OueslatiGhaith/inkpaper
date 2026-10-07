@@ -558,34 +558,28 @@ where
                 }
             }
 
-            ReaderRequest::JumpTo {
-                path,
-                spine,
-                anchor,
-            } => {
-                let target = match self.reader_session.as_mut() {
-                    Some(session) if session.path() == path => session
-                        .load_chapter_at(spine, anchor.as_deref())
-                        .await
-                        .ok()
-                        .flatten(),
+            ReaderRequest::JumpTo { path, target } => {
+                let landing = match self.reader_session.as_mut() {
+                    Some(session) if session.path() == path => {
+                        session.load_jump_target(&target).await.ok().flatten()
+                    }
 
                     _ => None,
                 };
 
-                match target {
+                match landing {
                     Some((mut chapter, page_index)) => {
                         chapter.register_images(runtime);
                         self.cover_source = None;
 
                         runtime.update(app, move |app, cx| {
-                            app.apply_reader_jump(path, spine, anchor, chapter, page_index, cx);
+                            app.apply_reader_jump(path, target, chapter, page_index, cx);
                         })?;
                     }
 
                     None => {
                         runtime.update(app, move |app, _| {
-                            app.finish_reader_jump_request(path, spine, anchor);
+                            app.finish_reader_jump_request(path, target);
                         })?;
                     }
                 }

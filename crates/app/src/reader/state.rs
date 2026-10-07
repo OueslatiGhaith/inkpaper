@@ -1,6 +1,6 @@
 use alloc::{format, string::String, vec::Vec};
-use inkpaper_epub::SpineIndex;
-use inkpaper_reader::{Page, ReadingPosition};
+use inkpaper_epub::{ArchivePath, LinkTarget, SpineIndex};
+use inkpaper_reader::{Page, PageItem, ReadingPosition, Rect};
 
 use crate::{
     ReaderChapter, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
@@ -35,8 +35,7 @@ pub(crate) enum ReaderRequest {
 
     JumpTo {
         path: String,
-        spine: SpineIndex,
-        anchor: Option<String>,
+        target: JumpTarget,
     },
 
     LoadTableOfContents {
@@ -53,11 +52,26 @@ struct PendingRepaginationRequest {
     text: TextSettings,
 }
 
+/// Where a jump lands. The service finds the chapter and the page in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PendingJumpRequest {
-    spine: SpineIndex,
-    anchor: Option<String>,
+pub(crate) enum JumpTarget {
+    /// a chapter, at an anchor or its start, like a chapter list entry
+    Chapter {
+        spine: SpineIndex,
+        anchor: Option<String>,
+    },
+    /// a link's destination: the resource it names, at an anchor or its start
+    Link {
+        resource: ArchivePath,
+        anchor: Option<String>,
+    },
+    /// a saved reading position, to go back after following a link
+    Position(ReadingPosition),
 }
+
+/// Like crosspoint, following a link saves where it was followed from, up to
+/// this many times; a deeper link drops the oldest.
+const MAX_LINK_RETURNS: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PendingChapterRequest {
@@ -91,7 +105,9 @@ pub(crate) struct ReaderState {
     pending_preferences: Option<ReaderPreferencesRequest>,
     pending_chapter: Option<PendingChapterRequest>,
     pending_repagination: Option<PendingRepaginationRequest>,
-    pending_jump: Option<PendingJumpRequest>,
+    pending_jump: Option<JumpTarget>,
+    /// positions links were followed from, the latest last
+    link_returns: Vec<ReadingPosition>,
 
     document: Option<ReaderDocument>,
     page_index: usize,
@@ -112,6 +128,7 @@ impl Default for ReaderState {
             pending_chapter: None,
             pending_repagination: None,
             pending_jump: None,
+            link_returns: Vec::new(),
             document: None,
             page_index: 0,
             text: TextSettings::default(),
@@ -132,6 +149,7 @@ impl ReaderState {
         self.pending_chapter = None;
         self.pending_repagination = None;
         self.pending_jump = None;
+        self.link_returns.clear();
 
         self.path = path;
         self.fallback_title = fallback_title;
@@ -365,6 +383,10 @@ impl ReaderState {
 
     /// Requests the chapter at `spine`, opened on the page holding `anchor`.
     pub(crate) fn jump_to(&mut self, spine: SpineIndex, anchor: Option<String>) -> bool {
+        self.jump(JumpTarget::Chapter { spine, anchor })
+    }
+
+    fn jump(&mut self, target: JumpTarget) -> bool {
         if self.document.is_none()
             || self.pending_chapter.is_some()
             || self.pending_repagination.is_some()
@@ -373,16 +395,81 @@ impl ReaderState {
             return false;
         }
 
-        self.pending_jump = Some(PendingJumpRequest {
-            spine,
-            anchor: anchor.clone(),
-        });
+        self.pending_jump = Some(target.clone());
 
         self.pending = Some(ReaderRequest::JumpTo {
             path: self.path.clone(),
-            spine,
-            anchor,
+            target,
         });
+
+        true
+    }
+
+    /// The internal links on the page, each with its text's bounds on the
+    /// page. A link broken across lines appears once per piece.
+    pub(crate) fn page_links(&self) -> Vec<(Rect, &LinkTarget)> {
+        let Some(page) = self.page() else {
+            return Vec::new();
+        };
+
+        page.items()
+            .iter()
+            .filter_map(|item| match item {
+                PageItem::Text(text) => text
+                    .link()
+                    .filter(|link| !link.is_external())
+                    .map(|link| (text.bounds(), link)),
+                PageItem::Image(_) => None,
+            })
+            .collect()
+    }
+
+    /// Follows link `index` of [`Self::page_links`], saving this page to come
+    /// back to.
+    pub(crate) fn follow_link(&mut self, index: usize) -> bool {
+        let Some(LinkTarget::Internal { path, fragment }) = self
+            .page_links()
+            .get(index)
+            .map(|(_, link)| (*link).clone())
+        else {
+            return false;
+        };
+
+        let Some(position) = self.page().map(Page::position) else {
+            return false;
+        };
+
+        let target = JumpTarget::Link {
+            resource: path,
+            anchor: fragment,
+        };
+
+        if !self.jump(target) {
+            return false;
+        }
+
+        if self.link_returns.len() == MAX_LINK_RETURNS {
+            self.link_returns.remove(0);
+        }
+
+        self.link_returns.push(position);
+
+        true
+    }
+
+    /// Goes back to where the latest link was followed from. `false` with
+    /// nowhere to go back to.
+    pub(crate) fn return_from_link(&mut self) -> bool {
+        let Some(&position) = self.link_returns.last() else {
+            return false;
+        };
+
+        if !self.jump(JumpTarget::Position(position)) {
+            // busy: keep the position, but the press is spent
+            return true;
+        }
+
+        self.link_returns.pop();
 
         true
     }
@@ -390,16 +477,11 @@ impl ReaderState {
     pub(crate) fn apply_jump(
         &mut self,
         path: &str,
-        spine: SpineIndex,
-        anchor: Option<String>,
+        target: JumpTarget,
         chapter: ReaderChapter,
         page_index: usize,
     ) -> bool {
-        if path != self.path || chapter.spine() != spine {
-            return false;
-        }
-
-        if self.pending_jump != Some(PendingJumpRequest { spine, anchor }) {
+        if path != self.path || self.pending_jump.as_ref() != Some(&target) {
             return false;
         }
 
@@ -422,13 +504,8 @@ impl ReaderState {
         true
     }
 
-    pub(crate) fn finish_jump_request(
-        &mut self,
-        path: &str,
-        spine: SpineIndex,
-        anchor: Option<String>,
-    ) -> bool {
-        if path != self.path || self.pending_jump != Some(PendingJumpRequest { spine, anchor }) {
+    pub(crate) fn finish_jump_request(&mut self, path: &str, target: JumpTarget) -> bool {
+        if path != self.path || self.pending_jump.as_ref() != Some(&target) {
             return false;
         }
 

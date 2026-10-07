@@ -117,7 +117,14 @@ impl InkPaperApp {
                 self.close_control_center(cx);
             }
 
-            InputTarget::Screen => self.navigate_home(cx),
+            // like crosspoint's Back, it first returns from followed links
+            InputTarget::Screen => {
+                if self.screen() == super::Screen::Reader && self.reader.return_from_link() {
+                    cx.notify();
+                } else {
+                    self.navigate_home(cx);
+                }
+            }
         }
     }
 
