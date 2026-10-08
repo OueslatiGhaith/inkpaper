@@ -14,6 +14,7 @@ mod frontlight;
 mod gesture;
 mod input;
 mod keyboard;
+mod paging;
 mod reader;
 mod reader_page;
 mod reading_history;

@@ -1,20 +1,20 @@
-use alloc::format;
 use inkpaper_ui::prelude::*;
 
 use crate::{
     InkPaperApp,
     app::{Back, Entry, ScreenInput, ScreenLifecycle, ScreenView, SideButton},
-    browser::{BrowseEntry, BrowseEntryKind, PageTurn},
+    browser::{BrowseEntry, BrowseEntryKind},
     components::{
         file_row::{FILE_ROW_HEIGHT, FileKind, FileRow, FileRowProps},
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
+        page_number::{PageNumber, PageNumberProps},
     },
+    paging,
 };
 
 /// The list fills the space between the header and the footer.
 const LIST_HEIGHT: i32 = 662;
 const ROWS_PER_PAGE: usize = (LIST_HEIGHT / FILE_ROW_HEIGHT) as usize;
-const SWIPE_DISTANCE: i32 = 40;
 
 #[component]
 pub(crate) struct BrowseFilesScreen<'a> {
@@ -34,7 +34,6 @@ impl RenderOnce for BrowseFilesScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let list_height = px(LIST_HEIGHT);
         let paged = self.page_count > 1;
-        let page_label = format!("{}/{}", self.page + 1, self.page_count);
         let path_width = if paged { px(360) } else { px(440) };
 
         rsx! {
@@ -81,9 +80,7 @@ impl RenderOnce for BrowseFilesScreen<'_> {
 
                     {#if paged}
                         <div class="absolute right-5 top-3">
-                            <text class="text-base no-wrap">
-                                {page_label}
-                            </text>
+                            <PageNumber page={self.page} page_count={self.page_count} />
                         </div>
                     {/if}
                 </div>
@@ -92,8 +89,7 @@ impl RenderOnce for BrowseFilesScreen<'_> {
     }
 }
 
-/// One page of the listing. Lists turn pages rather than scroll, since an
-/// e-ink panel redraws every step of a scroll.
+/// One page of the listing.
 #[component]
 struct FileList<'a> {
     entries: &'a [BrowseEntry],
@@ -167,17 +163,11 @@ impl ScreenInput for BrowseFilesRoute {
         button: SideButton,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        let turn = match button {
-            SideButton::Previous => PageTurn::Previous,
-            SideButton::Next => PageTurn::Next,
-        };
-
-        if app.browser.turn_page(turn, ROWS_PER_PAGE) {
-            cx.notify();
-        }
+        paging::turn_page_by_button(app, button, cx, |app, turn| {
+            app.browser.turn_page(turn, ROWS_PER_PAGE)
+        });
     }
 
-    // a vertical swipe turns one page: up for the next, down for the previous
     fn drag(
         &self,
         app: &mut InkPaperApp,
@@ -185,27 +175,9 @@ impl ScreenInput for BrowseFilesRoute {
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> bool {
-        let dx = position.x.get() - origin.x.get();
-        let dy = position.y.get() - origin.y.get();
-
-        if dy.abs() < SWIPE_DISTANCE || dy.abs() <= dx.abs() {
-            return false;
-        }
-
-        let turn = if dy < 0 {
-            PageTurn::Next
-        } else {
-            PageTurn::Previous
-        };
-
-        if app.browser.turn_page(turn, ROWS_PER_PAGE) {
-            cx.notify();
-        }
-
-        // the rest of the swipe turns nothing more
-        app.capture_pointer();
-
-        true
+        paging::turn_page_by_swipe(app, origin, position, cx, |app, turn| {
+            app.browser.turn_page(turn, ROWS_PER_PAGE)
+        })
     }
 }
 

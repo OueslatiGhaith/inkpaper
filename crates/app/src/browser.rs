@@ -2,6 +2,8 @@ use core::cmp::Ordering;
 
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
+use crate::paging::{PageTurn, Pager};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowseEntryKind {
     Directory,
@@ -104,14 +106,7 @@ pub(crate) struct BrowserState {
     pending: Option<BrowseRequest>,
     error: bool,
     revision: u64,
-    /// the entry at the top of the page shown
-    top: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PageTurn {
-    Previous,
-    Next,
+    pager: Pager,
 }
 
 impl Default for BrowserState {
@@ -122,7 +117,7 @@ impl Default for BrowserState {
             pending: None,
             error: false,
             revision: 0,
-            top: 0,
+            pager: Pager::default(),
         }
     }
 }
@@ -157,28 +152,15 @@ impl BrowserState {
 
     /// The page shown when `rows_per_page` entries fit on one.
     pub(crate) fn page(&self, rows_per_page: usize) -> usize {
-        (self.top / rows_per_page).min(self.page_count(rows_per_page) - 1)
+        self.pager.page(self.entries.len(), rows_per_page)
     }
 
     pub(crate) fn page_count(&self, rows_per_page: usize) -> usize {
-        self.entries.len().div_ceil(rows_per_page).max(1)
+        Pager::page_count(self.entries.len(), rows_per_page)
     }
 
-    /// Returns false at either end of the listing.
     pub(crate) fn turn_page(&mut self, turn: PageTurn, rows_per_page: usize) -> bool {
-        let page = self.page(rows_per_page);
-        let next = match turn {
-            PageTurn::Previous => page.checked_sub(1),
-            PageTurn::Next => Some(page + 1).filter(|&next| next < self.page_count(rows_per_page)),
-        };
-
-        let Some(next) = next else {
-            return false;
-        };
-
-        self.top = next * rows_per_page;
-
-        true
+        self.pager.turn(turn, self.entries.len(), rows_per_page)
     }
 
     pub(crate) fn request_current_directory(&mut self) {
@@ -222,13 +204,13 @@ impl BrowserState {
         let (path, entries) = listing.into_parts();
 
         // like crosspoint, going up a level shows the folder just left
-        self.top = child_name(&path, &self.path)
+        self.pager = child_name(&path, &self.path)
             .and_then(|name| {
                 entries.iter().position(|entry| {
                     entry.kind == BrowseEntryKind::Directory && entry.name == name
                 })
             })
-            .unwrap_or(0);
+            .map_or(Pager::default(), Pager::showing);
         self.path = path;
         self.entries = entries;
         self.error = false;
@@ -237,7 +219,7 @@ impl BrowserState {
 
     pub(crate) fn apply_error(&mut self) {
         self.error = true;
-        self.top = 0;
+        self.pager = Pager::default();
         self.revision = self.revision.wrapping_add(1);
     }
 
@@ -330,7 +312,7 @@ mod tests {
         ));
 
         // directories sort first: fantasy, sci-fi, then the file
-        assert_eq!(browser.top, 1);
+        assert_eq!(browser.pager, Pager::showing(1));
     }
 
     #[test]
@@ -346,7 +328,7 @@ mod tests {
             ],
         ));
 
-        assert_eq!(browser.top, 1);
+        assert_eq!(browser.pager, Pager::showing(1));
     }
 
     #[test]
@@ -354,9 +336,9 @@ mod tests {
         let mut browser = BrowserState::default();
         browser.apply_listing(list("/", vec![BrowseEntry::directory("books")]));
         browser.apply_listing(list("/books", vec![BrowseEntry::directory("books")]));
-        assert_eq!(browser.top, 0);
+        assert_eq!(browser.pager, Pager::default());
 
         browser.apply_listing(list("/books", vec![BrowseEntry::directory("books")]));
-        assert_eq!(browser.top, 0);
+        assert_eq!(browser.pager, Pager::default());
     }
 }

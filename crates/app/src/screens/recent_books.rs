@@ -1,20 +1,19 @@
-use alloc::format;
 use inkpaper_ui::prelude::*;
 
 use crate::{
     InkPaperApp, ReadingHistoryEntry,
     app::{Entry, ScreenInput, ScreenLifecycle, ScreenView, SideButton},
-    browser::PageTurn,
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
+        page_number::{PageNumber, PageNumberProps},
         recent_book_row::{RECENT_BOOK_ROW_HEIGHT, RecentBookRow, RecentBookRowProps},
     },
+    paging,
 };
 
 /// The list fills the space under the header.
 const LIST_HEIGHT: i32 = 682;
 const ROWS_PER_PAGE: usize = (LIST_HEIGHT / RECENT_BOOK_ROW_HEIGHT) as usize;
-const SWIPE_DISTANCE: i32 = 40;
 
 #[component]
 pub(crate) struct RecentBooksScreen<'a> {
@@ -32,7 +31,6 @@ impl RenderOnce for RecentBooksScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let list_height = px(LIST_HEIGHT);
         let paged = self.page_count > 1;
-        let page_label = format!("{}/{}", self.page + 1, self.page_count);
 
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
@@ -71,9 +69,7 @@ impl RenderOnce for RecentBooksScreen<'_> {
 
                 {#if paged}
                     <div class="absolute right-5 bottom-3">
-                        <text class="text-base no-wrap">
-                            {page_label}
-                        </text>
+                        <PageNumber page={self.page} page_count={self.page_count} />
                     </div>
                 {/if}
             </div>
@@ -81,8 +77,7 @@ impl RenderOnce for RecentBooksScreen<'_> {
     }
 }
 
-/// One page of the history. Lists turn pages rather than scroll, since an
-/// e-ink panel redraws every step of a scroll.
+/// One page of the history.
 #[component]
 struct RecentBookList<'a> {
     entries: &'a [ReadingHistoryEntry],
@@ -138,17 +133,11 @@ impl ScreenInput for RecentBooksRoute {
         button: SideButton,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        let turn = match button {
-            SideButton::Previous => PageTurn::Previous,
-            SideButton::Next => PageTurn::Next,
-        };
-
-        if app.reading_history.turn_page(turn, ROWS_PER_PAGE) {
-            cx.notify();
-        }
+        paging::turn_page_by_button(app, button, cx, |app, turn| {
+            app.reading_history.turn_page(turn, ROWS_PER_PAGE)
+        });
     }
 
-    // a vertical swipe turns one page: up for the next, down for the previous
     fn drag(
         &self,
         app: &mut InkPaperApp,
@@ -156,27 +145,9 @@ impl ScreenInput for RecentBooksRoute {
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> bool {
-        let dx = position.x.get() - origin.x.get();
-        let dy = position.y.get() - origin.y.get();
-
-        if dy.abs() < SWIPE_DISTANCE || dy.abs() <= dx.abs() {
-            return false;
-        }
-
-        let turn = if dy < 0 {
-            PageTurn::Next
-        } else {
-            PageTurn::Previous
-        };
-
-        if app.reading_history.turn_page(turn, ROWS_PER_PAGE) {
-            cx.notify();
-        }
-
-        // the rest of the swipe turns nothing more
-        app.capture_pointer();
-
-        true
+        paging::turn_page_by_swipe(app, origin, position, cx, |app, turn| {
+            app.reading_history.turn_page(turn, ROWS_PER_PAGE)
+        })
     }
 }
 

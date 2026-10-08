@@ -7,6 +7,7 @@ pub(crate) mod home_menu;
 pub(crate) mod icon;
 pub(crate) mod keyboard;
 pub(crate) mod option_picker;
+pub(crate) mod page_number;
 pub(crate) mod popup_menu;
 pub(crate) mod reader_menu;
 pub(crate) mod recent_book_row;
