@@ -10,6 +10,7 @@ use super::{
 };
 use crate::{
     fonts::{CardFont, card_for},
+    paging::{PageTurn, Pager},
     typography::READER_FONT_NAME,
 };
 
@@ -73,6 +74,8 @@ pub(crate) enum TextSettingsRow {
 #[derive(Debug, Default)]
 pub(crate) struct TextSettingsState {
     tab: TextSettingsTab,
+    /// which page of the tab's rows is shown
+    pager: Pager,
     draft: TextSettings,
     picker: Option<TextSetting>,
     preview: Option<Page<'static>>,
@@ -86,6 +89,7 @@ impl TextSettingsState {
     /// Starts editing `text`, on the Font tab like crosspoint.
     pub(crate) fn open(&mut self, text: TextSettings) {
         self.tab = TextSettingsTab::Font;
+        self.pager = Pager::default();
         self.picker = None;
         self.draft = text;
         self.preview = layout_preview(text, self.card.as_ref());
@@ -156,6 +160,7 @@ impl TextSettingsState {
         }
 
         self.tab = tab;
+        self.pager = Pager::default();
         self.picker = None;
 
         true
@@ -183,6 +188,19 @@ impl TextSettingsState {
                 .map(|&setting| TextSettingsRow::Setting(setting))
                 .collect(),
         }
+    }
+
+    /// The page of the tab's rows shown when `rows_per_page` fit on one.
+    pub(crate) fn page(&self, rows_per_page: usize) -> usize {
+        self.pager.page(self.rows().len(), rows_per_page)
+    }
+
+    pub(crate) fn page_count(&self, rows_per_page: usize) -> usize {
+        Pager::page_count(self.rows().len(), rows_per_page)
+    }
+
+    pub(crate) fn turn_page(&mut self, turn: PageTurn, rows_per_page: usize) -> bool {
+        self.pager.turn(turn, self.rows().len(), rows_per_page)
     }
 
     /// Picks a size, flips a toggle or opens a setting's picker. Returns

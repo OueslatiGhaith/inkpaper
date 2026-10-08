@@ -6,6 +6,7 @@ use inkpaper_reader::{Page, PageItem, ReadingPosition, Rect};
 use crate::{
     ReaderChapter, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
     ReadingHistoryEntry,
+    paging::{PageTurn, Pager},
     reader::{TableOfContents, TextSetting, TextSettings, TocEntry, toc::current_toc_index},
 };
 
@@ -119,6 +120,7 @@ pub(crate) struct ReaderState {
     failed: bool,
     chrome: ReaderChromeState,
     toc: TableOfContents,
+    toc_pager: Pager,
 }
 
 impl Default for ReaderState {
@@ -138,6 +140,7 @@ impl Default for ReaderState {
             failed: false,
             chrome: ReaderChromeState::default(),
             toc: TableOfContents::NotLoaded,
+            toc_pager: Pager::default(),
         }
     }
 }
@@ -727,6 +730,31 @@ impl ReaderState {
         current_toc_index(entries, self.document.as_ref()?.spine())
     }
 
+    /// Shows the chapter list's page holding the chapter being read.
+    pub(crate) fn show_current_toc_page(&mut self) {
+        self.toc_pager = Pager::showing(self.current_toc_index().unwrap_or(0));
+    }
+
+    fn toc_len(&self) -> usize {
+        match &self.toc {
+            TableOfContents::Loaded(entries) => entries.len(),
+            _ => 0,
+        }
+    }
+
+    /// The chapter list's page shown when `rows_per_page` entries fit on one.
+    pub(crate) fn toc_page(&self, rows_per_page: usize) -> usize {
+        self.toc_pager.page(self.toc_len(), rows_per_page)
+    }
+
+    pub(crate) fn toc_page_count(&self, rows_per_page: usize) -> usize {
+        Pager::page_count(self.toc_len(), rows_per_page)
+    }
+
+    pub(crate) fn turn_toc_page(&mut self, turn: PageTurn, rows_per_page: usize) -> bool {
+        self.toc_pager.turn(turn, self.toc_len(), rows_per_page)
+    }
+
     /// Requests the table of contents once per book; failures retry.
     pub(crate) fn request_table_of_contents(&mut self) -> bool {
         if self.document.is_none()
@@ -752,6 +780,7 @@ impl ReaderState {
         }
 
         self.toc = TableOfContents::Loaded(entries);
+        self.show_current_toc_page();
 
         true
     }

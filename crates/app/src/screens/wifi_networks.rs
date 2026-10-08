@@ -4,15 +4,23 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     InkPaperApp, SavedNetworks, WifiNetwork, WifiScanStatus,
-    app::{Back, Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView},
+    app::{Back, Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView, SideButton},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
+        page_number::{PageNumber, PageNumberProps},
         popup_menu::{MenuItem, PopupMenu, PopupMenuProps},
-        settings_row::{ListRow, ListRowProps, SettingsValueRow, SettingsValueRowProps},
+        settings_row::{
+            LIST_ROW_HEIGHT, ListRow, ListRowProps, SettingsValueRow, SettingsValueRowProps,
+        },
     },
     input::LongPressEvent,
+    paging,
     wifi::NetworkMenu,
 };
+
+/// The list fills the space under Scan Again.
+const LIST_HEIGHT: i32 = 598;
+const ROWS_PER_PAGE: usize = (LIST_HEIGHT / LIST_ROW_HEIGHT) as usize;
 
 /// The items of a saved network's menu, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +58,8 @@ pub(crate) struct WifiNetworksScreen<'a> {
     on_dismiss_menu: Listener<ActivateEvent>,
     scan: WifiScanStatus,
     revision: u64,
+    page: usize,
+    page_count: usize,
     battery: Entity<BatteryIndicator>,
     on_back: Listener<ActivateEvent>,
     on_scan: Listener<ActivateEvent>,
@@ -102,6 +112,10 @@ impl RenderOnce for WifiNetworksScreen<'_> {
         // a running scan can't be started again
         let on_scan = (self.scan != WifiScanStatus::Scanning).then_some(self.on_scan);
 
+        let list_height = px(LIST_HEIGHT);
+        let paged = self.page_count > 1;
+        let status_width = if paged { px(344) } else { px(424) };
+
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
                 <div class="absolute left-0 top-[5px] w-[480px] h-[77px]">
@@ -112,11 +126,17 @@ impl RenderOnce for WifiNetworksScreen<'_> {
                     />
                 </div>
 
-                <div class="absolute left-7 top-[98px] w-[424px] h-8 flex items-center">
+                <div class="absolute left-7 top-[98px] w-{status_width} h-8 flex items-center">
                     <text class="text-base no-wrap max-lines-1 text-ellipsis">
                         {status}
                     </text>
                 </div>
+
+                {#if paged}
+                    <div class="absolute right-7 top-[98px] h-8 flex items-center">
+                        <PageNumber page={self.page} page_count={self.page_count} />
+                    </div>
+                {/if}
 
                 <div class="absolute left-0 top-[130px] w-[480px]">
                     <ListRow
@@ -129,13 +149,14 @@ impl RenderOnce for WifiNetworksScreen<'_> {
                     />
                 </div>
 
-                <div class="absolute left-0 top-[202px] w-[480px] h-[598px]">
+                <div class="absolute left-0 top-[202px] w-[480px] h-{list_height}">
                     <NetworkList
                         networks={self.networks}
                         saved={self.saved}
                         on_network={self.on_network}
                         on_hold_network={self.on_hold_network}
                         revision={self.revision}
+                        page={self.page}
                     />
                 </div>
 
@@ -147,6 +168,7 @@ impl RenderOnce for WifiNetworksScreen<'_> {
     }
 }
 
+/// One page of the networks.
 #[component]
 struct NetworkList<'a> {
     networks: &'a [WifiNetwork],
@@ -154,6 +176,7 @@ struct NetworkList<'a> {
     on_network: Listener<ActivateEvent>,
     on_hold_network: Listener<LongPressEvent>,
     revision: u64,
+    page: usize,
 }
 
 impl RenderOnce for NetworkList<'_> {
@@ -161,12 +184,15 @@ impl RenderOnce for NetworkList<'_> {
         let saved = self.saved;
         let connected = saved.connected().map(|network| network.ssid());
         let (on_network, on_hold_network) = (self.on_network, self.on_hold_network);
+        let first = self.page * ROWS_PER_PAGE;
 
         // every row shares one listener per event; the row's id says which
         let rows = self
             .networks
             .iter()
             .enumerate()
+            .skip(first)
+            .take(ROWS_PER_PAGE)
             .map(move |(index, network)| {
                 let known = saved.find(network.ssid()).is_some();
 
@@ -202,7 +228,6 @@ impl RenderOnce for NetworkList<'_> {
             .h_full()
             .flex()
             .flex_col()
-            .overflow_y_scroll()
             .children(rows)
     }
 }
@@ -232,17 +257,38 @@ impl ScreenLifecycle for WifiNetworksRoute {
     }
 }
 
-// while the menu is open, the list behind it neither scrolls nor opens
+// while the menu is open, the list behind it neither turns pages nor opens
 // another menu
 impl ScreenInput for WifiNetworksRoute {
+    fn side_button(
+        &self,
+        app: &mut InkPaperApp,
+        button: SideButton,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) {
+        if app.wifi.menu().is_some() {
+            return;
+        }
+
+        paging::turn_page_by_button(app, button, cx, |app, turn| {
+            app.wifi.turn_page(turn, ROWS_PER_PAGE)
+        });
+    }
+
     fn drag(
         &self,
         app: &mut InkPaperApp,
-        _origin: Point,
-        _position: Point,
-        _cx: &mut Context<'_, InkPaperApp>,
+        origin: Point,
+        position: Point,
+        cx: &mut Context<'_, InkPaperApp>,
     ) -> bool {
-        app.wifi.menu().is_some()
+        if app.wifi.menu().is_some() {
+            return true;
+        }
+
+        paging::turn_page_by_swipe(app, origin, position, cx, |app, turn| {
+            app.wifi.turn_page(turn, ROWS_PER_PAGE)
+        })
     }
 
     fn long_press(
@@ -271,6 +317,8 @@ impl ScreenView for WifiNetworksRoute {
             on_dismiss_menu: cx.listener(InkPaperApp::dismiss_wifi_menu),
             scan: app.wifi.scan_status(),
             revision: app.wifi.revision(),
+            page: app.wifi.page(ROWS_PER_PAGE),
+            page_count: app.wifi.page_count(ROWS_PER_PAGE),
             battery: app.battery_indicator,
             on_back: cx.listener(InkPaperApp::activate_back),
             on_scan: cx.listener(InkPaperApp::activate_wifi_scan),

@@ -2,6 +2,8 @@ use inkpaper_ui::prelude::*;
 
 use crate::components::icon::{Icon, IconKind, IconProps};
 
+pub(crate) const LIST_ROW_HEIGHT: i32 = 64;
+
 fn row_background(selected: bool) -> Color {
     if selected {
         Color::rgb(170, 170, 170)
@@ -26,31 +28,32 @@ pub(crate) struct ListRow<'a> {
 impl RenderOnce for ListRow<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let background = row_background(self.selected);
+        let height = px(LIST_ROW_HEIGHT);
 
         let indent = i32::from(self.depth.min(6)) * 16;
         let label_left = px(28 + indent);
         let label_width = px(if self.chevron { 380 } else { 412 } - indent);
 
         rsx! {
-            <div class="w-full h-16 relative">
-                <div class="absolute left-5 top-0 w-[440px] h-16 rounded-md bg-{background}" />
+            <div class="w-full h-{height} relative">
+                <div class="absolute left-5 top-0 w-[440px] h-{height} rounded-md bg-{background}" />
 
                 {#if let Some(listener) = self.on_activate}
                     <div
                         id={self.id}
                         on:activate={listener}
-                        class="absolute left-5 top-0 w-[440px] h-16 rounded-md"
+                        class="absolute left-5 top-0 w-[440px] h-{height} rounded-md"
                     />
                 {/if}
 
-                <div class="absolute left-{label_left} top-0 w-{label_width} h-16 flex items-center">
+                <div class="absolute left-{label_left} top-0 w-{label_width} h-{height} flex items-center">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.label}
                     </text>
                 </div>
 
                 {#if self.chevron}
-                    <div class="absolute right-7 top-0 h-16 flex items-center">
+                    <div class="absolute right-7 top-0 h-{height} flex items-center">
                         <Icon kind={IconKind::ChevronRight} size={px(24)} />
                     </div>
                 {/if}
@@ -73,26 +76,27 @@ pub(crate) struct SettingsValueRow<'a> {
 impl RenderOnce for SettingsValueRow<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let background = row_background(self.selected);
+        let height = px(LIST_ROW_HEIGHT);
 
         rsx! {
-            <div class="w-full h-16 relative">
-                <div class="absolute left-5 top-0 w-[440px] h-16 rounded-md bg-{background}" />
+            <div class="w-full h-{height} relative">
+                <div class="absolute left-5 top-0 w-[440px] h-{height} rounded-md bg-{background}" />
 
                 {#if let Some(listener) = self.on_activate}
                     <div
                         id={self.id}
                         on:activate={listener}
-                        class="absolute left-5 top-0 w-[440px] h-16 rounded-md"
+                        class="absolute left-5 top-0 w-[440px] h-{height} rounded-md"
                     />
                 {/if}
 
-                <div class="absolute left-7 top-0 w-[290px] h-16 flex items-center">
+                <div class="absolute left-7 top-0 w-[290px] h-{height} flex items-center">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.label}
                     </text>
                 </div>
 
-                <div class="absolute right-7 top-0 w-[130px] h-16 flex items-center justify-end">
+                <div class="absolute right-7 top-0 w-[130px] h-{height} flex items-center justify-end">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.value}
                     </text>
@@ -114,15 +118,17 @@ pub(crate) struct SettingsToggleRow<'a> {
 
 impl RenderOnce for SettingsToggleRow<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let height = px(LIST_ROW_HEIGHT);
+
         rsx! {
-            <div class="w-full h-16 relative">
+            <div class="w-full h-{height} relative">
                 <div
                     id={self.id}
                     on:activate={self.on_activate}
-                    class="absolute left-5 top-0 w-[440px] h-16 rounded-md"
+                    class="absolute left-5 top-0 w-[440px] h-{height} rounded-md"
                 />
 
-                <div class="absolute left-7 top-0 w-[340px] h-16 flex items-center">
+                <div class="absolute left-7 top-0 w-[340px] h-{height} flex items-center">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.label}
                     </text>

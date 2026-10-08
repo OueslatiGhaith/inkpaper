@@ -3,6 +3,7 @@ use alloc::{string::String, vec::Vec};
 use minicbor::{Decode, Encode};
 
 use crate::keyboard::{Key, KeyResult, KeyboardState};
+use crate::paging::{PageTurn, Pager};
 use crate::storage::{self, StorageError};
 
 /// Like crosspoint, up to eight networks are remembered.
@@ -480,6 +481,7 @@ pub(crate) struct WifiState {
     scan: WifiScanStatus,
     scan_requested: bool,
     revision: u64,
+    pager: Pager,
     password_entry: Option<PasswordEntry>,
     menu: Option<NetworkMenu>,
 }
@@ -514,10 +516,22 @@ impl WifiState {
         self.scan
     }
 
-    /// Changes whenever the scan list is replaced, so the list scrolls back to
-    /// the top.
+    /// Changes whenever the scan list is replaced.
     pub(crate) const fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// The page of networks shown when `rows_per_page` fit on one.
+    pub(crate) fn page(&self, rows_per_page: usize) -> usize {
+        self.pager.page(self.networks.len(), rows_per_page)
+    }
+
+    pub(crate) fn page_count(&self, rows_per_page: usize) -> usize {
+        Pager::page_count(self.networks.len(), rows_per_page)
+    }
+
+    pub(crate) fn turn_page(&mut self, turn: PageTurn, rows_per_page: usize) -> bool {
+        self.pager.turn(turn, self.networks.len(), rows_per_page)
     }
 
     pub(crate) fn apply_saved(&mut self, saved: SavedNetworks) -> bool {
@@ -629,8 +643,10 @@ impl WifiState {
         core::mem::take(&mut self.scan_requested)
     }
 
+    /// Replaces the list, back on its first page.
     pub(crate) fn finish_scan(&mut self, result: Result<Vec<WifiNetwork>, WifiScanError>) {
         self.revision += 1;
+        self.pager = Pager::default();
 
         let Ok(mut found) = result else {
             self.scan = WifiScanStatus::Failed;

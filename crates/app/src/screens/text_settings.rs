@@ -4,12 +4,14 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     InkPaperApp,
-    app::{Back, Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView},
+    app::{Back, Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView, SideButton},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
         option_picker::{OptionPicker, OptionPickerProps},
-        settings_row::{SettingsToggleRow, SettingsToggleRowProps},
+        page_number::{PageNumber, PageNumberProps},
+        settings_row::{LIST_ROW_HEIGHT, SettingsToggleRow, SettingsToggleRowProps},
     },
+    paging,
     reader::{
         PREVIEW_PADDING, PREVIEW_TEXT_HEIGHT, TextSetting, TextSettings, TextSettingsRow,
         TextSettingsTab, preview_text_left,
@@ -24,6 +26,8 @@ const TABS_TOP: i32 = PREVIEW_TOP + PREVIEW_HEIGHT;
 const TABS_HEIGHT: i32 = 50;
 /// crossink's list starts 16 px below its tabs
 const LIST_TOP: i32 = TABS_TOP + TABS_HEIGHT + 16;
+const LIST_HEIGHT: i32 = 800 - LIST_TOP;
+const ROWS_PER_PAGE: usize = (LIST_HEIGHT / LIST_ROW_HEIGHT) as usize;
 const TAB_WIDTH: i32 = 120;
 
 /// crosspoint's Text Settings: a live preview of the reader's text above
@@ -35,6 +39,8 @@ pub(crate) struct TextSettingsScreen {
     /// the chosen family's name
     font_name: String,
     rows: Vec<TextSettingsRow>,
+    page: usize,
+    page_count: usize,
     picker: Option<TextSetting>,
     preview: Canvas,
     battery: Entity<BatteryIndicator>,
@@ -73,11 +79,14 @@ impl RenderOnce for TextSettingsScreen {
             });
         let tabs = div().w_full().h_full().relative().children(tabs);
 
+        // one page of the tab's rows
         let on_row = self.on_row;
         let rows = self
             .rows
             .into_iter()
             .enumerate()
+            .skip(self.page * ROWS_PER_PAGE)
+            .take(ROWS_PER_PAGE)
             .map(move |(index, row)| setting_row(index, row, text, on_row));
         let list = div()
             .id(("text-settings-list", 0u8))
@@ -85,8 +94,8 @@ impl RenderOnce for TextSettingsScreen {
             .h_full()
             .flex()
             .flex_col()
-            .overflow_y_scroll()
             .children(rows);
+        let paged = self.page_count > 1;
 
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
@@ -117,9 +126,15 @@ impl RenderOnce for TextSettingsScreen {
                     <div class="absolute left-0 bottom-0 w-full h-px bg-black" />
                 </div>
 
-                <div class="absolute left-0 top-{px(LIST_TOP)} w-[480px] h-{px(800 - LIST_TOP)}">
+                <div class="absolute left-0 top-{px(LIST_TOP)} w-[480px] h-{px(LIST_HEIGHT)}">
                     {list}
                 </div>
+
+                {#if paged}
+                    <div class="absolute right-5 bottom-3">
+                        <PageNumber page={self.page} page_count={self.page_count} />
+                    </div>
+                {/if}
 
                 {#if let Some(setting) = self.picker}
                     <OptionPicker
@@ -189,21 +204,23 @@ struct ValueRow {
 
 impl RenderOnce for ValueRow {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let height = px(LIST_ROW_HEIGHT);
+
         rsx! {
-            <div class="w-full h-16 relative">
+            <div class="w-full h-{height} relative">
                 <div
                     id={self.id}
                     on:activate={self.on_activate}
-                    class="absolute left-5 top-0 w-[440px] h-16 rounded-md"
+                    class="absolute left-5 top-0 w-[440px] h-{height} rounded-md"
                 />
 
-                <div class="absolute left-7 top-0 w-[290px] h-16 flex items-center">
+                <div class="absolute left-7 top-0 w-[290px] h-{height} flex items-center">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.label}
                     </text>
                 </div>
 
-                <div class="absolute right-7 top-0 w-[130px] h-16 flex items-center justify-end">
+                <div class="absolute right-7 top-0 w-[130px] h-{height} flex items-center justify-end">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
                         {self.value}
                     </text>
@@ -275,7 +292,39 @@ impl ScreenLifecycle for TextSettingsRoute {
     }
 }
 
-impl ScreenInput for TextSettingsRoute {}
+// while a picker is open, the rows behind it don't turn pages
+impl ScreenInput for TextSettingsRoute {
+    fn side_button(
+        &self,
+        app: &mut InkPaperApp,
+        button: SideButton,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) {
+        if app.text_settings.picker().is_some() {
+            return;
+        }
+
+        paging::turn_page_by_button(app, button, cx, |app, turn| {
+            app.text_settings.turn_page(turn, ROWS_PER_PAGE)
+        });
+    }
+
+    fn drag(
+        &self,
+        app: &mut InkPaperApp,
+        origin: Point,
+        position: Point,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> bool {
+        if app.text_settings.picker().is_some() {
+            return true;
+        }
+
+        paging::turn_page_by_swipe(app, origin, position, cx, |app, turn| {
+            app.text_settings.turn_page(turn, ROWS_PER_PAGE)
+        })
+    }
+}
 
 impl ScreenView for TextSettingsRoute {
     fn render<'a>(
@@ -290,6 +339,8 @@ impl ScreenView for TextSettingsRoute {
             text: state.draft(),
             font_name: state.font_name(state.draft().font()),
             rows: state.rows(),
+            page: state.page(ROWS_PER_PAGE),
+            page_count: state.page_count(ROWS_PER_PAGE),
             picker: state.picker(),
             preview: cx.canvas(|app: &InkPaperApp, paint| app.paint_text_settings_preview(paint)),
             battery: app.battery_indicator,
