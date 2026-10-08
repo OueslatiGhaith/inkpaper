@@ -1,14 +1,20 @@
+use alloc::format;
 use inkpaper_ui::prelude::*;
 
 use crate::{
     InkPaperApp,
-    app::{Back, Entry, ScreenInput, ScreenLifecycle, ScreenView},
-    browser::{BrowseEntry, BrowseEntryKind},
+    app::{Back, Entry, ScreenInput, ScreenLifecycle, ScreenView, SideButton},
+    browser::{BrowseEntry, BrowseEntryKind, PageTurn},
     components::{
-        file_row::{FileKind, FileRow, FileRowProps},
+        file_row::{FILE_ROW_HEIGHT, FileKind, FileRow, FileRowProps},
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
     },
 };
+
+/// The list fills the space between the header and the footer.
+const LIST_HEIGHT: i32 = 662;
+const ROWS_PER_PAGE: usize = (LIST_HEIGHT / FILE_ROW_HEIGHT) as usize;
+const SWIPE_DISTANCE: i32 = 40;
 
 #[component]
 pub(crate) struct BrowseFilesScreen<'a> {
@@ -17,7 +23,8 @@ pub(crate) struct BrowseFilesScreen<'a> {
     entries: &'a [BrowseEntry],
     on_entry: Listener<ActivateEvent>,
     revision: u64,
-    return_to: Option<usize>,
+    page: usize,
+    page_count: usize,
     error: bool,
     battery: Entity<BatteryIndicator>,
     on_back: Listener<ActivateEvent>,
@@ -25,6 +32,11 @@ pub(crate) struct BrowseFilesScreen<'a> {
 
 impl RenderOnce for BrowseFilesScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let list_height = px(LIST_HEIGHT);
+        let paged = self.page_count > 1;
+        let page_label = format!("{}/{}", self.page + 1, self.page_count);
+        let path_width = if paged { px(360) } else { px(440) };
+
         rsx! {
             <div class="w-[480px] h-[800px] relative bg-white text-black">
                 <div class="absolute left-0 top-[5px] w-[480px] h-[77px]">
@@ -35,7 +47,7 @@ impl RenderOnce for BrowseFilesScreen<'_> {
                     />
                 </div>
 
-                <div class="absolute left-0 top-[98px] w-[480px] h-[662px]">
+                <div class="absolute left-0 top-[98px] w-[480px] h-{list_height}">
                     {#if self.error}
                         <div class="w-full h-full flex items-center justify-center">
                             <text class="text-xl">
@@ -53,7 +65,7 @@ impl RenderOnce for BrowseFilesScreen<'_> {
                             entries={self.entries}
                             on_entry={self.on_entry}
                             revision={self.revision}
-                            return_to={self.return_to}
+                            page={self.page}
                         />
                     {/if}
                 </div>
@@ -61,31 +73,49 @@ impl RenderOnce for BrowseFilesScreen<'_> {
                 <div class="absolute left-0 bottom-0 w-[480px] h-10">
                     <div class="absolute left-0 top-0 w-full h-[3px] bg-black" />
 
-                    <div class="absolute left-5 top-3 w-[440px]">
+                    <div class="absolute left-5 top-3 w-{path_width}">
                         <text class="text-base no-wrap max-lines-1 text-ellipsis">
                             {self.path}
                         </text>
                     </div>
+
+                    {#if paged}
+                        <div class="absolute right-5 top-3">
+                            <text class="text-base no-wrap">
+                                {page_label}
+                            </text>
+                        </div>
+                    {/if}
                 </div>
             </div>
         }
     }
 }
 
+/// One page of the listing. Lists turn pages rather than scroll, since an
+/// e-ink panel redraws every step of a scroll.
 #[component]
 struct FileList<'a> {
     entries: &'a [BrowseEntry],
     on_entry: Listener<ActivateEvent>,
     revision: u64,
-    return_to: Option<usize>,
+    page: usize,
 }
 
 impl RenderOnce for FileList<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let on_entry = self.on_entry;
 
+        let first = self.page * ROWS_PER_PAGE;
+
         // every row shares one listener; the row's id says which was tapped
-        let rows = self.entries.iter().enumerate().map(move |(index, entry)| {
+        let rows = self
+            .entries
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(ROWS_PER_PAGE);
+        let rows = rows.map(move |(index, entry)| {
             let kind = match entry.kind() {
                 BrowseEntryKind::Directory => FileKind::Folder,
                 BrowseEntryKind::File => FileKind::File,
@@ -100,21 +130,13 @@ impl RenderOnce for FileList<'_> {
             })
         });
 
-        let list = div()
+        div()
             .id(("browse-list", self.revision))
             .w_full()
             .h_full()
             .flex()
             .flex_col()
-            .overflow_y_scroll();
-
-        // like crosspoint, going up a level brings the folder just left into view
-        let list = match self.return_to {
-            Some(index) => list.initial_scroll_to_child(index),
-            None => list,
-        };
-
-        list.children(rows)
+            .children(rows)
     }
 }
 
@@ -138,7 +160,54 @@ impl ScreenLifecycle for BrowseFilesRoute {
     }
 }
 
-impl ScreenInput for BrowseFilesRoute {}
+impl ScreenInput for BrowseFilesRoute {
+    fn side_button(
+        &self,
+        app: &mut InkPaperApp,
+        button: SideButton,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) {
+        let turn = match button {
+            SideButton::Previous => PageTurn::Previous,
+            SideButton::Next => PageTurn::Next,
+        };
+
+        if app.browser.turn_page(turn, ROWS_PER_PAGE) {
+            cx.notify();
+        }
+    }
+
+    // a vertical swipe turns one page: up for the next, down for the previous
+    fn drag(
+        &self,
+        app: &mut InkPaperApp,
+        origin: Point,
+        position: Point,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> bool {
+        let dx = position.x.get() - origin.x.get();
+        let dy = position.y.get() - origin.y.get();
+
+        if dy.abs() < SWIPE_DISTANCE || dy.abs() <= dx.abs() {
+            return false;
+        }
+
+        let turn = if dy < 0 {
+            PageTurn::Next
+        } else {
+            PageTurn::Previous
+        };
+
+        if app.browser.turn_page(turn, ROWS_PER_PAGE) {
+            cx.notify();
+        }
+
+        // the rest of the swipe turns nothing more
+        app.capture_pointer();
+
+        true
+    }
+}
 
 impl ScreenView for BrowseFilesRoute {
     fn render<'a>(
@@ -152,7 +221,8 @@ impl ScreenView for BrowseFilesRoute {
             entries: app.browser.entries(),
             on_entry: cx.listener(InkPaperApp::activate_browse_entry),
             revision: app.browser.revision(),
-            return_to: app.browser.return_to(),
+            page: app.browser.page(ROWS_PER_PAGE),
+            page_count: app.browser.page_count(ROWS_PER_PAGE),
             error: app.browser.error(),
             battery: app.battery_indicator,
             on_back: cx.listener(InkPaperApp::activate_back),
