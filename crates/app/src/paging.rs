@@ -78,20 +78,19 @@ pub(crate) fn turn_page_by_button(
 }
 
 /// Turns a page for a vertical swipe: up for the next, down for the previous.
-/// Returns whether the drag was taken; once a swipe turns a page, the rest of
-/// the touch turns nothing more.
+/// Once a swipe turns a page, the rest of the touch turns nothing more.
 pub(crate) fn turn_page_by_swipe(
     app: &mut InkPaperApp,
     origin: Point,
     position: Point,
     cx: &mut Context<'_, InkPaperApp>,
     turn_page: impl FnOnce(&mut InkPaperApp, PageTurn) -> bool,
-) -> bool {
+) {
     let dx = position.x.get() - origin.x.get();
     let dy = position.y.get() - origin.y.get();
 
     if dy.abs() < SWIPE_DISTANCE || dy.abs() <= dx.abs() {
-        return false;
+        return;
     }
 
     let turn = if dy < 0 {
@@ -105,6 +104,4 @@ pub(crate) fn turn_page_by_swipe(
     }
 
     app.capture_pointer();
-
-    true
 }

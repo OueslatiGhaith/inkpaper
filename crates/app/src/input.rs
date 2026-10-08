@@ -1,6 +1,4 @@
-use inkpaper_ui::{
-    ElementId, Entity, EntityAccessError, ListenerInvokeError, Offset, Point, RuntimeApi,
-};
+use inkpaper_ui::{ElementId, Entity, EntityAccessError, ListenerInvokeError, Point, RuntimeApi};
 
 use crate::InkPaperApp;
 
@@ -12,17 +10,12 @@ pub enum AppInputEvent {
     PointerDown(Point),
     PointerDrag {
         origin: Point,
-        previous: Point,
         position: Point,
     },
     /// The pointer stayed down without moving; see [`crate::TouchGesture`].
     PointerLongPress(Point),
     PointerUp(Point),
     PointerCancel,
-    ScrollWheel {
-        position: Point,
-        delta: Offset,
-    },
 }
 
 /// A touch held still on an element. Like `ActivateEvent`, it carries the
@@ -70,7 +63,6 @@ impl From<ListenerInvokeError> for AppInputError {
 pub(crate) enum PointerAction {
     Activate,
     Capture,
-    Scroll,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,27 +100,18 @@ pub fn dispatch_input(
                 PointerAction::Activate => {
                     runtime.begin_activation_at(position);
                 }
-                PointerAction::Capture | PointerAction::Scroll => {
+                PointerAction::Capture => {
                     runtime.cancel_activation();
                 }
             }
         }
 
-        AppInputEvent::PointerDrag {
-            origin,
-            previous,
-            position,
-        } => {
+        AppInputEvent::PointerDrag { origin, position } => {
             // A pointer that has crossed the host's drag threshold cannot still
             // complete a tap activation.
             runtime.cancel_activation();
 
-            let action =
-                runtime.update(app, |app, cx| app.handle_pointer_drag(origin, position, cx))?;
-
-            if action == PointerAction::Scroll {
-                runtime.scroll_at(origin, previous - position);
-            }
+            runtime.update(app, |app, cx| app.handle_pointer_drag(origin, position, cx))?;
         }
 
         AppInputEvent::PointerLongPress(position) => {
@@ -157,7 +140,7 @@ pub fn dispatch_input(
                 PointerAction::Activate => {
                     runtime.complete_activation_at(position)?;
                 }
-                PointerAction::Capture | PointerAction::Scroll => {
+                PointerAction::Capture => {
                     runtime.cancel_activation();
                 }
             }
@@ -166,14 +149,6 @@ pub fn dispatch_input(
         AppInputEvent::PointerCancel => {
             runtime.update(app, |app, _| app.cancel_pointer_input())?;
             runtime.cancel_activation();
-        }
-
-        AppInputEvent::ScrollWheel { position, delta } => {
-            let allowed = runtime.update(app, |app, _| app.allows_wheel_scroll())?;
-
-            if allowed {
-                runtime.scroll_at(position, delta);
-            }
         }
     }
 

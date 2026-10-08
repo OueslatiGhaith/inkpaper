@@ -1,15 +1,20 @@
 use embedded_graphics_simulator::sdl2::MouseWheelDirection;
-use inkpaper_ui::prelude::*;
+use inkpaper_app::AppInputEvent;
 
-pub(crate) fn wheel_scroll_offset(
+/// Lists turn pages rather than scroll, so the wheel stands in for the side
+/// buttons, turning toward the end of a list the way it used to scroll.
+pub(crate) fn wheel_input(
     delta: embedded_graphics::geometry::Point,
     direction: MouseWheelDirection,
-) -> Offset {
-    let multiplier = match direction {
-        MouseWheelDirection::Normal => 1,
-        MouseWheelDirection::Flipped => -1,
-        MouseWheelDirection::Unknown(_) => 1,
+) -> Option<AppInputEvent> {
+    let delta = match direction {
+        MouseWheelDirection::Flipped => -delta.y,
+        MouseWheelDirection::Normal | MouseWheelDirection::Unknown(_) => delta.y,
     };
 
-    Offset::new(px(delta.x * multiplier * 24), px(delta.y * multiplier * 24))
+    match delta.signum() {
+        1 => Some(AppInputEvent::Next),
+        -1 => Some(AppInputEvent::Previous),
+        _ => None,
+    }
 }

@@ -45,8 +45,7 @@ impl TouchGesture {
             return Some(AppInputEvent::PointerDown(position));
         };
 
-        let previous = active.position;
-        if previous == position {
+        if active.position == position {
             return None;
         }
 
@@ -55,7 +54,6 @@ impl TouchGesture {
         if active.dragging {
             return Some(AppInputEvent::PointerDrag {
                 origin: active.origin,
-                previous,
                 position,
             });
         }
@@ -69,12 +67,7 @@ impl TouchGesture {
 
         active.dragging = true;
 
-        // the first drag includes the movement made before the threshold
-        Some(AppInputEvent::PointerDrag {
-            origin,
-            previous: origin,
-            position,
-        })
+        Some(AppInputEvent::PointerDrag { origin, position })
     }
 
     /// The finger has been held still long enough, once per touch.
@@ -140,7 +133,6 @@ mod tests {
             gesture.touch(point(100, 112), 100),
             Some(AppInputEvent::PointerDrag {
                 origin: point(100, 100),
-                previous: point(100, 100),
                 position: point(100, 112),
             })
         );

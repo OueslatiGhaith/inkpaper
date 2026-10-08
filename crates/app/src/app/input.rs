@@ -52,16 +52,15 @@ pub(crate) trait ScreenInput {
         false
     }
 
-    /// Handles a touch drag no overlay claimed. Returning true captures the
-    /// drag instead of scrolling. Called for every move with the same origin.
+    /// Handles a touch drag no overlay claimed. Called for every move with
+    /// the same origin.
     fn drag(
         &self,
         _app: &mut InkPaperApp,
         _origin: Point,
         _position: Point,
         _cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
-        false
+    ) {
     }
 }
 
@@ -128,10 +127,6 @@ impl InkPaperApp {
         }
     }
 
-    pub(crate) fn allows_wheel_scroll(&self) -> bool {
-        self.input_target() == InputTarget::Screen
-    }
-
     pub(crate) fn handle_pointer_down(
         &mut self,
         position: Point,
@@ -153,20 +148,18 @@ impl InkPaperApp {
         origin: Point,
         position: Point,
         cx: &mut Context<'_, Self>,
-    ) -> PointerAction {
+    ) {
         if self.pointer_captured || self.input_target() == InputTarget::Blocked {
-            return PointerAction::Capture;
+            return;
         }
 
         let result = self.control_center.pointer_drag(origin, position);
 
-        if result == ControlCenterPointerResult::Pass
-            && self.screen().route().drag(self, origin, position, cx)
-        {
-            return PointerAction::Capture;
+        if result == ControlCenterPointerResult::Pass {
+            self.screen().route().drag(self, origin, position, cx);
+        } else {
+            self.apply_control_center_pointer_result(result, PointerAction::Capture, cx);
         }
-
-        self.apply_control_center_pointer_result(result, PointerAction::Scroll, cx)
     }
 
     pub(crate) fn handle_pointer_up(

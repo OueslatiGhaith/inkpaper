@@ -12,12 +12,10 @@ use inkpaper_app::{
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    gesture::wheel_scroll_offset,
+    gesture::wheel_input,
     platform::SimulatorPlatform,
     radio::SimulatedRadio,
-    render::{
-        DISPLAY_HEIGHT, DISPLAY_SIZE_EG, DISPLAY_WIDTH, rebuild_ui, render_pending_ui, ui_point,
-    },
+    render::{DISPLAY_SIZE_EG, rebuild_ui, render_pending_ui, ui_point},
     runtime::new_runtime,
 };
 
@@ -57,8 +55,6 @@ fn main() {
     let now_ms = || started.elapsed().as_millis() as u64;
 
     let mut pointer = TouchGesture::default();
-    let mut mouse_position =
-        Point::new(px(DISPLAY_WIDTH as i32 / 2), px(DISPLAY_HEIGHT as i32 / 2));
 
     'running: loop {
         window.update(&display);
@@ -84,21 +80,17 @@ fn main() {
                     mouse_btn: MouseButton::Left,
                     point,
                 } => {
-                    mouse_position = ui_point(point);
-
                     // a press that was never released starts over
                     pointer.release();
 
-                    if let Some(input) = pointer.touch(mouse_position, now_ms()) {
+                    if let Some(input) = pointer.touch(ui_point(point), now_ms()) {
                         send_input(&mut runtime, app, input);
                     }
                 }
 
                 SimulatorEvent::MouseMove { point } => {
-                    mouse_position = ui_point(point);
-
                     if pointer.is_touching()
-                        && let Some(input) = pointer.touch(mouse_position, now_ms())
+                        && let Some(input) = pointer.touch(ui_point(point), now_ms())
                     {
                         send_input(&mut runtime, app, input);
                     }
@@ -108,10 +100,8 @@ fn main() {
                     mouse_btn: MouseButton::Left,
                     point,
                 } => {
-                    mouse_position = ui_point(point);
-
                     if pointer.is_touching()
-                        && let Some(input) = pointer.touch(mouse_position, now_ms())
+                        && let Some(input) = pointer.touch(ui_point(point), now_ms())
                     {
                         send_input(&mut runtime, app, input);
                     }
@@ -124,14 +114,9 @@ fn main() {
                     scroll_delta,
                     direction,
                 } => {
-                    send_input(
-                        &mut runtime,
-                        app,
-                        AppInputEvent::ScrollWheel {
-                            position: mouse_position,
-                            delta: wheel_scroll_offset(scroll_delta, direction),
-                        },
-                    );
+                    if let Some(input) = wheel_input(scroll_delta, direction) {
+                        send_input(&mut runtime, app, input);
+                    }
                 }
 
                 SimulatorEvent::KeyDown {

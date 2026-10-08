@@ -177,15 +177,11 @@ impl ScreenInput for ClockSettingsRoute {
         origin: Point,
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
+    ) {
         // dragging along the timezone slider previews an offset; release saves it
-        if !slider::track_contains(origin, TIMEZONE_LEFT, TIMEZONE_SLIDER_TOP) {
-            return false;
+        if slider::track_contains(origin, TIMEZONE_LEFT, TIMEZONE_SLIDER_TOP) {
+            app.preview_utc_offset(timezone_at(position.x.get()), cx);
         }
-
-        app.preview_utc_offset(timezone_at(position.x.get()), cx);
-
-        true
     }
 
     fn release(

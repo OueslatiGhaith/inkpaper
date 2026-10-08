@@ -284,19 +284,19 @@ impl ScreenInput for ReaderRoute {
         origin: Point,
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
+    ) {
         let dx = position.x.get() - origin.x.get();
         let dy = position.y.get() - origin.y.get();
 
         // a swipe right from the left edge goes back
         if origin.x.get() < BACK_EDGE_WIDTH && dx >= SWIPE_DISTANCE && dx.abs() > dy.abs() {
             app.navigate_back(cx);
-            return true;
+            return;
         }
 
         // vertical swipes open (up) and close (down) the drawer
         if dy.abs() < SWIPE_DISTANCE || dy.abs() <= dx.abs() {
-            return false;
+            return;
         }
 
         if dy < 0 {
@@ -304,8 +304,6 @@ impl ScreenInput for ReaderRoute {
         } else {
             app.close_reader_menu(cx);
         }
-
-        true
     }
 }
 

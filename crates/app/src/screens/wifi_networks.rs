@@ -281,14 +281,14 @@ impl ScreenInput for WifiNetworksRoute {
         origin: Point,
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
+    ) {
         if app.wifi.menu().is_some() {
-            return true;
+            return;
         }
 
         paging::turn_page_by_swipe(app, origin, position, cx, |app, turn| {
             app.wifi.turn_page(turn, ROWS_PER_PAGE)
-        })
+        });
     }
 
     fn long_press(

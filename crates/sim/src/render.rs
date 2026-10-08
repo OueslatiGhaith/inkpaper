@@ -8,8 +8,8 @@ use inkpaper_ui::{
     prelude::*,
 };
 
-pub(super) const DISPLAY_WIDTH: u32 = 480;
-pub(super) const DISPLAY_HEIGHT: u32 = 800;
+const DISPLAY_WIDTH: u32 = 480;
+const DISPLAY_HEIGHT: u32 = 800;
 
 pub(super) const DISPLAY_SIZE_EG: EgSize = EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT);
 const DISPLAY_SIZE: Size = Size::new(px(DISPLAY_WIDTH as i32), px(DISPLAY_HEIGHT as i32));

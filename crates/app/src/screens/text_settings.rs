@@ -315,14 +315,14 @@ impl ScreenInput for TextSettingsRoute {
         origin: Point,
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
+    ) {
         if app.text_settings.picker().is_some() {
-            return true;
+            return;
         }
 
         paging::turn_page_by_swipe(app, origin, position, cx, |app, turn| {
             app.text_settings.turn_page(turn, ROWS_PER_PAGE)
-        })
+        });
     }
 }
 

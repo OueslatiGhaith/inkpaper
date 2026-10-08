@@ -156,10 +156,10 @@ impl ScreenInput for TableOfContentsRoute {
         origin: Point,
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
+    ) {
         paging::turn_page_by_swipe(app, origin, position, cx, |app, turn| {
             app.reader.turn_toc_page(turn, ROWS_PER_PAGE)
-        })
+        });
     }
 }
 
