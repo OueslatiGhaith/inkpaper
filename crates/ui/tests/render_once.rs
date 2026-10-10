@@ -131,33 +131,7 @@ fn render_once_component_can_borrow_from_persistent_component() {
     let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
     assert!(runtime.paint(&mut painter).unwrap().is_some());
-}
 
-#[test]
-fn render_once_components_can_nest_other_render_once_components() {
-    let mut runtime = TestRuntime::default();
-
-    assert_eq!(
-        runtime.register_font(&TEST_FONT_FACE).unwrap(),
-        FontId::DEFAULT,
-    );
-
-    runtime.create_root(|_| App::new()).unwrap();
-
-    runtime.rebuild().unwrap();
-
-    let mut display = SimulatorDisplay::<Rgb888>::new(EgSize::new(DISPLAY_WIDTH, DISPLAY_HEIGHT));
-
-    runtime
-        .layout(Size::new(
-            px(DISPLAY_WIDTH as i32),
-            px(DISPLAY_HEIGHT as i32),
-        ))
-        .unwrap();
-
-    let mut painter = EmbeddedGraphicsPainter::new(&mut display);
-
-    runtime.paint(&mut painter).unwrap().unwrap();
-
+    // the persistent component and the nested render-once components
     assert!(runtime.frame_node_count() >= 4);
 }

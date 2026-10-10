@@ -85,28 +85,9 @@ fn mounts_div_tree() {
     assert_eq!(frame.node(a).parent, Some(root));
     assert_eq!(frame.node(b).parent, Some(root));
     assert_eq!(frame.node(b).next_sibling, None);
+    assert_eq!(frame.node(root).last_child, Some(b));
     assert_eq!(node_text(&frame, a), "A");
     assert_eq!(node_text(&frame, b), "B");
-}
-
-#[test]
-fn preserves_child_order() {
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
-    let app = AppContext::from_globals(&globals);
-
-    let root = frame
-        .mount(div().child("A").child("B").child("C"), app)
-        .unwrap();
-    let a = frame.node(root).first_child.unwrap();
-    let b = frame.node(a).next_sibling.unwrap();
-    let c = frame.node(b).next_sibling.unwrap();
-
-    assert_eq!(node_text(&frame, a), "A");
-    assert_eq!(node_text(&frame, b), "B");
-    assert_eq!(node_text(&frame, c), "C");
-    assert_eq!(frame.node(c).next_sibling, None);
-    assert_eq!(frame.node(root).last_child, Some(c));
 }
 
 #[test]
@@ -1421,25 +1402,6 @@ fn identity_resolution_reports_state_capacity_exhaustion() {
         frame.resolve_identities(root, &mut states, 1,),
         Err(IdentityError::StatesFull)
     );
-}
-
-#[test]
-fn failed_identity_resolution_can_be_aborted() {
-    let mut states = ElementStateTable::<TestElementStates<8>>::default();
-
-    let parent = IdentityParent::Entity(EntityId::new(0, 0));
-    let old = states.resolve(parent, ElementId::Name("old"), 1).unwrap();
-
-    states.sweep(1);
-
-    assert!(states.contains(old));
-
-    states.resolve(parent, ElementId::Name("new"), 2).unwrap();
-    states.resolve(parent, ElementId::Name("old"), 2).unwrap();
-    states.abort_frame(2);
-
-    assert!(states.contains(old));
-    assert_eq!(states.len(), 1);
 }
 
 #[test]

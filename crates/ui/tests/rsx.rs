@@ -542,27 +542,6 @@ fn rsx_supports_interaction_variants() {
     assert_into_element(tree);
 }
 
-fn interactive_variant_tree(listener: Listener<ActivateEvent>) -> impl IntoElement {
-    rsx! {
-        <div
-            id="button"
-            on:activate={listener}
-            class="
-                bg-white
-                focus:bg-zinc-100
-                active:bg-zinc-200
-            "
-        >
-            <text>"Open"</text>
-        </div>
-    }
-}
-
-#[test]
-fn rsx_interaction_variants_work_with_activate_listener() {
-    let _ = interactive_variant_tree;
-}
-
 #[test]
 fn rsx_keyed_each_supports_interactive_root() {
     let books = [(1_u64, "Dune"), (2_u64, "Neuromancer")];

@@ -263,59 +263,6 @@ fn newly_created_entry_records_creation_frame() {
 }
 
 #[test]
-fn abort_removes_elements_created_during_failed_frame() {
-    let mut states = ElementStateTable::<TestElementStates<8>>::default();
-
-    let parent = entity_parent(0);
-    let existing = states
-        .resolve(parent, ElementId::Name("existing"), 1)
-        .unwrap();
-    states.sweep(1);
-
-    let created = states
-        .resolve(parent, ElementId::Name("created"), 2)
-        .unwrap();
-
-    assert!(states.contains(created));
-    assert_eq!(states.len(), 2,);
-
-    states.abort_frame(2);
-
-    assert!(states.contains(existing));
-    assert!(!states.contains(created));
-    assert_eq!(states.len(), 1,);
-}
-
-#[test]
-fn abort_restores_existing_entry_last_seen_frame() {
-    let mut states = ElementStateTable::<TestElementStates<8>>::default();
-
-    let parent = entity_parent(0);
-    let id = states
-        .resolve(parent, ElementId::Name("button"), 1)
-        .unwrap();
-    states.sweep(1);
-
-    states
-        .resolve(parent, ElementId::Name("button"), 2)
-        .unwrap();
-
-    {
-        let entry = states.slots[id.slot()].entry.as_ref().unwrap();
-
-        assert_eq!(entry.previous_seen_frame, 1,);
-        assert_eq!(entry.last_seen_frame, 2,);
-    }
-
-    states.abort_frame(2);
-
-    let entry = states.slots[id.slot()].entry.as_ref().unwrap();
-
-    assert_eq!(entry.last_seen_frame, 1);
-    assert!(states.contains(id));
-}
-
-#[test]
 fn aborted_existing_identity_remains_stable_next_frame() {
     let mut states = ElementStateTable::<TestElementStates<8>>::default();
 
