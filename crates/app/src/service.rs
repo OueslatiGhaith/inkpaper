@@ -400,31 +400,38 @@ where
         Ok(())
     }
 
-    async fn load_history(&mut self) -> ReadingHistory {
-        let bytes = match self
-            .platform
-            .load_state(READING_HISTORY_STATE, MAX_READING_HISTORY_BYTES)
+    /// The bytes saved as `name`; `None` when nothing was saved or reading
+    /// failed.
+    async fn read_state(&mut self, name: &str, max_bytes: usize) -> Option<Vec<u8>> {
+        self.platform
+            .load_state(name, max_bytes)
             .await
-        {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) | Err(_) => {
-                return ReadingHistory::default();
-            }
+            .ok()
+            .flatten()
+    }
+
+    /// Saves `encoded` as `name`, returning whether it was encoded and written.
+    async fn write_state<E>(&mut self, name: &str, encoded: Result<Vec<u8>, E>) -> bool {
+        let Ok(bytes) = encoded else {
+            return false;
         };
 
-        ReadingHistory::decode(&bytes).unwrap_or_default()
+        self.platform.save_state(name, &bytes).await.is_ok()
+    }
+
+    async fn load_history(&mut self) -> ReadingHistory {
+        self.read_state(READING_HISTORY_STATE, MAX_READING_HISTORY_BYTES)
+            .await
+            .and_then(|bytes| ReadingHistory::decode(&bytes).ok())
+            .unwrap_or_default()
     }
 
     async fn load_preferences(&mut self) -> ReaderPreferences {
-        let bytes = match self
-            .platform
-            .load_state(READER_PREFERENCES_STATE, MAX_READER_PREFERENCES_BYTES)
+        let Some(bytes) = self
+            .read_state(READER_PREFERENCES_STATE, MAX_READER_PREFERENCES_BYTES)
             .await
-        {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) | Err(_) => {
-                return ReaderPreferences::default();
-            }
+        else {
+            return ReaderPreferences::default();
         };
 
         let families = &self.font_families;
@@ -438,63 +445,34 @@ where
     }
 
     async fn load_frontlight_preferences(&mut self) -> FrontlightPreferences {
-        let bytes = match self
-            .platform
-            .load_state(
-                FRONTLIGHT_PREFERENCES_STATE,
-                MAX_FRONTLIGHT_PREFERENCES_BYTES,
-            )
-            .await
-        {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) | Err(_) => {
-                return FrontlightPreferences::default();
-            }
-        };
-
-        FrontlightPreferences::decode(&bytes).unwrap_or_default()
+        self.read_state(
+            FRONTLIGHT_PREFERENCES_STATE,
+            MAX_FRONTLIGHT_PREFERENCES_BYTES,
+        )
+        .await
+        .and_then(|bytes| FrontlightPreferences::decode(&bytes).ok())
+        .unwrap_or_default()
     }
 
     async fn load_clock_preferences(&mut self) -> ClockPreferences {
-        let bytes = match self
-            .platform
-            .load_state(CLOCK_PREFERENCES_STATE, MAX_CLOCK_PREFERENCES_BYTES)
+        self.read_state(CLOCK_PREFERENCES_STATE, MAX_CLOCK_PREFERENCES_BYTES)
             .await
-        {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) | Err(_) => {
-                return ClockPreferences::default();
-            }
-        };
-
-        ClockPreferences::decode(&bytes).unwrap_or_default()
+            .and_then(|bytes| ClockPreferences::decode(&bytes).ok())
+            .unwrap_or_default()
     }
 
     async fn load_wifi_networks(&mut self) -> SavedNetworks {
-        let bytes = match self
-            .platform
-            .load_state(WIFI_NETWORKS_STATE, MAX_WIFI_NETWORKS_BYTES)
+        self.read_state(WIFI_NETWORKS_STATE, MAX_WIFI_NETWORKS_BYTES)
             .await
-        {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) | Err(_) => {
-                return SavedNetworks::default();
-            }
-        };
-
-        SavedNetworks::decode(&bytes, &self.platform.device_key()).unwrap_or_default()
+            .and_then(|bytes| SavedNetworks::decode(&bytes, &self.platform.device_key()).ok())
+            .unwrap_or_default()
     }
 
     /// Networks are saved as soon as one is chosen; they change rarely.
     async fn save_wifi_networks(&mut self, networks: &SavedNetworks) -> bool {
-        let Ok(bytes) = networks.encode(&self.platform.device_key()) else {
-            return false;
-        };
+        let encoded = networks.encode(&self.platform.device_key());
 
-        self.platform
-            .save_state(WIFI_NETWORKS_STATE, &bytes)
-            .await
-            .is_ok()
+        self.write_state(WIFI_NETWORKS_STATE, encoded).await
     }
 
     async fn service_browse_request<R>(
@@ -778,7 +756,7 @@ where
     /// The cover of the book at `path`, from the cache or made from the book.
     /// `None` when the book couldn't be read, so it is tried again next time.
     async fn load_cover(&mut self, path: &str) -> Option<BookCover> {
-        if let Ok(Some(bytes)) = self.platform.load_state(COVER_STATE, MAX_COVER_BYTES).await
+        if let Some(bytes) = self.read_state(COVER_STATE, MAX_COVER_BYTES).await
             && let Ok(cover) = BookCover::decode(&bytes)
             && cover.path() == path
         {
@@ -788,9 +766,7 @@ where
         let image = self.read_cover_image(path).await?;
         let cover = BookCover::new(String::from(path), image.as_ref());
 
-        if let Ok(bytes) = cover.encode() {
-            let _ = self.platform.save_state(COVER_STATE, &bytes).await;
-        }
+        self.write_state(COVER_STATE, cover.encode()).await;
 
         Some(cover)
     }
@@ -943,103 +919,49 @@ where
     }
 
     async fn persist_history(&mut self) -> bool {
-        if !self.history_dirty {
-            return true;
+        if self.history_dirty {
+            let encoded = self.history.encode();
+            self.history_dirty = !self.write_state(READING_HISTORY_STATE, encoded).await;
         }
 
-        let Ok(bytes) = self.history.encode() else {
-            return false;
-        };
-
-        if self
-            .platform
-            .save_state(READING_HISTORY_STATE, &bytes)
-            .await
-            .is_err()
-        {
-            return false;
-        }
-
-        self.history_dirty = false;
-
-        true
+        !self.history_dirty
     }
 
     async fn persist_preferences(&mut self) -> bool {
-        if !self.preferences_dirty {
-            return true;
+        if self.preferences_dirty {
+            let font_name = match self.preferences.text().font() {
+                ReaderFont::Card(index) => self
+                    .font_families
+                    .get(usize::from(index))
+                    .map(FontFamily::name),
+                ReaderFont::BuiltIn => None,
+            };
+            let encoded = self.preferences.encode(font_name);
+            self.preferences_dirty = !self.write_state(READER_PREFERENCES_STATE, encoded).await;
         }
 
-        let font_name = match self.preferences.text().font() {
-            ReaderFont::Card(index) => self
-                .font_families
-                .get(usize::from(index))
-                .map(FontFamily::name),
-            ReaderFont::BuiltIn => None,
-        };
-
-        let Ok(bytes) = self.preferences.encode(font_name) else {
-            return false;
-        };
-
-        if self
-            .platform
-            .save_state(READER_PREFERENCES_STATE, &bytes)
-            .await
-            .is_err()
-        {
-            return false;
-        }
-
-        self.preferences_dirty = false;
-
-        true
+        !self.preferences_dirty
     }
 
     async fn persist_frontlight_preferences(&mut self) -> bool {
-        if !self.frontlight_preferences_dirty {
-            return true;
+        if self.frontlight_preferences_dirty {
+            let encoded = self.frontlight_preferences.encode();
+            self.frontlight_preferences_dirty = !self
+                .write_state(FRONTLIGHT_PREFERENCES_STATE, encoded)
+                .await;
         }
 
-        let Ok(bytes) = self.frontlight_preferences.encode() else {
-            return false;
-        };
-
-        if self
-            .platform
-            .save_state(FRONTLIGHT_PREFERENCES_STATE, &bytes)
-            .await
-            .is_err()
-        {
-            return false;
-        }
-
-        self.frontlight_preferences_dirty = false;
-
-        true
+        !self.frontlight_preferences_dirty
     }
 
     async fn persist_clock_preferences(&mut self) -> bool {
-        if !self.clock_preferences_dirty {
-            return true;
+        if self.clock_preferences_dirty {
+            let encoded = self.clock_preferences.encode();
+            self.clock_preferences_dirty =
+                !self.write_state(CLOCK_PREFERENCES_STATE, encoded).await;
         }
 
-        let Ok(bytes) = self.clock_preferences.encode() else {
-            return false;
-        };
-
-        if self
-            .platform
-            .save_state(CLOCK_PREFERENCES_STATE, &bytes)
-            .await
-            .is_err()
-        {
-            return false;
-        }
-
-        self.clock_preferences_dirty = false;
-
-        true
+        !self.clock_preferences_dirty
     }
 
     async fn service_file_transfer_request<R>(
