@@ -1,4 +1,4 @@
-use inkpaper_ui::prelude::*;
+use inkpaper_ui::{TextContent, prelude::*};
 
 use crate::components::icon::{Icon, IconKind, IconProps};
 
@@ -67,8 +67,8 @@ impl RenderOnce for ListRow<'_> {
 #[component]
 pub(crate) struct SettingsValueRow<'a> {
     id: (&'static str, usize),
-    label: &'a str,
-    value: &'a str,
+    label: TextContent<'a>,
+    value: TextContent<'a>,
     selected: bool,
     on_activate: Option<Listener<ActivateEvent>>,
 }

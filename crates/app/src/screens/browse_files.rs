@@ -102,37 +102,27 @@ impl RenderOnce for FileList<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let on_entry = self.on_entry;
 
-        let first = self.page * ROWS_PER_PAGE;
-
         // every row shares one listener; the row's id says which was tapped
-        let rows = self
-            .entries
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take(ROWS_PER_PAGE);
-        let rows = rows.map(move |(index, entry)| {
-            let kind = match entry.kind() {
-                BrowseEntryKind::Directory => FileKind::Folder,
-                BrowseEntryKind::File => FileKind::File,
-            };
+        paging::page_column(
+            ("browse-list", self.revision),
+            self.entries,
+            self.page,
+            ROWS_PER_PAGE,
+            move |(index, entry)| {
+                let kind = match entry.kind() {
+                    BrowseEntryKind::Directory => FileKind::Folder,
+                    BrowseEntryKind::File => FileKind::File,
+                };
 
-            FileRow::from(FileRowProps {
-                id: index,
-                name: entry.display_name(),
-                extension: entry.extension(),
-                kind,
-                on_activate: on_entry,
-            })
-        });
-
-        div()
-            .id(("browse-list", self.revision))
-            .w_full()
-            .h_full()
-            .flex()
-            .flex_col()
-            .children(rows)
+                FileRow::from(FileRowProps {
+                    id: index,
+                    name: entry.display_name(),
+                    extension: entry.extension(),
+                    kind,
+                    on_activate: on_entry,
+                })
+            },
+        )
     }
 }
 

@@ -96,33 +96,24 @@ impl RenderOnce for TocList<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let current = self.current;
         let on_entry = self.on_entry;
-        let first = self.page * ROWS_PER_PAGE;
 
         // every row shares one listener; the row's id says which was tapped
-        let rows = self
-            .entries
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take(ROWS_PER_PAGE);
-        let rows = rows.map(move |(index, entry)| {
-            ListRow::from(ListRowProps {
-                id: ("toc-entry", index),
-                label: entry.label(),
-                depth: entry.depth(),
-                selected: current == Some(index),
-                chevron: false,
-                on_activate: Some(on_entry),
-            })
-        });
-
-        div()
-            .id(("toc-list", 0u8))
-            .w_full()
-            .h_full()
-            .flex()
-            .flex_col()
-            .children(rows)
+        paging::page_column(
+            ("toc-list", 0u8),
+            self.entries,
+            self.page,
+            ROWS_PER_PAGE,
+            move |(index, entry)| {
+                ListRow::from(ListRowProps {
+                    id: ("toc-entry", index),
+                    label: entry.label(),
+                    depth: entry.depth(),
+                    selected: current == Some(index),
+                    chevron: false,
+                    on_activate: Some(on_entry),
+                })
+            },
+        )
     }
 }
 

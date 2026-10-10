@@ -1,4 +1,4 @@
-use inkpaper_ui::prelude::*;
+use inkpaper_ui::{IntoElementId, prelude::*};
 
 use crate::{InkPaperApp, app::SideButton};
 
@@ -104,4 +104,32 @@ pub(crate) fn turn_page_by_swipe(
     }
 
     app.capture_pointer();
+}
+
+/// A column of the rows on `page`. `row` gets each item with its index in the
+/// whole list.
+pub(crate) fn page_column<T, E>(
+    id: impl IntoElementId,
+    items: impl IntoIterator<Item = T>,
+    page: usize,
+    rows_per_page: usize,
+    row: impl FnMut((usize, T)) -> E,
+) -> impl IntoElement
+where
+    E: IntoElement,
+{
+    let rows = items
+        .into_iter()
+        .enumerate()
+        .skip(page * rows_per_page)
+        .take(rows_per_page)
+        .map(row);
+
+    div()
+        .id(id)
+        .w_full()
+        .h_full()
+        .flex()
+        .flex_col()
+        .children(rows)
 }

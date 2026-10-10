@@ -90,31 +90,21 @@ impl RenderOnce for RecentBookList<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let on_entry = self.on_entry;
 
-        let first = self.page * ROWS_PER_PAGE;
-
         // every row shares one listener; the row's id says which was tapped
-        let rows = self
-            .entries
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take(ROWS_PER_PAGE);
-        let rows = rows.map(move |(index, entry)| {
-            RecentBookRow::from(RecentBookRowProps {
-                id: index,
-                title: entry.display_title(),
-                subtitle: entry.display_subtitle(),
-                on_activate: on_entry,
-            })
-        });
-
-        div()
-            .id(("recent-books-list", self.revision))
-            .w_full()
-            .h_full()
-            .flex()
-            .flex_col()
-            .children(rows)
+        paging::page_column(
+            ("recent-books-list", self.revision),
+            self.entries,
+            self.page,
+            ROWS_PER_PAGE,
+            move |(index, entry)| {
+                RecentBookRow::from(RecentBookRowProps {
+                    id: index,
+                    title: entry.display_title(),
+                    subtitle: entry.display_subtitle(),
+                    on_activate: on_entry,
+                })
+            },
+        )
     }
 }
 

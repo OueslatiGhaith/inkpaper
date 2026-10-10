@@ -56,8 +56,8 @@ impl RenderOnce for ClockSettingsScreen<'_> {
                 <div class="absolute left-0 top-[286px] w-[480px] flex flex-col">
                     <SettingsValueRow
                         id={("clock-wifi", 0)}
-                        label="WiFi Network"
-                        value={self.network.unwrap_or("Not connected")}
+                        label={"WiFi Network".into()}
+                        value={self.network.unwrap_or("Not connected").into()}
                         selected={false}
                         on_activate={Some(self.on_wifi)}
                     />

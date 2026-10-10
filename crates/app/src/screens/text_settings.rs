@@ -9,7 +9,10 @@ use crate::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
         option_picker::{OptionPicker, OptionPickerProps},
         page_number::{PageNumber, PageNumberProps},
-        settings_row::{LIST_ROW_HEIGHT, SettingsToggleRow, SettingsToggleRowProps},
+        settings_row::{
+            LIST_ROW_HEIGHT, SettingsToggleRow, SettingsToggleRowProps, SettingsValueRow,
+            SettingsValueRowProps,
+        },
     },
     paging,
     reader::{
@@ -81,20 +84,13 @@ impl RenderOnce for TextSettingsScreen {
 
         // one page of the tab's rows
         let on_row = self.on_row;
-        let rows = self
-            .rows
-            .into_iter()
-            .enumerate()
-            .skip(self.page * ROWS_PER_PAGE)
-            .take(ROWS_PER_PAGE)
-            .map(move |(index, row)| setting_row(index, row, text, on_row));
-        let list = div()
-            .id(("text-settings-list", 0u8))
-            .w_full()
-            .h_full()
-            .flex()
-            .flex_col()
-            .children(rows);
+        let list = paging::page_column(
+            ("text-settings-list", 0u8),
+            self.rows,
+            self.page,
+            ROWS_PER_PAGE,
+            move |(index, row)| setting_row(index, row, text, on_row),
+        );
         let paged = self.page_count > 1;
 
         rsx! {
@@ -178,11 +174,12 @@ fn setting_row(
         }
     };
 
-    ValueRow::from(ValueRowProps {
+    SettingsValueRow::from(SettingsValueRowProps {
         id,
-        label,
-        value,
-        on_activate: on_row,
+        label: label.into(),
+        value: value.into(),
+        selected: false,
+        on_activate: Some(on_row),
     })
     .into_any_element()
 }
@@ -190,44 +187,6 @@ fn setting_row(
 /// crosspoint marks the current font and size "Selected"
 fn selected(current: bool) -> String {
     String::from(if current { "Selected" } else { "" })
-}
-
-/// [`SettingsValueRow`]'s look, owning its strings since sizes and values are
-/// formatted as the rows are built.
-#[component]
-struct ValueRow {
-    id: (&'static str, usize),
-    label: String,
-    value: String,
-    on_activate: Listener<ActivateEvent>,
-}
-
-impl RenderOnce for ValueRow {
-    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let height = px(LIST_ROW_HEIGHT);
-
-        rsx! {
-            <div class="w-full h-{height} relative">
-                <div
-                    id={self.id}
-                    on:activate={self.on_activate}
-                    class="absolute left-5 top-0 w-[440px] h-{height} rounded-md"
-                />
-
-                <div class="absolute left-7 top-0 w-[290px] h-{height} flex items-center">
-                    <text class="text-xl no-wrap max-lines-1 text-ellipsis">
-                        {self.label}
-                    </text>
-                </div>
-
-                <div class="absolute right-7 top-0 w-[130px] h-{height} flex items-center justify-end">
-                    <text class="text-xl no-wrap max-lines-1 text-ellipsis">
-                        {self.value}
-                    </text>
-                </div>
-            </div>
-        }
-    }
 }
 
 /// A tab: a quarter of the width, inverted when active.

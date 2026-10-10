@@ -184,16 +184,14 @@ impl RenderOnce for NetworkList<'_> {
         let saved = self.saved;
         let connected = saved.connected().map(|network| network.ssid());
         let (on_network, on_hold_network) = (self.on_network, self.on_hold_network);
-        let first = self.page * ROWS_PER_PAGE;
 
         // every row shares one listener per event; the row's id says which
-        let rows = self
-            .networks
-            .iter()
-            .enumerate()
-            .skip(first)
-            .take(ROWS_PER_PAGE)
-            .map(move |(index, network)| {
+        paging::page_column(
+            ("wifi-network-list", self.revision),
+            self.networks,
+            self.page,
+            ROWS_PER_PAGE,
+            move |(index, network)| {
                 let known = saved.find(network.ssid()).is_some();
 
                 let value = if connected == Some(network.ssid()) {
@@ -208,8 +206,8 @@ impl RenderOnce for NetworkList<'_> {
 
                 let row = SettingsValueRow::from(SettingsValueRowProps {
                     id: ("wifi-network", index),
-                    label: network.ssid(),
-                    value,
+                    label: network.ssid().into(),
+                    value: value.into(),
                     selected: false,
                     on_activate: Some(on_network),
                 });
@@ -220,15 +218,8 @@ impl RenderOnce for NetworkList<'_> {
                     .when(known, |hold| hold.on::<LongPressEvent>(on_hold_network))
                     .w_full()
                     .child(row)
-            });
-
-        div()
-            .id(("wifi-network-list", self.revision))
-            .w_full()
-            .h_full()
-            .flex()
-            .flex_col()
-            .children(rows)
+            },
+        )
     }
 }
 
