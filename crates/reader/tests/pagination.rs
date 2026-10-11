@@ -10,6 +10,11 @@ use inkpaper_reader::{
     TextMeasurer, TextStyle, Viewport, paginate_chapter,
 };
 
+use support::build_stored_zip;
+
+#[path = "../../epub/tests/support/mod.rs"]
+mod support;
+
 #[derive(Default)]
 struct MonoMeasurer {
     image_dimensions: Option<ImageDimensions>,
@@ -470,92 +475,6 @@ fn build_test_epub(body: &str) -> Vec<u8> {
         ("OPS/Text/chapter.xhtml", chapter.as_bytes()),
         ("OPS/Images/picture.jpg", TEST_JPEG),
     ])
-}
-
-fn build_stored_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
-    struct CentralEntry {
-        name: String,
-        size: u32,
-        local_offset: u32,
-    }
-
-    let mut output = Vec::new();
-    let mut central = Vec::new();
-
-    for (name, data) in entries {
-        let local_offset = u32::try_from(output.len()).unwrap();
-        let size = u32::try_from(data.len()).unwrap();
-        let name_len = u16::try_from(name.len()).unwrap();
-
-        push_u32(&mut output, 0x0403_4b50);
-        push_u16(&mut output, 20);
-        push_u16(&mut output, 0x0800);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u32(&mut output, 0);
-        push_u32(&mut output, size);
-        push_u32(&mut output, size);
-        push_u16(&mut output, name_len);
-        push_u16(&mut output, 0);
-
-        output.extend_from_slice(name.as_bytes());
-        output.extend_from_slice(data);
-
-        central.push(CentralEntry {
-            name: String::from(*name),
-            size,
-            local_offset,
-        });
-    }
-
-    let central_offset = u32::try_from(output.len()).unwrap();
-
-    for entry in &central {
-        let name_len = u16::try_from(entry.name.len()).unwrap();
-
-        push_u32(&mut output, 0x0201_4b50);
-        push_u16(&mut output, 20);
-        push_u16(&mut output, 20);
-        push_u16(&mut output, 0x0800);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u32(&mut output, 0);
-        push_u32(&mut output, entry.size);
-        push_u32(&mut output, entry.size);
-        push_u16(&mut output, name_len);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u32(&mut output, 0);
-        push_u32(&mut output, entry.local_offset);
-
-        output.extend_from_slice(entry.name.as_bytes());
-    }
-
-    let central_size = u32::try_from(output.len() - central_offset as usize).unwrap();
-    let count = u16::try_from(central.len()).unwrap();
-
-    push_u32(&mut output, 0x0605_4b50);
-    push_u16(&mut output, 0);
-    push_u16(&mut output, 0);
-    push_u16(&mut output, count);
-    push_u16(&mut output, count);
-    push_u32(&mut output, central_size);
-    push_u32(&mut output, central_offset);
-    push_u16(&mut output, 0);
-
-    output
-}
-
-fn push_u16(output: &mut Vec<u8>, value: u16) {
-    output.extend_from_slice(&value.to_le_bytes());
-}
-
-fn push_u32(output: &mut Vec<u8>, value: u32) {
-    output.extend_from_slice(&value.to_le_bytes());
 }
 
 #[test]

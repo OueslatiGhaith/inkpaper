@@ -1,10 +1,9 @@
 use futures_lite::future;
 use inkpaper_epub::{Epub, SliceSource};
 
-struct TestEntry<'a> {
-    name: &'a str,
-    data: &'a [u8],
-}
+use support::build_stored_zip;
+
+mod support;
 
 #[test]
 fn loads_nested_epub3_navigation() {
@@ -189,22 +188,10 @@ fn build_epub3() -> Vec<u8> {
 "#;
 
     build_stored_zip(&[
-        TestEntry {
-            name: "mimetype",
-            data: b"application/epub+zip",
-        },
-        TestEntry {
-            name: "META-INF/container.xml",
-            data: CONTAINER.as_bytes(),
-        },
-        TestEntry {
-            name: "OPS/package.opf",
-            data: PACKAGE.as_bytes(),
-        },
-        TestEntry {
-            name: "OPS/nav.xhtml",
-            data: NAV.as_bytes(),
-        },
+        ("mimetype", b"application/epub+zip"),
+        ("META-INF/container.xml", CONTAINER.as_bytes()),
+        ("OPS/package.opf", PACKAGE.as_bytes()),
+        ("OPS/nav.xhtml", NAV.as_bytes()),
     ])
 }
 
@@ -287,22 +274,10 @@ fn build_epub2() -> Vec<u8> {
 "#;
 
     build_stored_zip(&[
-        TestEntry {
-            name: "mimetype",
-            data: b"application/epub+zip",
-        },
-        TestEntry {
-            name: "META-INF/container.xml",
-            data: CONTAINER.as_bytes(),
-        },
-        TestEntry {
-            name: "OPS/package.opf",
-            data: PACKAGE.as_bytes(),
-        },
-        TestEntry {
-            name: "OPS/toc.ncx",
-            data: NCX.as_bytes(),
-        },
+        ("mimetype", b"application/epub+zip"),
+        ("META-INF/container.xml", CONTAINER.as_bytes()),
+        ("OPS/package.opf", PACKAGE.as_bytes()),
+        ("OPS/toc.ncx", NCX.as_bytes()),
     ])
 }
 
@@ -342,103 +317,8 @@ fn build_epub_without_navigation() -> Vec<u8> {
 "#;
 
     build_stored_zip(&[
-        TestEntry {
-            name: "mimetype",
-            data: b"application/epub+zip",
-        },
-        TestEntry {
-            name: "META-INF/container.xml",
-            data: CONTAINER.as_bytes(),
-        },
-        TestEntry {
-            name: "package.opf",
-            data: PACKAGE.as_bytes(),
-        },
+        ("mimetype", b"application/epub+zip"),
+        ("META-INF/container.xml", CONTAINER.as_bytes()),
+        ("package.opf", PACKAGE.as_bytes()),
     ])
-}
-
-fn build_stored_zip(entries: &[TestEntry<'_>]) -> Vec<u8> {
-    struct CentralEntry<'a> {
-        name: &'a str,
-        size: u32,
-        local_offset: u32,
-    }
-
-    let mut output = Vec::new();
-    let mut central = Vec::new();
-
-    for entry in entries {
-        let local_offset = u32::try_from(output.len()).unwrap();
-        let size = u32::try_from(entry.data.len()).unwrap();
-        let name_len = u16::try_from(entry.name.len()).unwrap();
-
-        push_u32(&mut output, 0x0403_4b50);
-        push_u16(&mut output, 20);
-        push_u16(&mut output, 0x0800);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u32(&mut output, 0);
-        push_u32(&mut output, size);
-        push_u32(&mut output, size);
-        push_u16(&mut output, name_len);
-        push_u16(&mut output, 0);
-
-        output.extend_from_slice(entry.name.as_bytes());
-        output.extend_from_slice(entry.data);
-
-        central.push(CentralEntry {
-            name: entry.name,
-            size,
-            local_offset,
-        });
-    }
-
-    let central_offset = u32::try_from(output.len()).unwrap();
-
-    for entry in &central {
-        let name_len = u16::try_from(entry.name.len()).unwrap();
-
-        push_u32(&mut output, 0x0201_4b50);
-        push_u16(&mut output, 20);
-        push_u16(&mut output, 20);
-        push_u16(&mut output, 0x0800);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u32(&mut output, 0);
-        push_u32(&mut output, entry.size);
-        push_u32(&mut output, entry.size);
-        push_u16(&mut output, name_len);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u32(&mut output, 0);
-        push_u32(&mut output, entry.local_offset);
-
-        output.extend_from_slice(entry.name.as_bytes());
-    }
-
-    let central_size = u32::try_from(output.len() - central_offset as usize).unwrap();
-    let entry_count = u16::try_from(central.len()).unwrap();
-
-    push_u32(&mut output, 0x0605_4b50);
-    push_u16(&mut output, 0);
-    push_u16(&mut output, 0);
-    push_u16(&mut output, entry_count);
-    push_u16(&mut output, entry_count);
-    push_u32(&mut output, central_size);
-    push_u32(&mut output, central_offset);
-    push_u16(&mut output, 0);
-
-    output
-}
-
-fn push_u16(output: &mut Vec<u8>, value: u16) {
-    output.extend_from_slice(&value.to_le_bytes());
-}
-
-fn push_u32(output: &mut Vec<u8>, value: u32) {
-    output.extend_from_slice(&value.to_le_bytes());
 }

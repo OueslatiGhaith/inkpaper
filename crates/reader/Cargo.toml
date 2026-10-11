@@ -13,3 +13,5 @@ unicode-linebreak = { workspace = true }
 
 [dev-dependencies]
 futures-lite = { workspace = true }
+# the epub tests' archive builder deflates entries
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }

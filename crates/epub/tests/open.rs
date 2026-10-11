@@ -3,29 +3,15 @@ use inkpaper_epub::{
     ArchivePath, BlockKind, BookLocation, ContentOffset, Epub, FontStyle, FontWeight, Inline,
     SliceSource, SpineIndex, TextAlign,
 };
-use miniz_oxide::deflate::compress_to_vec;
 
-const STORED: u16 = 0;
-const DEFLATED: u16 = 8;
+use support::{DEFLATED, STORED, ZipEntry, build_zip};
+
+mod support;
 
 const TEST_JPEG: &[u8] = &[
     0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x20, 0x00, 0x40, 0x03, 0x01, 0x11, 0x00, 0x02,
     0x11, 0x00, 0x03, 0x11, 0x00,
 ];
-
-struct TestEntry<'a> {
-    name: &'a str,
-    data: &'a [u8],
-    compression: u16,
-}
-
-struct CentralEntry {
-    name: std::string::String,
-    compression: u16,
-    compressed_size: u32,
-    uncompressed_size: u32,
-    local_offset: u32,
-}
 
 #[test]
 fn opens_epub_metadata_manifest_and_spine() {
@@ -296,37 +282,37 @@ fn build_test_epub(xml_compression: u16) -> std::vec::Vec<u8> {
     const CHAPTER_TWO: &str = "<html><body><p>Two</p></body></html>";
 
     build_zip(&[
-        TestEntry {
+        ZipEntry {
             name: "mimetype",
             data: b"application/epub+zip",
             compression: STORED,
         },
-        TestEntry {
+        ZipEntry {
             name: "META-INF/container.xml",
             data: CONTAINER.as_bytes(),
             compression: xml_compression,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/package.opf",
             data: PACKAGE.as_bytes(),
             compression: xml_compression,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/Text/chapter1.xhtml",
             data: CHAPTER_ONE.as_bytes(),
             compression: DEFLATED,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/Text/chapter2.xhtml",
             data: CHAPTER_TWO.as_bytes(),
             compression: DEFLATED,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/Images/cover.jpg",
             data: TEST_JPEG,
             compression: STORED,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/toc.ncx",
             data: b"<ncx/>",
             compression: DEFLATED,
@@ -409,123 +395,32 @@ fn build_styled_test_epub() -> std::vec::Vec<u8> {
 "#;
 
     build_zip(&[
-        TestEntry {
+        ZipEntry {
             name: "mimetype",
             data: b"application/epub+zip",
             compression: STORED,
         },
-        TestEntry {
+        ZipEntry {
             name: "META-INF/container.xml",
             data: CONTAINER.as_bytes(),
             compression: DEFLATED,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/package.opf",
             data: PACKAGE.as_bytes(),
             compression: DEFLATED,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/Text/chapter.xhtml",
             data: CHAPTER.as_bytes(),
             compression: DEFLATED,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/Styles/book.css",
             data: CSS.as_bytes(),
             compression: DEFLATED,
         },
     ])
-}
-
-fn build_zip(entries: &[TestEntry<'_>]) -> std::vec::Vec<u8> {
-    let mut output = std::vec::Vec::new();
-    let mut central = std::vec::Vec::new();
-
-    for entry in entries {
-        let compressed = match entry.compression {
-            STORED => entry.data.to_vec(),
-            DEFLATED => compress_to_vec(entry.data, 6),
-            _ => unreachable!(),
-        };
-
-        let local_offset = u32::try_from(output.len()).unwrap();
-        let compressed_size = u32::try_from(compressed.len()).unwrap();
-        let uncompressed_size = u32::try_from(entry.data.len()).unwrap();
-        let name_len = u16::try_from(entry.name.len()).unwrap();
-
-        push_u32(&mut output, 0x0403_4b50);
-        push_u16(&mut output, 20);
-        // UTF-8 entry names.
-        push_u16(&mut output, 0x0800);
-        push_u16(&mut output, entry.compression);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        // CRC isn't validated by our V1 reader.
-        push_u32(&mut output, 0);
-        push_u32(&mut output, compressed_size);
-        push_u32(&mut output, uncompressed_size);
-        push_u16(&mut output, name_len);
-        push_u16(&mut output, 0);
-
-        output.extend_from_slice(entry.name.as_bytes());
-        output.extend_from_slice(&compressed);
-
-        central.push(CentralEntry {
-            name: std::string::String::from(entry.name),
-            compression: entry.compression,
-            compressed_size,
-            uncompressed_size,
-            local_offset,
-        });
-    }
-
-    let central_offset = u32::try_from(output.len()).unwrap();
-
-    for entry in &central {
-        let name_len = u16::try_from(entry.name.len()).unwrap();
-
-        push_u32(&mut output, 0x0201_4b50);
-        push_u16(&mut output, 20);
-        push_u16(&mut output, 20);
-        push_u16(&mut output, 0x0800);
-        push_u16(&mut output, entry.compression);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u32(&mut output, 0);
-        push_u32(&mut output, entry.compressed_size);
-        push_u32(&mut output, entry.uncompressed_size);
-        push_u16(&mut output, name_len);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u16(&mut output, 0);
-        push_u32(&mut output, 0);
-        push_u32(&mut output, entry.local_offset);
-
-        output.extend_from_slice(entry.name.as_bytes());
-    }
-
-    let central_size = u32::try_from(output.len() - central_offset as usize).unwrap();
-    let entry_count = u16::try_from(central.len()).unwrap();
-
-    push_u32(&mut output, 0x0605_4b50);
-    push_u16(&mut output, 0);
-    push_u16(&mut output, 0);
-    push_u16(&mut output, entry_count);
-    push_u16(&mut output, entry_count);
-    push_u32(&mut output, central_size);
-    push_u32(&mut output, central_offset);
-    push_u16(&mut output, 0);
-
-    output
-}
-
-fn push_u16(output: &mut std::vec::Vec<u8>, value: u16) {
-    output.extend_from_slice(&value.to_le_bytes());
-}
-
-fn push_u32(output: &mut std::vec::Vec<u8>, value: u32) {
-    output.extend_from_slice(&value.to_le_bytes());
 }
 
 #[test]
@@ -609,22 +504,22 @@ fn build_percent_encoded_path_epub() -> std::vec::Vec<u8> {
     const CHAPTER: &str = "<html><body><p>Encoded path works</p></body></html>";
 
     build_zip(&[
-        TestEntry {
+        ZipEntry {
             name: "mimetype",
             data: b"application/epub+zip",
             compression: STORED,
         },
-        TestEntry {
+        ZipEntry {
             name: "META-INF/container.xml",
             data: CONTAINER.as_bytes(),
             compression: DEFLATED,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/package.opf",
             data: PACKAGE.as_bytes(),
             compression: DEFLATED,
         },
-        TestEntry {
+        ZipEntry {
             name: "OPS/Text/Café Chapter.xhtml",
             data: CHAPTER.as_bytes(),
             compression: DEFLATED,

@@ -2218,6 +2218,7 @@ dependencies = [
  "futures-lite",
  "hypher",
  "inkpaper-epub",
+ "miniz_oxide 0.9.1",
  "unicode-linebreak",
 ]
 
