@@ -62,6 +62,7 @@ mod power_button;
 mod presenter;
 mod probe;
 mod refresh_policy;
+mod rpc;
 mod rtc;
 mod sleep_pins;
 mod storage;

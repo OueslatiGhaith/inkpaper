@@ -19,7 +19,7 @@ use crate::firmware::{
         partition::{SECTOR_SIZE, SdPartition, find_fat_partition},
         service::{
             FilesystemExit, serve_filesystem, serve_unavailable_requests, serve_usb_drive_requests,
-            signal_ready, signal_shutdown_done, signal_usb_drive_ready,
+            signal_ready,
         },
     },
     usb_mass_storage::{self, UsbMassStorageExit},
@@ -163,7 +163,7 @@ async fn run_storage<B>(
         drop(filesystem);
 
         match exit {
-            FilesystemExit::Shutdown => {
+            FilesystemExit::Shutdown(shutdown_done) => {
                 // Deep sleep does not need the raw card. Tear the SD stack down
                 // and remove card power before acknowledging shutdown.
                 drop(card);
@@ -172,7 +172,7 @@ async fn run_storage<B>(
 
                 info!("storage shut down; SD power off");
 
-                signal_shutdown_done();
+                shutdown_done.send(());
 
                 // Preserve ownership of the GPIO output while main prepares the RTC holds
                 // and enters deep sleep.
@@ -181,7 +181,7 @@ async fn run_storage<B>(
                 return;
             }
 
-            FilesystemExit::UsbDrive => {
+            FilesystemExit::UsbDrive(usb_drive_ready) => {
                 signal_ready(false);
 
                 let sector_count = match usb_sector_count(&mut card).await {
@@ -189,7 +189,7 @@ async fn run_storage<B>(
                     None => {
                         error!("USB drive cannot determine raw SD capacity");
 
-                        signal_usb_drive_ready(false);
+                        usb_drive_ready.send(false);
                         drop(card);
                         serve_unavailable(sd_power).await;
 
@@ -204,17 +204,15 @@ async fn run_storage<B>(
 
                 // From this point until USB MSC exits, filesystem calls are unavailable.
                 // The raw card stays exclusively owned by this task
-                signal_usb_drive_ready(true);
+                usb_drive_ready.send(true);
 
-                let exit = usb_mass_storage::run(
-                    &mut card,
-                    sector_count,
-                    usb_fs,
-                    usb_dp,
-                    usb_dm,
-                    serve_usb_drive_requests(),
-                )
-                .await;
+                let mut shutdown_done = None;
+
+                let exit =
+                    usb_mass_storage::run(&mut card, sector_count, usb_fs, usb_dp, usb_dm, async {
+                        shutdown_done = Some(serve_usb_drive_requests().await)
+                    })
+                    .await;
 
                 match exit {
                     UsbMassStorageExit::Shutdown => {
@@ -223,7 +221,11 @@ async fn run_storage<B>(
 
                         info!("USB drive stopped for system shutdown");
 
-                        signal_shutdown_done();
+                        // `run` only stops for shutdown once the requests future has
+                        // returned the shutdown reply.
+                        if let Some(shutdown_done) = shutdown_done {
+                            shutdown_done.send(());
+                        }
                         hold_forever().await;
 
                         return;

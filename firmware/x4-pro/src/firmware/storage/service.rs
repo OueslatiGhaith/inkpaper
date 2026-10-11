@@ -16,6 +16,7 @@ use super::{
         StorageError,
     },
 };
+use crate::firmware::rpc::{self, Reply};
 
 const COMMAND_CAPACITY: usize = 4;
 
@@ -23,67 +24,54 @@ static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = C
 
 static READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
-static SHUTDOWN_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-
-static USB_DRIVE_READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
-
-static DIRECTORY_LIST_DONE: Signal<
-    CriticalSectionRawMutex,
-    Result<Vec<StorageEntry>, StorageError>,
-> = Signal::new();
-
-static RANDOM_ACCESS_OPEN_DONE: Signal<
-    CriticalSectionRawMutex,
-    Result<RandomAccessHandle, StorageError>,
-> = Signal::new();
-
-static RANDOM_ACCESS_READ_DONE: Signal<CriticalSectionRawMutex, Result<Vec<u8>, StorageError>> =
-    Signal::new();
-
-static FILE_READ_DONE: Signal<CriticalSectionRawMutex, Result<Vec<u8>, StorageError>> =
-    Signal::new();
-
-static STATE_LOAD_DONE: Signal<CriticalSectionRawMutex, Result<Option<Vec<u8>>, StorageError>> =
-    Signal::new();
-
-static STATE_SAVE_DONE: Signal<CriticalSectionRawMutex, Result<(), StorageError>> = Signal::new();
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why the storage task stopped serving the filesystem, with the reply that
+/// acknowledges the transition once `mount.rs` has made it.
+#[derive(Debug)]
 pub(super) enum FilesystemExit {
-    Shutdown,
-    UsbDrive,
+    Shutdown(Reply<()>),
+    UsbDrive(Reply<bool>),
 }
 
 #[derive(Debug)]
 enum Command {
-    ListDirectory(String),
+    ListDirectory {
+        path: String,
+        reply: Reply<Result<Vec<StorageEntry>, StorageError>>,
+    },
 
-    OpenRandomAccess(String),
+    OpenRandomAccess {
+        path: String,
+        reply: Reply<Result<RandomAccessHandle, StorageError>>,
+    },
 
     ReadRandomAccess {
         handle: u32,
         offset: u64,
         len: usize,
+        reply: Reply<Result<Vec<u8>, StorageError>>,
     },
 
     ReadFile {
         path: String,
         max_bytes: usize,
+        reply: Reply<Result<Vec<u8>, StorageError>>,
     },
 
     LoadState {
         name: String,
         max_bytes: usize,
+        reply: Reply<Result<Option<Vec<u8>>, StorageError>>,
     },
 
     SaveState {
         name: String,
         bytes: Vec<u8>,
+        reply: Reply<Result<(), StorageError>>,
     },
 
-    EnterUsbDrive,
+    EnterUsbDrive(Reply<bool>),
 
-    Shutdown,
+    Shutdown(Reply<()>),
 }
 
 pub async fn wait_ready() -> bool {
@@ -91,19 +79,19 @@ pub async fn wait_ready() -> bool {
 }
 
 pub async fn list_directory_and_wait(path: &str) -> Result<Vec<StorageEntry>, StorageError> {
-    DIRECTORY_LIST_DONE.reset();
-    COMMANDS
-        .send(Command::ListDirectory(String::from(path)))
-        .await;
-    DIRECTORY_LIST_DONE.wait().await
+    rpc::call(&COMMANDS, |reply| Command::ListDirectory {
+        path: String::from(path),
+        reply,
+    })
+    .await
 }
 
 pub async fn open_random_access_and_wait(path: &str) -> Result<RandomAccessHandle, StorageError> {
-    RANDOM_ACCESS_OPEN_DONE.reset();
-    COMMANDS
-        .send(Command::OpenRandomAccess(String::from(path)))
-        .await;
-    RANDOM_ACCESS_OPEN_DONE.wait().await
+    rpc::call(&COMMANDS, |reply| Command::OpenRandomAccess {
+        path: String::from(path),
+        reply,
+    })
+    .await
 }
 
 pub async fn read_random_access_and_wait(
@@ -115,27 +103,23 @@ pub async fn read_random_access_and_wait(
         return Err(StorageError::ReadTooLarge);
     }
 
-    RANDOM_ACCESS_READ_DONE.reset();
-    COMMANDS
-        .send(Command::ReadRandomAccess {
-            handle,
-            offset,
-            len,
-        })
-        .await;
-    RANDOM_ACCESS_READ_DONE.wait().await
+    rpc::call(&COMMANDS, |reply| Command::ReadRandomAccess {
+        handle,
+        offset,
+        len,
+        reply,
+    })
+    .await
 }
 
 /// Reads a whole file, apart from the open random-access file.
 pub async fn read_file_and_wait(path: &str, max_bytes: usize) -> Result<Vec<u8>, StorageError> {
-    FILE_READ_DONE.reset();
-    COMMANDS
-        .send(Command::ReadFile {
-            path: String::from(path),
-            max_bytes,
-        })
-        .await;
-    FILE_READ_DONE.wait().await
+    rpc::call(&COMMANDS, |reply| Command::ReadFile {
+        path: String::from(path),
+        max_bytes,
+        reply,
+    })
+    .await
 }
 
 pub async fn load_state_and_wait(
@@ -146,14 +130,12 @@ pub async fn load_state_and_wait(
         return Err(StorageError::StateTooLarge);
     }
 
-    STATE_LOAD_DONE.reset();
-    COMMANDS
-        .send(Command::LoadState {
-            name: String::from(name),
-            max_bytes,
-        })
-        .await;
-    STATE_LOAD_DONE.wait().await
+    rpc::call(&COMMANDS, |reply| Command::LoadState {
+        name: String::from(name),
+        max_bytes,
+        reply,
+    })
+    .await
 }
 
 pub async fn save_state_and_wait(name: &str, bytes: &[u8]) -> Result<(), StorageError> {
@@ -161,38 +143,24 @@ pub async fn save_state_and_wait(name: &str, bytes: &[u8]) -> Result<(), Storage
         return Err(StorageError::StateTooLarge);
     }
 
-    STATE_SAVE_DONE.reset();
-    COMMANDS
-        .send(Command::SaveState {
-            name: String::from(name),
-            bytes: Vec::from(bytes),
-        })
-        .await;
-    STATE_SAVE_DONE.wait().await
+    rpc::call(&COMMANDS, |reply| Command::SaveState {
+        name: String::from(name),
+        bytes: Vec::from(bytes),
+        reply,
+    })
+    .await
 }
 
 pub async fn shutdown_and_wait() {
-    SHUTDOWN_DONE.reset();
-    COMMANDS.send(Command::Shutdown).await;
-    SHUTDOWN_DONE.wait().await;
+    rpc::call(&COMMANDS, Command::Shutdown).await;
 }
 
 pub async fn enter_usb_drive_and_wait() -> bool {
-    USB_DRIVE_READY.reset();
-    COMMANDS.send(Command::EnterUsbDrive).await;
-    USB_DRIVE_READY.wait().await
+    rpc::call(&COMMANDS, Command::EnterUsbDrive).await
 }
 
 pub(super) fn signal_ready(ready: bool) {
     READY.signal(ready);
-}
-
-pub(super) fn signal_shutdown_done() {
-    SHUTDOWN_DONE.signal(());
-}
-
-pub(super) fn signal_usb_drive_ready(ready: bool) {
-    USB_DRIVE_READY.signal(ready);
 }
 
 pub(super) async fn serve_filesystem<'a, D>(filesystem: &'a FatVolume<D>) -> FilesystemExit
@@ -206,12 +174,11 @@ where
 
     loop {
         match COMMANDS.receive().await {
-            Command::ListDirectory(path) => {
-                let result = list_directory(filesystem, &path).await;
-                DIRECTORY_LIST_DONE.signal(result);
+            Command::ListDirectory { path, reply } => {
+                reply.send(list_directory(filesystem, &path).await);
             }
 
-            Command::OpenRandomAccess(path) => {
+            Command::OpenRandomAccess { path, reply } => {
                 // only one random-access file is required by the app today. Drop
                 // the previous FAT reader before opening its replacement.
                 open_random_access = None;
@@ -224,12 +191,10 @@ where
 
                         open_random_access = Some(file);
 
-                        RANDOM_ACCESS_OPEN_DONE.signal(Ok(handle));
+                        reply.send(Ok(handle));
                     }
 
-                    Err(error) => {
-                        RANDOM_ACCESS_OPEN_DONE.signal(Err(error));
-                    }
+                    Err(error) => reply.send(Err(error)),
                 }
             }
 
@@ -237,6 +202,7 @@ where
                 handle,
                 offset,
                 len,
+                reply,
             } => {
                 let result = match open_random_access.as_mut() {
                     Some(file) if file.handle().id() == handle => {
@@ -245,25 +211,30 @@ where
                     _ => Err(StorageError::StaleHandle),
                 };
 
-                RANDOM_ACCESS_READ_DONE.signal(result);
+                reply.send(result);
             }
 
-            Command::ReadFile { path, max_bytes } => {
-                let result = read_file(filesystem, &path, max_bytes).await;
-                FILE_READ_DONE.signal(result);
+            Command::ReadFile {
+                path,
+                max_bytes,
+                reply,
+            } => {
+                reply.send(read_file(filesystem, &path, max_bytes).await);
             }
 
-            Command::LoadState { name, max_bytes } => {
-                let result = load_state(filesystem, &name, max_bytes).await;
-                STATE_LOAD_DONE.signal(result);
+            Command::LoadState {
+                name,
+                max_bytes,
+                reply,
+            } => {
+                reply.send(load_state(filesystem, &name, max_bytes).await);
             }
 
-            Command::SaveState { name, bytes } => {
-                let result = save_state(filesystem, &name, &bytes).await;
-                STATE_SAVE_DONE.signal(result);
+            Command::SaveState { name, bytes, reply } => {
+                reply.send(save_state(filesystem, &name, &bytes).await);
             }
 
-            Command::EnterUsbDrive => {
+            Command::EnterUsbDrive(reply) => {
                 debug!("USB Drive storage handoff requested");
 
                 // No FAT-backed object may survive the transition to raw block access.
@@ -271,17 +242,17 @@ where
                 // the FatVolume itself.
                 drop(open_random_access);
 
-                return FilesystemExit::UsbDrive;
+                return FilesystemExit::UsbDrive(reply);
             }
 
-            Command::Shutdown => {
+            Command::Shutdown(reply) => {
                 debug!("storage shutdown requested");
 
                 // ensure every FAT FileReader is gone before `mount.rs` drops
                 // the FatVolume and block device.
                 drop(open_random_access);
 
-                return FilesystemExit::Shutdown;
+                return FilesystemExit::Shutdown(reply);
             }
         }
     }
@@ -290,23 +261,28 @@ where
 pub(super) async fn serve_unavailable_requests() {
     READY.signal(false);
 
+    refuse_filesystem_requests(false).await.send(());
+}
+
+/// Refuses filesystem requests while the card is a USB drive, until a shutdown
+/// request. The drive's exit acknowledges it once it has stopped.
+pub(super) async fn serve_usb_drive_requests() -> Reply<()> {
+    refuse_filesystem_requests(true).await
+}
+
+/// Answers every filesystem request with [`StorageError::Unavailable`] and a
+/// USB drive request with `usb_drive`, until a shutdown request.
+async fn refuse_filesystem_requests(usb_drive: bool) -> Reply<()> {
     loop {
         match COMMANDS.receive().await {
-            Command::ListDirectory(_) => DIRECTORY_LIST_DONE.signal(Err(StorageError::Unavailable)),
-            Command::OpenRandomAccess(_) => {
-                RANDOM_ACCESS_OPEN_DONE.signal(Err(StorageError::Unavailable));
-            }
-            Command::ReadRandomAccess { .. } => {
-                RANDOM_ACCESS_READ_DONE.signal(Err(StorageError::Unavailable));
-            }
-            Command::ReadFile { .. } => FILE_READ_DONE.signal(Err(StorageError::Unavailable)),
-            Command::LoadState { .. } => STATE_LOAD_DONE.signal(Err(StorageError::Unavailable)),
-            Command::SaveState { .. } => STATE_SAVE_DONE.signal(Err(StorageError::Unavailable)),
-            Command::EnterUsbDrive => USB_DRIVE_READY.signal(false),
-            Command::Shutdown => {
-                SHUTDOWN_DONE.signal(());
-                return;
-            }
+            Command::ListDirectory { reply, .. } => reply.send(Err(StorageError::Unavailable)),
+            Command::OpenRandomAccess { reply, .. } => reply.send(Err(StorageError::Unavailable)),
+            Command::ReadRandomAccess { reply, .. } => reply.send(Err(StorageError::Unavailable)),
+            Command::ReadFile { reply, .. } => reply.send(Err(StorageError::Unavailable)),
+            Command::LoadState { reply, .. } => reply.send(Err(StorageError::Unavailable)),
+            Command::SaveState { reply, .. } => reply.send(Err(StorageError::Unavailable)),
+            Command::EnterUsbDrive(reply) => reply.send(usb_drive),
+            Command::Shutdown(reply) => return reply,
         }
     }
 }
@@ -319,42 +295,4 @@ fn next_handle(last: &mut u32) -> u32 {
     }
 
     *last
-}
-
-pub(super) async fn serve_usb_drive_requests() {
-    loop {
-        match COMMANDS.receive().await {
-            Command::ListDirectory(_) => {
-                DIRECTORY_LIST_DONE.signal(Err(StorageError::Unavailable));
-            }
-
-            Command::OpenRandomAccess(_) => {
-                RANDOM_ACCESS_OPEN_DONE.signal(Err(StorageError::Unavailable));
-            }
-
-            Command::ReadRandomAccess { .. } => {
-                RANDOM_ACCESS_READ_DONE.signal(Err(StorageError::Unavailable));
-            }
-
-            Command::ReadFile { .. } => {
-                FILE_READ_DONE.signal(Err(StorageError::Unavailable));
-            }
-
-            Command::LoadState { .. } => {
-                STATE_LOAD_DONE.signal(Err(StorageError::Unavailable));
-            }
-
-            Command::SaveState { .. } => {
-                STATE_SAVE_DONE.signal(Err(StorageError::Unavailable));
-            }
-
-            Command::EnterUsbDrive => {
-                USB_DRIVE_READY.signal(true);
-            }
-
-            Command::Shutdown => {
-                return;
-            }
-        }
-    }
 }
