@@ -11,6 +11,7 @@ default:
 
 test:
     cargo nextest run
+    cargo nextest run -p inkpaper-ui --all-features
 
 sim:
     cargo run -p {{simulator_package}}
