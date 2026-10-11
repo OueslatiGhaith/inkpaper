@@ -65,6 +65,19 @@ where
         }
     }
 
+    /// Draws `drawable` inside the clip.
+    fn draw(&mut self, drawable: impl Drawable<Color = EgRgb888, Output = ()>) {
+        let clip = to_embedded_rect(self.clip);
+
+        let result = {
+            let mut target = self.target.color_converted::<EgRgb888>();
+
+            drawable.draw(&mut target.clipped(&clip))
+        };
+
+        self.record(result);
+    }
+
     pub(super) fn finish(self) -> Result<(), D::Error> {
         match self.error {
             Some(error) => Err(error),
@@ -85,17 +98,9 @@ where
         }
 
         let rect = self.translated_rect(rect);
-        let clip = to_embedded_rect(self.clip);
         let style = EgPrimitiveStyle::with_fill(to_rgb888(color));
 
-        let result = {
-            let mut target = self.target.color_converted::<EgRgb888>();
-            let mut clipped = target.clipped(&clip);
-
-            to_embedded_rect(rect).into_styled(style).draw(&mut clipped)
-        };
-
-        self.record(result);
+        self.draw(to_embedded_rect(rect).into_styled(style));
     }
 
     fn stroke_rect(&mut self, rect: Rect, width: Pixels, color: Color) {
@@ -109,7 +114,6 @@ where
 
         let rect = self.translated_rect(rect);
         let width = u32::try_from(width.non_negative().get()).unwrap_or(u32::MAX);
-        let clip = to_embedded_rect(self.clip);
 
         let style = EgPrimitiveStyleBuilder::new()
             .stroke_color(to_rgb888(color))
@@ -117,14 +121,7 @@ where
             .stroke_alignment(EgStrokeAlignment::Inside)
             .build();
 
-        let result = {
-            let mut target = self.target.color_converted::<EgRgb888>();
-            let mut clipped = target.clipped(&clip);
-
-            to_embedded_rect(rect).into_styled(style).draw(&mut clipped)
-        };
-
-        self.record(result);
+        self.draw(to_embedded_rect(rect).into_styled(style));
     }
 
     fn line(&mut self, start: Point, end: Point, width: Pixels, color: Color) {
@@ -135,19 +132,9 @@ where
         let start = self.translated_point(start);
         let end = self.translated_point(end);
         let width = u32::try_from(width.non_negative().get()).unwrap_or(u32::MAX);
-        let clip = to_embedded_rect(self.clip);
         let style = EgPrimitiveStyle::with_stroke(to_rgb888(color), width);
 
-        let result = {
-            let mut target = self.target.color_converted::<EgRgb888>();
-            let mut clipped = target.clipped(&clip);
-
-            EgLine::new(to_embedded_point(start), to_embedded_point(end))
-                .into_styled(style)
-                .draw(&mut clipped)
-        };
-
-        self.record(result);
+        self.draw(EgLine::new(to_embedded_point(start), to_embedded_point(end)).into_styled(style));
     }
 
     fn fill_circle(&mut self, center: Point, radius: Pixels, color: Color) {
@@ -159,19 +146,9 @@ where
         let diameter = radius.non_negative().get().saturating_mul(2);
         let diameter = u32::try_from(diameter).unwrap_or(u32::MAX);
 
-        let clip = to_embedded_rect(self.clip);
         let style = EgPrimitiveStyle::with_fill(to_rgb888(color));
 
-        let result = {
-            let mut target = self.target.color_converted::<EgRgb888>();
-            let mut clipped = target.clipped(&clip);
-
-            EgCircle::with_center(to_embedded_point(center), diameter)
-                .into_styled(style)
-                .draw(&mut clipped)
-        };
-
-        self.record(result);
+        self.draw(EgCircle::with_center(to_embedded_point(center), diameter).into_styled(style));
     }
 
     fn stroke_circle(&mut self, center: Point, radius: Pixels, width: Pixels, color: Color) {
@@ -184,23 +161,13 @@ where
         let diameter = u32::try_from(diameter).unwrap_or(u32::MAX);
         let width = u32::try_from(width.non_negative().get()).unwrap_or(u32::MAX);
 
-        let clip = to_embedded_rect(self.clip);
         let style = EgPrimitiveStyleBuilder::new()
             .stroke_color(to_rgb888(color))
             .stroke_width(width)
             .stroke_alignment(EgStrokeAlignment::Inside)
             .build();
 
-        let result = {
-            let mut target = self.target.color_converted::<EgRgb888>();
-            let mut clipped = target.clipped(&clip);
-
-            EgCircle::with_center(to_embedded_point(center), diameter)
-                .into_styled(style)
-                .draw(&mut clipped)
-        };
-
-        self.record(result);
+        self.draw(EgCircle::with_center(to_embedded_point(center), diameter).into_styled(style));
     }
 
     fn fill_pixel_coverage(&mut self, point: Point, color: Color, coverage: u8) {

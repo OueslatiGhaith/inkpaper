@@ -1,20 +1,14 @@
-use embedded_graphics::{
-    Drawable,
-    draw_target::DrawTargetExt,
-    geometry::{Point as EgPoint, Size as EgSize},
-    prelude::DrawTarget as EgDrawTarget,
-    primitives::{
-        Primitive, PrimitiveStyleBuilder as EgPrimitiveStyleBuilder, Rectangle as EgRectangle,
-        RoundedRectangle as EgRoundedRectangle, StrokeAlignment as EgStrokeAlignment,
-    },
-};
+use embedded_graphics::{draw_target::DrawTargetExt, prelude::DrawTarget as EgDrawTarget};
 
 use crate::{
     BoxPaint, CanvasPainter, Color, DamageRegion, GlyphCacheError, ImagePaint, ImageSource,
-    Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError, Size,
-    backend::eink::{
-        text::draw_text_run_to,
-        tone::{BinaryDitherTarget, gray2_tone},
+    Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError,
+    backend::{
+        eink::{
+            text::draw_text_run_to,
+            tone::{BinaryDitherTarget, gray2_tone},
+        },
+        embedded::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
     },
     pair_cache::{PAIR_POSITIONING_CACHE_SLOTS, PairPositioningCache},
     px,
@@ -183,9 +177,9 @@ where
                     let clip = to_embedded_rect(clip);
                     let mut clipped = self.target.clipped(&clip);
 
-                    draw_box_to(&mut clipped, bounds, paint)
+                    draw_box_to(&mut clipped, bounds, paint, color_to_gray2)
                 } else {
-                    draw_box_to(self.target, bounds, paint)
+                    draw_box_to(self.target, bounds, paint, color_to_gray2)
                 }
             }
 
@@ -195,11 +189,11 @@ where
                     let mut clipped = self.target.clipped(&clip);
                     let mut dithered = BinaryDitherTarget::new(&mut clipped);
 
-                    draw_box_to(&mut dithered, bounds, paint)
+                    draw_box_to(&mut dithered, bounds, paint, color_to_gray2)
                 } else {
                     let mut dithered = BinaryDitherTarget::new(self.target);
 
-                    draw_box_to(&mut dithered, bounds, paint)
+                    draw_box_to(&mut dithered, bounds, paint, color_to_gray2)
                 }
             }
         };
@@ -434,71 +428,4 @@ where
 
         Ok(())
     }
-}
-
-pub(super) fn to_embedded_rect(rect: Rect) -> EgRectangle {
-    let width = u32::try_from(rect.width().non_negative().get()).unwrap_or(u32::MAX);
-
-    let height = u32::try_from(rect.height().non_negative().get()).unwrap_or(u32::MAX);
-
-    EgRectangle::new(
-        EgPoint::new(rect.x().get(), rect.y().get()),
-        EgSize::new(width, height),
-    )
-}
-
-pub(super) fn to_embedded_point(point: Point) -> EgPoint {
-    EgPoint::new(point.x.get(), point.y.get())
-}
-
-fn from_embedded_size(size: EgSize) -> Size {
-    Size::new(
-        px(i32::try_from(size.width).unwrap_or(i32::MAX)),
-        px(i32::try_from(size.height).unwrap_or(i32::MAX)),
-    )
-}
-
-fn draw_box_to<D>(target: &mut D, bounds: Rect, paint: BoxPaint) -> Result<(), D::Error>
-where
-    D: EgDrawTarget<Color = Gray2>,
-{
-    if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
-        return Ok(());
-    }
-
-    if paint.background.is_none() && paint.border.is_none() {
-        return Ok(());
-    }
-
-    let mut style = EgPrimitiveStyleBuilder::new().stroke_alignment(EgStrokeAlignment::Inside);
-
-    if let Some(background) = paint.background {
-        style = style.fill_color(color_to_gray2(background));
-    }
-
-    if let Some(border) = paint.border {
-        let width = u32::try_from(border.width.non_negative().get()).unwrap_or(u32::MAX);
-
-        if width > 0 {
-            style = style
-                .stroke_color(color_to_gray2(border.color))
-                .stroke_width(width);
-        }
-    }
-
-    let style = style.build();
-
-    let rectangle = to_embedded_rect(bounds);
-
-    let radius = u32::try_from(paint.radius.non_negative().get()).unwrap_or(u32::MAX);
-
-    if radius == 0 {
-        rectangle.into_styled(style).draw(target)?;
-    } else {
-        EgRoundedRectangle::with_equal_corners(rectangle, EgSize::new(radius, radius))
-            .into_styled(style)
-            .draw(target)?;
-    }
-
-    Ok(())
 }

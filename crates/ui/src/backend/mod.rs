@@ -1,5 +1,7 @@
 #[cfg(feature = "eink")]
 mod eink;
+#[cfg(any(feature = "eink", feature = "embedded-graphics"))]
+mod embedded;
 #[cfg(feature = "embedded-graphics")]
 mod embedded_graphics;
 mod mono_font;

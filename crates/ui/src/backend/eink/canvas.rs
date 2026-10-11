@@ -68,6 +68,25 @@ where
         }
     }
 
+    /// Draws `drawable` inside the clip, dithered to black and white in
+    /// [`EInkUiMode::BinaryDither`].
+    fn draw(&mut self, drawable: impl Drawable<Color = Gray2, Output = ()>) {
+        let clip = to_embedded_rect(self.clip);
+
+        let result = {
+            let mut clipped = self.target.clipped(&clip);
+
+            match self.ui_mode {
+                EInkUiMode::NativeGray2 => drawable.draw(&mut clipped),
+                EInkUiMode::BinaryDither => {
+                    drawable.draw(&mut BinaryDitherTarget::new(&mut clipped))
+                }
+            }
+        };
+
+        self.record(result);
+    }
+
     pub(super) fn finish(self) -> Result<(), D::Error> {
         match self.error {
             Some(error) => Err(error),
@@ -87,29 +106,9 @@ where
         }
 
         let rect = self.translated_rect(rect);
-        let clip = to_embedded_rect(self.clip);
-
         let style = EgPrimitiveStyle::with_fill(color_to_gray2(color));
 
-        let result = {
-            let mut clipped = self.target.clipped(&clip);
-
-            match self.ui_mode {
-                EInkUiMode::NativeGray2 => {
-                    to_embedded_rect(rect).into_styled(style).draw(&mut clipped)
-                }
-
-                EInkUiMode::BinaryDither => {
-                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
-
-                    to_embedded_rect(rect)
-                        .into_styled(style)
-                        .draw(&mut dithered)
-                }
-            }
-        };
-
-        self.record(result);
+        self.draw(to_embedded_rect(rect).into_styled(style));
     }
 
     fn stroke_rect(&mut self, rect: Rect, width: Pixels, color: Color) {
@@ -124,32 +123,13 @@ where
         let rect = self.translated_rect(rect);
         let width = u32::try_from(width.non_negative().get()).unwrap_or(u32::MAX);
 
-        let clip = to_embedded_rect(self.clip);
-
         let style = EgPrimitiveStyleBuilder::new()
             .stroke_color(color_to_gray2(color))
             .stroke_width(width)
             .stroke_alignment(EgStrokeAlignment::Inside)
             .build();
 
-        let result = {
-            let mut clipped = self.target.clipped(&clip);
-
-            match self.ui_mode {
-                EInkUiMode::NativeGray2 => {
-                    to_embedded_rect(rect).into_styled(style).draw(&mut clipped)
-                }
-                EInkUiMode::BinaryDither => {
-                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
-
-                    to_embedded_rect(rect)
-                        .into_styled(style)
-                        .draw(&mut dithered)
-                }
-            }
-        };
-
-        self.record(result);
+        self.draw(to_embedded_rect(rect).into_styled(style));
     }
 
     fn line(&mut self, start: Point, end: Point, width: Pixels, color: Color) {
@@ -162,30 +142,9 @@ where
 
         let width = u32::try_from(width.non_negative().get()).unwrap_or(u32::MAX);
 
-        let clip = to_embedded_rect(self.clip);
-
         let style = EgPrimitiveStyle::with_stroke(color_to_gray2(color), width);
 
-        let result = {
-            let mut clipped = self.target.clipped(&clip);
-
-            match self.ui_mode {
-                EInkUiMode::NativeGray2 => {
-                    EgLine::new(to_embedded_point(start), to_embedded_point(end))
-                        .into_styled(style)
-                        .draw(&mut clipped)
-                }
-                EInkUiMode::BinaryDither => {
-                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
-
-                    EgLine::new(to_embedded_point(start), to_embedded_point(end))
-                        .into_styled(style)
-                        .draw(&mut dithered)
-                }
-            }
-        };
-
-        self.record(result);
+        self.draw(EgLine::new(to_embedded_point(start), to_embedded_point(end)).into_styled(style));
     }
 
     fn fill_circle(&mut self, center: Point, radius: Pixels, color: Color) {
@@ -198,30 +157,9 @@ where
         let diameter = radius.non_negative().get().saturating_mul(2);
         let diameter = u32::try_from(diameter).unwrap_or(u32::MAX);
 
-        let clip = to_embedded_rect(self.clip);
-
         let style = EgPrimitiveStyle::with_fill(color_to_gray2(color));
 
-        let result = {
-            let mut clipped = self.target.clipped(&clip);
-
-            match self.ui_mode {
-                EInkUiMode::NativeGray2 => {
-                    EgCircle::with_center(to_embedded_point(center), diameter)
-                        .into_styled(style)
-                        .draw(&mut clipped)
-                }
-                EInkUiMode::BinaryDither => {
-                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
-
-                    EgCircle::with_center(to_embedded_point(center), diameter)
-                        .into_styled(style)
-                        .draw(&mut dithered)
-                }
-            }
-        };
-
-        self.record(result);
+        self.draw(EgCircle::with_center(to_embedded_point(center), diameter).into_styled(style));
     }
 
     fn stroke_circle(&mut self, center: Point, radius: Pixels, width: Pixels, color: Color) {
@@ -236,34 +174,13 @@ where
 
         let width = u32::try_from(width.non_negative().get()).unwrap_or(u32::MAX);
 
-        let clip = to_embedded_rect(self.clip);
-
         let style = EgPrimitiveStyleBuilder::new()
             .stroke_color(color_to_gray2(color))
             .stroke_width(width)
             .stroke_alignment(EgStrokeAlignment::Inside)
             .build();
 
-        let result = {
-            let mut clipped = self.target.clipped(&clip);
-
-            match self.ui_mode {
-                EInkUiMode::NativeGray2 => {
-                    EgCircle::with_center(to_embedded_point(center), diameter)
-                        .into_styled(style)
-                        .draw(&mut clipped)
-                }
-                EInkUiMode::BinaryDither => {
-                    let mut dithered = BinaryDitherTarget::new(&mut clipped);
-
-                    EgCircle::with_center(to_embedded_point(center), diameter)
-                        .into_styled(style)
-                        .draw(&mut dithered)
-                }
-            }
-        };
-
-        self.record(result);
+        self.draw(EgCircle::with_center(to_embedded_point(center), diameter).into_styled(style));
     }
 
     fn fill_pixel_coverage(&mut self, point: Point, color: Color, coverage: u8) {
