@@ -301,7 +301,7 @@ impl<'a> ShapedRun<'a> {
 /// are only:
 /// ```txt
 ///    Unicode scalar
-///      -> font fallbakc
+///      -> font fallback
 ///      -> glyph
 ///      -> same-face kerning
 /// ```
@@ -347,31 +347,8 @@ impl SimpleShaper {
         text: &str,
         output: &'out mut [ShapedGlyph],
     ) -> Result<ShapedRun<'out>, ShapeError> {
-        let preferred_font = self.font_instance(preferred_font);
-        let prepared_font = registry.prepare_instance(preferred_font);
-
-        let mut state = ShapeState::new();
-
-        let summary = self.shape_piece_into_with_prepared_font(
-            registry,
-            preferred_font,
-            prepared_font.as_ref(),
-            size_px,
-            text,
-            &mut state,
-            output,
-        )?;
-
-        let glyph_count = summary.glyph_count();
-
-        self.visual_order_with_prepared_font(
-            registry,
-            size_px,
-            text,
-            glyph_count,
-            &mut output[..glyph_count],
-            prepared_font.as_ref(),
-        )
+        self.prepare(registry, preferred_font)
+            .shape_into(registry, size_px, text, output)
     }
 
     #[cfg(feature = "eink")]
@@ -388,31 +365,12 @@ impl SimpleShaper {
         output: &'out mut [ShapedGlyph],
         pair_positioning_cache: &mut pair_cache::PairPositioningCache<SLOTS>,
     ) -> Result<ShapedRun<'out>, ShapeError> {
-        let preferred_font = self.font_instance(preferred_font);
-        let prepared_font = registry.prepare_instance(preferred_font);
-
-        let mut state = ShapeState::new();
-
-        let summary = self.shape_piece_into_with_prepared_font(
+        self.prepare(registry, preferred_font).shape_into_with(
             registry,
-            preferred_font,
-            prepared_font.as_ref(),
             size_px,
             text,
-            &mut state,
             output,
-        )?;
-
-        let glyph_count = summary.glyph_count();
-
-        self.visual_order_with_pair_positioning_cache(
-            registry,
-            size_px,
-            text,
-            glyph_count,
-            &mut output[..glyph_count],
-            prepared_font.as_ref(),
-            pair_positioning_cache,
+            Some(pair_positioning_cache),
         )
     }
 
@@ -458,6 +416,25 @@ impl<'font> PreparedSimpleShaper<'font> {
         text: &str,
         output: &'out mut [ShapedGlyph],
     ) -> Result<ShapedRun<'out>, ShapeError> {
+        self.shape_into_with(
+            registry,
+            size_px,
+            text,
+            output,
+            None::<&mut pair_cache::PairPositioningCache<1>>,
+        )
+    }
+
+    /// Shapes `text`, caching pair positioning in `pair_positioning_cache`
+    /// when given one.
+    fn shape_into_with<'out, const FONTS: usize, const SLOTS: usize>(
+        &self,
+        registry: &'font FontRegistry<'_, FONTS>,
+        size_px: u16,
+        text: &str,
+        output: &'out mut [ShapedGlyph],
+        pair_positioning_cache: Option<&mut pair_cache::PairPositioningCache<SLOTS>>,
+    ) -> Result<ShapedRun<'out>, ShapeError> {
         let mut state = ShapeState::new();
 
         let summary = self.shaper.shape_piece_into_with_prepared_font(
@@ -472,12 +449,13 @@ impl<'font> PreparedSimpleShaper<'font> {
 
         let glyph_count = summary.glyph_count();
 
-        self.shaper.visual_order_with_prepared_font(
+        self.shaper.visual_order_impl(
             registry,
             size_px,
             text,
             glyph_count,
             &mut output[..glyph_count],
+            pair_positioning_cache,
             self.prepared_font.as_ref(),
         )
     }

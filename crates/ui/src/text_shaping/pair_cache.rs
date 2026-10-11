@@ -163,23 +163,45 @@ impl<const SLOTS: usize> PairPositioningCache<SLOTS> {
             right_to_left,
         };
 
-        self.get_or_insert_with(key, || match prepared_font {
-            Some(prepared) if prepared.instance() == font => {
-                prepared.pair_positioning(visual_left, visual_right, size_px, right_to_left)
-            }
-
-            _ => registry
-                .resolve_instance(font)
-                .map(|face| {
-                    face.pair_positioning(visual_left, visual_right, size_px, right_to_left)
-                })
-                .unwrap_or(PairPositioning::Kerning(px(0))),
+        self.get_or_insert_with(key, || {
+            compute_pair_positioning(
+                registry,
+                prepared_font,
+                font,
+                visual_left,
+                visual_right,
+                size_px,
+                right_to_left,
+            )
         })
     }
 
     #[cfg(feature = "metrics")]
     pub(crate) const fn metrics(&self) -> PairPositioningCacheMetrics {
         self.metrics
+    }
+}
+
+/// The positioning between two glyphs of `font`, read from `prepared_font` when
+/// it is that font.
+pub(super) fn compute_pair_positioning<const FONTS: usize>(
+    registry: &FontRegistry<'_, FONTS>,
+    prepared_font: Option<&PreparedFont<'_>>,
+    font: FontInstance,
+    visual_left: GlyphId,
+    visual_right: GlyphId,
+    size_px: u16,
+    right_to_left: bool,
+) -> PairPositioning {
+    match prepared_font {
+        Some(prepared) if prepared.instance() == font => {
+            prepared.pair_positioning(visual_left, visual_right, size_px, right_to_left)
+        }
+
+        _ => registry
+            .resolve_instance(font)
+            .map(|face| face.pair_positioning(visual_left, visual_right, size_px, right_to_left))
+            .unwrap_or(PairPositioning::Kerning(px(0))),
     }
 }
 

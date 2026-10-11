@@ -101,56 +101,8 @@ impl SimpleShaper {
         )
     }
 
-    pub(super) fn visual_order_with_prepared_font<'out, 'font, const FONTS: usize>(
-        &self,
-        registry: &'font FontRegistry<'_, FONTS>,
-        size_px: u16,
-        text: &str,
-        text_glyph_count: usize,
-        glyphs: &'out mut [ShapedGlyph],
-        prepared_font: Option<&PreparedFont<'font>>,
-    ) -> Result<ShapedRun<'out>, ShapeError> {
-        self.visual_order_impl(
-            registry,
-            size_px,
-            text,
-            text_glyph_count,
-            glyphs,
-            None::<&mut PairPositioningCache<1>>,
-            prepared_font,
-        )
-    }
-
-    #[cfg(feature = "eink")]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn visual_order_with_pair_positioning_cache<
-        'out,
-        'font,
-        const FONTS: usize,
-        const SLOTS: usize,
-    >(
-        &self,
-        registry: &'font FontRegistry<'_, FONTS>,
-        size_px: u16,
-        text: &str,
-        text_glyph_count: usize,
-        glyphs: &'out mut [ShapedGlyph],
-        prepared_font: Option<&PreparedFont<'font>>,
-        pair_positioning_cache: &mut PairPositioningCache<SLOTS>,
-    ) -> Result<ShapedRun<'out>, ShapeError> {
-        self.visual_order_impl(
-            registry,
-            size_px,
-            text,
-            text_glyph_count,
-            glyphs,
-            Some(pair_positioning_cache),
-            prepared_font,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn visual_order_impl<'out, 'font, const FONTS: usize, const SLOTS: usize>(
+    pub(super) fn visual_order_impl<'out, 'font, const FONTS: usize, const SLOTS: usize>(
         &self,
         registry: &'font FontRegistry<'_, FONTS>,
         size_px: u16,

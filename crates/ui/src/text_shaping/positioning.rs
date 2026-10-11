@@ -1,6 +1,7 @@
 use crate::{
     FontRegistry, GlyphMetrics, Offset, PairPositioning, Pixels, PreparedFont,
-    pair_cache::PairPositioningCache, px,
+    pair_cache::{PairPositioningCache, compute_pair_positioning},
+    px,
 };
 
 use super::{ShapedGlyph, bidi::DirectionalRun, marks::MarkPlacement};
@@ -81,27 +82,15 @@ fn apply_visual_run_positioning<'font, const FONTS: usize, const SLOTS: usize>(
                         right_to_left,
                     ),
 
-                    None => match prepared_font {
-                        Some(prepared) if prepared.instance() == shaped.font_instance() => prepared
-                            .pair_positioning(
-                                previous.glyph(),
-                                shaped.glyph(),
-                                size_px,
-                                right_to_left,
-                            ),
-
-                        _ => registry
-                            .resolve_instance(shaped.font_instance())
-                            .map(|face| {
-                                face.pair_positioning(
-                                    previous.glyph(),
-                                    shaped.glyph(),
-                                    size_px,
-                                    right_to_left,
-                                )
-                            })
-                            .unwrap_or(PairPositioning::Kerning(px(0))),
-                    },
+                    None => compute_pair_positioning(
+                        registry,
+                        prepared_font,
+                        shaped.font_instance(),
+                        previous.glyph(),
+                        shaped.glyph(),
+                        size_px,
+                        right_to_left,
+                    ),
                 }
             }
 
