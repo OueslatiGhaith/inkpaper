@@ -1,10 +1,9 @@
 use alloc::{string::String, vec::Vec};
-use xmlparser::{ElementEnd, Token, Tokenizer};
 
 use crate::{
     error::PackageError,
     path::ArchivePath,
-    xml::{decode_xml_value, push_decoded_xml_text},
+    xml::{XmlParser, decode_xml_value, parse_xml, push_decoded_xml_text},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -378,6 +377,10 @@ impl PackageParser {
             capture: None,
         }
     }
+}
+
+impl XmlParser for PackageParser {
+    type Error = PackageError;
 
     fn element_start(&mut self, name: &str) {
         self.start = match name {
@@ -503,7 +506,7 @@ impl PackageParser {
         Ok(())
     }
 
-    fn close_element(&mut self, name: &str) {
+    fn close_element(&mut self, name: &str) -> Result<(), PackageError> {
         if let Some(field) = MetadataField::from_local_name(name) {
             self.finish_capture(field);
         }
@@ -512,6 +515,8 @@ impl PackageParser {
             "metadata" | "manifest" | "spine" | "guide" => self.section = Section::None,
             _ => {}
         }
+
+        Ok(())
     }
 
     fn text(&mut self, text: &str, cdata: bool) {
@@ -525,7 +530,9 @@ impl PackageParser {
             push_decoded_xml_text(&mut capture.value, text);
         }
     }
+}
 
+impl PackageParser {
     fn finish_capture(&mut self, field: MetadataField) {
         let Some(capture) = self.capture.take() else {
             return;
@@ -584,41 +591,7 @@ impl PackageParser {
 pub(crate) fn parse_package(xml: &str, path: ArchivePath) -> Result<Package, PackageError> {
     let mut parser = PackageParser::new(path);
 
-    for token in Tokenizer::from(xml) {
-        match token.map_err(PackageError::Xml)? {
-            Token::ElementStart { local, .. } => {
-                parser.element_start(local.as_str());
-            }
-            Token::Attribute { local, value, .. } => {
-                parser.attribute(local.as_str(), value.as_str());
-            }
-            Token::Text { text } => {
-                parser.text(text.as_str(), false);
-            }
-            Token::Cdata { text, .. } => {
-                parser.text(text.as_str(), true);
-            }
-            Token::ElementEnd {
-                end: ElementEnd::Open,
-                ..
-            } => {
-                parser.element_boundary(false)?;
-            }
-            Token::ElementEnd {
-                end: ElementEnd::Empty,
-                ..
-            } => {
-                parser.element_boundary(true)?;
-            }
-            Token::ElementEnd {
-                end: ElementEnd::Close(_, local),
-                ..
-            } => {
-                parser.close_element(local.as_str());
-            }
-            _ => {}
-        }
-    }
+    parse_xml(xml, &mut parser, PackageError::Xml)?;
 
     Ok(parser.finish())
 }

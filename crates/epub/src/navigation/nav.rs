@@ -1,11 +1,10 @@
 use alloc::{string::String, vec::Vec};
-use xmlparser::{ElementEnd, Token, Tokenizer};
 
 use crate::{
     ArchivePath,
     error::NavigationError,
     navigation::{EntryBuilder, Navigation, NavigationEntry, NavigationTarget, close_entry},
-    xml::{decode_xml_value, push_decoded_xml_text},
+    xml::{XmlParser, decode_xml_value, parse_xml, push_decoded_xml_text},
 };
 
 enum StartTag {
@@ -52,6 +51,10 @@ impl NavParser {
             label: None,
         }
     }
+}
+
+impl XmlParser for NavParser {
+    type Error = NavigationError;
 
     fn element_start(&mut self, name: &str) {
         self.depth = self.depth.saturating_add(1);
@@ -210,6 +213,12 @@ impl NavParser {
         Ok(())
     }
 
+    fn element_end(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+}
+
+impl NavParser {
     fn finish(self) -> Navigation {
         Navigation {
             entries: self.entries,
@@ -220,43 +229,7 @@ impl NavParser {
 pub(crate) fn parse_nav(xml: &str, path: ArchivePath) -> Result<Navigation, NavigationError> {
     let mut parser = NavParser::new(path);
 
-    for token in Tokenizer::from(xml) {
-        match token.map_err(NavigationError::Xml)? {
-            Token::ElementStart { local, .. } => {
-                parser.element_start(local.as_str());
-            }
-            Token::Attribute { local, value, .. } => {
-                parser.attribute(local.as_str(), value.as_str());
-            }
-            Token::Text { text } => {
-                parser.text(text.as_str(), false);
-            }
-            Token::Cdata { text, .. } => {
-                parser.text(text.as_str(), true);
-            }
-            Token::ElementEnd {
-                end: ElementEnd::Open,
-                ..
-            } => {
-                parser.element_boundary(false)?;
-            }
-            Token::ElementEnd {
-                end: ElementEnd::Empty,
-                ..
-            } => {
-                parser.element_boundary(true)?;
-                parser.depth = parser.depth.saturating_sub(1);
-            }
-            Token::ElementEnd {
-                end: ElementEnd::Close(_, local),
-                ..
-            } => {
-                parser.close_element(local.as_str())?;
-                parser.depth = parser.depth.saturating_sub(1);
-            }
-            _ => {}
-        }
-    }
+    parse_xml(xml, &mut parser, NavigationError::Xml)?;
 
     Ok(parser.finish())
 }

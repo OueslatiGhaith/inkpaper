@@ -1,11 +1,9 @@
 use alloc::{string::String, vec::Vec};
 
-use xmlparser::{ElementEnd, Token, Tokenizer};
-
 use crate::{
     ArchivePath, XhtmlError,
     xhtml::{ChapterImage, is_collapsible_whitespace},
-    xml::decode_xml_value,
+    xml::{XmlParser, decode_xml_value, parse_xml},
 };
 
 use super::{
@@ -173,6 +171,10 @@ impl XhtmlParser {
             stylesheet_capture: None,
         }
     }
+}
+
+impl XmlParser for XhtmlParser {
+    type Error = XhtmlError;
 
     fn element_start(&mut self, name: &str) {
         self.depth = self.depth.saturating_add(1);
@@ -338,20 +340,15 @@ impl XhtmlParser {
 
                 match target {
                     LinkTarget::Internal { path, .. } => {
-                        self.ensure_implicit_block();
-
                         let link = self.active_link.as_ref().map(|link| link.target.clone());
                         let alt = element.image_alt.filter(|alt| !alt.is_empty());
 
-                        self.current
-                            .as_mut()
-                            .expect("chapter block exists")
-                            .push_image(ChapterImage {
-                                path,
-                                alt,
-                                style_node,
-                                link,
-                            });
+                        self.implicit_block().push_image(ChapterImage {
+                            path,
+                            alt,
+                            style_node,
+                            link,
+                        });
                     }
 
                     LinkTarget::External(_) => {
@@ -367,11 +364,7 @@ impl XhtmlParser {
                     self.push_anchor(id);
                 }
 
-                self.ensure_implicit_block();
-                self.current
-                    .as_mut()
-                    .expect("implicit block exists")
-                    .push_break();
+                self.implicit_block().push_break();
             }
             ElementKind::BlockBoundary => {
                 self.finish_implicit_block();
@@ -396,11 +389,11 @@ impl XhtmlParser {
         Ok(())
     }
 
-    fn close_element(&mut self, name: &str) {
+    fn close_element(&mut self, name: &str) -> Result<(), XhtmlError> {
         let kind = ElementKind::from_name(name);
         if kind == ElementKind::Stylesheet {
             self.finish_stylesheet_capture();
-            return;
+            return Ok(());
         }
 
         if let Some(ignored_depth) = self.ignored_depth {
@@ -408,11 +401,11 @@ impl XhtmlParser {
                 self.ignored_depth = None;
             }
 
-            return;
+            return Ok(());
         }
 
         if self.body_depth.is_none() {
-            return;
+            return Ok(());
         }
 
         if kind == ElementKind::Body && self.body_depth == Some(self.depth) {
@@ -421,7 +414,7 @@ impl XhtmlParser {
             self.body_depth = None;
             self.close_style_node();
 
-            return;
+            return Ok(());
         }
 
         match kind {
@@ -457,6 +450,8 @@ impl XhtmlParser {
         }
 
         self.close_style_node();
+
+        Ok(())
     }
 
     fn text(&mut self, text: &str, cdata: bool) {
@@ -484,8 +479,6 @@ impl XhtmlParser {
             return;
         }
 
-        self.ensure_implicit_block();
-
         let style = InlineStyle {
             bold: self.bold_depth > 0,
             italic: self.italic_depth > 0,
@@ -497,12 +490,16 @@ impl XhtmlParser {
             .current_style_node()
             .expect("body text must have an active style node");
 
-        self.current
-            .as_mut()
-            .expect("chapter block exists")
+        self.implicit_block()
             .push_text(&text, style, link, style_node);
     }
 
+    fn element_end(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+}
+
+impl XhtmlParser {
     fn create_style_node(&mut self, element: &PendingElement, empty: bool) -> StyleNodeId {
         let parent = self.style_stack.last().map(|node| node.id);
 
@@ -611,15 +608,10 @@ impl XhtmlParser {
             return;
         }
 
-        if self.current.is_none() {
-            self.queue_anchor(anchor);
-            return;
+        match self.current.as_mut() {
+            Some(block) => block.push_anchor(anchor),
+            None => self.queue_anchor(anchor),
         }
-
-        self.current
-            .as_mut()
-            .expect("chapter block exists")
-            .push_anchor(anchor);
     }
 
     fn queue_anchor(&mut self, anchor: String) {
@@ -636,15 +628,11 @@ impl XhtmlParser {
     }
 
     fn flush_pending_anchors(&mut self) {
-        if self.current.is_none() {
+        let Some(block) = self.current.as_mut() else {
             return;
-        }
+        };
 
-        let anchors = core::mem::take(&mut self.pending_anchors);
-
-        let block = self.current.as_mut().expect("chapter block exists");
-
-        for anchor in anchors {
+        for anchor in self.pending_anchors.drain(..) {
             block.push_anchor(anchor);
         }
     }
@@ -654,8 +642,6 @@ impl XhtmlParser {
             return;
         };
 
-        self.ensure_implicit_block();
-
         let style = InlineStyle {
             bold: self.bold_depth > 0,
             italic: self.italic_depth > 0,
@@ -663,28 +649,27 @@ impl XhtmlParser {
 
         let link = self.active_link.as_ref().map(|link| link.target.clone());
 
-        self.current
-            .as_mut()
-            .expect("chapter block exists")
+        self.implicit_block()
             .push_text(&alt, style, link, style_node);
     }
 
-    fn ensure_implicit_block(&mut self) {
-        if self.current.is_some() {
-            return;
+    /// The block being built, starting a paragraph when there is none.
+    fn implicit_block(&mut self) -> &mut ChapterBlockBuilder {
+        if self.current.is_none() {
+            let style_node = self
+                .current_style_node()
+                .expect("body content must have an active style node");
+
+            self.current = Some(ChapterBlockBuilder::new(
+                BlockKind::Paragraph,
+                None,
+                style_node,
+            ));
+
+            self.flush_pending_anchors();
         }
 
-        let style_node = self
-            .current_style_node()
-            .expect("body content must have an active style node");
-
-        self.current = Some(ChapterBlockBuilder::new(
-            BlockKind::Paragraph,
-            None,
-            style_node,
-        ));
-
-        self.flush_pending_anchors();
+        self.current.as_mut().expect("a block was just started")
     }
 
     fn finish_implicit_block(&mut self) {
@@ -727,43 +712,7 @@ impl XhtmlParser {
 pub(crate) fn parse_xhtml(xml: &str, path: ArchivePath) -> Result<Chapter, XhtmlError> {
     let mut parser = XhtmlParser::new(path);
 
-    for token in Tokenizer::from(xml) {
-        match token.map_err(XhtmlError::Xml)? {
-            Token::ElementStart { local, .. } => {
-                parser.element_start(local.as_str());
-            }
-            Token::Attribute { local, value, .. } => {
-                parser.attribute(local.as_str(), value.as_str());
-            }
-            Token::Text { text } => {
-                parser.text(text.as_str(), false);
-            }
-            Token::Cdata { text, .. } => {
-                parser.text(text.as_str(), true);
-            }
-            Token::ElementEnd {
-                end: ElementEnd::Open,
-                ..
-            } => {
-                parser.element_boundary(false)?;
-            }
-            Token::ElementEnd {
-                end: ElementEnd::Empty,
-                ..
-            } => {
-                parser.element_boundary(true)?;
-                parser.depth = parser.depth.saturating_sub(1);
-            }
-            Token::ElementEnd {
-                end: ElementEnd::Close(_, local),
-                ..
-            } => {
-                parser.close_element(local.as_str());
-                parser.depth = parser.depth.saturating_sub(1);
-            }
-            _ => {}
-        }
-    }
+    parse_xml(xml, &mut parser, XhtmlError::Xml)?;
 
     parser.finish()
 }

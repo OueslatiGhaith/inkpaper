@@ -1,6 +1,66 @@
 use alloc::string::String;
 
+use xmlparser::{ElementEnd, Token, Tokenizer};
+
 mod entities;
+
+/// A parser that [`parse_xml`] feeds one token at a time.
+pub(crate) trait XmlParser {
+    type Error;
+
+    fn element_start(&mut self, name: &str);
+
+    fn attribute(&mut self, name: &str, value: &str);
+
+    fn text(&mut self, text: &str, cdata: bool);
+
+    /// The end of a start tag; `empty` when the element closes itself.
+    fn element_boundary(&mut self, empty: bool) -> Result<(), Self::Error>;
+
+    fn close_element(&mut self, name: &str) -> Result<(), Self::Error>;
+
+    /// Once an element has ended, after `element_boundary` for an empty one and
+    /// `close_element` for the others.
+    fn element_end(&mut self) {}
+}
+
+pub(crate) fn parse_xml<P: XmlParser>(
+    xml: &str,
+    parser: &mut P,
+    xml_error: fn(xmlparser::Error) -> P::Error,
+) -> Result<(), P::Error> {
+    for token in Tokenizer::from(xml) {
+        match token.map_err(xml_error)? {
+            Token::ElementStart { local, .. } => parser.element_start(local.as_str()),
+            Token::Attribute { local, value, .. } => {
+                parser.attribute(local.as_str(), value.as_str());
+            }
+            Token::Text { text } => parser.text(text.as_str(), false),
+            Token::Cdata { text, .. } => parser.text(text.as_str(), true),
+            Token::ElementEnd {
+                end: ElementEnd::Open,
+                ..
+            } => parser.element_boundary(false)?,
+            Token::ElementEnd {
+                end: ElementEnd::Empty,
+                ..
+            } => {
+                parser.element_boundary(true)?;
+                parser.element_end();
+            }
+            Token::ElementEnd {
+                end: ElementEnd::Close(_, local),
+                ..
+            } => {
+                parser.close_element(local.as_str())?;
+                parser.element_end();
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
 
 pub(crate) fn decode_xml_value(value: &str) -> String {
     let mut output = String::with_capacity(value.len());

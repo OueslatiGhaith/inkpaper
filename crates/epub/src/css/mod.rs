@@ -253,15 +253,18 @@ impl Stylesheet {
 #[derive(Debug, Clone, Copy)]
 struct Candidate<T> {
     value: T,
+    rank: Rank,
+}
+
+/// How a declaration ranks in the cascade.
+#[derive(Debug, Clone, Copy)]
+struct Rank {
     important: bool,
     specificity: Specificity,
     order: usize,
 }
 
-impl<T> Candidate<T>
-where
-    T: Copy,
-{
+impl Rank {
     fn outranks(self, current: Self) -> bool {
         if self.important != current.important {
             return self.important;
@@ -400,108 +403,30 @@ fn apply_declaration(
     specificity: Specificity,
     order: usize,
 ) {
+    let rank = Rank {
+        important: declaration.important,
+        specificity,
+        order,
+    };
+
     match declaration.property {
-        Property::FontWeight(value) => {
-            consider_candidate(
-                &mut cascade.font_weight,
-                Candidate {
-                    value,
-                    important: declaration.important,
-                    specificity,
-                    order,
-                },
-            );
-        }
-        Property::FontStyle(value) => {
-            consider_candidate(
-                &mut cascade.font_style,
-                Candidate {
-                    value,
-                    important: declaration.important,
-                    specificity,
-                    order,
-                },
-            );
-        }
-        Property::TextAlign(value) => {
-            consider_candidate(
-                &mut cascade.text_align,
-                Candidate {
-                    value,
-                    important: declaration.important,
-                    specificity,
-                    order,
-                },
-            );
-        }
-        Property::MarginTop(value) => {
-            consider_candidate(
-                &mut cascade.margin_top,
-                Candidate {
-                    value,
-                    important: declaration.important,
-                    specificity,
-                    order,
-                },
-            );
-        }
-        Property::MarginBottom(value) => {
-            consider_candidate(
-                &mut cascade.margin_bottom,
-                Candidate {
-                    value,
-                    important: declaration.important,
-                    specificity,
-                    order,
-                },
-            );
-        }
-        Property::TextIndent(value) => {
-            consider_candidate(
-                &mut cascade.text_indent,
-                Candidate {
-                    value,
-                    important: declaration.important,
-                    specificity,
-                    order,
-                },
-            );
-        }
-        Property::LineHeight(value) => {
-            consider_candidate(
-                &mut cascade.line_height,
-                Candidate {
-                    value,
-                    important: declaration.important,
-                    specificity,
-                    order,
-                },
-            );
-        }
-        Property::Display(value) => {
-            consider_candidate(
-                &mut cascade.display,
-                Candidate {
-                    value,
-                    important: declaration.important,
-                    specificity,
-                    order,
-                },
-            );
-        }
+        Property::FontWeight(value) => consider(&mut cascade.font_weight, value, rank),
+        Property::FontStyle(value) => consider(&mut cascade.font_style, value, rank),
+        Property::TextAlign(value) => consider(&mut cascade.text_align, value, rank),
+        Property::MarginTop(value) => consider(&mut cascade.margin_top, value, rank),
+        Property::MarginBottom(value) => consider(&mut cascade.margin_bottom, value, rank),
+        Property::TextIndent(value) => consider(&mut cascade.text_indent, value, rank),
+        Property::LineHeight(value) => consider(&mut cascade.line_height, value, rank),
+        Property::Display(value) => consider(&mut cascade.display, value, rank),
     }
 }
 
-fn consider_candidate<T>(current: &mut Option<Candidate<T>>, candidate: Candidate<T>)
-where
-    T: Copy,
-{
-    let replace = match current {
-        Some(current) => candidate.outranks(*current),
-        None => true,
-    };
-
-    if replace {
-        *current = Some(candidate);
+/// Keeps `value` when it outranks the candidate already in `current`.
+fn consider<T>(current: &mut Option<Candidate<T>>, value: T, rank: Rank) {
+    if current
+        .as_ref()
+        .is_none_or(|current| rank.outranks(current.rank))
+    {
+        *current = Some(Candidate { value, rank });
     }
 }
