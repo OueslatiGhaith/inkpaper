@@ -6,7 +6,10 @@ use embassy_sync::{
 };
 use embassy_time::{Duration, Timer};
 
-use crate::firmware::i2c_bus::SharedI2cDevice;
+use crate::firmware::{
+    i2c_bus::SharedI2cDevice,
+    rpc::{self, Reply},
+};
 
 const INVALID_RECHECK_SECS: u64 = 30;
 const ERROR_RETRY_SECS: u64 = 5;
@@ -38,15 +41,16 @@ pub enum RtcSyncResult {
     Failed(RtcSyncFailure),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 enum RtcCommand {
-    SetUtc(DateTime),
+    SetUtc {
+        datetime: DateTime,
+        reply: Reply<RtcSyncResult>,
+    },
 }
 
 pub static RTC_UPDATES: Signal<CriticalSectionRawMutex, RtcState> = Signal::new();
 static RTC_COMMANDS: Channel<CriticalSectionRawMutex, RtcCommand, COMMAND_CAPACITY> =
-    Channel::new();
-static RTC_SYNC_RESULTS: Channel<CriticalSectionRawMutex, RtcSyncResult, COMMAND_CAPACITY> =
     Channel::new();
 
 /// ask the RTC task to replace the BM8563 clock with a trusted UTC datetime.
@@ -56,11 +60,12 @@ static RTC_SYNC_RESULTS: Channel<CriticalSectionRawMutex, RtcSyncResult, COMMAND
 /// 2. read the clock back
 /// 3. checked the voltage-low flag
 /// 4. verified that the read-back is within the allowed timing tolerance
-///
-/// There should currently be only 1 synchronization producer at a time
 pub async fn sync_utc(datetime: DateTime) -> RtcSyncResult {
-    RTC_COMMANDS.send(RtcCommand::SetUtc(datetime)).await;
-    RTC_SYNC_RESULTS.receive().await
+    rpc::call(&RTC_COMMANDS, |reply| RtcCommand::SetUtc {
+        datetime,
+        reply,
+    })
+    .await
 }
 
 #[embassy_executor::task]
@@ -76,7 +81,10 @@ pub async fn rtc_task(i2c: SharedI2cDevice) {
     loop {
         match select(RTC_COMMANDS.receive(), Timer::after(next_poll)).await {
             Either::First(command) => match command {
-                RtcCommand::SetUtc(requested) => {
+                RtcCommand::SetUtc {
+                    datetime: requested,
+                    reply,
+                } => {
                     let result = synchronize(&mut rtc, requested).await;
                     match result {
                         RtcSyncResult::Applied(actual) => {
@@ -94,6 +102,7 @@ pub async fn rtc_task(i2c: SharedI2cDevice) {
                             next_poll = Duration::from_secs(ERROR_RETRY_SECS);
                         }
                     }
+                    reply.send(result);
                 }
             },
             Either::Second(_) => {

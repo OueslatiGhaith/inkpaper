@@ -1,7 +1,5 @@
 use defmt::{info, warn};
-use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
-};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use esp_hal::{
     gpio::DriveMode,
     ledc::{
@@ -17,6 +15,8 @@ use esp_hal::{
 };
 use frontlight::{DualPwmFrontlight, Setting};
 
+use crate::firmware::rpc::{self, Reply};
+
 const PWM_FREQUENCY_KHZ: u32 = 10;
 
 /// X4 PRO uses 10-bit LEDC
@@ -28,12 +28,11 @@ const PWM_FULL_SCALE: u16 = 1023;
 const COMMAND_CAPACITY: usize = 4;
 
 static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = Channel::new();
-static OFF_APPLIED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 enum Command {
     Set(Setting),
-    Off,
+    Off(Reply<()>),
 }
 
 pub async fn set(setting: Setting) {
@@ -41,12 +40,7 @@ pub async fn set(setting: Setting) {
 }
 
 pub async fn frontlight_off_and_wait() {
-    // remove any stale acknowledgement before issuing the command whose completion
-    // we actually care about
-    OFF_APPLIED.reset();
-
-    COMMANDS.send(Command::Off).await;
-    OFF_APPLIED.wait().await;
+    rpc::call(&COMMANDS, Command::Off).await;
 }
 
 #[embassy_executor::task]
@@ -101,14 +95,14 @@ pub async fn frontlight_task(
                     warn!("frontlight set failed: {:?}", error);
                 }
             }
-            Command::Off => {
+            Command::Off(reply) => {
                 if let Err(error) = frontlight.off() {
                     warn!("frontlight off failed: {:?}", error);
                 }
 
-                // signal even after an unexpected PWM error. The power path must never
-                // deadlock while trying to ender deep sleep
-                OFF_APPLIED.signal(());
+                // reply even after an unexpected PWM error. The power path must never
+                // deadlock while trying to enter deep sleep
+                reply.send(());
             }
         }
     }
