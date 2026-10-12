@@ -451,13 +451,15 @@ where
     where
         D: RawBlockDevice<SECTOR_SIZE>,
     {
-        if self.reset_requested.swap(false, Ordering::AcqRel) {
-            self.sense = Sense::NONE;
-        }
-
         let mut bytes = [0u8; CBW_LENGTH];
 
         let received = self.endpoint_out.read_transfer(&mut bytes).await?;
+
+        // A bulk-only reset usually lands while this task waits for the next
+        // CBW, so honour it only once that CBW has arrived.
+        if self.reset_requested.swap(false, Ordering::AcqRel) {
+            self.sense = Sense::NONE;
+        }
 
         if received != CBW_LENGTH {
             warn!("USB MSC invalid CBW length={}", received);
@@ -516,6 +518,12 @@ where
         D: RawBlockDevice<SECTOR_SIZE>,
     {
         let cdb = cbw.command();
+
+        // Sense data describes the most recent command, so every command but
+        // REQUEST SENSE starts from a clean slate.
+        if cdb[0] != SCSI_REQUEST_SENSE {
+            self.sense = Sense::NONE;
+        }
 
         match cdb[0] {
             SCSI_READ_6 | SCSI_WRITE_6 | SCSI_READ_10 | SCSI_WRITE_10 | SCSI_READ_12
