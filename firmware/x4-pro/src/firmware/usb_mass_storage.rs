@@ -338,7 +338,9 @@ async fn monitor_host_lifecycle(
     configured: &AtomicBool,
     suspended: &AtomicBool,
 ) -> UsbMassStorageExit {
-    let started_at = Instant::now();
+    // `Some` while no host has the device configured: before the first
+    // configuration, and again after a bus reset or deconfiguration.
+    let mut waiting_since = Some(Instant::now());
 
     let mut ever_configured = false;
     let mut suspended_at: Option<Instant> = None;
@@ -347,18 +349,32 @@ async fn monitor_host_lifecycle(
         let is_configured = configured.load(Ordering::Acquire);
         let is_suspended = suspended.load(Ordering::Acquire);
 
-        if is_configured && !ever_configured {
-            ever_configured = true;
-            info!("USB MSC host configured");
+        if is_configured {
+            if waiting_since.take().is_some() {
+                ever_configured = true;
+                info!("USB MSC host configured");
+            }
+        } else if waiting_since.is_none() {
+            // A cable pull can glitch the bus into a reset before it goes
+            // idle, which drops the configuration without a suspend.
+            info!("USB MSC host configuration lost");
+            waiting_since = Some(Instant::now());
         }
 
-        if !ever_configured {
-            if started_at.elapsed() >= HOST_WAIT_TIMEOUT {
-                info!("USB MSC host wait timed out");
+        if let Some(started_at) = waiting_since
+            && started_at.elapsed() >= HOST_WAIT_TIMEOUT
+        {
+            info!("USB MSC host wait timed out");
 
-                return UsbMassStorageExit::HostTimeout;
-            }
-        } else if is_configured && is_suspended {
+            return UsbMassStorageExit::HostTimeout;
+        }
+
+        // Without VBUS sensing a pulled cable shows up as an idle, suspended
+        // bus. Before the first configuration that is just a host that has
+        // not enumerated yet, but afterwards it means the host is gone,
+        // whether or not a reset dropped the configuration first. Reset and
+        // deconfiguration clear the suspended flag, so it is never stale.
+        if ever_configured && is_suspended {
             match suspended_at {
                 Some(started_at) if started_at.elapsed() >= HOST_SUSPEND_TIMEOUT => {
                     info!("USB MSC host suspend timed out");
