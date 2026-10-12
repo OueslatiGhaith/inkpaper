@@ -40,12 +40,6 @@ impl InkPaperApp {
             return;
         };
 
-        // EPUB is the first reader format. Other file types remain visible in Browse Files
-        // but intentionally do nothing until their corresponding reader/viewer exists.
-        if !file.is_epub() {
-            return;
-        }
-
         let (path, title) = file.into_reader_parts();
 
         self.reader.open(path, title);

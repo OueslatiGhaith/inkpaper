@@ -57,12 +57,6 @@ pub(crate) struct BrowseFile {
 }
 
 impl BrowseFile {
-    pub(crate) fn is_epub(&self) -> bool {
-        split_name_extension(&self.name)
-            .1
-            .eq_ignore_ascii_case(".epub")
-    }
-
     pub(crate) fn into_reader_parts(self) -> (String, String) {
         let title = split_name_extension(&self.name).0.to_owned();
 
@@ -78,7 +72,10 @@ pub struct BrowseListing {
 
 impl BrowseListing {
     pub fn new(path: impl Into<String>, mut entries: Vec<BrowseEntry>) -> Self {
-        entries.retain(|entry| !is_hidden(&entry.name));
+        entries.retain(|entry| {
+            !is_hidden(&entry.name)
+                && (entry.kind == BrowseEntryKind::Directory || is_readable(&entry.name))
+        });
         entries.sort_unstable_by(|left, right| match (left.kind, right.kind) {
             (BrowseEntryKind::Directory, BrowseEntryKind::File) => Ordering::Less,
             (BrowseEntryKind::File, BrowseEntryKind::Directory) => Ordering::Greater,
@@ -242,6 +239,12 @@ impl BrowserState {
 /// the folder Windows leaves on every volume.
 fn is_hidden(name: &str) -> bool {
     name.starts_with('.') || name.eq_ignore_ascii_case("System Volume Information")
+}
+
+/// Like crosspoint, only files the reader can open are listed. EPUB is the first
+/// reader format; other formats join here as their readers land.
+fn is_readable(name: &str) -> bool {
+    split_name_extension(name).1.eq_ignore_ascii_case(".epub")
 }
 
 /// Case-insensitive and number-aware, so "book 2" sorts before "Book 10" (ported from
