@@ -70,6 +70,18 @@ where
         self.driver.poll().await
     }
 
+    /// The X4 Pro's GT911 is configured for a low-level INT, held low while
+    /// it has frames to report.
+    fn frame_pending(&self) -> bool {
+        self.interrupt.is_low()
+    }
+
+    /// Waits for INT to go low. A level wait returns at once if it already
+    /// is, so a frame that lands before the wait is armed isn't missed.
+    async fn wait_for_frame(&mut self) {
+        self.interrupt.wait_for_low().await;
+    }
+
     async fn probe_addresses(&mut self) -> Result<ProductInfo, gt911::Error<I2C::Error>> {
         self.driver.set_address(PRIMARY_ADDRESS);
         if let Ok(info) = self.driver.product_info().await {
@@ -154,7 +166,13 @@ pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
                 .await;
         }
 
-        Timer::after(Duration::from_millis(POLL_INTERVAL_MS)).await;
+        // poll while the GT911 has frames to report, and while a finger or
+        // the home key is down so the long press is timed
+        if touch.frame_pending() || gesture.is_touching() || home_pressed {
+            Timer::after(Duration::from_millis(POLL_INTERVAL_MS)).await;
+        } else {
+            touch.wait_for_frame().await;
+        }
     }
 }
 
