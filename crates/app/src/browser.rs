@@ -82,7 +82,7 @@ impl BrowseListing {
         entries.sort_unstable_by(|left, right| match (left.kind, right.kind) {
             (BrowseEntryKind::Directory, BrowseEntryKind::File) => Ordering::Less,
             (BrowseEntryKind::File, BrowseEntryKind::Directory) => Ordering::Greater,
-            _ => left.name.cmp(&right.name),
+            _ => natural_cmp(&left.name, &right.name),
         });
 
         Self {
@@ -242,6 +242,64 @@ impl BrowserState {
 /// the folder Windows leaves on every volume.
 fn is_hidden(name: &str) -> bool {
     name.starts_with('.') || name.eq_ignore_ascii_case("System Volume Information")
+}
+
+/// Case-insensitive and number-aware, so "book 2" sorts before "Book 10" (ported from
+/// crosspoint's `naturalLess`). Names it calls equal fall back to byte order, keeping the
+/// listing order stable across reloads.
+fn natural_cmp(left: &str, right: &str) -> Ordering {
+    natural_order(left.as_bytes(), right.as_bytes()).then_with(|| left.cmp(right))
+}
+
+fn natural_order(mut left: &[u8], mut right: &[u8]) -> Ordering {
+    loop {
+        match (left.first(), right.first()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+
+            (Some(l), Some(r)) if l.is_ascii_digit() && r.is_ascii_digit() => {
+                let (left_digits, left_rest) = split_number(left);
+                let (right_digits, right_rest) = split_number(right);
+
+                // without leading zeros, the shorter run is the smaller number
+                let order = left_digits
+                    .len()
+                    .cmp(&right_digits.len())
+                    .then_with(|| left_digits.cmp(right_digits));
+
+                if order != Ordering::Equal {
+                    return order;
+                }
+
+                left = left_rest;
+                right = right_rest;
+            }
+
+            (Some(l), Some(r)) => {
+                let order = l.to_ascii_lowercase().cmp(&r.to_ascii_lowercase());
+
+                if order != Ordering::Equal {
+                    return order;
+                }
+
+                left = &left[1..];
+                right = &right[1..];
+            }
+        }
+    }
+}
+
+/// a leading run of digits without its leading zeros, and the bytes after it
+fn split_number(bytes: &[u8]) -> (&[u8], &[u8]) {
+    let end = bytes
+        .iter()
+        .position(|byte| !byte.is_ascii_digit())
+        .unwrap_or(bytes.len());
+    let (digits, rest) = bytes.split_at(end);
+    let zeros = digits.iter().take_while(|&&byte| byte == b'0').count();
+
+    (&digits[zeros..], rest)
 }
 
 fn split_name_extension(name: &str) -> (&str, &str) {
