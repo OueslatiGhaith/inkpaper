@@ -8,7 +8,7 @@ use defmt::{debug, warn};
 use hadris_fat::r#async::{DirectoryEntry, FatVolume, FileEntry};
 use hadris_io::r#async::{Read as HadrisRead, Seek as HadrisSeek};
 
-use crate::firmware::storage::{StorageEntry, StorageError, state::INKPAPER_DIRECTORY_NAME};
+use crate::firmware::storage::{StorageEntry, StorageError};
 
 pub(super) async fn list_directory<D>(
     filesystem: &FatVolume<D>,
@@ -53,10 +53,6 @@ where
         let name = owned_entry_name(&entry);
 
         if name == "." || name == ".." {
-            continue;
-        }
-
-        if path == "/" && name.eq_ignore_ascii_case(INKPAPER_DIRECTORY_NAME) {
             continue;
         }
 
