@@ -11,9 +11,11 @@ const MAX_WORD_BYTES: usize = 256;
 /// the big-endian offset and size after each word
 const ENTRY_TAIL_BYTES: usize = 8;
 
-const MAX_ENTRY_BYTES: usize = MAX_WORD_BYTES + ENTRY_TAIL_BYTES;
+/// The longest entry, all a reader of one entry needs to read
+pub(crate) const MAX_ENTRY_BYTES: usize = MAX_WORD_BYTES + ENTRY_TAIL_BYTES;
 
-const BUFFER_BYTES: usize = 4096;
+/// What a reader of many entries reads at a time
+pub(crate) const BUFFER_BYTES: usize = 4096;
 
 /// One `.idx` entry: a word and where its definition sits in the `.dict`.
 pub(crate) struct IndexEntry<'a> {
@@ -27,6 +29,8 @@ pub(crate) struct IndexReader<'s, S> {
     source: &'s mut S,
     len: u64,
     buffer: Vec<u8>,
+    /// how much to read at a time, at least [`MAX_ENTRY_BYTES`]
+    buffer_bytes: usize,
     /// the file offset of the buffer's first byte
     buffer_start: u64,
     /// the file offset of the next entry
@@ -37,14 +41,20 @@ impl<'s, S> IndexReader<'s, S>
 where
     S: EpubSource,
 {
-    pub fn new(source: &'s mut S, len: u64, position: u64) -> Self {
+    pub fn new(source: &'s mut S, len: u64, position: u64, buffer_bytes: usize) -> Self {
         Self {
             source,
             len,
             buffer: Vec::new(),
+            buffer_bytes: buffer_bytes.max(MAX_ENTRY_BYTES),
             buffer_start: 0,
             position,
         }
+    }
+
+    /// The file offset of the next entry.
+    pub const fn position(&self) -> u64 {
+        self.position
     }
 
     pub async fn next(&mut self) -> Result<Option<IndexEntry<'_>>, Error<S::Error>> {
@@ -57,7 +67,7 @@ where
 
         // refill whenever the longest possible entry might not fit what's left
         if self.position < self.buffer_start || entry_end > buffer_end {
-            let read_len = (self.len - self.position).min(BUFFER_BYTES as u64) as usize;
+            let read_len = (self.len - self.position).min(self.buffer_bytes as u64) as usize;
 
             self.buffer.resize(read_len, 0);
             self.source
