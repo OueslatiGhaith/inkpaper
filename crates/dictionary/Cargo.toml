@@ -1,0 +1,11 @@
+[package]
+name = "inkpaper-dictionary"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# its random-access source trait, which the platforms already implement
+inkpaper-epub = { path = "../epub" }
+
+[dev-dependencies]
+futures-lite = { workspace = true }

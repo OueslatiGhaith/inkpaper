@@ -2204,6 +2204,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "inkpaper-dictionary"
+version = "0.1.0"
+dependencies = [
+ "futures-lite",
+ "inkpaper-epub",
+]
+
+[[package]]
 name = "inkpaper-epub"
 version = "0.1.0"
 dependencies = [
