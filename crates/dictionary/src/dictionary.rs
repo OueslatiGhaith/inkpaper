@@ -7,6 +7,7 @@ use crate::{
     definition::{Definition, parse_fields},
     dictzip::DictZip,
     error::Error,
+    forms::word_forms,
     index::{BUFFER_BYTES, IndexReader, MAX_ENTRY_BYTES, compare_folded},
     info::DictionaryInfo,
     samples::{IndexSamples, SAMPLE_INTERVAL},
@@ -99,11 +100,26 @@ where
             .insert(IndexSamples::new(self.index_len, offsets)))
     }
 
-    /// The definition of `word`, matched the way StarDict sorts: ASCII
-    /// letters in any case. An entry spelled exactly like `word` wins over
-    /// one in another case.
+    /// The definition of `word` as a page gives it: without the punctuation
+    /// around it, then by the English forms it could be inflected from, like
+    /// `walk` for `walking`.
     pub async fn lookup(&mut self, word: &str) -> Result<Option<Definition>, Error<S::Error>> {
-        let target = word.as_bytes();
+        for form in word_forms(word) {
+            if let Some((headword, offset, size)) = self.locate(form.as_bytes()).await? {
+                return self.read_definition(headword, offset, size).await.map(Some);
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// The headword matching `target` the way StarDict sorts, ASCII letters
+    /// in any case, and where its definition is. An entry spelled exactly
+    /// like `target` wins over one in another case.
+    async fn locate(
+        &mut self,
+        target: &[u8],
+    ) -> Result<Option<(String, u32, u32)>, Error<S::Error>> {
         let start = self.scan_start(target).await?;
 
         let mut entries = IndexReader::new(&mut self.index, self.index_len, start, BUFFER_BYTES);
@@ -129,11 +145,7 @@ where
             }
         }
 
-        let Some((headword, offset, size)) = found else {
-            return Ok(None);
-        };
-
-        self.read_definition(headword, offset, size).await.map(Some)
+        Ok(found)
     }
 
     /// Where to start reading entries for `target`: the last sample sorting

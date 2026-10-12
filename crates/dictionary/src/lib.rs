@@ -10,6 +10,7 @@ mod definition;
 mod dictionary;
 mod dictzip;
 mod error;
+mod forms;
 mod index;
 mod info;
 mod samples;
