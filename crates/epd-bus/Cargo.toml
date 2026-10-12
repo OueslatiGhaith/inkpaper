@@ -9,5 +9,6 @@ defmt = ["dep:defmt", "embedded-hal/defmt-03", "embedded-hal-async/defmt-03"]
 
 [dependencies]
 defmt = { workspace = true, optional = true }
+embassy-futures = "0.1.2"
 embedded-hal = { workspace = true }
 embedded-hal-async = { workspace = true }

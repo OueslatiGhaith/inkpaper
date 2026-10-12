@@ -1,7 +1,13 @@
 #![no_std]
 
+use embassy_futures::select::{Either, select};
 use embedded_hal::digital::{InputPin, OutputPin};
-use embedded_hal_async::{delay::DelayNs, spi::SpiBus};
+use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiBus};
+
+/// longest a BUSY wait may last before the panel is treated as stuck.
+///
+/// a cold full refresh takes a few seconds; this matches crosspoint's bound
+const BUSY_TIMEOUT_MS: u32 = 30_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -25,6 +31,7 @@ pub enum Error<Spi, Cs, Dc, Reset, Busy> {
     DataCommand(Dc),
     Reset(Reset),
     Busy(Busy),
+    BusyTimeout,
     Protocol(ProtocolError),
 }
 
@@ -79,7 +86,7 @@ where
     CS: OutputPin,
     DC: OutputPin,
     RESET: OutputPin,
-    BUSY: InputPin,
+    BUSY: InputPin + Wait,
 {
     pub fn new(
         spi: SPI,
@@ -141,7 +148,7 @@ where
     CS: OutputPin,
     DC: OutputPin,
     RESET: OutputPin,
-    BUSY: InputPin,
+    BUSY: InputPin + Wait,
 {
     type Error = Error<SPI::Error, CS::Error, DC::Error, RESET::Error, BUSY::Error>;
 
@@ -231,11 +238,17 @@ where
     where
         D: DelayNs,
     {
-        while self.is_busy(polarity)? {
-            delay.delay_ms(1).await;
-        }
+        let idle = async {
+            match polarity {
+                BusyPolarity::ActiveHigh => self.busy.wait_for_low().await,
+                BusyPolarity::ActiveLow => self.busy.wait_for_high().await,
+            }
+        };
 
-        Ok(())
+        match select(idle, delay.delay_ms(BUSY_TIMEOUT_MS)).await {
+            Either::First(result) => result.map_err(Error::Busy),
+            Either::Second(()) => Err(Error::BusyTimeout),
+        }
     }
 
     async fn begin_data_stream(&mut self) -> Result<(), Self::Error> {
