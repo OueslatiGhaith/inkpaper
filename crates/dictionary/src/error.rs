@@ -6,6 +6,11 @@ pub enum Error<E> {
     MalformedIndex,
     /// an `.idx` entry points past the end of the `.dict`
     DefinitionOutOfBounds,
+    /// a `.dict.dz` without dictzip's chunk table, or with one that doesn't
+    /// fit the file
+    MalformedDictZip,
+    /// a `.dict.dz` chunk that doesn't inflate to its bytes
+    Inflate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

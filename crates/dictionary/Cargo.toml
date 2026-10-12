@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 # its random-access source trait, which the platforms already implement
 inkpaper-epub = { path = "../epub" }
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 
 [dev-dependencies]
 futures-lite = { workspace = true }
+# the dictzip tests' builder deflates chunks
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }

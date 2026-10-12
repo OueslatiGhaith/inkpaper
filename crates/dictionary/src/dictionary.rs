@@ -5,6 +5,7 @@ use inkpaper_epub::EpubSource;
 
 use crate::{
     definition::{Definition, parse_fields},
+    dictzip::DictZip,
     error::Error,
     index::{BUFFER_BYTES, IndexReader, MAX_ENTRY_BYTES, compare_folded},
     info::DictionaryInfo,
@@ -15,13 +16,17 @@ use crate::{
 /// cut short.
 const MAX_DEFINITION_BYTES: u32 = 64 * 1024;
 
-/// An open StarDict dictionary: its `.idx` and `.dict`, read in place.
+/// An open StarDict dictionary: its `.idx` and its `.dict` or `.dict.dz`,
+/// read in place.
 pub struct Dictionary<S> {
     info: DictionaryInfo,
     index: S,
     index_len: u64,
     data: S,
+    /// the definitions' size, inflated for a `.dict.dz`
     data_len: u64,
+    /// the chunk table of a `.dict.dz`
+    dictzip: Option<DictZip>,
     /// without them a lookup reads the index from its start
     samples: Option<IndexSamples>,
 }
@@ -36,7 +41,10 @@ where
         mut data: S,
     ) -> Result<Self, Error<S::Error>> {
         let index_len = index.len().await.map_err(Error::Source)?;
-        let data_len = data.len().await.map_err(Error::Source)?;
+        let file_len = data.len().await.map_err(Error::Source)?;
+
+        let dictzip = DictZip::parse(&mut data, file_len).await?;
+        let data_len = dictzip.as_ref().map_or(file_len, DictZip::len);
 
         Ok(Self {
             info,
@@ -44,6 +52,7 @@ where
             index_len,
             data,
             data_len,
+            dictzip,
             samples: None,
         })
     }
@@ -173,10 +182,18 @@ where
 
         let mut data = vec![0; size.min(MAX_DEFINITION_BYTES) as usize];
 
-        self.data
-            .read_exact_at(u64::from(offset), &mut data)
-            .await
-            .map_err(Error::Source)?;
+        match &self.dictzip {
+            Some(dictzip) => {
+                dictzip
+                    .read(&mut self.data, u64::from(offset), &mut data)
+                    .await?
+            }
+            None => self
+                .data
+                .read_exact_at(u64::from(offset), &mut data)
+                .await
+                .map_err(Error::Source)?,
+        }
 
         let fields = parse_fields(&data, self.info.same_type_sequence());
 

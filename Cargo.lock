@@ -2209,6 +2209,7 @@ version = "0.1.0"
 dependencies = [
  "futures-lite",
  "inkpaper-epub",
+ "miniz_oxide 0.9.1",
 ]
 
 [[package]]

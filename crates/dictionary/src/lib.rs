@@ -1,6 +1,6 @@
 //! Offline lookups in StarDict dictionaries, read from the card a piece at a
-//! time. Follows crosspoint's reader: an uncompressed `.idx`, a `.dict`, and
-//! the `.ifo` describing them.
+//! time. Follows crosspoint's reader: an uncompressed `.idx`, a `.dict` or
+//! `.dict.dz`, and the `.ifo` describing them.
 
 #![no_std]
 
@@ -8,6 +8,7 @@ extern crate alloc;
 
 mod definition;
 mod dictionary;
+mod dictzip;
 mod error;
 mod index;
 mod info;
