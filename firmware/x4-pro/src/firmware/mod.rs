@@ -461,7 +461,7 @@ async fn main(spawner: Spawner) -> ! {
 
 async fn stay_alive() -> ! {
     loop {
-        Timer::after(Duration::from_secs(60)).await;
+        core::future::pending::<()>().await;
     }
 }
 

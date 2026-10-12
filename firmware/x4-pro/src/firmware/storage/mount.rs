@@ -290,7 +290,7 @@ async fn power_cycle_sd(sd_power: &mut SdPower<'_>) {
 
 async fn hold_forever() {
     loop {
-        Timer::after(Duration::from_secs(60)).await;
+        core::future::pending::<()>().await;
     }
 }
 
