@@ -78,6 +78,7 @@ pub struct BrowseListing {
 
 impl BrowseListing {
     pub fn new(path: impl Into<String>, mut entries: Vec<BrowseEntry>) -> Self {
+        entries.retain(|entry| !is_hidden(&entry.name));
         entries.sort_unstable_by(|left, right| match (left.kind, right.kind) {
             (BrowseEntryKind::Directory, BrowseEntryKind::File) => Ordering::Less,
             (BrowseEntryKind::File, BrowseEntryKind::Directory) => Ordering::Greater,
@@ -235,6 +236,12 @@ impl BrowserState {
             name: entry.name.clone(),
         })
     }
+}
+
+/// Dotfiles (including macOS `._*` resource forks, `.Trashes`, `.fseventsd`) and
+/// the folder Windows leaves on every volume.
+fn is_hidden(name: &str) -> bool {
+    name.starts_with('.') || name.eq_ignore_ascii_case("System Volume Information")
 }
 
 fn split_name_extension(name: &str) -> (&str, &str) {
