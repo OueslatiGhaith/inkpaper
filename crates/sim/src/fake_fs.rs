@@ -6,8 +6,8 @@ use std::{
 use inkpaper_app::PlatformEntry;
 
 pub(super) fn simulator_listing(path: &str) -> Option<Vec<PlatformEntry>> {
-    if let Some(fonts) = fonts_path(path) {
-        return host_listing(&fonts);
+    if let Some(folder) = card_folder_path(path) {
+        return host_listing(&folder);
     }
 
     let entries = match path {
@@ -91,10 +91,18 @@ fn fixtures_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
 }
 
-/// `/fonts` is the repository's font fixtures, so the reader has card fonts
+/// The folders of the card's fonts and dictionaries, each the repository's
+/// fixtures of the same name, so the reader has card fonts and dictionaries
 /// to offer
-pub(super) fn fonts_path(path: &str) -> Option<PathBuf> {
-    let relative = path.strip_prefix("/fonts")?;
+const CARD_FOLDERS: [&str; 2] = ["fonts", "dictionaries"];
+
+/// Where a path in `/fonts` or `/dictionaries` is among the fixtures.
+pub(super) fn card_folder_path(path: &str) -> Option<PathBuf> {
+    let (folder, relative) = CARD_FOLDERS.iter().find_map(|&folder| {
+        let relative = path.strip_prefix('/')?.strip_prefix(folder)?;
+
+        Some((folder, relative))
+    })?;
 
     if !(relative.is_empty() || relative.starts_with('/')) {
         return None;
@@ -109,7 +117,7 @@ pub(super) fn fonts_path(path: &str) -> Option<PathBuf> {
         return None;
     }
 
-    Some(fixtures_directory().join("fonts").join(relative))
+    Some(fixtures_directory().join(folder).join(relative))
 }
 
 fn host_listing(directory: &Path) -> Option<Vec<PlatformEntry>> {

@@ -3916,6 +3916,7 @@ dependencies = [
  "embedded-graphics",
  "indoc",
  "inkpaper-ui",
+ "miniz_oxide 0.9.1",
  "png",
  "zip",
 ]

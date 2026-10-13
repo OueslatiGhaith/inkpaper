@@ -10,5 +10,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 embedded-graphics = { workspace = true }
 indoc = "2.0.7"
 inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "eink", "hinting"] }
+# the dictionary fixtures' dictzip chunks
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 png = "0.18.1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

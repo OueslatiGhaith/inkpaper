@@ -1,4 +1,5 @@
-//! EPUB fixtures for tests and manual checks, written to `/fixtures`.
+//! EPUB fixtures for tests and manual checks, written to `/fixtures`, and
+//! the simulator's dictionaries, written to `/fixtures/dictionaries`.
 //!
 //! most fixtures are well-formed books made with [`Book`]. Fixtures that test
 //! unusual or broken files spell out their files with [`Epub`].
@@ -15,6 +16,7 @@ use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 mod book;
 mod compat;
 mod covers;
+mod dictionaries;
 mod images;
 mod navigation;
 mod pixels;
@@ -68,7 +70,7 @@ pub fn generate() -> Result<()> {
         println!("  {:<40} {size:>8} bytes", epub.file_name());
     }
 
-    Ok(())
+    dictionaries::generate(&directory.join("dictionaries"))
 }
 
 fn fixtures_directory() -> PathBuf {

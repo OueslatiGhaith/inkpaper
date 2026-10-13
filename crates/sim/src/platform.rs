@@ -9,7 +9,7 @@ use inkpaper_app::{
 };
 
 use crate::{
-    fake_fs::{fonts_path, simulator_listing},
+    fake_fs::{card_folder_path, simulator_listing},
     host_epub::HostFileSource,
     radio::SimulatedRadio,
 };
@@ -53,15 +53,18 @@ impl AppPlatform for SimulatorPlatform {
         &mut self,
         path: &str,
     ) -> Result<Self::RandomAccessSource, Self::Error> {
-        let host_path = simulator_epub_path(path).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "simulated EPUB does not exist")
-        })?;
+        // books, and the dictionaries' files
+        let host_path = simulator_epub_path(path)
+            .or_else(|| card_folder_path(path))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "simulated file does not exist")
+            })?;
 
         HostFileSource::open(&host_path)
     }
 
     async fn read_file(&mut self, path: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
-        let host_path = fonts_path(path).ok_or_else(|| {
+        let host_path = card_folder_path(path).ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "simulated file does not exist")
         })?;
 
