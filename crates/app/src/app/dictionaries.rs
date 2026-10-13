@@ -63,15 +63,24 @@ impl InkPaperApp {
         self.dictionaries.names().get(index).map(String::as_str)
     }
 
-    /// Looks `word` up in the chosen dictionary. Returns whether there's one
-    /// to look it up in.
-    #[expect(dead_code, reason = "the reader looks words up from the next commit")]
-    pub(crate) fn look_up_word(&mut self, word: String, cx: &mut Context<'_, Self>) -> bool {
+    /// Selects the word held at `position` on the reader's page and looks it
+    /// up in the chosen dictionary. Returns whether there was a word and a
+    /// dictionary to look it up in.
+    pub(crate) fn look_up_word_at(&mut self, position: Point, cx: &mut Context<'_, Self>) -> bool {
         let Some(dictionary) = self.reader.dictionary() else {
             return false;
         };
 
-        self.lookup.start(dictionary, word);
+        let card = self.text_settings.card_font();
+
+        let Some(word) = self
+            .reader
+            .select_word(position.x.get(), position.y.get(), card)
+        else {
+            return false;
+        };
+
+        self.lookup.start(dictionary, String::from(word));
         cx.notify();
 
         true

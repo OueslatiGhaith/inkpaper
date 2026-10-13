@@ -5,6 +5,7 @@ mod measure_cache;
 mod measurer;
 mod preferences;
 mod progress;
+mod selection;
 mod state;
 mod text_settings;
 mod text_settings_screen;
@@ -19,6 +20,7 @@ pub(crate) use loader::ReaderSession;
 #[cfg(test)]
 pub(crate) use loader::load_reader_document;
 pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesRequest};
+pub(crate) use selection::WordSelection;
 pub(crate) use state::{
     JumpTarget, ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState,
 };

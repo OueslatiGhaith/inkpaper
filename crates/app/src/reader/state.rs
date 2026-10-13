@@ -6,8 +6,14 @@ use inkpaper_reader::{Page, PageItem, ReadingPosition, Rect};
 use crate::{
     ReaderChapter, ReaderDocument, ReaderPreferences, ReaderPreferencesRequest,
     ReadingHistoryEntry,
+    fonts::{CardFont, card_for},
     paging::{PageTurn, Pager},
-    reader::{TableOfContents, TextSetting, TextSettings, TocEntry, toc::current_toc_index},
+    reader::{
+        TableOfContents, TextSetting, TextSettings, TocEntry, WordSelection,
+        measurer::{ReaderFonts, ReaderMeasurer},
+        selection::word_at,
+        toc::current_toc_index,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +124,8 @@ pub(crate) struct ReaderState {
     text: TextSettings,
     /// the dictionary words are looked up in
     dictionary: Option<u8>,
+    /// the word held to look up, on the page it was held on
+    selection: Option<WordSelection>,
 
     failed: bool,
     chrome: ReaderChromeState,
@@ -140,6 +148,7 @@ impl Default for ReaderState {
             page_index: 0,
             text: TextSettings::default(),
             dictionary: None,
+            selection: None,
             failed: false,
             chrome: ReaderChromeState::default(),
             toc: TableOfContents::NotLoaded,
@@ -198,6 +207,30 @@ impl ReaderState {
 
     pub(crate) const fn dictionary(&self) -> Option<u8> {
         self.dictionary
+    }
+
+    /// Selects the word at `x` and `y` on the screen, measured in the font
+    /// the page was laid out in, `card` when it's the reader's. Returns it.
+    pub(crate) fn select_word(&mut self, x: i32, y: i32, card: Option<&CardFont>) -> Option<&str> {
+        let bounds = self.text.margin().page_bounds();
+        let x = u32::try_from(x).ok()?.checked_sub(bounds.left)?;
+        let y = u32::try_from(y).ok()?.checked_sub(bounds.top)?;
+
+        let fonts = ReaderFonts::new(card_for(self.text.font(), card)).ok()?;
+        let mut measurer = ReaderMeasurer::new(&fonts, Default::default());
+
+        let selection = word_at(self.page()?, x, y, &mut measurer)?;
+
+        Some(self.selection.insert(selection).word())
+    }
+
+    /// The selected word, while its page is the one shown.
+    pub(crate) fn selection(&self) -> Option<&WordSelection> {
+        let position = self.page()?.position();
+
+        self.selection
+            .as_ref()
+            .filter(|selection| selection.position() == position)
     }
 
     /// Looks words up in `dictionary` from now on, and saves it. Returns

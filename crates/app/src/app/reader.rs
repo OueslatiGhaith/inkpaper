@@ -382,6 +382,11 @@ impl InkPaperApp {
             self.text_settings.card_font(),
         );
 
-        paint_reader_page(page, document, family, paint);
+        let selected = self
+            .reader
+            .selection()
+            .map_or(&[][..], |selection| selection.pieces());
+
+        paint_reader_page(page, document, family, selected, paint);
     }
 }

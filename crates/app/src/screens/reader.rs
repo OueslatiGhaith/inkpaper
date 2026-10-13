@@ -278,6 +278,22 @@ impl ScreenInput for ReaderRoute {
         }
     }
 
+    /// Holding a word looks it up, like crosspoint's touch selection, even on
+    /// a link, which then isn't followed.
+    fn long_press(
+        &self,
+        app: &mut InkPaperApp,
+        position: Point,
+        cx: &mut Context<'_, InkPaperApp>,
+    ) -> bool {
+        // the drawer covers the page
+        if app.reader.menu_open() {
+            return false;
+        }
+
+        app.look_up_word_at(position, cx)
+    }
+
     fn drag(
         &self,
         app: &mut InkPaperApp,
