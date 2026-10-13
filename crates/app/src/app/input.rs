@@ -52,6 +52,19 @@ pub(crate) trait ScreenInput {
         false
     }
 
+    /// Handles a move of a touch the screen captured by its long press, to
+    /// `position`.
+    fn held_drag(
+        &self,
+        _app: &mut InkPaperApp,
+        _position: Point,
+        _cx: &mut Context<'_, InkPaperApp>,
+    ) {
+    }
+
+    /// Handles the end of a touch the screen captured by its long press.
+    fn held_release(&self, _app: &mut InkPaperApp, _cx: &mut Context<'_, InkPaperApp>) {}
+
     /// Handles a touch drag no overlay claimed. Called for every move with
     /// the same origin.
     fn drag(
@@ -140,6 +153,7 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
         self.pointer_captured = false;
+        self.pointer_held = false;
 
         if self.input_target() == InputTarget::Blocked {
             return PointerAction::Capture;
@@ -156,6 +170,11 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.pointer_held && self.input_target() == InputTarget::Screen {
+            self.screen().route().held_drag(self, position, cx);
+            return;
+        }
+
         if self.pointer_captured || self.input_target() == InputTarget::Blocked {
             return;
         }
@@ -174,6 +193,13 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
+        if core::mem::take(&mut self.pointer_held) && self.input_target() == InputTarget::Screen {
+            self.pointer_captured = false;
+            self.screen().route().held_release(self, cx);
+
+            return PointerAction::Capture;
+        }
+
         if core::mem::take(&mut self.pointer_captured)
             || self.input_target() == InputTarget::Blocked
         {
@@ -201,6 +227,8 @@ impl InkPaperApp {
         }
 
         if self.screen().route().long_press(self, position, cx) {
+            self.pointer_held = true;
+
             LongPressAction::Capture
         } else {
             LongPressAction::Dispatch
@@ -214,6 +242,7 @@ impl InkPaperApp {
 
     pub(crate) fn cancel_pointer_input(&mut self) {
         self.pointer_captured = false;
+        self.pointer_held = false;
         self.control_center.cancel_pointer();
     }
 

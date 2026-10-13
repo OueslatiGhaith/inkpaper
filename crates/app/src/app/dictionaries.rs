@@ -69,27 +69,55 @@ impl InkPaperApp {
         self.dictionaries.names().get(index).map(String::as_str)
     }
 
-    /// Selects the word held at `position` on the reader's page and looks it
-    /// up in the chosen dictionary. Returns whether there was a word and a
-    /// dictionary to look it up in.
-    pub(crate) fn look_up_word_at(&mut self, position: Point, cx: &mut Context<'_, Self>) -> bool {
-        let Some(dictionary) = self.reader.dictionary() else {
+    /// Selects the word held at `position` on the reader's page, to look up
+    /// once the touch ends. Returns whether there was a word and a dictionary
+    /// to look it up in.
+    pub(crate) fn select_word_at(&mut self, position: Point, cx: &mut Context<'_, Self>) -> bool {
+        if self.reader.dictionary().is_none() {
             return false;
-        };
+        }
 
         let card = self.text_settings.card_font();
 
-        let Some(word) = self
+        if self
             .reader
             .select_word(position.x.get(), position.y.get(), card)
-        else {
+            .is_none()
+        {
             return false;
-        };
+        }
 
-        self.lookup.start(dictionary, String::from(word));
         cx.notify();
 
         true
+    }
+
+    /// Grows or shrinks the selection from the word held to the one the
+    /// touch dragged to at `position`.
+    pub(crate) fn extend_selection_to(&mut self, position: Point, cx: &mut Context<'_, Self>) {
+        let card = self.text_settings.card_font();
+
+        if self
+            .reader
+            .extend_selection(position.x.get(), position.y.get(), card)
+        {
+            cx.notify();
+        }
+    }
+
+    /// Looks the selected words up in the chosen dictionary.
+    pub(crate) fn look_up_selection(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(dictionary) = self.reader.dictionary() else {
+            return;
+        };
+
+        let Some(selection) = self.reader.selection() else {
+            return;
+        };
+
+        self.lookup
+            .start(dictionary, String::from(selection.word()));
+        cx.notify();
     }
 
     pub(crate) fn take_dictionary_request(&mut self) -> Option<DictionaryRequest> {

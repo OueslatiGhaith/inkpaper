@@ -126,6 +126,9 @@ pub struct InkPaperApp {
     control_center: ControlCenterState,
     /// set once a long press took the current touch
     pointer_captured: bool,
+    /// set once the screen's own long press took the current touch, so its
+    /// moves and release still go to the screen
+    pointer_held: bool,
     pub(crate) file_transfer: FileTransferState,
 }
 
@@ -167,6 +170,7 @@ impl InkPaperApp {
             timezone,
             control_center: ControlCenterState::default(),
             pointer_captured: false,
+            pointer_held: false,
             file_transfer: FileTransferState::default(),
         }
     }

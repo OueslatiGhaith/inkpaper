@@ -139,6 +139,11 @@ const HTML_ENTRIES: &[(&str, &str)] = &[
         "justify",
         "<i>verb</i><br/>To space a line's words so it fills the line from margin to margin.",
     ),
+    // a phrase, selected by dragging from its first word
+    (
+        "justified text",
+        "<i>noun</i><br/>Text whose lines all reach both margins, its spaces stretched to fit.",
+    ),
     ("line", "<i>noun</i><br/>A row of words across a page."),
     (
         "move",

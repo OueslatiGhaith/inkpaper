@@ -299,8 +299,9 @@ impl ScreenInput for ReaderRoute {
         }
     }
 
-    /// Holding a word looks it up, like crosspoint's touch selection, even on
-    /// a link, which then isn't followed.
+    /// Holding a word selects it, like crosspoint's touch selection, even on
+    /// a link, which then isn't followed. Dragging on selects the words up
+    /// to the finger, and letting go looks them up.
     fn long_press(
         &self,
         app: &mut InkPaperApp,
@@ -317,7 +318,19 @@ impl ScreenInput for ReaderRoute {
             return true;
         }
 
-        app.look_up_word_at(position, cx)
+        app.select_word_at(position, cx)
+    }
+
+    fn held_drag(&self, app: &mut InkPaperApp, position: Point, cx: &mut Context<'_, InkPaperApp>) {
+        if app.lookup.current().is_none() {
+            app.extend_selection_to(position, cx);
+        }
+    }
+
+    fn held_release(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) {
+        if app.lookup.current().is_none() {
+            app.look_up_selection(cx);
+        }
     }
 
     fn drag(

@@ -1,7 +1,7 @@
-//! The word held on a page, found by measuring the text under the finger, as
-//! pages don't keep where each word sits.
+//! The words held on a page, found by measuring the text under the finger,
+//! as pages don't keep where each word sits.
 
-use alloc::{string::String, vec, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use core::ops::Range;
 
 use inkpaper_reader::{Page, PageItem, ReadingPosition, Rect, TextFragment, TextMeasurer};
@@ -13,15 +13,23 @@ const SLOP: u32 = 6;
 /// against it.
 const HIGHLIGHT_PADDING: u32 = 2;
 
-/// A word held on a page, to look up.
+/// How long a selection can grow, the most a dictionary's word can be.
+const MAX_SELECTION_BYTES: usize = 255;
+
+/// Words held on a page, to look up: the one held, and the ones a drag from
+/// it went over.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WordSelection {
     /// the page it's on
     position: ReadingPosition,
     word: String,
-    /// each text item the word is drawn in, by its index on the page, with
-    /// the bounds of its highlight there: two for a word broken across lines
+    /// each text item the words are drawn in, by its index on the page,
+    /// with the bounds of its highlight there: one a line
     pieces: Vec<(usize, Rect)>,
+    /// the word held
+    anchor: WordSpot,
+    /// the word the drag reached, or the one held
+    end: WordSpot,
 }
 
 impl WordSelection {
@@ -38,6 +46,14 @@ impl WordSelection {
     }
 }
 
+/// A word on a page: its text item's index, and its index among the item's
+/// words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct WordSpot {
+    item: usize,
+    word: usize,
+}
+
 /// The word on `page` under `x` and `y`, which are page coordinates, measured
 /// like the page was laid out.
 pub(super) fn word_at<M: TextMeasurer>(
@@ -46,8 +62,38 @@ pub(super) fn word_at<M: TextMeasurer>(
     y: u32,
     measurer: &mut M,
 ) -> Option<WordSelection> {
-    let items = page.items();
+    let spot = spot_at(page.items(), x, y, measurer)?;
 
+    select(page, spot, spot, measurer)
+}
+
+/// `selection` grown or shrunk to the word under `x` and `y` on `page`, or
+/// `None` when that's no other word, or the words would be too long to look
+/// up.
+pub(super) fn extend_to<M: TextMeasurer>(
+    selection: &WordSelection,
+    page: &Page<'_>,
+    x: u32,
+    y: u32,
+    measurer: &mut M,
+) -> Option<WordSelection> {
+    let end = spot_at(page.items(), x, y, measurer)?;
+
+    if end == selection.end {
+        return None;
+    }
+
+    select(page, selection.anchor, end, measurer)
+        .filter(|extended| extended.word.len() <= MAX_SELECTION_BYTES)
+}
+
+/// The word under `x` and `y`, or the closest one beside it on its line.
+fn spot_at<M: TextMeasurer>(
+    items: &[PageItem<'_>],
+    x: u32,
+    y: u32,
+    measurer: &mut M,
+) -> Option<WordSpot> {
     // the text under the press, or else beside it
     let text_near = |slop| {
         items.iter().position(|item| match item {
@@ -56,56 +102,111 @@ pub(super) fn word_at<M: TextMeasurer>(
         })
     };
 
-    let index = text_near(0).or_else(|| text_near(SLOP))?;
+    let item = text_near(0).or_else(|| text_near(SLOP))?;
+    let words = measure_words(text_item(items, item)?, measurer)?;
 
-    let fragment = text_item(items, index)?;
-    let words = measure_words(fragment, measurer)?;
-
-    // the word under the press, or the closest one beside it
-    let picked = words
+    let word = words
         .iter()
         .enumerate()
         .min_by_key(|(_, word)| distance(word, x))
-        .map(|(picked, _)| picked)?;
+        .map(|(word, _)| word)?;
 
-    let text = fragment.text();
-    let word = &words[picked];
+    Some(WordSpot { item, word })
+}
 
-    let mut selection = WordSelection {
-        position: page.position(),
-        word: String::from(&text[word.range.clone()]),
-        pieces: vec![(index, word.bounds(fragment.bounds()))],
-    };
+/// The words from `anchor` to `end`, in either order, with the rest of a
+/// word either one is part of where it's broken across lines.
+fn select<M: TextMeasurer>(
+    page: &Page<'_>,
+    anchor: WordSpot,
+    end: WordSpot,
+    measurer: &mut M,
+) -> Option<WordSelection> {
+    let items = page.items();
 
-    // a word broken at the end of its line goes on at the start of the next,
-    // unless that's on the next page. The hyphen drawn at the break is
-    // punctuation, so it isn't part of either piece
-    if picked + 1 == words.len()
+    let mut first = anchor.min(end);
+    let mut last = anchor.max(end);
+
+    // a word broken at the end of its line goes on at the start of the
+    // next, unless that's on the next page
+    if first.word == 0
+        && let Some((previous, fragment)) = neighbor(items, first.item, -1)
         && fragment.hyphenated()
-        && let Some((next_index, next)) = neighbor(items, index, 1)
-        && let Some(rest) = measure_words(next, measurer).and_then(|words| words.into_iter().next())
+        && let Some(words) = measure_words(fragment, measurer)
+        && !words.is_empty()
     {
-        selection.word.push_str(&next.text()[rest.range.clone()]);
-        selection
-            .pieces
-            .push((next_index, rest.bounds(next.bounds())));
+        first = WordSpot {
+            item: previous,
+            word: words.len() - 1,
+        };
     }
 
-    if picked == 0
-        && let Some((previous_index, previous)) = neighbor(items, index, -1)
-        && previous.hyphenated()
-        && let Some(start) =
-            measure_words(previous, measurer).and_then(|words| words.into_iter().last())
+    let fragment = text_item(items, last.item)?;
+
+    if fragment.hyphenated()
+        && measure_words(fragment, measurer)?.len() == last.word + 1
+        && let Some((next, fragment)) = neighbor(items, last.item, 1)
+        && measure_words(fragment, measurer).is_some_and(|words| !words.is_empty())
     {
-        selection
-            .word
-            .insert_str(0, &previous.text()[start.range.clone()]);
-        selection
-            .pieces
-            .insert(0, (previous_index, start.bounds(previous.bounds())));
+        last = WordSpot {
+            item: next,
+            word: 0,
+        };
     }
 
-    Some(selection)
+    let mut word = String::new();
+    let mut pieces = Vec::new();
+    // whether the item before ended in a hyphen drawn at its break, which
+    // is punctuation, so its word goes on without it
+    let mut broken = false;
+
+    for item in first.item..=last.item {
+        let Some(fragment) = text_item(items, item) else {
+            continue;
+        };
+
+        let words = measure_words(fragment, measurer)?;
+        let from = if item == first.item { first.word } else { 0 };
+        let to = if item == last.item {
+            last.word
+        } else {
+            words.len().saturating_sub(1)
+        };
+
+        let Some(selected) = words.get(from..=to).filter(|words| !words.is_empty()) else {
+            continue;
+        };
+
+        let (start, finish) = (&selected[0], &selected[selected.len() - 1]);
+
+        if !word.is_empty() && !broken {
+            word.push(' ');
+        }
+
+        // the line as written between them, punctuation and all
+        word.push_str(&fragment.text()[start.range.start..finish.range.end]);
+        let line = fragment.bounds();
+
+        pieces.push((
+            item,
+            Rect::new(
+                start.left,
+                line.y(),
+                finish.right - start.left,
+                line.height(),
+            ),
+        ));
+
+        broken = fragment.hyphenated() && to + 1 == words.len();
+    }
+
+    (!pieces.is_empty()).then(|| WordSelection {
+        position: page.position(),
+        word,
+        pieces,
+        anchor,
+        end,
+    })
 }
 
 /// A word of a text item, and where its highlight goes across the item.
@@ -114,13 +215,6 @@ struct Word {
     range: Range<usize>,
     left: u32,
     right: u32,
-}
-
-impl Word {
-    /// Its bounds on the page, the height of the item's line.
-    fn bounds(&self, line: Rect) -> Rect {
-        Rect::new(self.left, line.y(), self.right - self.left, line.height())
-    }
 }
 
 /// The words of `fragment`, split at whitespace and without the punctuation
