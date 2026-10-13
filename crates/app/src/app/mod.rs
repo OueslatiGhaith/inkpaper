@@ -9,7 +9,7 @@ use crate::{
         reader_menu::ReaderMenuView,
     },
     control_center::ControlCenterState,
-    dictionaries::DictionarySettings,
+    dictionaries::{DictionarySettings, WordLookup},
     reader::{ReaderState, TextSettingsState},
     reading_history::ReadingHistoryState,
     screens::{
@@ -100,6 +100,8 @@ pub struct InkPaperApp {
     pub(crate) text_settings: TextSettingsState,
     /// the dictionary picker of Settings
     pub(crate) dictionaries: DictionarySettings,
+    /// the word looked up in the dictionary, and its definition
+    pub(crate) lookup: WordLookup,
     pub(crate) reading_history: ReadingHistoryState,
     /// the current book's cover on the home screen
     pub(crate) cover: CoverState,
@@ -148,6 +150,7 @@ impl InkPaperApp {
             reader: ReaderState::default(),
             text_settings: TextSettingsState::default(),
             dictionaries: DictionarySettings::default(),
+            lookup: WordLookup::default(),
             reading_history: ReadingHistoryState::default(),
             cover: CoverState::default(),
             battery,

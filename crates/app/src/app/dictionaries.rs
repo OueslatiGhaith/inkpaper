@@ -3,6 +3,7 @@ use alloc::{string::String, vec::Vec};
 use inkpaper_ui::prelude::*;
 
 use super::InkPaperApp;
+use crate::dictionaries::{DictionaryRequest, LookupOutcome};
 
 impl InkPaperApp {
     /// The dictionaries found on the card.
@@ -60,5 +61,34 @@ impl InkPaperApp {
         let index = usize::from(self.reader.dictionary()?);
 
         self.dictionaries.names().get(index).map(String::as_str)
+    }
+
+    /// Looks `word` up in the chosen dictionary. Returns whether there's one
+    /// to look it up in.
+    #[expect(dead_code, reason = "the reader looks words up from the next commit")]
+    pub(crate) fn look_up_word(&mut self, word: String, cx: &mut Context<'_, Self>) -> bool {
+        let Some(dictionary) = self.reader.dictionary() else {
+            return false;
+        };
+
+        self.lookup.start(dictionary, word);
+        cx.notify();
+
+        true
+    }
+
+    pub(crate) fn take_dictionary_request(&mut self) -> Option<DictionaryRequest> {
+        self.lookup.take_request()
+    }
+
+    pub(crate) fn apply_dictionary_lookup(
+        &mut self,
+        word: &str,
+        outcome: LookupOutcome,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.lookup.finish(word, outcome) {
+            cx.notify();
+        }
     }
 }

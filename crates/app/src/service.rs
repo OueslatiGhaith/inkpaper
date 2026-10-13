@@ -5,6 +5,8 @@ use alloc::boxed::Box;
 use inkpaper_epub::{Epub, EpubSource};
 use inkpaper_ui::{Entity, EntityAccessError, ImageSource, ResourceRuntimeApi, RuntimeApi};
 
+use inkpaper_dictionary::{Dictionary, IndexSamples};
+
 use crate::{
     BookCover, BrowseEntry, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure,
     DeviceKey, FileTransferRequest, FrontlightPreferences, FrontlightPreferencesRequest,
@@ -12,7 +14,7 @@ use crate::{
     ReaderSession, ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials,
     WifiJoinFailure, WifiJoinPlan, WifiScanError,
     cover::read_cover_image,
-    dictionaries::{DictionaryFolder, find_dictionaries},
+    dictionaries::{DictionaryFolder, DictionaryRequest, LookupOutcome, find_dictionaries},
     fonts::{CardFont, FontFamily, card_for, find_font_families, load_card_font},
     reader::{GrayImage, ReaderFont, TextSettings},
     typography::register_card_font,
@@ -34,6 +36,9 @@ const MAX_READING_HISTORY_BYTES: usize = 64 * 1024;
 /// room for a font family's and a dictionary's names, each up to FAT's 255
 /// bytes
 const MAX_READER_PREFERENCES_BYTES: usize = 1024;
+/// a dictionary's index samples, as much as a state file holds: those of an
+/// index of up to some 3.5 million words
+const MAX_DICTIONARY_SAMPLES_BYTES: usize = 56 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlatformEntryKind {
@@ -162,6 +167,9 @@ where
 
     /// the dictionaries on the card, found at startup
     dictionaries: Vec<DictionaryFolder>,
+    /// the dictionary words were last looked up in, by its index among them,
+    /// kept open for the next word
+    dictionary: Option<(u8, Dictionary<P::RandomAccessSource>)>,
 
     history: ReadingHistory,
     preferences: ReaderPreferences,
@@ -192,6 +200,7 @@ where
             failed_font: None,
 
             dictionaries: Vec::new(),
+            dictionary: None,
 
             history: ReadingHistory::default(),
             preferences: ReaderPreferences::default(),
@@ -298,6 +307,15 @@ where
 
             if let Some(request) = preferences_request {
                 self.service_reader_preferences_request(runtime, app, request)
+                    .await?;
+
+                continue;
+            }
+
+            let dictionary_request = runtime.update(app, |app, _| app.take_dictionary_request())?;
+
+            if let Some(request) = dictionary_request {
+                self.service_dictionary_request(runtime, app, request)
                     .await?;
 
                 continue;
@@ -753,6 +771,76 @@ where
 
     /// Shows the cover of the book at `path`: the one already registered, the
     /// cached thumbnail, or one made from the book and cached.
+    /// Looks a word up, opening the dictionary first when it isn't open.
+    async fn service_dictionary_request<R>(
+        &mut self,
+        runtime: &mut R,
+        app: Entity<InkPaperApp>,
+        request: DictionaryRequest,
+    ) -> Result<(), AppServiceError>
+    where
+        R: RuntimeApi,
+    {
+        let DictionaryRequest { dictionary, word } = request;
+
+        let outcome = match self.open_dictionary(dictionary).await {
+            Some(open) => match open.lookup(&word).await {
+                Ok(Some(definition)) => LookupOutcome::Found(definition),
+                Ok(None) => LookupOutcome::NotFound,
+                Err(_) => {
+                    // opened again for the next word, in case another file
+                    // closed one of its own
+                    self.dictionary = None;
+
+                    LookupOutcome::Failed
+                }
+            },
+            None => LookupOutcome::Failed,
+        };
+
+        runtime.update(app, move |app, cx| {
+            app.apply_dictionary_lookup(&word, outcome, cx);
+        })?;
+
+        Ok(())
+    }
+
+    /// The dictionary at `index` among those found, opened with its index
+    /// samples. Samples are taken in a pass over its index the first time,
+    /// and saved for the next.
+    async fn open_dictionary(
+        &mut self,
+        index: u8,
+    ) -> Option<&mut Dictionary<P::RandomAccessSource>> {
+        if self
+            .dictionary
+            .as_ref()
+            .is_none_or(|(open, _)| *open != index)
+        {
+            self.dictionary = None;
+
+            let folder = self.dictionaries.get(usize::from(index))?.clone();
+            let mut dictionary = folder.open(&mut self.platform).await?;
+
+            let state = folder.samples_state();
+            let saved = self
+                .read_state(&state, MAX_DICTIONARY_SAMPLES_BYTES)
+                .await
+                .and_then(|bytes| IndexSamples::decode(&bytes));
+
+            if !saved.is_some_and(|samples| dictionary.use_samples(samples)) {
+                let samples = dictionary.sample_index().await.ok()?;
+
+                // without them saved, the next start samples again
+                let _ = self.platform.save_state(&state, &samples.encode()).await;
+            }
+
+            self.dictionary = Some((index, dictionary));
+        }
+
+        self.dictionary.as_mut().map(|(_, dictionary)| dictionary)
+    }
+
     async fn service_cover_request<'resource, R>(
         &mut self,
         runtime: &mut R,
@@ -1023,6 +1111,7 @@ where
                 // transition. The storage service independently drops its FAT
                 // OpenRandomAccessFile when it receives EnterUsbDrive.
                 self.reader_session = None;
+                self.dictionary = None;
 
                 let ready = self.platform.enter_usb_drive().await.is_ok();
 

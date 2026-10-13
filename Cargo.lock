@@ -2193,6 +2193,7 @@ name = "inkpaper-app"
 version = "0.1.0"
 dependencies = [
  "futures-lite",
+ "inkpaper-dictionary",
  "inkpaper-epub",
  "inkpaper-reader",
  "inkpaper-trace",

@@ -10,6 +10,7 @@ defmt = ["inkpaper-ui/defmt"]
 hinting = ["inkpaper-ui/hinting"]
 
 [dependencies]
+inkpaper-dictionary = { path = "../dictionary" }
 inkpaper-epub = { path = "../epub" }
 inkpaper-reader = { path = "../reader" }
 inkpaper-trace = { path = "../trace" }
