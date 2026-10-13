@@ -437,6 +437,10 @@ fn definition_card<'a>(
 
     let (title, message) = match state {
         LookupState::Pending => (word, Some("Looking up…")),
+        LookupState::Indexing => (
+            word,
+            Some("Indexing the dictionary… This takes a moment the first time."),
+        ),
         LookupState::Found {
             headword, pages, ..
         } if pages.is_empty() => (headword.as_str(), Some("The definition is empty")),

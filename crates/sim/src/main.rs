@@ -59,6 +59,14 @@ fn main() {
     'running: loop {
         window.update(&display);
 
+        // work the service put off until a frame showed it goes on now that
+        // the window shows that frame
+        if app_service.has_deferred_work() {
+            future::block_on(app_service.service_pending(&mut runtime, app))
+                .expect("application service must remain available");
+            render_pending_ui(&mut runtime, &mut display);
+        }
+
         if radio.finish_due(&mut runtime, app) {
             render_pending_ui(&mut runtime, &mut display);
         }
@@ -66,6 +74,8 @@ fn main() {
         // a mouse button held still long presses
         if let Some(input) = pointer.tick(now_ms()) {
             send_input(&mut runtime, app, input);
+            future::block_on(app_service.service_pending(&mut runtime, app))
+                .expect("application service must remain available");
             render_pending_ui(&mut runtime, &mut display);
         }
 

@@ -132,6 +132,15 @@ pub trait AppPlatform {
     async fn start_wifi_scan(&mut self) -> Result<(), Self::Error>;
 }
 
+/// A dictionary kept open for the next word.
+struct OpenDictionary<S> {
+    /// its index among the dictionaries found
+    index: u8,
+    dictionary: Dictionary<S>,
+    /// whether it has index samples, saved or taken
+    sampled: bool,
+}
+
 #[derive(Debug)]
 pub enum AppServiceError {
     AppUnavailable(EntityAccessError),
@@ -167,9 +176,10 @@ where
 
     /// the dictionaries on the card, found at startup
     dictionaries: Vec<DictionaryFolder>,
-    /// the dictionary words were last looked up in, by its index among them,
-    /// kept open for the next word
-    dictionary: Option<(u8, Dictionary<P::RandomAccessSource>)>,
+    /// the dictionary words were last looked up in, kept open for the next
+    dictionary: Option<OpenDictionary<P::RandomAccessSource>>,
+    /// a lookup put off until a frame shows its dictionary being indexed
+    deferred_lookup: Option<DictionaryRequest>,
 
     history: ReadingHistory,
     preferences: ReaderPreferences,
@@ -201,6 +211,7 @@ where
 
             dictionaries: Vec::new(),
             dictionary: None,
+            deferred_lookup: None,
 
             history: ReadingHistory::default(),
             preferences: ReaderPreferences::default(),
@@ -312,11 +323,23 @@ where
                 continue;
             }
 
+            if let Some(request) = self.deferred_lookup.take() {
+                self.service_dictionary_request(runtime, app, request, false)
+                    .await?;
+
+                continue;
+            }
+
             let dictionary_request = runtime.update(app, |app, _| app.take_dictionary_request())?;
 
             if let Some(request) = dictionary_request {
-                self.service_dictionary_request(runtime, app, request)
+                self.service_dictionary_request(runtime, app, request, true)
                     .await?;
+
+                // the frame showing the indexing goes first
+                if self.deferred_lookup.is_some() {
+                    return Ok(());
+                }
 
                 continue;
             }
@@ -370,6 +393,13 @@ where
                 return Ok(());
             }
         }
+    }
+
+    /// Whether [`AppService::service_pending`] put work off until the frame
+    /// it left is shown, like a dictionary's first indexing. Once that frame
+    /// is on screen, service again without waiting for input.
+    pub const fn has_deferred_work(&self) -> bool {
+        self.deferred_lookup.is_some()
     }
 
     pub async fn flush(&mut self) -> bool {
@@ -769,33 +799,29 @@ where
         Ok(())
     }
 
-    /// Shows the cover of the book at `path`: the one already registered, the
-    /// cached thumbnail, or one made from the book and cached.
     /// Looks a word up, opening the dictionary first when it isn't open.
+    /// When its index has to be sampled and `may_defer`, the lookup is put
+    /// off instead, and the app shows the indexing until it goes on.
     async fn service_dictionary_request<R>(
         &mut self,
         runtime: &mut R,
         app: Entity<InkPaperApp>,
         request: DictionaryRequest,
+        may_defer: bool,
     ) -> Result<(), AppServiceError>
     where
         R: RuntimeApi,
     {
-        let DictionaryRequest { dictionary, word } = request;
+        let word = request.word.clone();
 
-        let outcome = match self.open_dictionary(dictionary).await {
-            Some(open) => match open.lookup(&word).await {
-                Ok(Some(definition)) => LookupOutcome::Found(definition),
-                Ok(None) => LookupOutcome::NotFound,
-                Err(_) => {
-                    // opened again for the next word, in case another file
-                    // closed one of its own
-                    self.dictionary = None;
+        let Some(outcome) = self.look_up(&request, may_defer).await else {
+            self.deferred_lookup = Some(request);
 
-                    LookupOutcome::Failed
-                }
-            },
-            None => LookupOutcome::Failed,
+            runtime.update(app, move |app, cx| {
+                app.apply_dictionary_indexing(&word, cx);
+            })?;
+
+            return Ok(());
         };
 
         runtime.update(app, move |app, cx| {
@@ -805,42 +831,79 @@ where
         Ok(())
     }
 
-    /// The dictionary at `index` among those found, opened with its index
-    /// samples. Samples are taken in a pass over its index the first time,
-    /// and saved for the next.
-    async fn open_dictionary(
+    /// What looking `request` up comes to, or `None` when its dictionary's
+    /// index has to be sampled first and `may_defer`. Samples are taken in a
+    /// pass over the index the first time, and saved for the next.
+    async fn look_up(
         &mut self,
-        index: u8,
-    ) -> Option<&mut Dictionary<P::RandomAccessSource>> {
-        if self
-            .dictionary
-            .as_ref()
-            .is_none_or(|(open, _)| *open != index)
-        {
-            self.dictionary = None;
+        request: &DictionaryRequest,
+        may_defer: bool,
+    ) -> Option<LookupOutcome> {
+        let mut open = match self.dictionary.take() {
+            Some(open) if open.index == request.dictionary => open,
+            _ => match self.open_dictionary(request.dictionary).await {
+                Some(open) => open,
+                None => return Some(LookupOutcome::Failed),
+            },
+        };
 
-            let folder = self.dictionaries.get(usize::from(index))?.clone();
-            let mut dictionary = folder.open(&mut self.platform).await?;
+        if !open.sampled {
+            if may_defer {
+                self.dictionary = Some(open);
 
-            let state = folder.samples_state();
-            let saved = self
-                .read_state(&state, MAX_DICTIONARY_SAMPLES_BYTES)
-                .await
-                .and_then(|bytes| IndexSamples::decode(&bytes));
+                return None;
+            }
 
-            if !saved.is_some_and(|samples| dictionary.use_samples(samples)) {
-                let samples = dictionary.sample_index().await.ok()?;
+            let Ok(samples) = open.dictionary.sample_index().await else {
+                return Some(LookupOutcome::Failed);
+            };
 
-                // without them saved, the next start samples again
+            // without them saved, the next start samples again
+            if let Some(folder) = self.dictionaries.get(usize::from(open.index)) {
+                let state = folder.samples_state();
                 let _ = self.platform.save_state(&state, &samples.encode()).await;
             }
 
-            self.dictionary = Some((index, dictionary));
+            open.sampled = true;
         }
 
-        self.dictionary.as_mut().map(|(_, dictionary)| dictionary)
+        let outcome = match open.dictionary.lookup(&request.word).await {
+            Ok(Some(definition)) => LookupOutcome::Found(definition),
+            Ok(None) => LookupOutcome::NotFound,
+            // opened again for the next word, in case another file closed
+            // one of its own
+            Err(_) => return Some(LookupOutcome::Failed),
+        };
+
+        self.dictionary = Some(open);
+
+        Some(outcome)
     }
 
+    /// The dictionary at `index` among those found, with its saved index
+    /// samples when they still fit it.
+    async fn open_dictionary(
+        &mut self,
+        index: u8,
+    ) -> Option<OpenDictionary<P::RandomAccessSource>> {
+        let folder = self.dictionaries.get(usize::from(index))?.clone();
+        let mut dictionary = folder.open(&mut self.platform).await?;
+
+        let sampled = self
+            .read_state(&folder.samples_state(), MAX_DICTIONARY_SAMPLES_BYTES)
+            .await
+            .and_then(|bytes| IndexSamples::decode(&bytes))
+            .is_some_and(|samples| dictionary.use_samples(samples));
+
+        Some(OpenDictionary {
+            index,
+            dictionary,
+            sampled,
+        })
+    }
+
+    /// Shows the cover of the book at `path`: the one already registered, the
+    /// cached thumbnail, or one made from the book and cached.
     async fn service_cover_request<'resource, R>(
         &mut self,
         runtime: &mut R,
@@ -1112,6 +1175,7 @@ where
                 // OpenRandomAccessFile when it receives EnterUsbDrive.
                 self.reader_session = None;
                 self.dictionary = None;
+                self.deferred_lookup = None;
 
                 let ready = self.platform.enter_usb_drive().await.is_ok();
 

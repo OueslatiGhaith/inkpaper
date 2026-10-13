@@ -181,6 +181,8 @@ pub(crate) enum LookupOutcome {
 pub(crate) enum LookupState {
     /// waiting for the service
     Pending,
+    /// waiting for the service to index the dictionary, the first time
+    Indexing,
     Found {
         headword: String,
         /// the definition laid out for the card
@@ -211,7 +213,10 @@ impl WordLookup {
 
     /// Whether `word` is still waiting for the service.
     pub(crate) fn waits_for(&self, word: &str) -> bool {
-        matches!(&self.current, Some((current, LookupState::Pending)) if current == word)
+        matches!(
+            &self.current,
+            Some((current, LookupState::Pending | LookupState::Indexing)) if current == word
+        )
     }
 
     /// Where the lookup of `word` got to. Returns whether it's the word

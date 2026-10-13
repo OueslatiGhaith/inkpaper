@@ -96,6 +96,13 @@ impl InkPaperApp {
         self.lookup.take_request()
     }
 
+    /// The service is indexing the dictionary before it looks `word` up.
+    pub(crate) fn apply_dictionary_indexing(&mut self, word: &str, cx: &mut Context<'_, Self>) {
+        if self.lookup.finish(word, LookupState::Indexing) {
+            cx.notify();
+        }
+    }
+
     /// The service's outcome for `word`, its definition laid out for the
     /// card in the reader's font.
     pub(crate) fn apply_dictionary_lookup(

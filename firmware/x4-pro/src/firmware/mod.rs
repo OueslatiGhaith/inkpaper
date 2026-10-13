@@ -323,12 +323,14 @@ async fn main(spawner: Spawner) -> ! {
 
     loop {
         let mut action = InputAction::Continue;
+        let deferred = app_service.has_deferred_work();
 
         // main sleeps until either:
         // - physical user input arrives
         // - the battery service has a new reading
         // - the inactivity countdown expires
         // - a WiFi scan or clock sync finished
+        // - the app service put work off until a frame showed it
         // `BATTERY_UPDATES` is a signal, so dropping its pending wait when input
         // wins this select is safe and doesn't lose a stored reading
         match select(
@@ -340,11 +342,12 @@ async fn main(spawner: Spawner) -> ! {
                 USB_HOST_UPDATES.wait(),
                 auto_sleep.wait(),
             ),
-            WIFI_EVENTS.receive(),
+            select(WIFI_EVENTS.receive(), deferred_work(deferred)),
         )
         .await
         {
-            Either::Second(event) => apply_wifi_event(runtime, app, event),
+            Either::Second(Either::First(event)) => apply_wifi_event(runtime, app, event),
+            Either::Second(Either::Second(())) => {}
             Either::First(Either6::First(event)) => {
                 auto_sleep.reset();
 
@@ -461,6 +464,14 @@ async fn main(spawner: Spawner) -> ! {
 
 async fn stay_alive() -> ! {
     loop {
+        core::future::pending::<()>().await;
+    }
+}
+
+/// Ready at once when the app service put work off until a frame showed it,
+/// so it goes on without waiting for input.
+async fn deferred_work(deferred: bool) {
+    if !deferred {
         core::future::pending::<()>().await;
     }
 }
