@@ -6,11 +6,9 @@ use inkpaper_ui::{BoxPaint, prelude::*};
 
 use crate::ReaderDocument;
 
-/// How far a selected word's highlight reaches past its text at the sides.
-const SELECTION_PADDING: u32 = 2;
-
 /// A book's page, with the `selected` pieces of a word, each a text item's
-/// index and the word's bounds in it, inverted like crosspoint's.
+/// index and the bounds of the word's highlight in it, inverted like
+/// crosspoint's.
 pub(crate) fn paint_reader_page(
     page: &Page<'static>,
     document: &ReaderDocument,
@@ -25,12 +23,7 @@ pub(crate) fn paint_reader_page(
             continue;
         };
 
-        let highlight = reader_rect(ReaderRect::new(
-            bounds.x().saturating_sub(SELECTION_PADDING),
-            bounds.y(),
-            bounds.width() + 2 * SELECTION_PADDING,
-            bounds.height(),
-        ));
+        let highlight = reader_rect(bounds);
 
         paint.draw_box(
             highlight,

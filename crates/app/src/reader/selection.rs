@@ -9,6 +9,10 @@ use inkpaper_reader::{Page, PageItem, ReadingPosition, Rect, TextFragment, TextM
 /// How far beside a line's text a press still picks its word.
 const SLOP: u32 = 6;
 
+/// How far a word's highlight reaches past it on a side with no punctuation
+/// against it.
+const HIGHLIGHT_PADDING: u32 = 2;
+
 /// A word held on a page, to look up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WordSelection {
@@ -16,7 +20,7 @@ pub(crate) struct WordSelection {
     position: ReadingPosition,
     word: String,
     /// each text item the word is drawn in, by its index on the page, with
-    /// the word's bounds there: two for a word broken across lines
+    /// the bounds of its highlight there: two for a word broken across lines
     pieces: Vec<(usize, Rect)>,
 }
 
@@ -73,15 +77,11 @@ pub(super) fn word_at<M: TextMeasurer>(
         pieces: vec![(index, word.bounds(fragment.bounds()))],
     };
 
-    // a word broken at the end of its line, without the hyphen drawn there,
-    // goes on at the start of the next, unless that's on the next page
-    let broken = picked + 1 == words.len() && fragment.hyphenated();
-
-    if broken && selection.word.ends_with('-') {
-        selection.word.pop();
-    }
-
-    if broken
+    // a word broken at the end of its line goes on at the start of the next,
+    // unless that's on the next page. The hyphen drawn at the break is
+    // punctuation, so it isn't part of either piece
+    if picked + 1 == words.len()
+        && fragment.hyphenated()
         && let Some((next_index, next)) = neighbor(items, index, 1)
         && let Some(rest) = measure_words(next, measurer).and_then(|words| words.into_iter().next())
     {
@@ -97,11 +97,9 @@ pub(super) fn word_at<M: TextMeasurer>(
         && let Some(start) =
             measure_words(previous, measurer).and_then(|words| words.into_iter().last())
     {
-        let start_text = &previous.text()[start.range.clone()];
-
         selection
             .word
-            .insert_str(0, start_text.strip_suffix('-').unwrap_or(start_text));
+            .insert_str(0, &previous.text()[start.range.clone()]);
         selection
             .pieces
             .insert(0, (previous_index, start.bounds(previous.bounds())));
@@ -110,7 +108,7 @@ pub(super) fn word_at<M: TextMeasurer>(
     Some(selection)
 }
 
-/// A word of a text item, and where it's drawn across the item.
+/// A word of a text item, and where its highlight goes across the item.
 struct Word {
     /// its bytes in the item's text
     range: Range<usize>,
@@ -125,9 +123,9 @@ impl Word {
     }
 }
 
-/// The words of `fragment`, split at whitespace, each placed by measuring
-/// the text before it like the page was laid out, its spaces stretched by
-/// the line's justification.
+/// The words of `fragment`, split at whitespace and without the punctuation
+/// around them, each placed by measuring the text before it like the page
+/// was laid out, its spaces stretched by the line's justification.
 fn measure_words<M: TextMeasurer>(
     fragment: &TextFragment<'_>,
     measurer: &mut M,
@@ -155,11 +153,18 @@ fn measure_words<M: TextMeasurer>(
         match (start, whitespace) {
             (None, false) => start = Some(offset),
             (Some(word_start), true) => {
-                words.push(Word {
-                    range: word_start..offset,
-                    left: advance(word_start)?,
-                    right: advance(offset)?,
-                });
+                // a dash or a quote on its own isn't a word
+                if let Some(range) = letters(text, word_start..offset) {
+                    // padded only where it won't cover punctuation
+                    let padding = |touching: bool| if touching { 0 } else { HIGHLIGHT_PADDING };
+
+                    words.push(Word {
+                        left: advance(range.start)?
+                            .saturating_sub(padding(range.start > word_start)),
+                        right: advance(range.end)? + padding(range.end < offset),
+                        range,
+                    });
+                }
 
                 start = None;
             }
@@ -168,6 +173,19 @@ fn measure_words<M: TextMeasurer>(
     }
 
     Some(words)
+}
+
+/// `range` of `text` from its first letter or digit to its last, or `None`
+/// without any.
+fn letters(text: &str, range: Range<usize>) -> Option<Range<usize>> {
+    let token = &text[range.clone()];
+
+    let first = token.find(char::is_alphanumeric)?;
+    let (last, character) = token
+        .char_indices()
+        .rfind(|(_, character)| character.is_alphanumeric())?;
+
+    Some(range.start + first..range.start + last + character.len_utf8())
 }
 
 /// Whether a press at `x` and `y` lands on a line's text at `bounds`, or
