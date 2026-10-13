@@ -1,6 +1,6 @@
 //! Offline lookups in StarDict dictionaries, read from the card a piece at a
 //! time. Follows crosspoint's reader: an uncompressed `.idx`, a `.dict` or
-//! `.dict.dz`, and the `.ifo` describing them.
+//! `.dict.dz`, an optional `.syn`, and the `.ifo` describing them.
 
 #![no_std]
 

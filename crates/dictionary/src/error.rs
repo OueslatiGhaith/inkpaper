@@ -1,8 +1,9 @@
 #[derive(Debug)]
 pub enum Error<E> {
     Source(E),
-    /// an `.idx` entry runs past the end of the file, or its word past the
-    /// format's 256 bytes
+    /// an `.idx` or `.syn` entry runs past the end of its file, or its word
+    /// past the format's 256 bytes, or a synonym names an entry past the
+    /// index's end
     MalformedIndex,
     /// an `.idx` entry points past the end of the `.dict`
     DefinitionOutOfBounds,

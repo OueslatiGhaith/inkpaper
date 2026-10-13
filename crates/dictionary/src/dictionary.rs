@@ -1,5 +1,4 @@
-use alloc::{string::String, vec, vec::Vec};
-use core::cmp::Ordering;
+use alloc::{string::String, vec};
 
 use inkpaper_epub::EpubSource;
 
@@ -8,28 +7,27 @@ use crate::{
     dictzip::DictZip,
     error::Error,
     forms::word_forms,
-    index::{BUFFER_BYTES, IndexReader, MAX_ENTRY_BYTES, compare_folded},
+    index::{EntryKind, WordList},
     info::DictionaryInfo,
-    samples::{IndexSamples, SAMPLE_INTERVAL},
+    samples::{FileSamples, IndexSamples},
 };
 
 /// The most of one definition read, like crosspoint's cap. A longer one is
 /// cut short.
 const MAX_DEFINITION_BYTES: u32 = 64 * 1024;
 
-/// An open StarDict dictionary: its `.idx` and its `.dict` or `.dict.dz`,
-/// read in place.
+/// An open StarDict dictionary: its `.idx`, its `.dict` or `.dict.dz`, and
+/// its `.syn` when it has one, read in place.
 pub struct Dictionary<S> {
     info: DictionaryInfo,
-    index: S,
-    index_len: u64,
+    index: WordList<S>,
+    /// other spellings of the index's words, like `oxen` for `ox`
+    synonyms: Option<WordList<S>>,
     data: S,
     /// the definitions' size, inflated for a `.dict.dz`
     data_len: u64,
     /// the chunk table of a `.dict.dz`
     dictzip: Option<DictZip>,
-    /// without them a lookup reads the index from its start
-    samples: Option<IndexSamples>,
 }
 
 impl<S> Dictionary<S>
@@ -38,10 +36,10 @@ where
 {
     pub async fn open(
         info: DictionaryInfo,
-        mut index: S,
+        index: S,
         mut data: S,
     ) -> Result<Self, Error<S::Error>> {
-        let index_len = index.len().await.map_err(Error::Source)?;
+        let index = WordList::open(index, EntryKind::Index).await?;
         let file_len = data.len().await.map_err(Error::Source)?;
 
         let dictzip = DictZip::parse(&mut data, file_len).await?;
@@ -50,11 +48,10 @@ where
         Ok(Self {
             info,
             index,
-            index_len,
+            synonyms: None,
             data,
             data_len,
             dictzip,
-            samples: None,
         })
     }
 
@@ -62,47 +59,59 @@ where
         &self.info
     }
 
-    /// Looks words up through `samples`, unless they were taken from another
-    /// index. Returns whether they're used.
+    /// Looks words up in the dictionary's `.syn` too, before trying the
+    /// English forms they could come from. Samples cover it when they're
+    /// taken or used after this.
+    pub async fn use_synonyms(&mut self, synonyms: S) -> Result<(), Error<S::Error>> {
+        self.synonyms = Some(WordList::open(synonyms, EntryKind::Synonym).await?);
+
+        Ok(())
+    }
+
+    /// Looks words up through `samples`, unless they were taken from other
+    /// files. Returns whether they're used.
     pub fn use_samples(&mut self, samples: IndexSamples) -> bool {
-        if samples.index_len() != self.index_len {
+        let synonyms_match = match (&self.synonyms, &samples.synonyms) {
+            (Some(list), Some(samples)) => list.len() == samples.len,
+            (None, None) => true,
+            _ => false,
+        };
+
+        if samples.index.len != self.index.len() || !synonyms_match {
             return false;
         }
 
-        self.samples = Some(samples);
+        self.index.set_samples(samples.index.offsets);
+
+        if let (Some(list), Some(samples)) = (&mut self.synonyms, samples.synonyms) {
+            list.set_samples(samples.offsets);
+        }
 
         true
     }
 
-    /// Takes samples in one pass over the index and looks words up through
-    /// them from now on. Returns them to save.
-    pub async fn sample_index(&mut self) -> Result<&IndexSamples, Error<S::Error>> {
-        let mut entries = IndexReader::new(&mut self.index, self.index_len, 0, BUFFER_BYTES);
-        let mut offsets = Vec::new();
-        let mut count = 0usize;
+    /// Takes samples in one pass over the index, and one over the synonyms,
+    /// and looks words up through them from now on. Returns them to save.
+    pub async fn sample_index(&mut self) -> Result<IndexSamples, Error<S::Error>> {
+        let index = FileSamples {
+            len: self.index.len(),
+            offsets: self.index.sample().await?.to_vec(),
+        };
 
-        loop {
-            let position = entries.position();
+        let synonyms = match &mut self.synonyms {
+            Some(list) => Some(FileSamples {
+                len: list.len(),
+                offsets: list.sample().await?.to_vec(),
+            }),
+            None => None,
+        };
 
-            if entries.next().await?.is_none() {
-                break;
-            }
-
-            if count.is_multiple_of(SAMPLE_INTERVAL) {
-                offsets.push(u32::try_from(position).map_err(|_| Error::MalformedIndex)?);
-            }
-
-            count += 1;
-        }
-
-        Ok(self
-            .samples
-            .insert(IndexSamples::new(self.index_len, offsets)))
+        Ok(IndexSamples { index, synonyms })
     }
 
     /// The definition of `word` as a page gives it: without the punctuation
-    /// around it, then by the English forms it could be inflected from, like
-    /// `walk` for `walking`.
+    /// around it, then as another spelling the dictionary lists, then by the
+    /// English forms it could be inflected from, like `walk` for `walking`.
     pub async fn lookup(&mut self, word: &str) -> Result<Option<Definition>, Error<S::Error>> {
         for form in word_forms(word) {
             if let Some((headword, offset, size)) = self.locate(form.as_bytes()).await? {
@@ -113,73 +122,30 @@ where
         Ok(None)
     }
 
-    /// The headword matching `target` the way StarDict sorts, ASCII letters
-    /// in any case, and where its definition is. An entry spelled exactly
-    /// like `target` wins over one in another case.
+    /// The headword spelled like `target`, or that `target` is a synonym of,
+    /// and where its definition is.
     async fn locate(
         &mut self,
         target: &[u8],
     ) -> Result<Option<(String, u32, u32)>, Error<S::Error>> {
-        let start = self.scan_start(target).await?;
+        if let Some((headword, tail)) = self.index.find(target).await? {
+            let (offset, size) = tail.location();
 
-        let mut entries = IndexReader::new(&mut self.index, self.index_len, start, BUFFER_BYTES);
-        let mut found = None;
-
-        while let Some(entry) = entries.next().await? {
-            match compare_folded(entry.word, target) {
-                Ordering::Less => {}
-                Ordering::Greater => break,
-                Ordering::Equal => {
-                    let exact = entry.word == target;
-
-                    if found.is_none() || exact {
-                        let headword = String::from_utf8_lossy(entry.word).into_owned();
-
-                        found = Some((headword, entry.offset, entry.size));
-                    }
-
-                    if exact {
-                        break;
-                    }
-                }
-            }
+            return Ok(Some((headword, offset, size)));
         }
 
-        Ok(found)
-    }
-
-    /// Where to start reading entries for `target`: the last sample sorting
-    /// before it. Entries matching it may come right before a sample that
-    /// matches too, so a sample has to sort strictly before it.
-    async fn scan_start(&mut self, target: &[u8]) -> Result<u64, Error<S::Error>> {
-        let Some(samples) = &self.samples else {
-            return Ok(0);
+        let Some(synonyms) = &mut self.synonyms else {
+            return Ok(None);
         };
 
-        let offsets = samples.offsets();
+        let Some((_, synonym)) = synonyms.find(target).await? else {
+            return Ok(None);
+        };
 
-        // offsets[..low] sort before target, offsets[high..] don't
-        let mut low = 0;
-        let mut high = offsets.len();
+        let (headword, tail) = self.index.entry(synonym.ordinal()).await?;
+        let (offset, size) = tail.location();
 
-        while low < high {
-            let middle = low + (high - low) / 2;
-
-            let offset = u64::from(offsets[middle]);
-            let mut entries =
-                IndexReader::new(&mut self.index, self.index_len, offset, MAX_ENTRY_BYTES);
-            let entry = entries.next().await?.ok_or(Error::MalformedIndex)?;
-
-            if compare_folded(entry.word, target) == Ordering::Less {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-
-        Ok(low
-            .checked_sub(1)
-            .map_or(0, |sample| u64::from(offsets[sample])))
+        Ok(Some((headword, offset, size)))
     }
 
     async fn read_definition(

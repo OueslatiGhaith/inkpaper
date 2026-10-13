@@ -6,40 +6,36 @@ pub(crate) const SAMPLE_INTERVAL: usize = 256;
 
 const MAGIC: [u8; 4] = *b"IXS1";
 
-const HEADER_BYTES: usize = MAGIC.len() + 8 + 4;
-
-/// Where every 256th `.idx` entry starts, so a lookup can bisect them and
-/// read only the entries after the closest one. It's built in one pass over
-/// the index, and saved to skip that pass next time.
+/// Where every 256th entry of a dictionary's `.idx`, and of its `.syn` when
+/// it has one, starts, so a lookup can bisect them and read only the entries
+/// after the closest one. They're taken in one pass over each file, and saved
+/// to skip those passes next time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexSamples {
-    /// the size of the `.idx` the samples were taken from
-    index_len: u64,
-    offsets: Vec<u32>,
+    pub(crate) index: FileSamples,
+    pub(crate) synonyms: Option<FileSamples>,
+}
+
+/// The samples of one file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileSamples {
+    /// the size of the file they were taken from
+    pub len: u64,
+    pub offsets: Vec<u32>,
 }
 
 impl IndexSamples {
-    pub(crate) const fn new(index_len: u64, offsets: Vec<u32>) -> Self {
-        Self { index_len, offsets }
-    }
-
-    pub(crate) const fn index_len(&self) -> u64 {
-        self.index_len
-    }
-
-    pub(crate) fn offsets(&self) -> &[u32] {
-        &self.offsets
-    }
-
     pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(HEADER_BYTES + self.offsets.len() * 4);
+        let mut bytes = MAGIC.to_vec();
 
-        bytes.extend_from_slice(&MAGIC);
-        bytes.extend_from_slice(&self.index_len.to_le_bytes());
-        bytes.extend_from_slice(&(self.offsets.len() as u32).to_le_bytes());
+        self.index.encode(&mut bytes);
 
-        for offset in &self.offsets {
-            bytes.extend_from_slice(&offset.to_le_bytes());
+        match &self.synonyms {
+            Some(synonyms) => {
+                bytes.push(1);
+                synonyms.encode(&mut bytes);
+            }
+            None => bytes.push(0),
         }
 
         bytes
@@ -54,17 +50,40 @@ impl IndexSamples {
             return None;
         }
 
-        let (index_len, rest) = rest.split_first_chunk::<8>()?;
+        let (index, rest) = FileSamples::decode(rest)?;
+
+        let (synonyms, rest) = match rest.split_first()? {
+            (0, rest) => (None, rest),
+            (1, rest) => {
+                FileSamples::decode(rest).map(|(synonyms, rest)| (Some(synonyms), rest))?
+            }
+            _ => return None,
+        };
+
+        rest.is_empty().then_some(Self { index, synonyms })
+    }
+}
+
+impl FileSamples {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(&self.len.to_le_bytes());
+        bytes.extend_from_slice(&(self.offsets.len() as u32).to_le_bytes());
+
+        for offset in &self.offsets {
+            bytes.extend_from_slice(&offset.to_le_bytes());
+        }
+    }
+
+    fn decode(bytes: &[u8]) -> Option<(Self, &[u8])> {
+        let (len, rest) = bytes.split_first_chunk::<8>()?;
         let (count, rest) = rest.split_first_chunk::<4>()?;
 
-        let index_len = u64::from_le_bytes(*index_len);
+        let len = u64::from_le_bytes(*len);
         let count = u32::from_le_bytes(*count) as usize;
 
-        if rest.len() != count.checked_mul(4)? {
-            return None;
-        }
+        let (offsets, rest) = rest.split_at_checked(count.checked_mul(4)?)?;
 
-        let offsets: Vec<u32> = rest
+        let offsets: Vec<u32> = offsets
             .as_chunks::<4>()
             .0
             .iter()
@@ -72,14 +91,12 @@ impl IndexSamples {
             .collect();
 
         let ordered = offsets.windows(2).all(|pair| pair[0] < pair[1]);
-        let in_bounds = offsets
-            .last()
-            .is_none_or(|&last| u64::from(last) < index_len);
+        let in_bounds = offsets.last().is_none_or(|&last| u64::from(last) < len);
 
         if offsets.first().is_some_and(|&first| first != 0) || !ordered || !in_bounds {
             return None;
         }
 
-        Some(Self::new(index_len, offsets))
+        Some((Self { len, offsets }, rest))
     }
 }

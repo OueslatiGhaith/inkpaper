@@ -38,6 +38,20 @@ pub fn stardict(same_type_sequence: Option<&str>, entries: &[(&str, &[u8])]) -> 
     StarDict { ifo, idx, dict }
 }
 
+/// Builds a `.syn` from synonyms given in StarDict's sort order, each with
+/// the number of the index entry it spells another way.
+pub fn synonyms(entries: &[(&str, u32)]) -> Vec<u8> {
+    let mut syn = Vec::new();
+
+    for (word, ordinal) in entries {
+        syn.extend_from_slice(word.as_bytes());
+        syn.push(0);
+        syn.extend_from_slice(&ordinal.to_be_bytes());
+    }
+
+    syn
+}
+
 /// The optional gzip header fields to write before the deflated chunks.
 #[derive(Default)]
 pub struct GzipHeader<'a> {

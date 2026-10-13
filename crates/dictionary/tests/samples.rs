@@ -71,6 +71,9 @@ fn encoded(index_len: usize, offsets: &[usize]) -> Vec<u8> {
         bytes.extend_from_slice(&(offset as u32).to_le_bytes());
     }
 
+    // without synonyms
+    bytes.push(0);
+
     bytes
 }
 
