@@ -1,4 +1,4 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 
 use inkpaper_ui::prelude::*;
 
@@ -11,13 +11,19 @@ use crate::{
         option_picker::{OptionPicker, OptionPickerProps},
         reader_menu::ReaderMenuView,
     },
-    reader::{PageBounds, TextSetting, TextSettings},
+    dictionaries::LookupState,
+    reader::{DEFINITION_HEIGHT, DEFINITION_WIDTH, PageBounds, TextSetting, TextSettings},
 };
 
 /// crosspoint's link tap box: the link's text with 6 px of slack, and at
 /// least 28 px wide so a one-digit note marker is easy to hit
 const LINK_SLOP: i32 = 6;
 const LINK_MIN_WIDTH: i32 = 28;
+
+/// The definition card: below the held word, or above it when the word is in
+/// the screen's lower half.
+const DEFINITION_CARD_HEIGHT: i32 = 380;
+const DEFINITION_CARD_TOPS: (i32, i32) = (12, 800 - 12 - DEFINITION_CARD_HEIGHT);
 
 #[component]
 pub(crate) struct ReaderScreen<'a> {
@@ -49,6 +55,9 @@ pub(crate) struct ReaderScreen<'a> {
     /// the tap boxes of the page's links, on screen
     links: Vec<Rect>,
     on_link: Listener<ActivateEvent>,
+
+    /// the held word's definition, over the page
+    definition: Option<DefinitionCard<'a>>,
 
     on_previous_page: Listener<ActivateEvent>,
     on_open_menu: Listener<ActivateEvent>,
@@ -120,6 +129,10 @@ impl RenderOnce for ReaderScreen<'_> {
                         progress_label={self.progress_label}
                         battery={self.battery}
                     />
+
+                    {#if let Some(definition) = self.definition}
+                        {definition}
+                    {/if}
 
                     {#if self.menu_open}
                         // taps above the drawer close it. The drawer is its own entity
@@ -256,6 +269,8 @@ impl ScreenLifecycle for ReaderRoute {
     fn exit(&self, app: &mut InkPaperApp, exit: Exit) {
         if exit == Exit::Closed {
             app.reader.close_menu();
+            app.lookup.close();
+            app.reader.clear_selection();
         }
     }
 }
@@ -269,6 +284,12 @@ impl ScreenInput for ReaderRoute {
     ) {
         // the drawer covers the page, so it does not turn underneath it
         if app.reader.menu_open() {
+            return;
+        }
+
+        // the definition card turns its own pages
+        if app.lookup.current().is_some() {
+            app.turn_definition_page(button.into(), cx);
             return;
         }
 
@@ -291,6 +312,11 @@ impl ScreenInput for ReaderRoute {
             return false;
         }
 
+        // so does a definition, and holding it does nothing
+        if app.lookup.current().is_some() {
+            return true;
+        }
+
         app.look_up_word_at(position, cx)
     }
 
@@ -301,6 +327,11 @@ impl ScreenInput for ReaderRoute {
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
+        // a definition covers the page
+        if app.lookup.current().is_some() {
+            return;
+        }
+
         let dx = position.x.get() - origin.x.get();
         let dy = position.y.get() - origin.y.get();
 
@@ -321,6 +352,127 @@ impl ScreenInput for ReaderRoute {
             app.close_reader_menu(cx);
         }
     }
+}
+
+/// A held word's definition, a page at a time, or why there's none. Taps
+/// beside it close it; its left half turns back a page, its right half on.
+#[component]
+pub(crate) struct DefinitionCard<'a> {
+    top: i32,
+    title: &'a str,
+    /// the definition's page, or a message in its place
+    page_canvas: Option<Canvas>,
+    message: Option<&'static str>,
+    page_label: Option<String>,
+    on_page: Listener<ActivateEvent>,
+    on_dismiss: Listener<ActivateEvent>,
+}
+
+impl RenderOnce for DefinitionCard<'_> {
+    fn render(self, _: &AppContext<'_>) -> impl IntoElement {
+        let top = px(self.top);
+        let height = px(DEFINITION_CARD_HEIGHT);
+        let page_size = Size::new(px(DEFINITION_WIDTH as i32), px(DEFINITION_HEIGHT as i32));
+
+        rsx! {
+            <div class="absolute left-0 top-0 w-[480px] h-[800px]">
+                <div
+                    id="definition-dismiss"
+                    on:activate={self.on_dismiss}
+                    class="absolute left-0 top-0 w-[480px] h-[800px]"
+                />
+
+                <div class="absolute left-[10px] top-{top} w-[460px] h-{height} rounded-md border-2 border-black bg-white">
+                    <div
+                        id={("definition-page", 0usize)}
+                        on:activate={self.on_page}
+                        class="absolute left-0 top-0 w-[228px] h-full"
+                    />
+
+                    <div
+                        id={("definition-page", 1usize)}
+                        on:activate={self.on_page}
+                        class="absolute left-[228px] top-0 w-[228px] h-full"
+                    />
+
+                    <div class="absolute left-[10px] top-[10px] w-[436px] h-11 flex items-center">
+                        <text class="text-2xl font-bold no-wrap max-lines-1 text-ellipsis">
+                            {self.title}
+                        </text>
+                    </div>
+
+                    {#if let Some(canvas) = self.page_canvas}
+                        <div class="absolute left-[10px] top-[64px] w-{page_size.width} h-{page_size.height} overflow-hidden">
+                            {canvas.size(page_size)}
+                        </div>
+                    {/if}
+
+                    {#if let Some(message) = self.message}
+                        <div class="absolute left-[10px] top-[64px] w-[436px]">
+                            <text class="text-xl wrap max-lines-3">
+                                {message}
+                            </text>
+                        </div>
+                    {/if}
+
+                    {#if let Some(label) = self.page_label}
+                        <div class="absolute right-[12px] top-[336px] h-8 flex items-center">
+                            <text class="text-base no-wrap">
+                                {label}
+                            </text>
+                        </div>
+                    {/if}
+                </div>
+            </div>
+        }
+    }
+}
+
+/// The card for the word looked up, if any.
+fn definition_card<'a>(
+    app: &'a InkPaperApp,
+    cx: &mut Context<'_, InkPaperApp>,
+) -> Option<DefinitionCard<'a>> {
+    let (word, state) = app.lookup.current()?;
+
+    let (title, message) = match state {
+        LookupState::Pending => (word, Some("Looking up…")),
+        LookupState::Found {
+            headword, pages, ..
+        } if pages.is_empty() => (headword.as_str(), Some("The definition is empty")),
+        LookupState::Found { headword, .. } => (headword.as_str(), None),
+        LookupState::NotFound => (word, Some("Not in the dictionary")),
+        LookupState::Failed => (word, Some("Couldn't read the dictionary")),
+    };
+
+    let page = app.lookup.page();
+
+    // below the word, unless that would cover it
+    let page_top = app.reader.text_settings().margin().page_bounds().top as i32;
+    let word_top = app
+        .reader
+        .selection()
+        .and_then(|selection| selection.pieces().first())
+        .map_or(0, |(_, bounds)| page_top + bounds.y() as i32);
+    let top = if word_top > 400 {
+        DEFINITION_CARD_TOPS.0
+    } else {
+        DEFINITION_CARD_TOPS.1
+    };
+
+    Some(DefinitionCard::from(DefinitionCardProps {
+        top,
+        title,
+        page_canvas: page
+            .is_some()
+            .then(|| cx.canvas(|app: &InkPaperApp, paint| app.paint_definition_page(paint))),
+        message,
+        page_label: page
+            .filter(|&(_, _, count)| count > 1)
+            .map(|(_, index, count)| format!("{}/{count}", index + 1)),
+        on_page: cx.listener(InkPaperApp::activate_definition_page),
+        on_dismiss: cx.listener(InkPaperApp::activate_close_definition),
+    }))
 }
 
 #[component]
@@ -395,6 +547,7 @@ impl ScreenView for ReaderRoute {
                     .collect()
             },
             on_link: cx.listener(InkPaperApp::activate_reader_link),
+            definition: definition_card(app, cx),
             text_picker: app
                 .reader
                 .text_picker()

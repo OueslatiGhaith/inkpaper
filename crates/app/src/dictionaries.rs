@@ -4,8 +4,9 @@
 use alloc::{format, string::String, vec::Vec};
 
 use inkpaper_dictionary::{Definition, Dictionary, DictionaryInfo};
+use inkpaper_reader::Page;
 
-use crate::{AppPlatform, PlatformEntry, fonts::hidden};
+use crate::{AppPlatform, PlatformEntry, fonts::hidden, paging::PageTurn};
 
 /// Scanned in order, so a dictionary in `/.dictionaries` hides one of the same
 /// name in `/dictionaries`.
@@ -175,18 +176,32 @@ pub(crate) enum LookupOutcome {
     Failed,
 }
 
-/// A word being looked up, or its outcome, for the reader to show.
+/// Where a word's lookup has got to, for the reader to show.
+#[derive(Debug)]
+pub(crate) enum LookupState {
+    /// waiting for the service
+    Pending,
+    Found {
+        headword: String,
+        /// the definition laid out for the card
+        pages: Vec<Page<'static>>,
+        page: usize,
+    },
+    NotFound,
+    Failed,
+}
+
+/// The word looked up last, and where its lookup has got to.
 #[derive(Debug, Default)]
 pub(crate) struct WordLookup {
     request: Option<DictionaryRequest>,
-    /// the word looked up last, and its outcome once the service has it
-    current: Option<(String, Option<LookupOutcome>)>,
+    current: Option<(String, LookupState)>,
 }
 
 impl WordLookup {
     /// Looks `word` up in `dictionary`.
     pub(crate) fn start(&mut self, dictionary: u8, word: String) {
-        self.current = Some((word.clone(), None));
+        self.current = Some((word.clone(), LookupState::Pending));
         self.request = Some(DictionaryRequest { dictionary, word });
     }
 
@@ -194,16 +209,61 @@ impl WordLookup {
         self.request.take()
     }
 
-    /// The service's outcome for `word`. Returns whether it's the word still
-    /// wanted.
-    pub(crate) fn finish(&mut self, word: &str, outcome: LookupOutcome) -> bool {
-        match &mut self.current {
-            Some((current, slot)) if current == word => {
-                *slot = Some(outcome);
-                true
-            }
-            _ => false,
+    /// Whether `word` is still waiting for the service.
+    pub(crate) fn waits_for(&self, word: &str) -> bool {
+        matches!(&self.current, Some((current, LookupState::Pending)) if current == word)
+    }
+
+    /// Where the lookup of `word` got to. Returns whether it's the word
+    /// still wanted.
+    pub(crate) fn finish(&mut self, word: &str, state: LookupState) -> bool {
+        if !self.waits_for(word) {
+            return false;
         }
+
+        self.current = Some((String::from(word), state));
+
+        true
+    }
+
+    /// The word looked up, and where its lookup has got to.
+    pub(crate) fn current(&self) -> Option<(&str, &LookupState)> {
+        self.current
+            .as_ref()
+            .map(|(word, state)| (word.as_str(), state))
+    }
+
+    /// The page of the definition shown, and how many it has.
+    pub(crate) fn page(&self) -> Option<(&Page<'static>, usize, usize)> {
+        match self.current()? {
+            (_, LookupState::Found { pages, page, .. }) => {
+                pages.get(*page).map(|shown| (shown, *page, pages.len()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Turns the definition's page. Returns whether it turned.
+    pub(crate) fn turn_page(&mut self, turn: PageTurn) -> bool {
+        let Some((_, LookupState::Found { pages, page, .. })) = &mut self.current else {
+            return false;
+        };
+
+        let turned = match turn {
+            PageTurn::Previous => page.checked_sub(1),
+            PageTurn::Next => Some(*page + 1).filter(|&next| next < pages.len()),
+        };
+
+        turned.is_some_and(|turned| {
+            *page = turned;
+            true
+        })
+    }
+
+    /// Returns whether there was a lookup to close.
+    pub(crate) fn close(&mut self) -> bool {
+        self.request = None;
+        self.current.take().is_some()
     }
 }
 

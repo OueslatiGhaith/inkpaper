@@ -3,7 +3,13 @@ use alloc::{string::String, vec::Vec};
 use inkpaper_ui::prelude::*;
 
 use super::InkPaperApp;
-use crate::dictionaries::{DictionaryRequest, LookupOutcome};
+use crate::{
+    dictionaries::{DictionaryRequest, LookupOutcome, LookupState},
+    fonts::reader_family,
+    paging::PageTurn,
+    reader::layout_definition,
+    reader_page::paint_page,
+};
 
 impl InkPaperApp {
     /// The dictionaries found on the card.
@@ -90,14 +96,88 @@ impl InkPaperApp {
         self.lookup.take_request()
     }
 
+    /// The service's outcome for `word`, its definition laid out for the
+    /// card in the reader's font.
     pub(crate) fn apply_dictionary_lookup(
         &mut self,
         word: &str,
         outcome: LookupOutcome,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.lookup.finish(word, outcome) {
+        if !self.lookup.waits_for(word) {
+            return;
+        }
+
+        let state = match outcome {
+            LookupOutcome::Found(definition) => LookupState::Found {
+                headword: String::from(definition.headword()),
+                pages: layout_definition(
+                    &definition,
+                    self.reader.text_settings(),
+                    self.text_settings.card_font(),
+                ),
+                page: 0,
+            },
+            LookupOutcome::NotFound => LookupState::NotFound,
+            LookupOutcome::Failed => LookupState::Failed,
+        };
+
+        if self.lookup.finish(word, state) {
             cx.notify();
         }
+    }
+
+    /// Closes the definition card and unselects its word. Returns whether it
+    /// was open.
+    pub(crate) fn close_word_lookup(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        let closed = self.lookup.close();
+
+        if self.reader.clear_selection() || closed {
+            cx.notify();
+        }
+
+        closed
+    }
+
+    pub(crate) fn activate_close_definition(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.close_word_lookup(cx);
+    }
+
+    /// The card's left half turns back, its right half on.
+    pub(crate) fn activate_definition_page(
+        &mut self,
+        event: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let turn = match event.index() {
+            Some(0) => PageTurn::Previous,
+            Some(_) => PageTurn::Next,
+            None => return,
+        };
+
+        self.turn_definition_page(turn, cx);
+    }
+
+    pub(crate) fn turn_definition_page(&mut self, turn: PageTurn, cx: &mut Context<'_, Self>) {
+        if self.lookup.turn_page(turn) {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn paint_definition_page(&self, paint: &mut PaintCx<'_>) {
+        let Some((page, ..)) = self.lookup.page() else {
+            return;
+        };
+
+        let family = reader_family(
+            self.reader.text_settings().font(),
+            self.text_settings.card_font(),
+        );
+
+        paint_page(page, None, family, paint);
     }
 }

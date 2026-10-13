@@ -1,3 +1,4 @@
+mod definition;
 mod document;
 mod images;
 mod loader;
@@ -14,6 +15,7 @@ mod toc;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use definition::{DEFINITION_HEIGHT, DEFINITION_WIDTH, layout_definition};
 pub(crate) use document::{ReaderChapter, ReaderDocument};
 pub(crate) use images::{GrayImage, decode_image};
 pub(crate) use loader::ReaderSession;

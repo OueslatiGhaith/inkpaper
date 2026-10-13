@@ -224,6 +224,11 @@ impl ReaderState {
         Some(self.selection.insert(selection).word())
     }
 
+    /// Unselects the word. Returns whether one was selected.
+    pub(crate) fn clear_selection(&mut self) -> bool {
+        self.selection.take().is_some()
+    }
+
     /// The selected word, while its page is the one shown.
     pub(crate) fn selection(&self) -> Option<&WordSelection> {
         let position = self.page()?.position();

@@ -116,9 +116,16 @@ impl InkPaperApp {
                 self.close_control_center(cx);
             }
 
-            // like crosspoint's Back, it first returns from followed links
+            // like crosspoint's Back, it first closes a definition, then
+            // returns from followed links
             InputTarget::Screen => {
-                if self.screen() == super::Screen::Reader && self.reader.return_from_link() {
+                let reader = self.screen() == super::Screen::Reader;
+
+                if reader && self.close_word_lookup(cx) {
+                    return;
+                }
+
+                if reader && self.reader.return_from_link() {
                     cx.notify();
                 } else {
                     self.navigate_home(cx);
