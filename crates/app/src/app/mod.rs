@@ -9,6 +9,7 @@ use crate::{
         reader_menu::ReaderMenuView,
     },
     control_center::ControlCenterState,
+    dictionaries::DictionarySettings,
     reader::{ReaderState, TextSettingsState},
     reading_history::ReadingHistoryState,
     screens::{
@@ -24,6 +25,7 @@ use crate::{
 };
 
 mod browse;
+mod dictionaries;
 mod file_transfer;
 mod history;
 mod input;
@@ -96,6 +98,8 @@ pub struct InkPaperApp {
     pub(crate) reader: ReaderState,
     /// the Text Settings screen
     pub(crate) text_settings: TextSettingsState,
+    /// the dictionary picker of Settings
+    pub(crate) dictionaries: DictionarySettings,
     pub(crate) reading_history: ReadingHistoryState,
     /// the current book's cover on the home screen
     pub(crate) cover: CoverState,
@@ -143,6 +147,7 @@ impl InkPaperApp {
             browser: BrowserState::default(),
             reader: ReaderState::default(),
             text_settings: TextSettingsState::default(),
+            dictionaries: DictionarySettings::default(),
             reading_history: ReadingHistoryState::default(),
             cover: CoverState::default(),
             battery,

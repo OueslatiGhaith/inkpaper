@@ -116,6 +116,8 @@ pub(crate) struct ReaderState {
     document: Option<ReaderDocument>,
     page_index: usize,
     text: TextSettings,
+    /// the dictionary words are looked up in
+    dictionary: Option<u8>,
 
     failed: bool,
     chrome: ReaderChromeState,
@@ -137,6 +139,7 @@ impl Default for ReaderState {
             document: None,
             page_index: 0,
             text: TextSettings::default(),
+            dictionary: None,
             failed: false,
             chrome: ReaderChromeState::default(),
             toc: TableOfContents::NotLoaded,
@@ -177,15 +180,35 @@ impl ReaderState {
     pub(crate) fn apply_preferences(&mut self, preferences: ReaderPreferences) -> bool {
         let text = preferences.text();
 
+        let dictionary_changed = preferences.dictionary() != self.dictionary;
+        self.dictionary = preferences.dictionary();
+
         if text == self.text {
-            return false;
+            return dictionary_changed;
         }
 
         if self.document.is_some() {
-            return self.request_text_settings(text);
+            return self.request_text_settings(text) || dictionary_changed;
         }
 
         self.text = text;
+
+        true
+    }
+
+    pub(crate) const fn dictionary(&self) -> Option<u8> {
+        self.dictionary
+    }
+
+    /// Looks words up in `dictionary` from now on, and saves it. Returns
+    /// whether it changed.
+    pub(crate) fn choose_dictionary(&mut self, dictionary: Option<u8>) -> bool {
+        if dictionary == self.dictionary {
+            return false;
+        }
+
+        self.dictionary = dictionary;
+        self.queue_preferences_update();
 
         true
     }
@@ -1049,13 +1072,13 @@ impl ReaderState {
             self.text = text;
         }
 
-        let preferences = ReaderPreferences::new(text);
+        let preferences = ReaderPreferences::new(text).with_dictionary(self.dictionary);
 
         self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
     }
 
     fn queue_preferences_update(&mut self) {
-        let preferences = ReaderPreferences::new(self.text);
+        let preferences = ReaderPreferences::new(self.text).with_dictionary(self.dictionary);
 
         self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
     }

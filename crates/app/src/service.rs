@@ -12,6 +12,7 @@ use crate::{
     ReaderSession, ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiCredentials,
     WifiJoinFailure, WifiJoinPlan, WifiScanError,
     cover::read_cover_image,
+    dictionaries::{DictionaryFolder, find_dictionaries},
     fonts::{CardFont, FontFamily, card_for, find_font_families, load_card_font},
     reader::{GrayImage, ReaderFont, TextSettings},
     typography::register_card_font,
@@ -30,7 +31,9 @@ const COVER_STATE: &str = "cover.dat";
 const MAX_COVER_BYTES: usize = 48 * 1024;
 
 const MAX_READING_HISTORY_BYTES: usize = 64 * 1024;
-const MAX_READER_PREFERENCES_BYTES: usize = 256;
+/// room for a font family's and a dictionary's names, each up to FAT's 255
+/// bytes
+const MAX_READER_PREFERENCES_BYTES: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlatformEntryKind {
@@ -157,6 +160,9 @@ where
     /// font is wanted
     failed_font: Option<u8>,
 
+    /// the dictionaries on the card, found at startup
+    dictionaries: Vec<DictionaryFolder>,
+
     history: ReadingHistory,
     preferences: ReaderPreferences,
     frontlight_preferences: FrontlightPreferences,
@@ -184,6 +190,8 @@ where
             font_families: Vec::new(),
             card_font: None,
             failed_font: None,
+
+            dictionaries: Vec::new(),
 
             history: ReadingHistory::default(),
             preferences: ReaderPreferences::default(),
@@ -370,8 +378,9 @@ where
             return Ok(());
         }
 
-        // the saved font is looked up among the families
+        // the saved font and dictionary are looked up among those found
         self.font_families = find_font_families(&mut self.platform).await;
+        self.dictionaries = find_dictionaries(&mut self.platform).await;
 
         self.history = self.load_history().await;
         self.preferences = self.load_preferences().await;
@@ -386,6 +395,11 @@ where
             .iter()
             .map(|family| String::from(family.name()))
             .collect();
+        let dictionary_names = self
+            .dictionaries
+            .iter()
+            .map(|dictionary| String::from(dictionary.name()))
+            .collect();
         let frontlight_preferences = self.frontlight_preferences;
         let clock_preferences = self.clock_preferences;
 
@@ -396,6 +410,7 @@ where
             app.apply_reader_preferences(preferences, cx);
             app.apply_reading_history(entries, cx);
             app.apply_font_families(font_names, cx);
+            app.apply_dictionaries(dictionary_names, cx);
         })?;
 
         self.initialized = true;
@@ -438,12 +453,23 @@ where
         };
 
         let families = &self.font_families;
+        let dictionaries = &self.dictionaries;
 
-        ReaderPreferences::decode(&bytes, |name| {
-            let index = families.iter().position(|family| family.name() == name)?;
+        ReaderPreferences::decode(
+            &bytes,
+            |name| {
+                let index = families.iter().position(|family| family.name() == name)?;
 
-            u8::try_from(index).ok().map(ReaderFont::Card)
-        })
+                u8::try_from(index).ok().map(ReaderFont::Card)
+            },
+            |name| {
+                let index = dictionaries
+                    .iter()
+                    .position(|dictionary| dictionary.name() == name)?;
+
+                u8::try_from(index).ok()
+            },
+        )
         .unwrap_or_default()
     }
 
@@ -936,7 +962,12 @@ where
                     .map(FontFamily::name),
                 ReaderFont::BuiltIn => None,
             };
-            let encoded = self.preferences.encode(font_name);
+            let dictionary_name = self
+                .preferences
+                .dictionary()
+                .and_then(|index| self.dictionaries.get(usize::from(index)))
+                .map(DictionaryFolder::name);
+            let encoded = self.preferences.encode(font_name, dictionary_name);
             self.preferences_dirty = !self.write_state(READER_PREFERENCES_STATE, encoded).await;
         }
 

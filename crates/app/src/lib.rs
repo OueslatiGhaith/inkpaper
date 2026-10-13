@@ -8,6 +8,7 @@ mod clock;
 mod components;
 mod control_center;
 mod cover;
+mod dictionaries;
 mod file_transfer;
 mod fonts;
 mod frontlight;

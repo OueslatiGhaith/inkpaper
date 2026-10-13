@@ -104,7 +104,7 @@ async fn font_family<P: AppPlatform>(
 }
 
 /// crosspoint skips names starting with `.` or `_`, like macOS's `._` files
-fn hidden(name: &str) -> bool {
+pub(crate) fn hidden(name: &str) -> bool {
     name.starts_with(['.', '_'])
 }
 

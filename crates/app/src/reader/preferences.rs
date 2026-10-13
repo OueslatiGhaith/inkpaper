@@ -8,20 +8,38 @@ use crate::storage::{self, StorageError};
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReaderPreferences {
     text: TextSettings,
+    /// the chosen dictionary's index in the ones found at startup
+    dictionary: Option<u8>,
 }
 
 impl ReaderPreferences {
     pub const fn new(text: TextSettings) -> Self {
-        Self { text }
+        Self {
+            text,
+            dictionary: None,
+        }
+    }
+
+    pub const fn with_dictionary(self, dictionary: Option<u8>) -> Self {
+        Self { dictionary, ..self }
     }
 
     pub const fn text(self) -> TextSettings {
         self.text
     }
 
-    /// Saves the font by `font_name`, its family's name, since the card's
-    /// families may change before the next start.
-    pub fn encode(self, font_name: Option<&str>) -> Result<Vec<u8>, ReaderPreferencesError> {
+    pub const fn dictionary(self) -> Option<u8> {
+        self.dictionary
+    }
+
+    /// Saves the font by `font_name`, its family's name, and the dictionary
+    /// by `dictionary_name`, its folder's, since the card's may change before
+    /// the next start.
+    pub fn encode(
+        self,
+        font_name: Option<&str>,
+        dictionary_name: Option<&str>,
+    ) -> Result<Vec<u8>, ReaderPreferencesError> {
         let stored = StoredReaderPreferences {
             font_size: self.text.font_size(),
             line_spacing: self.text.line_spacing().index(),
@@ -32,16 +50,19 @@ impl ReaderPreferences {
             embedded_style: self.text.embedded_style(),
             hyphenation: Some(self.text.hyphenation()),
             font: font_name.map(String::from),
+            dictionary: dictionary_name.map(String::from),
         };
 
         Ok(storage::encode(&stored)?)
     }
 
-    /// `card_font` finds a saved family on the card; like crosspoint, one
-    /// that's gone falls back to the built-in font.
+    /// `card_font` finds a saved family on the card, and `dictionary` a saved
+    /// dictionary; like crosspoint, a family that's gone falls back to the
+    /// built-in font, and a dictionary to none.
     pub fn decode(
         bytes: &[u8],
         card_font: impl Fn(&str) -> Option<ReaderFont>,
+        dictionary: impl Fn(&str) -> Option<u8>,
     ) -> Result<Self, ReaderPreferencesError> {
         let stored: StoredReaderPreferences = storage::decode(bytes)?;
 
@@ -77,7 +98,7 @@ impl ReaderPreferences {
                     .unwrap_or_default(),
             );
 
-        Ok(Self::new(text))
+        Ok(Self::new(text).with_dictionary(stored.dictionary.as_deref().and_then(dictionary)))
     }
 }
 
@@ -125,4 +146,7 @@ struct StoredReaderPreferences {
     /// the card family's name; the built-in font when missing
     #[n(8)]
     font: Option<String>,
+    /// the dictionary folder's name; none when missing
+    #[n(9)]
+    dictionary: Option<String>,
 }

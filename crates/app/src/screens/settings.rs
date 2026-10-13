@@ -3,23 +3,27 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     ClockStatus, InkPaperApp,
-    app::{ScreenInput, ScreenLifecycle, ScreenView},
+    app::{Back, Entry, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
-        settings_row::{ListRow, ListRowProps},
+        option_picker::{OptionPicker, OptionPickerProps},
+        settings_row::{ListRow, ListRowProps, SettingsValueRow, SettingsValueRowProps},
     },
 };
 
 #[component]
-pub(crate) struct SettingsScreen {
+pub(crate) struct SettingsScreen<'a> {
     battery: Entity<BatteryIndicator>,
     clock: Option<ClockStatus>,
+    /// shown like crosspoint's only when the card has a dictionary
+    dictionary: Option<SettingsValueRow<'a>>,
+    dictionary_picker: Option<OptionPicker<'a>>,
     on_back: Listener<ActivateEvent>,
     on_clock: Listener<ActivateEvent>,
     on_text: Listener<ActivateEvent>,
 }
 
-impl RenderOnce for SettingsScreen {
+impl RenderOnce for SettingsScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let clock = match self.clock {
             None => String::from("Date/time unavailable"),
@@ -67,7 +71,15 @@ impl RenderOnce for SettingsScreen {
                         chevron={true}
                         on_activate={Some(self.on_clock)}
                     />
+
+                    {#if let Some(row) = self.dictionary}
+                        {row}
+                    {/if}
                 </div>
+
+                {#if let Some(picker) = self.dictionary_picker}
+                    {picker}
+                {/if}
             </div>
         }
     }
@@ -75,7 +87,23 @@ impl RenderOnce for SettingsScreen {
 
 pub(crate) struct SettingsRoute;
 
-impl ScreenLifecycle for SettingsRoute {}
+impl ScreenLifecycle for SettingsRoute {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+        if entry == Entry::Opened {
+            app.dictionaries.close_picker();
+        }
+    }
+
+    /// Back closes the dictionary picker first.
+    fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
+        if app.dictionaries.close_picker() {
+            cx.notify();
+            return Back::Handled;
+        }
+
+        Back::Leave
+    }
+}
 
 impl ScreenInput for SettingsRoute {}
 
@@ -85,9 +113,38 @@ impl ScreenView for SettingsRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
+        let dictionaries = &app.dictionaries;
+
+        let dictionary = (!dictionaries.names().is_empty()).then(|| {
+            SettingsValueRow::from(SettingsValueRowProps {
+                id: ("settings-dictionary", 0),
+                label: "Dictionary".into(),
+                value: app.dictionary_name().unwrap_or("None").into(),
+                selected: false,
+                on_activate: Some(cx.listener(InkPaperApp::activate_dictionary_setting)),
+            })
+        });
+
+        // none is the first option
+        let dictionary_picker = dictionaries.picker_open().then(|| {
+            OptionPicker::from(OptionPickerProps {
+                title: "Dictionary",
+                options: dictionaries.options(),
+                selected: Some(
+                    app.reader
+                        .dictionary()
+                        .map_or(0, |index| usize::from(index) + 1),
+                ),
+                on_option: cx.listener(InkPaperApp::activate_dictionary_option),
+                on_dismiss: cx.listener(InkPaperApp::activate_dismiss_dictionary_picker),
+            })
+        });
+
         SettingsScreen::from(SettingsScreenProps {
             battery: app.battery_indicator,
             clock: app.local_clock(cx),
+            dictionary,
+            dictionary_picker,
             on_back: cx.listener(InkPaperApp::activate_back),
             on_clock: cx.listener(InkPaperApp::show_clock_settings),
             on_text: cx.listener(InkPaperApp::show_text_settings),
