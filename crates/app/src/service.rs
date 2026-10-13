@@ -82,6 +82,9 @@ pub trait AppPlatform {
 
     async fn list_directory(&mut self, path: &str) -> Result<Vec<PlatformEntry>, Self::Error>;
 
+    /// Opens `path` to read anywhere in it. At least four files stay open
+    /// together, a book and a dictionary's; opening more may close the one
+    /// read least recently.
     async fn open_random_access(
         &mut self,
         path: &str,
@@ -772,16 +775,13 @@ where
     }
 
     async fn read_cover_image(&mut self, path: &str) -> Option<Option<GrayImage>> {
-        // the platform may keep only one file open, so read through the
-        // reader's book when it is this one
+        // read through the reader's book when it is this one, rather than
+        // opening it again
         if let Some(session) = self.reader_session.as_mut()
             && session.path() == path
         {
             return session.cover_image().await.ok();
         }
-
-        // opening another file closes the reader's, so its session goes too
-        self.reader_session = None;
 
         let source = self.platform.open_random_access(path).await.ok()?;
         let mut epub = Epub::open(source).await.ok()?;

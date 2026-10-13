@@ -20,6 +20,11 @@ use crate::firmware::rpc::{self, Reply};
 
 const COMMAND_CAPACITY: usize = 4;
 
+/// The random-access files kept open together: a book, and a dictionary's
+/// index, definitions and synonyms. Opening another closes the one read
+/// least recently.
+const MAX_OPEN_RANDOM_ACCESS: usize = 4;
+
 static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = Channel::new();
 
 static READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
@@ -169,7 +174,8 @@ where
         + HadrisWrite<Error = <D as HadrisRead>::Error>
         + HadrisSeek<Error = <D as HadrisRead>::Error>,
 {
-    let mut open_random_access: Option<OpenRandomAccessFile<'a, D>> = None;
+    // the least recently read first
+    let mut open_random_access: Vec<OpenRandomAccessFile<'a, D>> = Vec::new();
     let mut last_handle = 0u32;
 
     loop {
@@ -179,17 +185,17 @@ where
             }
 
             Command::OpenRandomAccess { path, reply } => {
-                // only one random-access file is required by the app today. Drop
-                // the previous FAT reader before opening its replacement.
-                open_random_access = None;
-
                 let handle = next_handle(&mut last_handle);
 
                 match OpenRandomAccessFile::open(filesystem, &path, handle).await {
                     Ok(file) => {
                         let handle = file.handle();
 
-                        open_random_access = Some(file);
+                        if open_random_access.len() == MAX_OPEN_RANDOM_ACCESS {
+                            open_random_access.remove(0);
+                        }
+
+                        open_random_access.push(file);
 
                         reply.send(Ok(handle));
                     }
@@ -204,11 +210,20 @@ where
                 len,
                 reply,
             } => {
-                let result = match open_random_access.as_mut() {
-                    Some(file) if file.handle().id() == handle => {
-                        file.read_exact_at(offset, len).await
+                let index = open_random_access
+                    .iter()
+                    .position(|file| file.handle().id() == handle);
+
+                let result = match index {
+                    Some(index) => {
+                        let result = open_random_access[index].read_exact_at(offset, len).await;
+
+                        // most recently read last
+                        open_random_access[index..].rotate_left(1);
+
+                        result
                     }
-                    _ => Err(StorageError::StaleHandle),
+                    None => Err(StorageError::StaleHandle),
                 };
 
                 reply.send(result);
@@ -238,7 +253,7 @@ where
                 debug!("USB Drive storage handoff requested");
 
                 // No FAT-backed object may survive the transition to raw block access.
-                // This drops the currently-open EPUB reader before mount.rs drops
+                // This drops the open random-access readers before mount.rs drops
                 // the FatVolume itself.
                 drop(open_random_access);
 
