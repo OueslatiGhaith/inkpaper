@@ -54,6 +54,22 @@ New UI follows crosspoint/crossink's screens and layout.
 - [x] extract and cache the current book's cover
 - [x] show the cover on the home screen instead of the placeholder
 
+## Dictionary
+
+- [x] read StarDict dictionaries: `.ifo`, `.idx`, `.dict` or dictzip `.dict.dz`, and `.syn` synonyms
+- [x] find dictionaries in `/.dictionaries` and `/dictionaries`, one a folder, like crosspoint
+- [x] sample each index once and save the samples, so lookups read only a few entries
+- [x] Dictionary setting to pick one, or none
+- [x] long press a word to select it and look it up, joining words broken across lines
+- [x] look up the word's plain forms too (lowercase, English endings)
+- [x] definition card with its own pages, turned with the side buttons
+- [x] show the indexing during a dictionary's first lookup
+- [ ] test on the device with a real Wiktionary dictionary: indexing time, lookup time, samples size
+- [ ] keep a definition's HTML formatting (bold, italics, lists)
+- [ ] select a phrase by dragging after the long press
+- [ ] `.idx.gz` indexes and 64-bit offsets, which have to be unpacked or converted for now
+- [ ] word forms for languages other than English
+
 # Done
 
 - reader: EPUB 2/3 open, render, CSS, images, pagination, chapter navigation, font size, status bar, saved progress
