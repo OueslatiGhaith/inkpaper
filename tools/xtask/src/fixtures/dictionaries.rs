@@ -84,7 +84,11 @@ const HTML_ENTRIES: &[(&str, &str)] = &[
     ),
     (
         "deliberate",
-        "<i>adjective</i><br/>Done on purpose.<br/><i>verb</i><br/>To think carefully before deciding.",
+        concat!(
+            "<i>adjective</i><ol><li>Done on purpose: <i>a deliberate lie</i>.</li>",
+            "<li>Slow and careful.<ul><li><i>She spoke in a deliberate voice.</i></li></ul></li></ol>",
+            "<i>verb</i><ol><li>To think <b>carefully</b> before deciding.</li></ol>",
+        ),
     ),
     (
         "deterministic",
@@ -178,7 +182,12 @@ const HTML_ENTRIES: &[(&str, &str)] = &[
     ),
     (
         "text",
-        "<i>noun</i><br/>The words of something written or printed.",
+        // markup like some dictionaries': unclosed paragraphs, crossed tags
+        concat!(
+            "<div class=\"sense\"><span style=\"color:#888\">noun</span>",
+            "<p>The words of something written or printed.",
+            "<p>The main body of a book, <b>apart from <i>its notes</b> and index</i>.</div>",
+        ),
     ),
     (
         "unquestionable",

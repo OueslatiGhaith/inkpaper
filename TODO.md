@@ -65,7 +65,7 @@ New UI follows crosspoint/crossink's screens and layout.
 - [x] definition card with its own pages, turned with the side buttons
 - [x] show the indexing during a dictionary's first lookup
 - [ ] test on the device with a real Wiktionary dictionary: indexing time, lookup time, samples size
-- [ ] keep a definition's HTML formatting (bold, italics, lists)
+- [x] keep a definition's HTML formatting (bold, italics, lists)
 - [ ] select a phrase by dragging after the long press
 - [ ] `.idx.gz` indexes and 64-bit offsets, which have to be unpacked or converted for now
 - [ ] word forms for languages other than English
