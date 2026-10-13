@@ -1,6 +1,11 @@
+use core::{
+    future::Future,
+    pin::{Pin, pin},
+};
+
 use defmt::{debug, error, info, warn};
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either, Either6, select, select6};
+use embassy_futures::select::select_array;
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
@@ -325,30 +330,8 @@ async fn main(spawner: Spawner) -> ! {
         let mut action = InputAction::Continue;
         let deferred = app_service.has_deferred_work();
 
-        // main sleeps until either:
-        // - physical user input arrives
-        // - the battery service has a new reading
-        // - the inactivity countdown expires
-        // - a WiFi scan or clock sync finished
-        // - the app service put work off until a frame showed it
-        // `BATTERY_UPDATES` is a signal, so dropping its pending wait when input
-        // wins this select is safe and doesn't lose a stored reading
-        match select(
-            select6(
-                INPUT_EVENTS.receive(),
-                BATTERY_UPDATES.wait(),
-                RTC_UPDATES.wait(),
-                display_power.wait_idle_timeout(),
-                USB_HOST_UPDATES.wait(),
-                auto_sleep.wait(),
-            ),
-            select(WIFI_EVENTS.receive(), deferred_work(deferred)),
-        )
-        .await
-        {
-            Either::Second(Either::First(event)) => apply_wifi_event(runtime, app, event),
-            Either::Second(Either::Second(())) => {}
-            Either::First(Either6::First(event)) => {
+        match next_wake(&display_power, &auto_sleep, deferred).await {
+            Wake::Input(event) => {
                 auto_sleep.reset();
 
                 action = handle_input_event(runtime, app, event);
@@ -362,9 +345,9 @@ async fn main(spawner: Spawner) -> ! {
                     action = handle_input_event(runtime, app, event);
                 }
             }
-            Either::First(Either6::Second(reading)) => apply_battery_reading(runtime, app, reading),
-            Either::First(Either6::Third(state)) => apply_rtc_state(runtime, app, state),
-            Either::First(Either6::Fourth(())) => {
+            Wake::Battery(reading) => apply_battery_reading(runtime, app, reading),
+            Wake::Rtc(state) => apply_rtc_state(runtime, app, state),
+            Wake::DisplayIdle => {
                 display_power
                     .handle_idle_timeout(&mut panel, &mut bus, &mut delay)
                     .await
@@ -372,8 +355,8 @@ async fn main(spawner: Spawner) -> ! {
 
                 continue;
             }
-            Either::First(Either6::Fifth(state)) => apply_usb_host_state(runtime, app, state),
-            Either::First(Either6::Sixth(())) => {
+            Wake::UsbHost(state) => apply_usb_host_state(runtime, app, state),
+            Wake::AutoSleep => {
                 // re-arm first, so a blocked auto-sleep waits another full timeout
                 auto_sleep.reset();
 
@@ -391,6 +374,8 @@ async fn main(spawner: Spawner) -> ! {
                     }
                 }
             }
+            Wake::Wifi(event) => apply_wifi_event(runtime, app, event),
+            Wake::DeferredWork => {}
         }
 
         if action == InputAction::Sleep {
@@ -466,6 +451,51 @@ async fn stay_alive() -> ! {
     loop {
         core::future::pending::<()>().await;
     }
+}
+
+/// What woke the main loop.
+enum Wake {
+    Input(InputEvent),
+    Battery(BatteryReading),
+    Rtc(RtcState),
+    DisplayIdle,
+    UsbHost(UsbHostState),
+    AutoSleep,
+    Wifi(WifiEvent),
+    DeferredWork,
+}
+
+/// Waits for the next thing the main loop handles.
+///
+/// Sources are polled in order, so input wins when several are ready. The
+/// losers are dropped, which is safe: the update signals keep their stored
+/// value, and the channels keep queued events.
+async fn next_wake(
+    display_power: &DisplayPowerManager,
+    auto_sleep: &AutoSleep,
+    deferred: bool,
+) -> Wake {
+    let wakes: [Pin<&mut dyn Future<Output = Wake>>; 8] = [
+        pin!(async { Wake::Input(INPUT_EVENTS.receive().await) }),
+        pin!(async { Wake::Battery(BATTERY_UPDATES.wait().await) }),
+        pin!(async { Wake::Rtc(RTC_UPDATES.wait().await) }),
+        pin!(async {
+            display_power.wait_idle_timeout().await;
+            Wake::DisplayIdle
+        }),
+        pin!(async { Wake::UsbHost(USB_HOST_UPDATES.wait().await) }),
+        pin!(async {
+            auto_sleep.wait().await;
+            Wake::AutoSleep
+        }),
+        pin!(async { Wake::Wifi(WIFI_EVENTS.receive().await) }),
+        pin!(async {
+            deferred_work(deferred).await;
+            Wake::DeferredWork
+        }),
+    ];
+
+    select_array(wakes).await.0
 }
 
 /// Ready at once when the app service put work off until a frame showed it,
