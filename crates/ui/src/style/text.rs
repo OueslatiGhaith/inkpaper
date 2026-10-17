@@ -59,15 +59,20 @@ impl From<Pixels> for LineHeight {
     }
 }
 
-/// how dark glyphs paint: a gain on their coverage, in percent. At 100 they
-/// paint as rasterized; above it their edges darken and, where coverage is
-/// thresholded, their stems thicken
+/// how dark glyphs paint, in percent of their weight as rasterized. It moves
+/// the coverage that paints as half ink, so above 100 edges darken and stems
+/// thicken, and below it they lighten and thin. Empty pixels stay empty and
+/// fully covered ones fully inked, so stems stay solid on painters that draw
+/// gray edges, and only where a thresholding painter cuts moves
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TextDarkness(u8);
 
 impl TextDarkness {
     pub const NORMAL: Self = Self(100);
+
+    /// coverage that paints as half ink
+    const HALF: u32 = 128;
 
     pub const fn percent(percent: u8) -> Self {
         Self(percent)
@@ -77,40 +82,64 @@ impl TextDarkness {
         self.0
     }
 
-    /// `coverage` after the gain
+    /// the rasterized coverage that paints as half ink
+    const fn pivot(self) -> u32 {
+        let percent = if self.0 == 0 { 1 } else { self.0 as u32 };
+        let pivot = (Self::HALF * 100 + percent / 2) / percent;
+
+        if pivot == 0 {
+            1
+        } else if pivot > u8::MAX as u32 {
+            u8::MAX as u32
+        } else {
+            pivot
+        }
+    }
+
+    /// `coverage` as this darkness paints it: two straight segments through
+    /// the pivot, keeping 0 and 255
     pub const fn apply(self, coverage: u8) -> u8 {
         if self.0 == 100 {
             return coverage;
         }
 
-        let scaled = coverage as u32 * self.0 as u32 / 100;
+        let pivot = self.pivot();
+        let coverage = coverage as u32;
+        let max = u8::MAX as u32;
 
-        if scaled > u8::MAX as u32 {
-            u8::MAX
+        let painted = if coverage < pivot {
+            coverage * Self::HALF / pivot
+        } else if pivot == max {
+            max
         } else {
-            scaled as u8
-        }
+            Self::HALF + (coverage - pivot) * (max - Self::HALF) / (max - pivot)
+        };
+
+        painted as u8
     }
 
-    /// the least rasterized coverage that reaches `threshold` after the gain,
-    /// or `None` when none does
-    pub const fn min_coverage_for(self, threshold: u8) -> Option<u8> {
-        if self.0 == 100 || threshold == 0 {
-            return Some(threshold);
+    /// the least rasterized coverage that paints at least `threshold`
+    pub const fn min_coverage_for(self, threshold: u8) -> u8 {
+        if self.0 == 100 {
+            return threshold;
         }
 
-        if self.0 == 0 {
-            return None;
+        // `apply` only grows with coverage and keeps 255, so some coverage
+        // always reaches the threshold
+        let mut low = 0u8;
+        let mut high = u8::MAX;
+
+        while low < high {
+            let middle = low + (high - low) / 2;
+
+            if self.apply(middle) >= threshold {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
         }
 
-        let gain = self.0 as u32;
-        let min = (threshold as u32 * 100).div_ceil(gain);
-
-        if min > u8::MAX as u32 {
-            None
-        } else {
-            Some(min as u8)
-        }
+        low
     }
 }
 

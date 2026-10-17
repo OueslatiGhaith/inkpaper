@@ -72,10 +72,10 @@ fn generated_line_height_preserves_non_negative_conversion() {
 }
 
 #[test]
-fn text_darkness_threshold_matches_its_gain() {
-    // a painter moving its threshold must ink exactly the pixels whose gained
+fn text_darkness_threshold_matches_its_curve() {
+    // a painter moving its threshold must ink exactly the pixels whose painted
     // coverage reaches it
-    for percent in [0, 1, 50, 60, 99, 100, 101, 140, 200, 255] {
+    for percent in [0, 1, 50, 60, 75, 99, 100, 101, 140, 180, 200, 255] {
         let darkness = TextDarkness::percent(percent);
 
         for threshold in 0..=u8::MAX {
@@ -84,7 +84,7 @@ fn text_darkness_threshold_matches_its_gain() {
             for coverage in 0..=u8::MAX {
                 assert_eq!(
                     darkness.apply(coverage) >= threshold,
-                    min.is_some_and(|min| coverage >= min),
+                    coverage >= min,
                     "{percent}% at {threshold}, coverage {coverage}",
                 );
             }
@@ -93,11 +93,32 @@ fn text_darkness_threshold_matches_its_gain() {
 }
 
 #[test]
-fn text_darkness_saturates_and_keeps_empty_coverage() {
-    let dark = TextDarkness::percent(200);
+fn text_darkness_keeps_empty_and_full_coverage() {
+    for percent in [0, 1, 50, 75, 100, 140, 180, 255] {
+        let darkness = TextDarkness::percent(percent);
 
-    assert_eq!(dark.apply(0), 0);
-    assert_eq!(dark.apply(100), 200);
-    assert_eq!(dark.apply(200), u8::MAX);
+        assert_eq!(darkness.apply(0), 0, "{percent}%");
+        assert_eq!(darkness.apply(u8::MAX), u8::MAX, "{percent}%");
+
+        for coverage in 1..=u8::MAX {
+            assert!(
+                darkness.apply(coverage) >= darkness.apply(coverage - 1),
+                "{percent}% falls at {coverage}",
+            );
+        }
+    }
+}
+
+#[test]
+fn text_darkness_moves_where_coverage_paints_half_ink() {
     assert_eq!(TextDarkness::NORMAL.apply(77), 77);
+
+    // lighter needs more coverage for half ink, darker less
+    assert_eq!(TextDarkness::percent(75).apply(171), 128);
+    assert_eq!(TextDarkness::percent(200).apply(64), 128);
+
+    // the reader's levels keep their binary thresholds
+    let thresholds =
+        [75, 100, 140, 180].map(|percent| TextDarkness::percent(percent).min_coverage_for(112));
+    assert_eq!(thresholds, [150, 112, 80, 63]);
 }

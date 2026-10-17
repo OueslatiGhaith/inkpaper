@@ -63,9 +63,7 @@ where
 
     match coverage_mode {
         CoverageMode::BinaryThreshold => {
-            let Some(min_coverage) = darkness.min_coverage_for(128) else {
-                return Ok(());
-            };
+            let min_coverage = darkness.min_coverage_for(128);
 
             let pixels = coverage
                 .iter()

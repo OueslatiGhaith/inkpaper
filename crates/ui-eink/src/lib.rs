@@ -319,7 +319,7 @@ where
 #[cfg(test)]
 mod tests {
     use embedded_graphics::{mock_display::MockDisplay, pixelcolor::GrayColor};
-    use inkpaper_ui::{GlyphMetrics, Size};
+    use inkpaper_ui::{GlyphMetrics, Size, TextDarkness};
 
     use super::*;
 
@@ -338,7 +338,16 @@ mod tests {
     }
 
     /// the row's levels after drawing the glyph, and the frame's tone
-    fn draw(antialias: bool, reader: bool) -> ([u8; 4], EInkTone) {
+    fn draw(antialias: bool, reader: bool, darkness: TextDarkness) -> ([u8; 4], EInkTone) {
+        draw_row(&COVERAGE, antialias, reader, darkness)
+    }
+
+    fn draw_row(
+        coverage: &[u8; 4],
+        antialias: bool,
+        reader: bool,
+        darkness: TextDarkness,
+    ) -> ([u8; 4], EInkTone) {
         let mut display = white_display();
 
         let metrics = GlyphMetrics {
@@ -346,7 +355,9 @@ mod tests {
             height: 1,
             ..GlyphMetrics::default()
         };
-        let bitmap = GlyphBitmap::new(&COVERAGE, metrics).with_antialias(antialias);
+        let bitmap = GlyphBitmap::new(coverage, metrics)
+            .with_antialias(antialias)
+            .with_darkness(darkness);
         let clip = Rect::new(Point::ZERO, Size::new(px(4), px(1)));
 
         let tone = {
@@ -372,14 +383,34 @@ mod tests {
 
     #[test]
     fn antialiased_glyphs_blend_into_native_gray() {
-        assert_eq!(draw(true, true), ([3, 2, 1, 0], EInkTone::Gray4));
+        assert_eq!(
+            draw(true, true, TextDarkness::NORMAL),
+            ([3, 2, 1, 0], EInkTone::Gray4)
+        );
+    }
+
+    #[test]
+    fn darkness_moves_antialiased_edges_but_keeps_stems_black() {
+        let light = TextDarkness::percent(75);
+        let extra_dark = TextDarkness::percent(180);
+
+        // light pales a dark edge, and the stem stays black
+        assert_eq!(draw(true, true, light).0, [3, 2, 2, 0]);
+
+        // extra dark inks a faint edge normal leaves white
+        let faint = [0, 40, 160, 255];
+        assert_eq!(
+            draw_row(&faint, true, true, TextDarkness::NORMAL).0,
+            [3, 3, 1, 0]
+        );
+        assert_eq!(draw_row(&faint, true, true, extra_dark).0, [3, 2, 1, 0]);
     }
 
     #[test]
     fn glyphs_stay_binary_without_antialiasing_or_a_reader() {
         let binary = ([3, 3, 0, 0], EInkTone::Binary);
 
-        assert_eq!(draw(false, true), binary);
-        assert_eq!(draw(true, false), binary);
+        assert_eq!(draw(false, true, TextDarkness::NORMAL), binary);
+        assert_eq!(draw(true, false, TextDarkness::NORMAL), binary);
     }
 }

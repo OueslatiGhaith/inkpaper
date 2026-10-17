@@ -144,9 +144,9 @@ impl ParagraphAlignment {
     }
 }
 
-/// How dark the book's text paints. It doesn't change the layout: only the
-/// coverage a glyph's pixel needs to ink. Extra Dark is about as heavy as
-/// crosspoint's text.
+/// How dark the book's text paints. It doesn't change the layout: only how
+/// much coverage a glyph's pixel needs to ink, or with anti-aliasing, how gray
+/// its edges paint. Extra Dark is about as heavy as crosspoint's text.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Darkness {
     Light,

@@ -219,9 +219,7 @@ where
 
     match coverage_mode {
         EInkCoverageMode::BinaryThreshold => {
-            let Some(min_coverage) = darkness.min_coverage_for(128) else {
-                return Ok(());
-            };
+            let min_coverage = darkness.min_coverage_for(128);
 
             #[cfg(feature = "metrics")]
             let mut accepted = 0u64;
@@ -266,9 +264,7 @@ where
         } => {
             // the gain moves the threshold rather than each sample, so a fast
             // blitter sees plain coverage
-            let Some(min_coverage) = darkness.min_coverage_for(min_coverage) else {
-                return Ok(());
-            };
+            let min_coverage = darkness.min_coverage_for(min_coverage);
 
             if let Some(blitter) = blitter {
                 let bitmap = EInkCoverageBitmap::new(

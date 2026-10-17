@@ -1068,12 +1068,24 @@ fn text_run_inks(darkness: TextDarkness) -> bool {
 }
 
 #[test]
-fn text_darkness_scales_coverage_before_the_threshold() {
-    // the mono font's glyphs are fully covered: half of that falls just short of
-    // the binary threshold
-    assert!(text_run_inks(TextDarkness::NORMAL));
-    assert!(text_run_inks(TextDarkness::percent(51)));
-    assert!(!text_run_inks(TextDarkness::percent(50)));
+fn text_darkness_never_erases_fully_covered_glyphs() {
+    // the mono font's glyphs are fully covered, which every darkness keeps
+    for percent in [0, 1, 50, 100, 255] {
+        assert!(text_run_inks(TextDarkness::percent(percent)), "{percent}%");
+    }
+}
+
+#[test]
+fn text_darkness_lightens_blended_edges_but_not_stems() {
+    let black = Rgb888::new(0, 0, 0);
+    let white = Rgb888::new(255, 255, 255);
+    let blend = |percent, coverage| {
+        alpha_blend_rgb888(black, white, TextDarkness::percent(percent).apply(coverage))
+    };
+
+    assert_eq!(blend(75, 255), black);
+    assert!(blend(75, 128).r() > blend(100, 128).r());
+    assert!(blend(140, 128).r() < blend(100, 128).r());
 }
 
 /// records how each glyph is asked to be drawn
