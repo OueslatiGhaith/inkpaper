@@ -1,3 +1,5 @@
+#[cfg(any(feature = "eink", feature = "embedded-graphics"))]
+pub(crate) mod image_paint;
 pub(crate) mod invalidation;
 pub(crate) mod paint;
 pub(crate) mod presentation;

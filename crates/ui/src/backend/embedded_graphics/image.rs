@@ -8,8 +8,9 @@ use embedded_graphics::{
 };
 
 use crate::{
-    Color, ImagePaint, ImageResource, ImageSampler, Rect, Size,
-    backend::embedded_graphics::to_rgb888, fitted_image_bounds, process_image_pixel,
+    Color, ImagePaint, ImageResource, Point, Rect, Size,
+    backend::embedded_graphics::to_rgb888,
+    rendering::image_paint::{PixelSink, paint_image},
 };
 
 use super::from_embedded_size;
@@ -65,76 +66,34 @@ where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,
 {
-    let source_size = image.size();
-
-    let destination = fitted_image_bounds(source_size, bounds, paint.fit, paint.position);
-
-    if source_size.width.is_non_positive()
-        || source_size.height.is_non_positive()
-        || destination.width().is_non_positive()
-        || destination.height().is_non_positive()
-    {
-        return Ok(());
-    }
-
-    let Some(visible) = (match clip {
-        Some(clip) => destination.intersection(clip),
-        None => Some(destination),
-    }) else {
-        return Ok(());
-    };
-
-    let source_width = u32::try_from(source_size.width.get()).unwrap_or(0);
-
-    let source_height = u32::try_from(source_size.height.get()).unwrap_or(0);
-
-    let destination_width = u32::try_from(destination.width().get()).unwrap_or(0);
-
-    let destination_height = u32::try_from(destination.height().get()).unwrap_or(0);
-
-    let Some(sampler) = ImageSampler::new(
+    paint_image(
+        &mut EmbeddedGraphicsPixelSink { target },
         image,
-        source_width,
-        source_height,
-        destination_width,
-        destination_height,
-        paint.sampling,
-    ) else {
-        return Ok(());
-    };
+        bounds,
+        paint,
+        clip,
+    )
+}
 
-    let destination_x = destination.x().get();
-    let destination_y = destination.y().get();
+struct EmbeddedGraphicsPixelSink<'a, D> {
+    target: &'a mut D,
+}
 
-    let left = visible.x().get();
-    let top = visible.y().get();
-    let right = visible.right().get();
-    let bottom = visible.bottom().get();
+impl<D> PixelSink for EmbeddedGraphicsPixelSink<'_, D>
+where
+    D: EgDrawTarget,
+    D::Color: From<EgRgb888>,
+{
+    type Error = D::Error;
 
-    let relative_left = i64::from(left) - i64::from(destination_x);
-    let Some(relative_left) = u32::try_from(relative_left).ok() else {
-        return Ok(());
-    };
+    fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error> {
+        let y = origin.y.get();
 
-    let pixels = (top..bottom).flat_map(|y| {
-        let relative_y = i64::from(y) - i64::from(destination_y);
+        let pixels = pixels
+            .iter()
+            .zip(origin.x.get()..)
+            .map(|(&color, x)| EgPixel(EgPoint::new(x, y), to_rgb888(color)));
 
-        let mut cursor = u32::try_from(relative_y)
-            .ok()
-            .and_then(|relative_y| sampler.row(relative_y))
-            .and_then(|row| row.cursor(relative_left));
-
-        (left..right).filter_map(move |x| {
-            let cursor = cursor.as_mut()?;
-
-            let color = cursor.sample_next()?;
-            let color = process_image_pixel(color, paint, x, y);
-
-            Some(EgPixel(EgPoint::new(x, y), to_rgb888(color)))
-        })
-    });
-
-    let mut target = target.color_converted::<EgRgb888>();
-
-    target.draw_iter(pixels)
+        self.target.color_converted::<EgRgb888>().draw_iter(pixels)
+    }
 }
