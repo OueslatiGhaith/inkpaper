@@ -12,7 +12,7 @@ use embedded_graphics::{
 
 use inkpaper_ui::{
     BoxPaint, CanvasPainter, Color, DamageRegion, GlyphBitmap, Painter, Point, Rect,
-    backend::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
+    backend::{draw_box_to, from_embedded_size, to_embedded_rect},
     px,
 };
 

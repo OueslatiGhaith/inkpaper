@@ -8,12 +8,14 @@ use embedded_graphics::{
     },
 };
 
-use inkpaper_ui::{CanvasPainter, Color, Pixels, Point, Rect};
+use inkpaper_ui::{
+    CanvasPainter, Color, Pixels, Point, Rect,
+    backend::{to_embedded_point, to_embedded_rect},
+};
 
 use crate::{
     BinaryDitherTarget, EInkCoverageMode, EInkUiMode, Gray2,
     coverage::{alpha_blend_gray2, color_to_gray2, inks},
-    to_embedded_point, to_embedded_rect,
     tone::binary_dither_gray2,
 };
 

@@ -14,6 +14,8 @@ use embedded_graphics::{
 
 use crate::{BoxPaint, Color, Point, Rect, Size, px};
 
+/// Converts a ui rect to an embedded-graphics rectangle, treating negative sizes as
+/// empty.
 pub fn to_embedded_rect(rect: Rect) -> EgRectangle {
     let width = u32::try_from(rect.width().non_negative().get()).unwrap_or(u32::MAX);
     let height = u32::try_from(rect.height().non_negative().get()).unwrap_or(u32::MAX);
@@ -24,10 +26,12 @@ pub fn to_embedded_rect(rect: Rect) -> EgRectangle {
     )
 }
 
+/// Converts a ui point to an embedded-graphics point.
 pub fn to_embedded_point(point: Point) -> EgPoint {
     EgPoint::new(point.x.get(), point.y.get())
 }
 
+/// Converts an embedded-graphics size to a ui size, saturating at `i32::MAX`.
 pub fn from_embedded_size(size: EgSize) -> Size {
     Size::new(
         px(i32::try_from(size.width).unwrap_or(i32::MAX)),
