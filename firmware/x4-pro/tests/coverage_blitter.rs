@@ -1,9 +1,12 @@
 extern crate alloc;
 
 use embedded_graphics::prelude::DrawTarget as _;
-use inkpaper_ui::{CanvasPainter, Color, Painter, Point, Rect, Size, px};
+use embedded_graphics::{Pixel, geometry::Point as EgPoint, pixelcolor::GrayColor};
+use inkpaper_ui::{
+    CanvasPainter, Color, GlyphBitmap, GlyphMetrics, Painter, Point, Rect, Size, px,
+};
 use inkpaper_ui_eink::{
-    DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkPainter, EInkUiMode, Gray2,
+    DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkPainter, EInkTone, EInkUiMode, Gray2,
 };
 
 // the test only exercises the blitter, not the rest of the firmware framebuffer
@@ -375,4 +378,73 @@ fn coverage_blitter_declines_native_gray_foreground() {
     );
 
     assert_eq!(framebuffer.draw_coverage_bitmap(request), None,);
+}
+
+#[test]
+fn pixels_read_back_as_drawn() {
+    let mut storage = FramebufferStorage::white();
+    let mut framebuffer = Framebuffer::new(&mut storage, Orientation::Portrait);
+
+    // the screen's corners and both sides of a physical byte boundary
+    let points = [
+        EgPoint::new(0, 0),
+        EgPoint::new(LOGICAL_WIDTH as i32 - 1, LOGICAL_HEIGHT as i32 - 1),
+        EgPoint::new(17, 7),
+        EgPoint::new(17, 8),
+    ];
+
+    for level in 0..4 {
+        let color = Gray2::new(level);
+
+        framebuffer
+            .draw_iter(points.map(|point| Pixel(point, color)))
+            .unwrap();
+
+        for point in points {
+            assert_eq!(framebuffer.pixel(point), Some(color), "{point:?}");
+        }
+    }
+
+    assert_eq!(framebuffer.pixel(EgPoint::new(-1, 0)), None);
+    assert_eq!(
+        framebuffer.pixel(EgPoint::new(LOGICAL_WIDTH as i32, 0)),
+        None
+    );
+}
+
+#[test]
+fn antialiased_glyphs_blend_into_the_framebuffer() {
+    let coverage = [0, 64, 160, 255];
+    let metrics = GlyphMetrics {
+        width: 4,
+        height: 1,
+        ..GlyphMetrics::default()
+    };
+    let bitmap = GlyphBitmap::new(&coverage, metrics).with_antialias(true);
+
+    let mut storage = FramebufferStorage::white();
+    let mut framebuffer = Framebuffer::new(&mut storage, Orientation::Portrait);
+
+    let tone = {
+        let mut painter = EInkPainter::new(&mut framebuffer)
+            .with_coverage_blitter(Framebuffer::draw_coverage_bitmap)
+            .with_ui_mode(EInkUiMode::BinaryDither)
+            .with_pixel_reader(Framebuffer::pixel);
+
+        painter
+            .draw_glyph(&bitmap, point(10, 20), Color::BLACK, full_screen_clip())
+            .unwrap();
+
+        painter.report().tone()
+    };
+
+    let levels: [u8; 4] = core::array::from_fn(|x| {
+        framebuffer
+            .pixel(EgPoint::new(10 + x as i32, 20))
+            .unwrap()
+            .luma()
+    });
+
+    assert_eq!(levels, [3, 2, 1, 0]);
+    assert_eq!(tone, EInkTone::Gray4);
 }

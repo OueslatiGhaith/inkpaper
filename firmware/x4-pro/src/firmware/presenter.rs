@@ -304,7 +304,8 @@ fn render_invalidation(
     let (damage, paint_report, eink_report) = {
         let mut painter = EInkPainter::new(&mut display)
             .with_coverage_blitter(Framebuffer::draw_coverage_bitmap)
-            .with_ui_mode(EInkUiMode::BinaryDither);
+            .with_ui_mode(EInkUiMode::BinaryDither)
+            .with_pixel_reader(Framebuffer::pixel);
 
         let damage = match invalidation.kind() {
             Invalidation::None => return None,

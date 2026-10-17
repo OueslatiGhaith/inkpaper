@@ -205,6 +205,24 @@ impl<'a> Framebuffer<'a> {
         Some(physical.align_x_to_byte())
     }
 
+    /// the level at a logical point, or `None` outside the screen. Painters
+    /// read it to blend into what's already drawn
+    pub fn pixel(&self, point: Point) -> Option<Gray2> {
+        if !contains_logical_pixel(point) {
+            return None;
+        }
+
+        let (physical_x, physical_y) = self.orientation.map_point(point.x as u16, point.y as u16);
+        let index = physical_y as usize * PHYSICAL_STRIDE + physical_x as usize / 8;
+
+        let mask = 0x80u8 >> (physical_x as usize % 8);
+
+        let lsb = self.storage.lsb[index] & mask != 0;
+        let msb = self.storage.msb[index] & mask != 0;
+
+        Some(Gray2::new(u8::from(lsb) | u8::from(msb) << 1))
+    }
+
     fn set_pixel(&mut self, x: u16, y: u16, color: Gray2) {
         let (physical_x, physical_y) = self.orientation.map_point(x, y);
         let index = physical_y as usize * PHYSICAL_STRIDE + physical_x as usize / 8;
