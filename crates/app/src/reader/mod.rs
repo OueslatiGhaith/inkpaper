@@ -27,7 +27,7 @@ pub(crate) use state::{
     JumpTarget, ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState,
 };
 pub(crate) use text_settings::{
-    LineSpacing, PageBounds, ParagraphAlignment, ReaderFont, ScreenMargin, TextSetting,
+    Darkness, LineSpacing, PageBounds, ParagraphAlignment, ReaderFont, ScreenMargin, TextSetting,
     TextSettings,
 };
 pub(crate) use text_settings_screen::{

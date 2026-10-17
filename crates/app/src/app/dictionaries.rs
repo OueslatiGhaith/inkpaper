@@ -213,6 +213,8 @@ impl InkPaperApp {
             self.text_settings.card_font(),
         );
 
-        paint_page(page, None, family, paint);
+        let darkness = self.reader.text_settings().darkness().ink();
+
+        paint_page(page, None, family, darkness, paint);
     }
 }

@@ -1036,6 +1036,12 @@ impl ReaderState {
             return false;
         }
 
+        // the page only paints differently
+        if text.same_layout(self.text) {
+            self.text = text;
+            return true;
+        }
+
         let Some(document) = self.document.as_ref() else {
             return false;
         };

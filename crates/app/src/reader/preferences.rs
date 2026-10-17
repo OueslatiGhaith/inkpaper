@@ -2,7 +2,7 @@ use alloc::{string::String, vec::Vec};
 
 use minicbor::{Decode, Encode};
 
-use super::{LineSpacing, ParagraphAlignment, ReaderFont, ScreenMargin, TextSettings};
+use super::{Darkness, LineSpacing, ParagraphAlignment, ReaderFont, ScreenMargin, TextSettings};
 use crate::storage::{self, StorageError};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +49,7 @@ impl ReaderPreferences {
             paragraph_spacing: self.text.paragraph_spacing(),
             embedded_style: self.text.embedded_style(),
             hyphenation: Some(self.text.hyphenation()),
+            darkness: Some(self.text.darkness().index()),
             font: font_name.map(String::from),
             dictionary: dictionary_name.map(String::from),
         };
@@ -76,6 +77,13 @@ impl ReaderPreferences {
         let alignment = ParagraphAlignment::from_index(stored.alignment)
             .ok_or(ReaderPreferencesError::InvalidAlignment(stored.alignment))?;
 
+        let darkness = match stored.darkness {
+            Some(index) => {
+                Darkness::from_index(index).ok_or(ReaderPreferencesError::InvalidDarkness(index))?
+            }
+            None => Darkness::default(),
+        };
+
         let text = TextSettings::new(stored.font_size, line_spacing, margin)
             .ok_or(ReaderPreferencesError::InvalidFontSize(stored.font_size))?
             .with_alignment(alignment)
@@ -90,6 +98,7 @@ impl ReaderPreferences {
                     .hyphenation
                     .unwrap_or(TextSettings::default().hyphenation()),
             )
+            .with_darkness(darkness)
             .with_font(
                 stored
                     .font
@@ -116,6 +125,7 @@ pub enum ReaderPreferencesError {
     InvalidMargin(u8),
     InvalidAlignment(u8),
     InvalidParagraphIndent(u8),
+    InvalidDarkness(u8),
 }
 
 impl From<StorageError> for ReaderPreferencesError {
@@ -149,4 +159,7 @@ struct StoredReaderPreferences {
     /// the dictionary folder's name; none when missing
     #[n(9)]
     dictionary: Option<String>,
+    /// normal when missing, from before the setting existed
+    #[n(10)]
+    darkness: Option<u8>,
 }

@@ -13,10 +13,11 @@ pub(crate) fn paint_reader_page(
     page: &Page<'static>,
     document: &ReaderDocument,
     family: FontFamilyId,
+    darkness: TextDarkness,
     selected: &[(usize, ReaderRect)],
     paint: &mut PaintCx<'_>,
 ) {
-    paint_page(page, Some(document), family, paint);
+    paint_page(page, Some(document), family, darkness, paint);
 
     for &(index, bounds) in selected {
         let Some(PageItem::Text(fragment)) = page.items().get(index) else {
@@ -36,23 +37,27 @@ pub(crate) fn paint_reader_page(
 
         // the item's text again, in white, showing only the word
         paint.with_clip(highlight, |paint| {
-            paint_text_fragment(fragment, family, Some(Color::WHITE), paint);
+            paint_text_fragment(fragment, family, darkness, Some(Color::WHITE), paint);
         });
     }
 }
 
-/// A laid out page, its text in `family`, the one it was laid out in. Its
+/// A laid out page, its text in `family`, the one it was laid out in, and
+/// `darkness`. Its
 /// images come from `document`, so a page without one, like a settings
 /// preview, draws only its text.
 pub(crate) fn paint_page(
     page: &Page<'static>,
     document: Option<&ReaderDocument>,
     family: FontFamilyId,
+    darkness: TextDarkness,
     paint: &mut PaintCx<'_>,
 ) {
     for item in page.items() {
         match item {
-            PageItem::Text(fragment) => paint_text_fragment(fragment, family, None, paint),
+            PageItem::Text(fragment) => {
+                paint_text_fragment(fragment, family, darkness, None, paint)
+            }
             PageItem::Image(fragment) => {
                 if let Some(document) = document {
                     paint_image_fragment(fragment, document, paint);
@@ -66,6 +71,7 @@ pub(crate) fn paint_page(
 fn paint_text_fragment(
     fragment: &TextFragment<'_>,
     family: FontFamilyId,
+    darkness: TextDarkness,
     color: Option<Color>,
     paint: &mut PaintCx<'_>,
 ) {
@@ -78,7 +84,8 @@ fn paint_text_fragment(
         .font_weight(font_weight)
         .font_style(font_style)
         .font_size(px(i32::from(style.font_size())))
-        .word_spacing(reader_px(fragment.word_spacing()));
+        .word_spacing(reader_px(fragment.word_spacing()))
+        .text_darkness(darkness);
 
     // like crosspoint, links into the book are underlined; the device can't
     // open the web, so external ones aren't

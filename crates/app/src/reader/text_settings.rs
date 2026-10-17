@@ -144,6 +144,60 @@ impl ParagraphAlignment {
     }
 }
 
+/// How dark the book's text paints. It doesn't change the layout: only the
+/// coverage a glyph's pixel needs to ink. Extra Dark is about as heavy as
+/// crosspoint's text.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Darkness {
+    Light,
+    #[default]
+    Normal,
+    Dark,
+    ExtraDark,
+}
+
+impl Darkness {
+    pub(crate) const ALL: [Self; 4] = [Self::Light, Self::Normal, Self::Dark, Self::ExtraDark];
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Light => "Light",
+            Self::Normal => "Normal",
+            Self::Dark => "Dark",
+            Self::ExtraDark => "Extra Dark",
+        }
+    }
+
+    pub(crate) const fn ink(self) -> inkpaper_ui::TextDarkness {
+        inkpaper_ui::TextDarkness::percent(match self {
+            Self::Light => 75,
+            Self::Normal => 100,
+            Self::Dark => 140,
+            Self::ExtraDark => 180,
+        })
+    }
+
+    /// The stored form, in order from lightest.
+    pub(crate) const fn index(self) -> u8 {
+        match self {
+            Self::Light => 0,
+            Self::Normal => 1,
+            Self::Dark => 2,
+            Self::ExtraDark => 3,
+        }
+    }
+
+    pub(crate) const fn from_index(index: u8) -> Option<Self> {
+        match index {
+            0 => Some(Self::Light),
+            1 => Some(Self::Normal),
+            2 => Some(Self::Dark),
+            3 => Some(Self::ExtraDark),
+            _ => None,
+        }
+    }
+}
+
 /// The space around the page, like crosspoint's screen margin: 5 to 40 px in
 /// steps of 5. It sets the left and right edges, and the top with a little extra.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,7 +268,7 @@ pub(crate) enum ReaderFont {
     Card(u8),
 }
 
-/// The reader settings that lay out text: changing any of them repaginates.
+/// The reader settings for text: changing any but its darkness repaginates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TextSettings {
     font: ReaderFont,
@@ -230,6 +284,7 @@ pub(crate) struct TextSettings {
     embedded_style: bool,
     /// whether words break at the end of a line, in the book's language
     hyphenation: bool,
+    darkness: Darkness,
 }
 
 impl TextSettings {
@@ -252,6 +307,7 @@ impl TextSettings {
             paragraph_spacing: true,
             embedded_style: true,
             hyphenation: true,
+            darkness: Darkness::Normal,
         })
     }
 
@@ -304,6 +360,20 @@ impl TextSettings {
             hyphenation,
             ..self
         }
+    }
+
+    pub(crate) const fn darkness(self) -> Darkness {
+        self.darkness
+    }
+
+    pub(crate) const fn with_darkness(self, darkness: Darkness) -> Self {
+        Self { darkness, ..self }
+    }
+
+    /// Whether `self` lays a book out like `other`: they differ in darkness
+    /// at most.
+    pub(crate) fn same_layout(self, other: Self) -> bool {
+        self.with_darkness(other.darkness) == other
     }
 
     pub(crate) const fn with_embedded_style(self, embedded_style: bool) -> Self {
@@ -374,6 +444,7 @@ impl Default for TextSettings {
             paragraph_spacing: true,
             embedded_style: true,
             hyphenation: true,
+            darkness: Darkness::Normal,
         }
     }
 }
@@ -391,6 +462,7 @@ pub(crate) enum TextSetting {
     ParagraphSpacing,
     EmbeddedStyle,
     Hyphenation,
+    Darkness,
 }
 
 impl TextSetting {
@@ -412,8 +484,9 @@ impl TextSetting {
         Self::ScreenMargin,
     ];
 
-    /// The Text Settings screen's Style tab, in crosspoint's order.
-    pub(crate) const STYLE: [Self; 2] = [Self::Hyphenation, Self::EmbeddedStyle];
+    /// The Text Settings screen's Style tab, in crosspoint's order, then
+    /// darkness, which crosspoint doesn't have.
+    pub(crate) const STYLE: [Self; 3] = [Self::Hyphenation, Self::EmbeddedStyle, Self::Darkness];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
@@ -426,6 +499,7 @@ impl TextSetting {
             Self::ParagraphSpacing => "Extra Paragraph Spacing",
             Self::EmbeddedStyle => "Embedded Style",
             Self::Hyphenation => "Hyphenation",
+            Self::Darkness => "Text Darkness",
         }
     }
 
@@ -469,6 +543,7 @@ impl TextSetting {
             Self::ParagraphSpacing => String::from(on_off(text.paragraph_spacing)),
             Self::EmbeddedStyle => String::from(on_off(text.embedded_style)),
             Self::Hyphenation => String::from(on_off(text.hyphenation)),
+            Self::Darkness => String::from(text.darkness.label()),
         }
     }
 
@@ -486,6 +561,10 @@ impl TextSetting {
                 .map(|alignment| String::from(alignment.label()))
                 .collect(),
             Self::ScreenMargin => margins().map(|margin| format!("{}", margin.px())).collect(),
+            Self::Darkness => Darkness::ALL
+                .iter()
+                .map(|darkness| String::from(darkness.label()))
+                .collect(),
             Self::ParagraphIndent => (0..=PARAGRAPH_INDENT_MAX).map(indent_label).collect(),
             Self::ParagraphSpacing | Self::EmbeddedStyle | Self::Hyphenation => [false, true]
                 .iter()
@@ -510,6 +589,9 @@ impl TextSetting {
             Self::ParagraphSpacing => Some(usize::from(text.paragraph_spacing)),
             Self::EmbeddedStyle => Some(usize::from(text.embedded_style)),
             Self::Hyphenation => Some(usize::from(text.hyphenation)),
+            Self::Darkness => Darkness::ALL
+                .iter()
+                .position(|&darkness| darkness == text.darkness),
         }
     }
 
@@ -545,6 +627,7 @@ impl TextSetting {
                 1 => Some(text.with_hyphenation(true)),
                 _ => None,
             },
+            Self::Darkness => Some(text.with_darkness(*Darkness::ALL.get(index)?)),
         }
     }
 

@@ -387,6 +387,8 @@ impl InkPaperApp {
             .selection()
             .map_or(&[][..], |selection| selection.pieces());
 
-        paint_reader_page(page, document, family, selected, paint);
+        let darkness = self.reader.text_settings().darkness().ink();
+
+        paint_reader_page(page, document, family, darkness, selected, paint);
     }
 }
