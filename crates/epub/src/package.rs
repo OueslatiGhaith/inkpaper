@@ -267,7 +267,9 @@ struct PendingManifestItem {
 }
 
 impl PendingManifestItem {
-    fn finish(self, package_path: &ArchivePath) -> Result<ManifestItem, PackageError> {
+    /// The item, or `None` when its href doesn't resolve, such as one outside
+    /// the book: nothing can read it, but the rest of the book still opens.
+    fn finish(self, package_path: &ArchivePath) -> Result<Option<ManifestItem>, PackageError> {
         let id = self
             .id
             .ok_or(PackageError::MissingManifestAttribute("id"))?;
@@ -280,7 +282,9 @@ impl PendingManifestItem {
             .media_type
             .ok_or(PackageError::MissingManifestAttribute("media-type"))?;
 
-        let path = package_path.resolve(&href).map_err(PackageError::Path)?;
+        let Ok(path) = package_path.resolve(&href) else {
+            return Ok(None);
+        };
 
         let properties = self
             .properties
@@ -290,14 +294,14 @@ impl PendingManifestItem {
             .map(String::from)
             .collect();
 
-        Ok(ManifestItem {
+        Ok(Some(ManifestItem {
             id,
             href,
             path,
             media_type,
             fallback: self.fallback,
             properties,
-        })
+        }))
     }
 }
 
@@ -483,7 +487,7 @@ impl XmlParser for PackageParser {
         let start = core::mem::replace(&mut self.start, StartTag::Other);
 
         match start {
-            StartTag::ManifestItem(item) => self.manifest.push(item.finish(&self.path)?),
+            StartTag::ManifestItem(item) => self.manifest.extend(item.finish(&self.path)?),
             StartTag::Spine { toc } => self.spine_toc = toc,
             StartTag::SpineItem(item) => self.spine_items.push(item.finish()?),
             StartTag::MetadataField(field) if empty => self.finish_capture(field),
@@ -649,6 +653,17 @@ mod tests {
 
         assert_eq!(content_id(&broken), "start");
         assert_eq!(content_id(&cyclic), "start");
+    }
+
+    #[test]
+    fn manifest_leaves_out_items_outside_the_book() {
+        let package = package(
+            r#"<item id="start" href="a.xhtml" media-type="application/xhtml+xml"/>
+               <item id="outside" href="../../b.css" media-type="text/css"/>"#,
+        );
+
+        assert_eq!(content_id(&package), "start");
+        assert!(package.manifest_item("outside").is_none());
     }
 
     #[test]

@@ -83,10 +83,10 @@ impl XmlParser for NcxParser {
                 self.nav_map_depth = Some(self.depth);
             }
             StartTag::Content { src: Some(src) } => {
-                let target =
-                    NavigationTarget::resolve(&self.path, &src).map_err(NavigationError::Path)?;
-
-                if let Some(entry) = self.stack.last_mut() {
+                // an entry whose target doesn't resolve keeps its label
+                if let Ok(target) = NavigationTarget::resolve(&self.path, &src)
+                    && let Some(entry) = self.stack.last_mut()
+                {
                     entry.set_target(target);
                 }
             }

@@ -222,6 +222,46 @@ fn xhtml_preserves_named_anchors_and_external_links() {
 }
 
 #[test]
+fn xhtml_ignores_references_outside_the_book() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <link rel="stylesheet" href="../../../outside.css" />
+    </head>
+
+    <body>
+        <p>
+            <a href="../../../outside.xhtml">away</a>
+            <img src="/Images/art.png" alt="art" />
+        </p>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+
+    assert!(chapter.stylesheets().is_empty());
+    assert_eq!(chapter.blocks().len(), 1);
+
+    let block = &chapter.blocks()[0];
+
+    assert_eq!(visible_text(block), "away art");
+    assert!(
+        block
+            .inlines()
+            .iter()
+            .all(|inline| !matches!(inline, Inline::Image(_))),
+    );
+    assert!(block.inlines().iter().all(|inline| {
+        let Inline::Text(text) = inline else {
+            return true;
+        };
+
+        text.link().is_none()
+    }));
+}
+
+#[test]
 fn xhtml_creates_list_item_blocks() {
     const XHTML: &str = r#"
 <html xmlns="http://www.w3.org/1999/xhtml">

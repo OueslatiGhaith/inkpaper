@@ -232,7 +232,7 @@ impl XmlParser for XhtmlParser {
         }
 
         if element.kind == ElementKind::StylesheetLink {
-            self.collect_stylesheet_link(&element)?;
+            self.collect_stylesheet_link(&element);
             return Ok(());
         }
 
@@ -314,10 +314,12 @@ impl XmlParser for XhtmlParser {
                 {
                     self.push_anchor(name);
                 }
-                if !empty && let Some(href) = element.href {
-                    let target =
-                        LinkTarget::resolve(&self.path, &href).map_err(XhtmlError::Path)?;
-
+                // a link that doesn't resolve, such as one outside the book, stays
+                // plain text
+                if !empty
+                    && let Some(href) = element.href
+                    && let Ok(target) = LinkTarget::resolve(&self.path, &href)
+                {
                     self.active_link = Some(ActiveLink {
                         depth: self.depth,
                         target,
@@ -336,10 +338,8 @@ impl XmlParser for XhtmlParser {
                     return Ok(());
                 };
 
-                let target = LinkTarget::resolve(&self.path, &src).map_err(XhtmlError::Path)?;
-
-                match target {
-                    LinkTarget::Internal { path, .. } => {
+                match LinkTarget::resolve(&self.path, &src) {
+                    Ok(LinkTarget::Internal { path, .. }) => {
                         let link = self.active_link.as_ref().map(|link| link.target.clone());
                         let alt = element.image_alt.filter(|alt| !alt.is_empty());
 
@@ -351,9 +351,9 @@ impl XmlParser for XhtmlParser {
                         });
                     }
 
-                    LinkTarget::External(_) => {
-                        // InkPaper does not fetch remote EPUB resources. Preserve useful
-                        // alternative text instead.
+                    Ok(LinkTarget::External(_)) | Err(_) => {
+                        // InkPaper does not fetch remote EPUB resources, nor find ones
+                        // outside the book. Preserve useful alternative text instead.
                         self.push_image_alt(element.image_alt, style_node);
                     }
                 }
@@ -545,7 +545,7 @@ impl XhtmlParser {
         }
     }
 
-    fn collect_stylesheet_link(&mut self, element: &PendingElement) -> Result<(), XhtmlError> {
+    fn collect_stylesheet_link(&mut self, element: &PendingElement) {
         let is_stylesheet = element
             .rel
             .as_deref()
@@ -554,19 +554,17 @@ impl XhtmlParser {
             .any(|relation| relation.eq_ignore_ascii_case("stylesheet"));
 
         if !is_stylesheet {
-            return Ok(());
+            return;
         }
 
         let Some(href) = element.href.as_deref() else {
-            return Ok(());
+            return;
         };
 
-        let target = LinkTarget::resolve(&self.path, href).map_err(XhtmlError::Path)?;
-
-        let LinkTarget::Internal { path, .. } = target else {
+        let Ok(LinkTarget::Internal { path, .. }) = LinkTarget::resolve(&self.path, href) else {
             // EPUB resources are local archive resources. We don't attempt network
-            // stylesheet loading from XHTML.
-            return Ok(());
+            // stylesheet loading from XHTML, nor look outside the book.
+            return;
         };
 
         if self.stylesheets.iter().any(|source| {
@@ -575,12 +573,10 @@ impl XhtmlParser {
                 StylesheetSource::External(existing) if existing == &path
             )
         }) {
-            return Ok(());
+            return;
         }
 
         self.stylesheets.push(StylesheetSource::External(path));
-
-        Ok(())
     }
 
     fn finish_stylesheet_capture(&mut self) {

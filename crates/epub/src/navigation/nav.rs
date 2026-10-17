@@ -116,10 +116,9 @@ impl XmlParser for NavParser {
             }
 
             StartTag::Anchor { href: Some(href) } => {
-                let target =
-                    NavigationTarget::resolve(&self.path, &href).map_err(NavigationError::Path)?;
-
-                if let Some(entry) = self.stack.last_mut() {
+                if let Ok(target) = NavigationTarget::resolve(&self.path, &href)
+                    && let Some(entry) = self.stack.last_mut()
+                {
                     entry.set_target(target);
                 }
             }
@@ -171,10 +170,10 @@ impl XmlParser for NavParser {
                     if let Some(entry) = self.stack.last_mut() {
                         entry.set_label(capture.label);
 
-                        if let Some(href) = capture.href {
-                            let target = NavigationTarget::resolve(&self.path, &href)
-                                .map_err(NavigationError::Path)?;
-
+                        // an entry whose target doesn't resolve keeps its label
+                        if let Some(href) = capture.href
+                            && let Ok(target) = NavigationTarget::resolve(&self.path, &href)
+                        {
                             entry.set_target(target);
                         }
                     }

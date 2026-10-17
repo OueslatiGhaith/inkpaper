@@ -206,6 +206,36 @@ mod tests {
     }
 
     #[test]
+    fn epub3_navigation_keeps_entries_whose_target_is_outside_the_book() {
+        const NAV: &str = r#"
+<html
+    xmlns="http://www.w3.org/1999/xhtml"
+    xmlns:epub="http://www.idpf.org/2007/ops"
+>
+    <body>
+        <nav epub:type="toc">
+            <ol>
+                <li><a href="../../../outside.xhtml">Outside</a></li>
+                <li><a href="../Text/chapter.xhtml">Chapter</a></li>
+            </ol>
+        </nav>
+    </body>
+</html>
+"#;
+
+        let navigation =
+            parse_nav(NAV, ArchivePath::new("OPS/Navigation/toc.xhtml").unwrap()).unwrap();
+
+        assert_eq!(navigation.entries().len(), 2);
+        assert_eq!(navigation.entries()[0].label(), "Outside");
+        assert!(navigation.entries()[0].target().is_none());
+        assert_eq!(
+            navigation.entries()[1].target().unwrap().path().as_str(),
+            "OPS/Text/chapter.xhtml",
+        );
+    }
+
+    #[test]
     fn epub2_ncx_decodes_percent_encoded_targets() {
         const NCX: &str = r#"
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
@@ -230,5 +260,34 @@ mod tests {
 
         assert_eq!(target.path().as_str(), "OPS/Text/Café Chapter.xhtml");
         assert_eq!(target.fragment(), Some("section 1"));
+    }
+
+    #[test]
+    fn epub2_ncx_keeps_entries_whose_target_is_outside_the_book() {
+        const NCX: &str = r#"
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+    <navMap>
+        <navPoint id="outside">
+            <navLabel><text>Outside</text></navLabel>
+            <content src="/outside.xhtml"/>
+        </navPoint>
+
+        <navPoint id="chapter">
+            <navLabel><text>Chapter</text></navLabel>
+            <content src="Text/chapter.xhtml"/>
+        </navPoint>
+    </navMap>
+</ncx>
+"#;
+
+        let navigation = parse_ncx(NCX, ArchivePath::new("OPS/toc.ncx").unwrap()).unwrap();
+
+        assert_eq!(navigation.entries().len(), 2);
+        assert_eq!(navigation.entries()[0].label(), "Outside");
+        assert!(navigation.entries()[0].target().is_none());
+        assert_eq!(
+            navigation.entries()[1].target().unwrap().path().as_str(),
+            "OPS/Text/chapter.xhtml",
+        );
     }
 }
