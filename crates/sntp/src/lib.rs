@@ -31,6 +31,8 @@ pub enum Error {
     OriginMismatch,
     /// the server sent no transmit time
     MissingTime,
+    /// the transmit time is before 1970, so it has no Unix time
+    BeforeUnixEpoch,
 }
 
 /// A client request. `nonce` is sent as the transmit timestamp; the server echoes
@@ -81,7 +83,9 @@ pub fn parse_response(packet: &[u8], nonce: u64) -> Result<u64, Error> {
         0
     };
 
-    Ok(seconds + era + rounding - UNIX_OFFSET)
+    (seconds + era + rounding)
+        .checked_sub(UNIX_OFFSET)
+        .ok_or(Error::BeforeUnixEpoch)
 }
 
 fn timestamp(packet: &[u8], offset: usize) -> u64 {
@@ -170,6 +174,12 @@ mod tests {
         );
 
         assert_eq!(parse_response(&reply(0), NONCE), Err(Error::MissingTime));
+
+        // era 0 second 2^31 is in 1968
+        assert_eq!(
+            parse_response(&reply(ntp(0x8000_0000, 0)), NONCE),
+            Err(Error::BeforeUnixEpoch)
+        );
     }
 
     #[test]
