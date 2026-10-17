@@ -4,7 +4,7 @@ use inkpaper_reader::{
 };
 use inkpaper_ui::{BoxPaint, prelude::*};
 
-use crate::ReaderDocument;
+use crate::{ReaderDocument, reader::TextSettings};
 
 /// A book's page, with the `selected` pieces of a word, each a text item's
 /// index and the bounds of the word's highlight in it, inverted like
@@ -13,11 +13,11 @@ pub(crate) fn paint_reader_page(
     page: &Page<'static>,
     document: &ReaderDocument,
     family: FontFamilyId,
-    darkness: TextDarkness,
+    settings: TextSettings,
     selected: &[(usize, ReaderRect)],
     paint: &mut PaintCx<'_>,
 ) {
-    paint_page(page, Some(document), family, darkness, paint);
+    paint_page(page, Some(document), family, settings, paint);
 
     for &(index, bounds) in selected {
         let Some(PageItem::Text(fragment)) = page.items().get(index) else {
@@ -37,26 +37,25 @@ pub(crate) fn paint_reader_page(
 
         // the item's text again, in white, showing only the word
         paint.with_clip(highlight, |paint| {
-            paint_text_fragment(fragment, family, darkness, Some(Color::WHITE), paint);
+            paint_text_fragment(fragment, family, settings, Some(Color::WHITE), paint);
         });
     }
 }
 
 /// A laid out page, its text in `family`, the one it was laid out in, and
-/// `darkness`. Its
-/// images come from `document`, so a page without one, like a settings
-/// preview, draws only its text.
+/// painted as `settings` say. Its images come from `document`, so a page
+/// without one, like a settings preview, draws only its text.
 pub(crate) fn paint_page(
     page: &Page<'static>,
     document: Option<&ReaderDocument>,
     family: FontFamilyId,
-    darkness: TextDarkness,
+    settings: TextSettings,
     paint: &mut PaintCx<'_>,
 ) {
     for item in page.items() {
         match item {
             PageItem::Text(fragment) => {
-                paint_text_fragment(fragment, family, darkness, None, paint)
+                paint_text_fragment(fragment, family, settings, None, paint)
             }
             PageItem::Image(fragment) => {
                 if let Some(document) = document {
@@ -67,11 +66,11 @@ pub(crate) fn paint_page(
     }
 }
 
-/// `fragment`'s text, in `color` when given.
+/// `fragment`'s text, painted as `settings` say, in `color` when given.
 fn paint_text_fragment(
     fragment: &TextFragment<'_>,
     family: FontFamilyId,
-    darkness: TextDarkness,
+    settings: TextSettings,
     color: Option<Color>,
     paint: &mut PaintCx<'_>,
 ) {
@@ -85,7 +84,8 @@ fn paint_text_fragment(
         .font_style(font_style)
         .font_size(px(i32::from(style.font_size())))
         .word_spacing(reader_px(fragment.word_spacing()))
-        .text_darkness(darkness);
+        .text_darkness(settings.darkness().ink())
+        .text_antialias(settings.antialiasing());
 
     // like crosspoint, links into the book are underlined; the device can't
     // open the web, so external ones aren't

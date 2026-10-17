@@ -268,7 +268,8 @@ pub(crate) enum ReaderFont {
     Card(u8),
 }
 
-/// The reader settings for text: changing any but its darkness repaginates.
+/// The reader settings for text: changing any but its darkness or
+/// antialiasing repaginates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TextSettings {
     font: ReaderFont,
@@ -285,6 +286,9 @@ pub(crate) struct TextSettings {
     /// whether words break at the end of a line, in the book's language
     hyphenation: bool,
     darkness: Darkness,
+    /// whether glyph edges paint in gray, like crosspoint's text
+    /// anti-aliasing
+    antialiasing: bool,
 }
 
 impl TextSettings {
@@ -308,6 +312,7 @@ impl TextSettings {
             embedded_style: true,
             hyphenation: true,
             darkness: Darkness::Normal,
+            antialiasing: false,
         })
     }
 
@@ -370,10 +375,23 @@ impl TextSettings {
         Self { darkness, ..self }
     }
 
-    /// Whether `self` lays a book out like `other`: they differ in darkness
-    /// at most.
+    pub(crate) const fn antialiasing(self) -> bool {
+        self.antialiasing
+    }
+
+    pub(crate) const fn with_antialiasing(self, antialiasing: bool) -> Self {
+        Self {
+            antialiasing,
+            ..self
+        }
+    }
+
+    /// Whether `self` lays a book out like `other`: they differ in how text
+    /// paints at most.
     pub(crate) fn same_layout(self, other: Self) -> bool {
-        self.with_darkness(other.darkness) == other
+        self.with_darkness(other.darkness)
+            .with_antialiasing(other.antialiasing)
+            == other
     }
 
     pub(crate) const fn with_embedded_style(self, embedded_style: bool) -> Self {
@@ -445,6 +463,7 @@ impl Default for TextSettings {
             embedded_style: true,
             hyphenation: true,
             darkness: Darkness::Normal,
+            antialiasing: false,
         }
     }
 }
@@ -462,6 +481,7 @@ pub(crate) enum TextSetting {
     ParagraphSpacing,
     EmbeddedStyle,
     Hyphenation,
+    AntiAliasing,
     Darkness,
 }
 
@@ -486,7 +506,12 @@ impl TextSetting {
 
     /// The Text Settings screen's Style tab, in crosspoint's order, then
     /// darkness, which crosspoint doesn't have.
-    pub(crate) const STYLE: [Self; 3] = [Self::Hyphenation, Self::EmbeddedStyle, Self::Darkness];
+    pub(crate) const STYLE: [Self; 4] = [
+        Self::Hyphenation,
+        Self::EmbeddedStyle,
+        Self::AntiAliasing,
+        Self::Darkness,
+    ];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
@@ -499,6 +524,7 @@ impl TextSetting {
             Self::ParagraphSpacing => "Extra Paragraph Spacing",
             Self::EmbeddedStyle => "Embedded Style",
             Self::Hyphenation => "Hyphenation",
+            Self::AntiAliasing => "Text Anti-Aliasing",
             Self::Darkness => "Text Darkness",
         }
     }
@@ -517,7 +543,7 @@ impl TextSetting {
     pub(crate) const fn is_toggle(self) -> bool {
         matches!(
             self,
-            Self::ParagraphSpacing | Self::EmbeddedStyle | Self::Hyphenation
+            Self::ParagraphSpacing | Self::EmbeddedStyle | Self::Hyphenation | Self::AntiAliasing
         )
     }
 
@@ -527,6 +553,7 @@ impl TextSetting {
             Self::ParagraphSpacing => text.paragraph_spacing,
             Self::EmbeddedStyle => text.embedded_style,
             Self::Hyphenation => text.hyphenation,
+            Self::AntiAliasing => text.antialiasing,
             _ => false,
         }
     }
@@ -543,6 +570,7 @@ impl TextSetting {
             Self::ParagraphSpacing => String::from(on_off(text.paragraph_spacing)),
             Self::EmbeddedStyle => String::from(on_off(text.embedded_style)),
             Self::Hyphenation => String::from(on_off(text.hyphenation)),
+            Self::AntiAliasing => String::from(on_off(text.antialiasing)),
             Self::Darkness => String::from(text.darkness.label()),
         }
     }
@@ -566,7 +594,10 @@ impl TextSetting {
                 .map(|darkness| String::from(darkness.label()))
                 .collect(),
             Self::ParagraphIndent => (0..=PARAGRAPH_INDENT_MAX).map(indent_label).collect(),
-            Self::ParagraphSpacing | Self::EmbeddedStyle | Self::Hyphenation => [false, true]
+            Self::ParagraphSpacing
+            | Self::EmbeddedStyle
+            | Self::Hyphenation
+            | Self::AntiAliasing => [false, true]
                 .iter()
                 .map(|&on| String::from(on_off(on)))
                 .collect(),
@@ -589,6 +620,7 @@ impl TextSetting {
             Self::ParagraphSpacing => Some(usize::from(text.paragraph_spacing)),
             Self::EmbeddedStyle => Some(usize::from(text.embedded_style)),
             Self::Hyphenation => Some(usize::from(text.hyphenation)),
+            Self::AntiAliasing => Some(usize::from(text.antialiasing)),
             Self::Darkness => Darkness::ALL
                 .iter()
                 .position(|&darkness| darkness == text.darkness),
@@ -627,6 +659,11 @@ impl TextSetting {
                 1 => Some(text.with_hyphenation(true)),
                 _ => None,
             },
+            Self::AntiAliasing => match index {
+                0 => Some(text.with_antialiasing(false)),
+                1 => Some(text.with_antialiasing(true)),
+                _ => None,
+            },
             Self::Darkness => Some(text.with_darkness(*Darkness::ALL.get(index)?)),
         }
     }
@@ -637,6 +674,7 @@ impl TextSetting {
             Self::ParagraphSpacing => Some(text.with_paragraph_spacing(!text.paragraph_spacing)),
             Self::EmbeddedStyle => Some(text.with_embedded_style(!text.embedded_style)),
             Self::Hyphenation => Some(text.with_hyphenation(!text.hyphenation)),
+            Self::AntiAliasing => Some(text.with_antialiasing(!text.antialiasing)),
             _ => None,
         }
     }

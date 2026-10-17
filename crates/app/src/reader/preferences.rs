@@ -50,6 +50,7 @@ impl ReaderPreferences {
             embedded_style: self.text.embedded_style(),
             hyphenation: Some(self.text.hyphenation()),
             darkness: Some(self.text.darkness().index()),
+            antialiasing: Some(self.text.antialiasing()),
             font: font_name.map(String::from),
             dictionary: dictionary_name.map(String::from),
         };
@@ -99,6 +100,7 @@ impl ReaderPreferences {
                     .unwrap_or(TextSettings::default().hyphenation()),
             )
             .with_darkness(darkness)
+            .with_antialiasing(stored.antialiasing.unwrap_or_default())
             .with_font(
                 stored
                     .font
@@ -162,4 +164,7 @@ struct StoredReaderPreferences {
     /// normal when missing, from before the setting existed
     #[n(10)]
     darkness: Option<u8>,
+    /// off when missing, from before the setting existed
+    #[n(11)]
+    antialiasing: Option<bool>,
 }

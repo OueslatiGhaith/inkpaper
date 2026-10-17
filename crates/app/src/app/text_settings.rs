@@ -94,9 +94,7 @@ impl InkPaperApp {
                 self.text_settings.card_font(),
             );
 
-            let darkness = self.text_settings.draft().darkness().ink();
-
-            paint_page(page, None, family, darkness, paint);
+            paint_page(page, None, family, self.text_settings.draft(), paint);
         }
     }
 
