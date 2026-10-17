@@ -1,6 +1,11 @@
 //! Paints the ui onto 2-bit grayscale e-paper framebuffers through
 //! embedded-graphics, tracking which grey levels a frame needs.
 
+#![no_std]
+
+#[cfg(test)]
+extern crate std;
+
 use embedded_graphics::{
     Drawable, Pixel as EgPixel,
     draw_target::DrawTargetExt,
