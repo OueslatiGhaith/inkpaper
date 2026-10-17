@@ -125,7 +125,7 @@ impl Div<i32> for Pixels {
         if rhs == 0 {
             return Self::ZERO;
         }
-        Self(self.0 / rhs)
+        Self(self.0.saturating_div(rhs))
     }
 }
 
@@ -360,5 +360,17 @@ impl SubAssign for Offset {
     fn sub_assign(&mut self, rhs: Self) {
         self.x -= rhs.x;
         self.y -= rhs.y;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pixel_division_saturates_and_divides_by_zero_to_zero() {
+        assert_eq!(px(-7) / 2, px(-3));
+        assert_eq!(px(7) / 0, Pixels::ZERO);
+        assert_eq!(px(i32::MIN) / -1, Pixels::MAX);
     }
 }
