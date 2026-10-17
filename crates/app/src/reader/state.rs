@@ -121,7 +121,11 @@ pub(crate) struct ReaderState {
 
     document: Option<ReaderDocument>,
     page_index: usize,
+    /// the settings the page is laid out with
     text: TextSettings,
+    /// the settings last saved; an open book is laid out with them once it
+    /// repaginates
+    saved_text: TextSettings,
     /// the dictionary words are looked up in
     dictionary: Option<u8>,
     /// the word held to look up, on the page it was held on
@@ -147,6 +151,7 @@ impl Default for ReaderState {
             document: None,
             page_index: 0,
             text: TextSettings::default(),
+            saved_text: TextSettings::default(),
             dictionary: None,
             selection: None,
             failed: false,
@@ -159,6 +164,7 @@ impl Default for ReaderState {
 
 impl ReaderState {
     pub(crate) fn open(&mut self, path: String, fallback_title: String) {
+        self.text = self.saved_text;
         self.pending = Some(ReaderRequest::OpenEpub {
             path: path.clone(),
             text: self.text,
@@ -188,6 +194,7 @@ impl ReaderState {
 
     pub(crate) fn apply_preferences(&mut self, preferences: ReaderPreferences) -> bool {
         let text = preferences.text();
+        self.saved_text = text;
 
         let dictionary_changed = preferences.dictionary() != self.dictionary;
         self.dictionary = preferences.dictionary();
@@ -1090,6 +1097,7 @@ impl ReaderState {
         self.page_index = page_index.min(document.page_count().saturating_sub(1));
 
         self.text = text;
+        self.saved_text = text;
         self.pending_repagination = None;
         self.failed = false;
 
@@ -1140,13 +1148,12 @@ impl ReaderState {
             self.text = text;
         }
 
-        let preferences = ReaderPreferences::new(text).with_dictionary(self.dictionary);
-
-        self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
+        self.saved_text = text;
+        self.queue_preferences_update();
     }
 
     fn queue_preferences_update(&mut self) {
-        let preferences = ReaderPreferences::new(self.text).with_dictionary(self.dictionary);
+        let preferences = ReaderPreferences::new(self.saved_text).with_dictionary(self.dictionary);
 
         self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
     }

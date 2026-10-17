@@ -770,13 +770,14 @@ where
 
             let card = card_for(text.font(), self.card_font.as_ref());
 
+            // without its fonts the book can't be laid out, so it fails to open
             if session.set_text_settings(text, card).is_err() {
-                return Ok(());
+                None
+            } else {
+                let resume = self.history.resume_position(&path, session.identifier());
+
+                session.load_document_at(resume).await.ok()
             }
-
-            let resume = self.history.resume_position(&path, session.identifier());
-
-            session.load_document_at(resume).await.ok()
         };
 
         match document {
