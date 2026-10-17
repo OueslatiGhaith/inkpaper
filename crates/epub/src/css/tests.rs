@@ -409,3 +409,69 @@ fn css_reports_whether_the_book_declared_an_alignment() {
     assert_eq!(plain.text_align(), TextAlign::Start);
     assert_eq!(inherited.declared_text_align(), Some(TextAlign::Center));
 }
+
+#[test]
+fn css_reads_values_with_non_ascii_text() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <style>
+            p {
+                font-family: Mérovingien;
+                text-align: center !important;
+            }
+
+            p {
+                text-align: right;
+            }
+        </style>
+    </head>
+
+    <body>
+        <p>text</p>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+
+    let styles = resolve_embedded(&chapter);
+
+    assert_eq!(
+        text_style(&chapter, &styles, "text").text_align(),
+        TextAlign::Center,
+    );
+}
+
+#[test]
+fn css_unclosed_string_ends_at_its_line() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <style>
+            p {
+                content: "unclosed;
+                font-style: italic;
+            }
+
+            h1 {
+                text-align: right;
+            }
+        </style>
+    </head>
+
+    <body>
+        <h1>title</h1>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+
+    let styles = resolve_embedded(&chapter);
+
+    assert_eq!(
+        text_style(&chapter, &styles, "title").text_align(),
+        TextAlign::Right,
+    );
+}

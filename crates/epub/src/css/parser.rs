@@ -384,7 +384,7 @@ fn parse_declarations(css: &str) -> Vec<Declaration> {
         }
 
         if let Some(active_quote) = quote {
-            if character == active_quote {
+            if ends_string(character, active_quote) {
                 quote = None;
             }
 
@@ -482,17 +482,11 @@ fn parse_declaration(declaration: &str, output: &mut Vec<Declaration>) {
 
 fn strip_important(value: &str) -> (&str, bool) {
     let value = value.trim();
-    const IMPORTANT: &str = "!important";
 
-    if value.len() >= IMPORTANT.len() {
-        let start = value.len() - IMPORTANT.len();
-
-        if value[start..].eq_ignore_ascii_case(IMPORTANT) {
-            return (value[..start].trim_end(), true);
-        }
+    match strip_suffix_ignore_ascii_case(value, "!important") {
+        Some(value) => (value.trim_end(), true),
+        None => (value, false),
     }
-
-    (value, false)
 }
 
 fn parse_vertical_margin(value: &str) -> Option<(CssLength, CssLength)> {
@@ -763,6 +757,12 @@ fn strip_comments(css: &str) -> String {
     output
 }
 
+/// A string ends at its closing quote, or, left unclosed, at the end of its
+/// line, so one bad string doesn't swallow the rest of the stylesheet.
+fn ends_string(character: char, quote: char) -> bool {
+    character == quote || matches!(character, '\n' | '\r' | '\x0c')
+}
+
 fn find_matching_brace(css: &str, open: usize) -> Option<usize> {
     let mut depth = 0usize;
     let mut quote = None;
@@ -782,7 +782,7 @@ fn find_matching_brace(css: &str, open: usize) -> Option<usize> {
         }
 
         if let Some(active_quote) = quote {
-            if character == active_quote {
+            if ends_string(character, active_quote) {
                 quote = None;
             }
 
