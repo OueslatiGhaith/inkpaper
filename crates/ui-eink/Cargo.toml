@@ -1,0 +1,13 @@
+[package]
+name = "inkpaper-ui-eink"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+defmt = ["dep:defmt", "embedded-graphics/defmt", "inkpaper-ui/defmt"]
+metrics = ["inkpaper-ui/metrics"]
+
+[dependencies]
+defmt = { workspace = true, optional = true }
+embedded-graphics = { workspace = true }
+inkpaper-ui = { path = "../ui", default-features = false, features = ["embedded-graphics"] }

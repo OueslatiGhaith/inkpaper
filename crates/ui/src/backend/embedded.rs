@@ -1,5 +1,5 @@
 //! Conversions between the ui's geometry and embedded-graphics', and box
-//! drawing, shared by the e-ink and embedded-graphics backends.
+//! drawing, shared by the embedded-graphics backends.
 
 use embedded_graphics::{
     Drawable,
@@ -14,7 +14,7 @@ use embedded_graphics::{
 
 use crate::{BoxPaint, Color, Point, Rect, Size, px};
 
-pub(super) fn to_embedded_rect(rect: Rect) -> EgRectangle {
+pub fn to_embedded_rect(rect: Rect) -> EgRectangle {
     let width = u32::try_from(rect.width().non_negative().get()).unwrap_or(u32::MAX);
     let height = u32::try_from(rect.height().non_negative().get()).unwrap_or(u32::MAX);
 
@@ -24,11 +24,11 @@ pub(super) fn to_embedded_rect(rect: Rect) -> EgRectangle {
     )
 }
 
-pub(super) fn to_embedded_point(point: Point) -> EgPoint {
+pub fn to_embedded_point(point: Point) -> EgPoint {
     EgPoint::new(point.x.get(), point.y.get())
 }
 
-pub(super) fn from_embedded_size(size: EgSize) -> Size {
+pub fn from_embedded_size(size: EgSize) -> Size {
     Size::new(
         px(i32::try_from(size.width).unwrap_or(i32::MAX)),
         px(i32::try_from(size.height).unwrap_or(i32::MAX)),
@@ -37,7 +37,7 @@ pub(super) fn from_embedded_size(size: EgSize) -> Size {
 
 /// Draws a box's background and border, converting their colors with
 /// `target_color`.
-pub(super) fn draw_box_to<D, C>(
+pub fn draw_box_to<D, C>(
     target: &mut D,
     bounds: Rect,
     paint: BoxPaint,

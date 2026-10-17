@@ -1,9 +1,9 @@
 use inkpaper_app::AppResources;
 use inkpaper_ui::{
     HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapFrame, HeapGlobalArena, PaintError,
-    backend::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
     prelude::*,
 };
+use inkpaper_ui_eink::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode};
 
 use crate::firmware::{
     framebuffer::{

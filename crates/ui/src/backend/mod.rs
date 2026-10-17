@@ -1,18 +1,7 @@
-#[cfg(feature = "eink")]
-mod eink;
-#[cfg(any(feature = "eink", feature = "embedded-graphics"))]
 mod embedded;
-#[cfg(feature = "embedded-graphics")]
 mod embedded_graphics;
 mod mono_font;
 
-#[cfg(feature = "eink")]
-pub use eink::{
-    DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkCoverageBlitter, EInkCoverageMode,
-    EInkPaintReport, EInkPainter, EInkTone, EInkUiMode, Gray2, inks,
-};
-
-#[cfg(feature = "embedded-graphics")]
+pub use embedded::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect};
 pub use embedded_graphics::{CoverageMode, EmbeddedGraphicsImage, EmbeddedGraphicsPainter};
-
 pub use mono_font::MonoFontFace;

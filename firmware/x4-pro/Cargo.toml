@@ -5,7 +5,7 @@ edition = "2024"
 
 [features]
 default = []
-trace = ["inkpaper-trace/recording", "inkpaper-ui/metrics"]
+trace = ["inkpaper-trace/recording", "inkpaper-ui/metrics", "inkpaper-ui-eink/metrics"]
 # logs what a new glyph costs, phase by phase, once at boot
 glyph-profile = ["dep:skrifa"]
 
@@ -19,7 +19,8 @@ gt911 = { path = "../../crates/gt911", features = ["defmt"] }
 inkpaper-app = { path = "../../crates/app", features = ["defmt"] }
 inkpaper-epub = { path = "../../crates/epub" }
 inkpaper-trace = { path = "../../crates/trace" }
-inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "defmt", "eink"] }
+inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "defmt"] }
+inkpaper-ui-eink = { path = "../../crates/ui-eink", features = ["defmt"] }
 sntp = { path = "../../crates/sntp", features = ["defmt"] }
 ssd1677 = { path = "../../crates/ssd1677", features = ["defmt"] }
 uc8179 = { path = "../../crates/uc8179", features = ["defmt"] }

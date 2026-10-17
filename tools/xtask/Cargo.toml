@@ -9,7 +9,8 @@ anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 embedded-graphics = { workspace = true }
 indoc = "2.0.7"
-inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "eink", "hinting"] }
+inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "hinting"] }
+inkpaper-ui-eink = { path = "../../crates/ui-eink" }
 # the dictionary fixtures' dictzip chunks
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 png = "0.18.1"

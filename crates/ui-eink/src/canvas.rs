@@ -8,15 +8,13 @@ use embedded_graphics::{
     },
 };
 
-use crate::{
-    CanvasPainter, Color, Pixels, Point, Rect,
-    backend::eink::{BinaryDitherTarget, EInkUiMode, tone::binary_dither_gray2},
-};
+use inkpaper_ui::{CanvasPainter, Color, Pixels, Point, Rect};
 
-use super::{
-    EInkCoverageMode, Gray2,
+use crate::{
+    BinaryDitherTarget, EInkCoverageMode, EInkUiMode, Gray2,
     coverage::{alpha_blend_gray2, color_to_gray2, inks},
     to_embedded_point, to_embedded_rect,
+    tone::binary_dither_gray2,
 };
 
 pub(super) struct EInkCanvasPainter<'target, D>

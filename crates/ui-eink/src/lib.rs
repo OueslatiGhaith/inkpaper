@@ -1,3 +1,6 @@
+//! Paints the ui onto 2-bit grayscale e-paper framebuffers through
+//! embedded-graphics, tracking which grey levels a frame needs.
+
 use embedded_graphics::{
     Drawable, Pixel as EgPixel,
     draw_target::DrawTargetExt,
@@ -7,14 +10,13 @@ use embedded_graphics::{
     primitives::{Primitive, PrimitiveStyle as EgPrimitiveStyle},
 };
 
-use crate::{
+use inkpaper_ui::{
     BoxPaint, CanvasPainter, Color, DamageRegion, GlyphBitmap, Painter, Point, Rect,
-    backend::{
-        eink::tone::{BinaryDitherTarget, gray2_tone},
-        embedded::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
-    },
+    backend::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
     px,
 };
+
+use tone::{BinaryDitherTarget, gray2_tone};
 
 mod canvas;
 mod coverage;

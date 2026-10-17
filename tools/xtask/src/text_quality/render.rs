@@ -21,10 +21,9 @@ use embedded_graphics::{
 };
 use inkpaper_ui::{
     FontData, FontFace, FontInstance, FontWeight, GlyphId, HintedTtfFont, ResolvedFont,
-    RuntimeResources, ShapedGlyph, SimpleShaper, TtfFont,
-    backend::{DEFAULT_MIN_INK_COVERAGE, EInkPainter, EInkUiMode, Gray2, inks},
-    prelude::*,
+    RuntimeResources, ShapedGlyph, SimpleShaper, TtfFont, prelude::*,
 };
+use inkpaper_ui_eink::{DEFAULT_MIN_INK_COVERAGE, EInkPainter, EInkUiMode, Gray2, inks};
 
 /// the reader's font. Keep in sync with `crates/app/src/typography.rs`
 static READER_FONT: TtfFont<'static> = TtfFont::from_data(

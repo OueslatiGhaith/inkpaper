@@ -8,7 +8,7 @@ use embedded_graphics::{
     pixelcolor::GrayColor,
     primitives::Rectangle,
 };
-use inkpaper_ui::backend::{EInkCoverageBitmap, Gray2, inks};
+use inkpaper_ui_eink::{EInkCoverageBitmap, Gray2, inks};
 
 #[cfg(all(feature = "trace", target_arch = "xtensa"))]
 use crate::firmware::perf::CycleTimer;

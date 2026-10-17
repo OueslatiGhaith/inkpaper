@@ -6,7 +6,7 @@ extern crate std;
 #[cfg(any(test, feature = "alloc", feature = "hinting"))]
 extern crate alloc;
 
-#[cfg(any(feature = "embedded-graphics", feature = "eink"))]
+#[cfg(feature = "embedded-graphics")]
 pub mod backend;
 
 mod callback;

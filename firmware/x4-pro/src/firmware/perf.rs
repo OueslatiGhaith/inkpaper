@@ -822,7 +822,7 @@ pub(crate) fn record_text_metrics(
 }
 
 pub(crate) fn record_coverage_metrics(
-    paint: inkpaper_ui::backend::EInkPaintReport,
+    paint: inkpaper_ui_eink::EInkPaintReport,
     framebuffer_draw_iter_pixels: u64,
 ) {
     inkpaper_trace::gauge!(

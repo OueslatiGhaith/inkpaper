@@ -2285,6 +2285,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inkpaper-ui-eink"
+version = "0.1.0"
+dependencies = [
+ "defmt 1.1.1",
+ "embedded-graphics",
+ "inkpaper-ui",
+]
+
+[[package]]
 name = "inkpaper-ui-macros"
 version = "0.1.0"
 dependencies = [
@@ -2336,6 +2345,7 @@ dependencies = [
  "inkpaper-epub",
  "inkpaper-trace",
  "inkpaper-ui",
+ "inkpaper-ui-eink",
  "rtt-target",
  "sdio",
  "skrifa",
@@ -3916,6 +3926,7 @@ dependencies = [
  "embedded-graphics",
  "indoc",
  "inkpaper-ui",
+ "inkpaper-ui-eink",
  "miniz_oxide 0.9.1",
  "png",
  "zip",

@@ -1,10 +1,9 @@
 extern crate alloc;
 
 use embedded_graphics::prelude::DrawTarget as _;
-use inkpaper_ui::{
-    CanvasPainter, Color, Painter, Point, Rect, Size,
-    backend::{DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkPainter, EInkUiMode, Gray2},
-    px,
+use inkpaper_ui::{CanvasPainter, Color, Painter, Point, Rect, Size, px};
+use inkpaper_ui_eink::{
+    DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkPainter, EInkUiMode, Gray2,
 };
 
 // the test only exercises the blitter, not the rest of the firmware framebuffer

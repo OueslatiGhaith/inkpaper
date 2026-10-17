@@ -5,11 +5,9 @@ use embedded_graphics::{
     prelude::DrawTarget as EgDrawTarget,
 };
 
-use crate::{
-    Color, GlyphBitmap, Luminance, Point, Rect,
-    backend::{EInkPaintReport, eink::tone::binary_dither_gray2},
-    increment_metric,
-};
+use inkpaper_ui::{Color, GlyphBitmap, Luminance, Point, Rect};
+
+use crate::{EInkPaintReport, tone::binary_dither_gray2};
 
 /// the least coverage that inks a pixel in binary output: 7/16 of a pixel.
 ///
@@ -235,7 +233,10 @@ where
                         return None;
                     }
 
-                    increment_metric!(accepted);
+                    #[cfg(feature = "metrics")]
+                    {
+                        accepted += 1;
+                    }
 
                     Some(EgPixel(point, foreground))
                 });
@@ -294,7 +295,10 @@ where
                         return None;
                     }
 
-                    increment_metric!(accepted);
+                    #[cfg(feature = "metrics")]
+                    {
+                        accepted += 1;
+                    }
 
                     Some(EgPixel(point, binary_dither_gray2(foreground, point)))
                 });
@@ -330,7 +334,10 @@ where
                             return None;
                         }
 
-                        increment_metric!(accepted);
+                        #[cfg(feature = "metrics")]
+                        {
+                            accepted += 1;
+                        }
 
                         Some(EgPixel(point, foreground))
                     });
@@ -358,7 +365,10 @@ where
 
                 target.draw_iter(core::iter::once(EgPixel(point, color)))?;
 
-                increment_metric!(accepted);
+                #[cfg(feature = "metrics")]
+                {
+                    accepted += 1;
+                }
             }
 
             #[cfg(feature = "metrics")]
