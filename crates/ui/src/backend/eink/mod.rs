@@ -1,25 +1,29 @@
-use embedded_graphics::{draw_target::DrawTargetExt, prelude::DrawTarget as EgDrawTarget};
+use embedded_graphics::{
+    Drawable, Pixel as EgPixel,
+    draw_target::DrawTargetExt,
+    geometry::Point as EgPoint,
+    pixelcolor::GrayColor,
+    prelude::DrawTarget as EgDrawTarget,
+    primitives::{Primitive, PrimitiveStyle as EgPrimitiveStyle},
+};
 
 use crate::{
-    BoxPaint, CanvasPainter, Color, DamageRegion, GlyphCacheError, ImagePaint, ImageSource,
-    Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError,
+    BoxPaint, CanvasPainter, Color, DamageRegion, GlyphBitmap, GlyphCacheError, ImagePaint,
+    ImageSource, Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError,
     backend::{
-        eink::{
-            text::{EInkGlyphSink, text_error},
-            tone::{BinaryDitherTarget, gray2_tone},
-        },
+        eink::tone::{BinaryDitherTarget, gray2_tone},
         embedded::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
     },
-    pair_cache::{PAIR_POSITIONING_CACHE_SLOTS, PairPositioningCache},
     px,
-    rendering::text_paint::{paint_text, paint_text_run},
+    rendering::{
+        image_paint::paint_image,
+        text_paint::{TextPaintError, paint_text, paint_text_run},
+    },
     resources::RuntimeResources,
 };
 
 mod canvas;
 mod coverage;
-mod image;
-mod text;
 mod tone;
 
 pub use coverage::{
@@ -30,8 +34,7 @@ pub use tone::{EInkPaintReport, EInkTone, EInkUiMode};
 pub use embedded_graphics::pixelcolor::Gray2;
 
 use canvas::EInkCanvasPainter;
-use coverage::color_to_gray2;
-use image::draw_image_to;
+use coverage::{color_to_gray2, draw_coverage_bitmap};
 
 #[derive(Debug)]
 pub enum EInkError<E> {
@@ -50,7 +53,6 @@ where
     min_ink_coverage: u8,
     ui_mode: EInkUiMode,
     report: EInkPaintReport,
-    pair_positioning_cache: PairPositioningCache<PAIR_POSITIONING_CACHE_SLOTS>,
 }
 
 impl<'target, D> EInkPainter<'target, D>
@@ -65,7 +67,6 @@ where
             min_ink_coverage: DEFAULT_MIN_INK_COVERAGE,
             ui_mode: EInkUiMode::NativeGray2,
             report: EInkPaintReport::default(),
-            pair_positioning_cache: PairPositioningCache::default(),
         }
     }
 
@@ -251,6 +252,50 @@ where
 
         painter.finish().map_err(EInkError::Target)
     }
+
+    fn draw_glyph(
+        &mut self,
+        bitmap: &GlyphBitmap<'_>,
+        origin: Point,
+        color: Color,
+        clip: Rect,
+    ) -> Result<(), Self::Error> {
+        let coverage_mode = self.effective_coverage_mode();
+
+        draw_coverage_bitmap(
+            self.target,
+            &mut self.report,
+            bitmap,
+            origin,
+            color,
+            clip,
+            coverage_mode,
+        )
+    }
+
+    fn fill_rect(&mut self, rect: Rect, color: Color, clip: Rect) -> Result<(), Self::Error> {
+        to_embedded_rect(rect)
+            .into_styled(EgPrimitiveStyle::with_fill(color_to_gray2(color)))
+            .draw(&mut self.target.clipped(&to_embedded_rect(clip)))
+            .map_err(EInkError::Target)
+    }
+
+    fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error> {
+        let report = &mut self.report;
+        let y = origin.y.get();
+
+        let pixels = pixels.iter().zip(origin.x.get()..).map(|(&color, x)| {
+            let gray = color_to_gray2(color);
+
+            if matches!(gray.luma(), 1 | 2) {
+                report.include(EInkTone::Gray4);
+            }
+
+            EgPixel(EgPoint::new(x, y), gray)
+        });
+
+        self.target.draw_iter(pixels).map_err(EInkError::Target)
+    }
 }
 
 impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
@@ -284,8 +329,6 @@ where
             .resolve_family_font(style.font_family, style.font_weight, style.font_style)
             .expect("EInkPainter requires a default font");
 
-        let coverage_mode = self.effective_coverage_mode();
-
         if self.ui_mode == EInkUiMode::NativeGray2 {
             self.record_native_ui_color(style.color);
 
@@ -296,23 +339,9 @@ where
             }
         }
 
-        let mut sink = EInkGlyphSink {
-            target: self.target,
-            report: &mut self.report,
-            coverage_mode,
-        };
-
-        let shaped_glyphs = paint_text(
-            &mut sink,
-            text,
-            bounds,
-            clip,
-            registry,
-            glyph_cache,
-            font,
-            style,
-        )
-        .map_err(text_error)?;
+        let shaped_glyphs =
+            paint_text(self, text, bounds, clip, registry, glyph_cache, font, style)
+                .map_err(text_error)?;
 
         #[cfg(feature = "metrics")]
         self.report.record_text_draw(shaped_glyphs);
@@ -339,13 +368,11 @@ where
         // glyph ink may overflow a run, so only the caller's clip applies
         let clip = clip.unwrap_or(bounds);
 
-        let (registry, glyph_cache) = resources.fonts_and_glyph_cache();
+        let (registry, glyph_cache, pair_positioning_cache) = resources.fonts_and_caches();
 
         let font = registry
             .resolve_family_font(style.font_family, style.font_weight, style.font_style)
             .expect("EInkPainter requires a default font");
-
-        let coverage_mode = self.effective_coverage_mode();
 
         if self.ui_mode == EInkUiMode::NativeGray2 {
             self.record_native_ui_color(style.color);
@@ -356,16 +383,10 @@ where
         }
 
         #[cfg(feature = "metrics")]
-        let pair_cache_before = self.pair_positioning_cache.metrics();
-
-        let mut sink = EInkGlyphSink {
-            target: self.target,
-            report: &mut self.report,
-            coverage_mode,
-        };
+        let pair_cache_before = pair_positioning_cache.metrics();
 
         let shaped_glyphs = paint_text_run(
-            &mut sink,
+            self,
             text,
             bounds,
             clip,
@@ -373,14 +394,13 @@ where
             glyph_cache,
             font,
             style,
-            Some(&mut self.pair_positioning_cache),
+            Some(&mut *pair_positioning_cache),
         )
         .map_err(text_error)?;
 
         #[cfg(feature = "metrics")]
         {
-            let pair_cache_delta = self
-                .pair_positioning_cache
+            let pair_cache_delta = pair_positioning_cache
                 .metrics()
                 .delta_since(pair_cache_before);
 
@@ -431,11 +451,14 @@ where
             return Ok(());
         };
 
-        let tone = draw_image_to(self.target, image, bounds, paint, Some(clip))
-            .map_err(EInkError::Target)?;
+        paint_image(self, image, bounds, paint, Some(clip))
+    }
+}
 
-        self.report.include(tone);
-
-        Ok(())
+fn text_error<E>(error: TextPaintError<EInkError<E>>) -> EInkError<E> {
+    match error {
+        TextPaintError::Painter(error) => error,
+        TextPaintError::Font(error) => EInkError::Font(error),
+        TextPaintError::Shape(error) => EInkError::Shape(error),
     }
 }

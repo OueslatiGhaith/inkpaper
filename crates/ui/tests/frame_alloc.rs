@@ -148,6 +148,24 @@ impl Painter for TextCounter {
     ) -> Result<(), Self::Error> {
         unreachable!("screen contains no canvas")
     }
+
+    fn draw_glyph(
+        &mut self,
+        _: &GlyphBitmap<'_>,
+        _: Point,
+        _: Color,
+        _: Rect,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn fill_rect(&mut self, _: Rect, _: Color, _: Rect) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_pixels(&mut self, _: Point, _: &[Color]) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 impl ResourcePainter for TextCounter {

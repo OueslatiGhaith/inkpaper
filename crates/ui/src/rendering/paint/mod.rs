@@ -1,7 +1,8 @@
 use crate::{
-    Axis, CanvasPainter, Color, DamageRegion, FrameArena, ImageColorMode, ImagePaint, ImageSource,
-    NodeId, NodeKind, Offset, Pixels, Position, Rect, ResolvedTextStyle, callback::CallbackStore,
-    count_metric, entity::EntityStore, flow_axis, storage::FrameStorage, visual::VisualNode,
+    Axis, CanvasPainter, Color, DamageRegion, FrameArena, GlyphBitmap, ImageColorMode, ImagePaint,
+    ImageSource, NodeId, NodeKind, Offset, Pixels, Point, Position, Rect, ResolvedTextStyle,
+    callback::CallbackStore, count_metric, entity::EntityStore, flow_axis, storage::FrameStorage,
+    visual::VisualNode,
 };
 
 mod canvas;
@@ -117,6 +118,21 @@ pub trait Painter {
         clip: Option<Rect>,
         draw: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
     ) -> Result<(), Self::Error>;
+
+    /// draws a rasterized glyph's coverage in `color`, its top-left corner at `origin`
+    fn draw_glyph(
+        &mut self,
+        bitmap: &GlyphBitmap<'_>,
+        origin: Point,
+        color: Color,
+        clip: Rect,
+    ) -> Result<(), Self::Error>;
+
+    fn fill_rect(&mut self, rect: Rect, color: Color, clip: Rect) -> Result<(), Self::Error>;
+
+    /// draws a row of final image colors left to right from `origin`. They're already
+    /// clipped
+    fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error>;
 }
 
 pub trait ResourcePainter<R: ?Sized = ()>: Painter {

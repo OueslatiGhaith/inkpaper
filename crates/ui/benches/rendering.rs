@@ -1,7 +1,7 @@
 use std::{convert::Infallible, hint::black_box};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use inkpaper_ui::{BoxPaint, Painter, ResolvedTextStyle, TextMeasurer, prelude::*};
+use inkpaper_ui::{BoxPaint, GlyphBitmap, Painter, ResolvedTextStyle, TextMeasurer, prelude::*};
 
 const VIEWPORT: Size = Size::new(px(320), px(240));
 
@@ -56,6 +56,24 @@ impl Painter for NullPainter {
             &mut canvas,
         );
 
+        Ok(())
+    }
+
+    fn draw_glyph(
+        &mut self,
+        _: &GlyphBitmap<'_>,
+        _: Point,
+        _: Color,
+        _: Rect,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn fill_rect(&mut self, _: Rect, _: Color, _: Rect) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_pixels(&mut self, _: Point, _: &[Color]) -> Result<(), Self::Error> {
         Ok(())
     }
 }

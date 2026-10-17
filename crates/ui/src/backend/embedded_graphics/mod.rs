@@ -1,27 +1,31 @@
 use embedded_graphics::{
-    draw_target::DrawTargetExt, pixelcolor::Rgb888 as EgRgb888, prelude::DrawTarget as EgDrawTarget,
+    Drawable, Pixel as EgPixel,
+    draw_target::DrawTargetExt,
+    geometry::Point as EgPoint,
+    pixelcolor::Rgb888 as EgRgb888,
+    prelude::DrawTarget as EgDrawTarget,
+    primitives::{Primitive, PrimitiveStyle as EgPrimitiveStyle},
 };
 
 use crate::{
-    BoxPaint, CanvasPainter, Color, DamageRegion, GlyphCacheError, ImagePaint, ImageSource,
-    Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError,
+    BoxPaint, CanvasPainter, Color, DamageRegion, GlyphBitmap, GlyphCacheError, ImagePaint,
+    ImageSource, Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError,
     backend::{
         embedded::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
-        embedded_graphics::{
-            image::draw_image_to,
-            text::{EmbeddedGraphicsGlyphSink, text_error},
-        },
+        embedded_graphics::coverage::draw_coverage_bitmap,
     },
     pair_cache::PairPositioningCache,
     px,
-    rendering::text_paint::{paint_text, paint_text_run},
+    rendering::{
+        image_paint::paint_image,
+        text_paint::{TextPaintError, paint_text, paint_text_run},
+    },
     resources::RuntimeResources,
 };
 
 mod canvas;
 mod coverage;
 mod image;
-mod text;
 
 pub use coverage::CoverageMode;
 pub use image::EmbeddedGraphicsImage;
@@ -175,6 +179,46 @@ where
             .finish()
             .map_err(EmbeddedGraphicsError::Target)
     }
+
+    fn draw_glyph(
+        &mut self,
+        bitmap: &GlyphBitmap<'_>,
+        origin: Point,
+        color: Color,
+        clip: Rect,
+    ) -> Result<(), Self::Error> {
+        draw_coverage_bitmap(
+            self.target,
+            bitmap,
+            origin,
+            to_rgb888(color),
+            clip,
+            self.coverage_mode,
+        )
+    }
+
+    fn fill_rect(&mut self, rect: Rect, color: Color, clip: Rect) -> Result<(), Self::Error> {
+        let mut target = self.target.color_converted::<EgRgb888>();
+
+        to_embedded_rect(rect)
+            .into_styled(EgPrimitiveStyle::with_fill(to_rgb888(color)))
+            .draw(&mut target.clipped(&to_embedded_rect(clip)))
+            .map_err(EmbeddedGraphicsError::Target)
+    }
+
+    fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error> {
+        let y = origin.y.get();
+
+        let pixels = pixels
+            .iter()
+            .zip(origin.x.get()..)
+            .map(|(&color, x)| EgPixel(EgPoint::new(x, y), to_rgb888(color)));
+
+        self.target
+            .color_converted::<EgRgb888>()
+            .draw_iter(pixels)
+            .map_err(EmbeddedGraphicsError::Target)
+    }
 }
 
 impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
@@ -209,13 +253,8 @@ where
             .resolve_family_font(style.font_family, style.font_weight, style.font_style)
             .expect("EmbeddedGraphicsPainter requires a default font");
 
-        let mut sink = EmbeddedGraphicsGlyphSink {
-            target: self.target,
-            coverage_mode: self.coverage_mode,
-        };
-
         paint_text(
-            &mut sink,
+            self,
             text,
             bounds,
             text_clip,
@@ -250,13 +289,8 @@ where
             .resolve_family_font(style.font_family, style.font_weight, style.font_style)
             .expect("EmbeddedGraphicsPainter requires a default font");
 
-        let mut sink = EmbeddedGraphicsGlyphSink {
-            target: self.target,
-            coverage_mode: self.coverage_mode,
-        };
-
         paint_text_run(
-            &mut sink,
+            self,
             text,
             bounds,
             text_clip,
@@ -301,8 +335,15 @@ where
             return Ok(());
         };
 
-        draw_image_to(self.target, image, bounds, paint, Some(image_clip))
-            .map_err(EmbeddedGraphicsError::Target)
+        paint_image(self, image, bounds, paint, Some(image_clip))
+    }
+}
+
+fn text_error<E>(error: TextPaintError<EmbeddedGraphicsError<E>>) -> EmbeddedGraphicsError<E> {
+    match error {
+        TextPaintError::Painter(error) => error,
+        TextPaintError::Font(error) => EmbeddedGraphicsError::Font(error),
+        TextPaintError::Shape(error) => EmbeddedGraphicsError::Shape(error),
     }
 }
 

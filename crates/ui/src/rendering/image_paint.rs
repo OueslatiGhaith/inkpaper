@@ -1,32 +1,24 @@
 //! Fits, samples and processes images into rows of final colors, leaving only
-//! putting them down to a [`PixelSink`].
+//! putting them down to a [`Painter`].
 
 use crate::{
-    Color, ImagePaint, ImageResource, ImageSampler, Point, Rect, fitted_image_bounds,
+    Color, ImagePaint, ImageResource, ImageSampler, Painter, Point, Rect, fitted_image_bounds,
     process_image_pixel, px,
 };
 
-/// how many pixels of a row are handed to a [`PixelSink`] at once
+/// how many pixels of a row are handed to a [`Painter`] at once
 const SPAN_CAPACITY: usize = 64;
 
-/// where painted images end up: horizontal spans of final colors
-pub(crate) trait PixelSink {
-    type Error;
-
-    /// draws `pixels` left to right, starting at `origin`
-    fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error>;
-}
-
 /// paints `image` fitted into `bounds`, only touching pixels inside `clip`
-pub(crate) fn paint_image<S>(
-    sink: &mut S,
+pub(crate) fn paint_image<P>(
+    painter: &mut P,
     image: &dyn ImageResource,
     bounds: Rect,
     paint: ImagePaint,
     clip: Option<Rect>,
-) -> Result<(), S::Error>
+) -> Result<(), P::Error>
 where
-    S: PixelSink,
+    P: Painter,
 {
     let source_size = image.size();
 
@@ -92,13 +84,13 @@ where
 
         for x in left..right {
             match cursor.sample_next() {
-                Some(color) => span.push(sink, x, y, process_image_pixel(color, paint, x, y))?,
+                Some(color) => span.push(painter, x, y, process_image_pixel(color, paint, x, y))?,
                 // a pixel the sampler can't produce stays unpainted
-                None => span.flush(sink)?,
+                None => span.flush(painter)?,
             }
         }
 
-        span.flush(sink)?;
+        span.flush(painter)?;
     }
 
     Ok(())
@@ -120,13 +112,13 @@ impl Span {
         }
     }
 
-    fn push<S: PixelSink>(
+    fn push<P: Painter>(
         &mut self,
-        sink: &mut S,
+        painter: &mut P,
         x: i32,
         y: i32,
         color: Color,
-    ) -> Result<(), S::Error> {
+    ) -> Result<(), P::Error> {
         if self.len == 0 {
             self.origin = Point::new(px(x), px(y));
         }
@@ -135,13 +127,13 @@ impl Span {
         self.len += 1;
 
         if self.len == SPAN_CAPACITY {
-            self.flush(sink)?;
+            self.flush(painter)?;
         }
 
         Ok(())
     }
 
-    fn flush<S: PixelSink>(&mut self, sink: &mut S) -> Result<(), S::Error> {
+    fn flush<P: Painter>(&mut self, painter: &mut P) -> Result<(), P::Error> {
         if self.len == 0 {
             return Ok(());
         }
@@ -149,6 +141,6 @@ impl Span {
         let len = self.len;
         self.len = 0;
 
-        sink.draw_pixels(self.origin, &self.pixels[..len])
+        painter.draw_pixels(self.origin, &self.pixels[..len])
     }
 }

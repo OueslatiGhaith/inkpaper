@@ -2,7 +2,7 @@
 
 use std::convert::Infallible;
 
-use inkpaper_ui::{BoxPaint, Painter, ResolvedTextStyle, TextMeasurer, prelude::*};
+use inkpaper_ui::{BoxPaint, GlyphBitmap, Painter, ResolvedTextStyle, TextMeasurer, prelude::*};
 
 type TestRuntime = Runtime<FixedStorage<4096, 4, 4096, 16, 64, 512, 32>>;
 
@@ -37,6 +37,24 @@ impl Painter for TestPainter {
         _: Option<Rect>,
         _: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
     ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_glyph(
+        &mut self,
+        _: &GlyphBitmap<'_>,
+        _: Point,
+        _: Color,
+        _: Rect,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn fill_rect(&mut self, _: Rect, _: Color, _: Rect) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_pixels(&mut self, _: Point, _: &[Color]) -> Result<(), Self::Error> {
         Ok(())
     }
 }

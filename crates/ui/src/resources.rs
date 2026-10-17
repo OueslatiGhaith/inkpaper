@@ -3,6 +3,8 @@ use alloc::boxed::Box;
 
 #[cfg(feature = "metrics")]
 use crate::GlyphCacheMetrics;
+#[cfg(feature = "eink")]
+use crate::pair_cache::{PAIR_POSITIONING_CACHE_SLOTS, PairPositioningCache};
 use crate::{
     FontFace, FontFamilyId, FontId, FontInstance, FontRegistry, FontRegistryError, FontResources,
     FontStyle, FontWeight, GlyphBitmap, GlyphCache, GlyphCacheError, GlyphId, ImageId,
@@ -19,6 +21,8 @@ pub struct RuntimeResources<
 > {
     fonts: FontResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
     images: ImageRegistry<'resource, IMAGES>,
+    #[cfg(feature = "eink")]
+    pair_positioning_cache: PairPositioningCache<PAIR_POSITIONING_CACHE_SLOTS>,
 }
 
 impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
@@ -28,6 +32,8 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, con
         Self {
             fonts: FontResources::default(),
             images: ImageRegistry::default(),
+            #[cfg(feature = "eink")]
+            pair_positioning_cache: PairPositioningCache::default(),
         }
     }
 }
@@ -100,6 +106,20 @@ impl<
         &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
     ) {
         self.fonts.registry_and_glyph_cache()
+    }
+
+    /// [`Self::fonts_and_glyph_cache`] with the cache of positioned glyph pairs
+    #[cfg(feature = "eink")]
+    pub(crate) fn fonts_and_caches(
+        &mut self,
+    ) -> (
+        &FontRegistry<'resource, FONTS>,
+        &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
+        &mut PairPositioningCache<PAIR_POSITIONING_CACHE_SLOTS>,
+    ) {
+        let (registry, glyph_cache) = self.fonts.registry_and_glyph_cache();
+
+        (registry, glyph_cache, &mut self.pair_positioning_cache)
     }
 
     pub const fn font_registry(&self) -> &FontRegistry<'resource, FONTS> {

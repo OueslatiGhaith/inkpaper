@@ -3,8 +3,8 @@
 use std::convert::Infallible;
 
 use inkpaper_ui::{
-    BoxPaint, Element, MountCx, MountError, NodeId, Painter, ResolvedTextStyle, TextMeasurer,
-    prelude::*,
+    BoxPaint, Element, GlyphBitmap, MountCx, MountError, NodeId, Painter, ResolvedTextStyle,
+    TextMeasurer, prelude::*,
 };
 
 pub const VIEWPORT: Size = Size::new(px(320), px(240));
@@ -135,6 +135,24 @@ impl Painter for BenchPainter {
             &mut painter,
         );
 
+        Ok(())
+    }
+
+    fn draw_glyph(
+        &mut self,
+        _: &GlyphBitmap<'_>,
+        _: Point,
+        _: Color,
+        _: Rect,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn fill_rect(&mut self, _: Rect, _: Color, _: Rect) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_pixels(&mut self, _: Point, _: &[Color]) -> Result<(), Self::Error> {
         Ok(())
     }
 }

@@ -1,10 +1,10 @@
 //! Lays out, shapes and rasterizes text into positioned glyph bitmaps, leaving
-//! only putting their coverage down to a [`GlyphSink`].
+//! only putting their coverage down to a [`Painter`].
 
 use crate::{
-    Color, FontInstance, FontRegistry, GlyphBitmap, GlyphCache, GlyphCacheError, LineHeight,
-    Pixels, Point, Rect, ResolvedFont, ResolvedTextStyle, ShapeError, ShapeState, ShapedGlyph,
-    ShapedRun, SimpleShaper, TextAlign, TextDirection,
+    Color, FontInstance, FontRegistry, GlyphCache, GlyphCacheError, LineHeight, Painter, Pixels,
+    Point, Rect, ResolvedFont, ResolvedTextStyle, ShapeError, ShapeState, ShapedGlyph, ShapedRun,
+    SimpleShaper, TextAlign, TextDirection,
     pair_cache::PairPositioningCache,
     px,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
@@ -12,25 +12,9 @@ use crate::{
 
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
 
-/// where painted text ends up: rasterized glyphs and the rectangles of underlines
-pub(crate) trait GlyphSink {
-    type Error;
-
-    /// draws `bitmap`'s coverage with its top-left corner at `origin`
-    fn draw_glyph(
-        &mut self,
-        bitmap: &GlyphBitmap<'_>,
-        origin: Point,
-        color: Color,
-        clip: Rect,
-    ) -> Result<(), Self::Error>;
-
-    fn fill_rect(&mut self, rect: Rect, color: Color, clip: Rect) -> Result<(), Self::Error>;
-}
-
 #[derive(Debug)]
 pub(crate) enum TextPaintError<E> {
-    Sink(E),
+    Painter(E),
     Font(GlyphCacheError),
     Shape(ShapeError),
 }
@@ -39,12 +23,12 @@ pub(crate) enum TextPaintError<E> {
 /// glyphs it shaped
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_text<
-    S,
+    P,
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
 >(
-    sink: &mut S,
+    painter: &mut P,
     text: &str,
     bounds: Rect,
     clip: Rect,
@@ -52,9 +36,9 @@ pub(crate) fn paint_text<
     glyph_cache: &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
     font: ResolvedFont<'_>,
     style: ResolvedTextStyle,
-) -> Result<u64, TextPaintError<S::Error>>
+) -> Result<u64, TextPaintError<P::Error>>
 where
-    S: GlyphSink,
+    P: Painter,
 {
     if text.is_empty() {
         return Ok(0);
@@ -153,7 +137,7 @@ where
             let baseline = y + baseline_offset;
 
             if let Err(draw_error) = paint_shaped_run(
-                sink,
+                painter,
                 registry,
                 glyph_cache,
                 size_px,
@@ -184,13 +168,13 @@ where
 /// many glyphs it shaped
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_text_run<
-    S,
+    P,
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
     const PAIR_SLOTS: usize,
 >(
-    sink: &mut S,
+    painter: &mut P,
     text: &str,
     bounds: Rect,
     clip: Rect,
@@ -199,9 +183,9 @@ pub(crate) fn paint_text_run<
     font: ResolvedFont<'_>,
     style: ResolvedTextStyle,
     pair_positioning_cache: Option<&mut PairPositioningCache<PAIR_SLOTS>>,
-) -> Result<u64, TextPaintError<S::Error>>
+) -> Result<u64, TextPaintError<P::Error>>
 where
-    S: GlyphSink,
+    P: Painter,
 {
     if text.is_empty() {
         return Ok(0);
@@ -235,7 +219,7 @@ where
     let mut pen_x = bounds.origin.x;
 
     paint_shaped_run(
-        sink,
+        painter,
         registry,
         glyph_cache,
         size_px,
@@ -250,16 +234,17 @@ where
     if style.underline
         && let Some(underline) = underline_rect(bounds.origin.x, pen_x, baseline, size_px)
     {
-        sink.fill_rect(underline, style.color, clip)
-            .map_err(TextPaintError::Sink)?;
+        painter
+            .fill_rect(underline, style.color, clip)
+            .map_err(TextPaintError::Painter)?;
     }
 
     Ok(u64::try_from(glyph_count).unwrap_or(u64::MAX))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_shaped_run<S, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize>(
-    sink: &mut S,
+fn paint_shaped_run<P, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize>(
+    painter: &mut P,
     registry: &FontRegistry<'_, FONTS>,
     glyph_cache: &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
     size_px: u16,
@@ -269,9 +254,9 @@ fn paint_shaped_run<S, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH
     clip: Rect,
     pen_x: &mut Pixels,
     word_spacing: WordSpacing<'_>,
-) -> Result<(), TextPaintError<S::Error>>
+) -> Result<(), TextPaintError<P::Error>>
 where
-    S: GlyphSink,
+    P: Painter,
 {
     for shaped in run.glyphs().iter().copied() {
         let bitmap = glyph_cache
@@ -286,8 +271,9 @@ where
             baseline + offset.y + metrics.bearing_y,
         );
 
-        sink.draw_glyph(&bitmap, origin, color, clip)
-            .map_err(TextPaintError::Sink)?;
+        painter
+            .draw_glyph(&bitmap, origin, color, clip)
+            .map_err(TextPaintError::Painter)?;
 
         *pen_x += shaped.advance() + word_spacing.after(shaped);
     }

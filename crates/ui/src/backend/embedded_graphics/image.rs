@@ -1,17 +1,10 @@
 use embedded_graphics::{
-    Pixel as EgPixel,
-    draw_target::DrawTargetExt,
     geometry::Point as EgPoint,
     image::{GetPixel as EgGetPixel, ImageDrawable as EgImageDrawable},
     pixelcolor::{Rgb888 as EgRgb888, RgbColor},
-    prelude::DrawTarget as EgDrawTarget,
 };
 
-use crate::{
-    Color, ImagePaint, ImageResource, Point, Rect, Size,
-    backend::embedded_graphics::to_rgb888,
-    rendering::image_paint::{PixelSink, paint_image},
-};
+use crate::{Color, ImageResource, Size};
 
 use super::from_embedded_size;
 
@@ -52,48 +45,5 @@ where
         let color: EgRgb888 = self.image.pixel(EgPoint::new(x, y))?.into();
 
         Some(Color::rgb(color.r(), color.g(), color.b()))
-    }
-}
-
-pub(super) fn draw_image_to<D>(
-    target: &mut D,
-    image: &dyn ImageResource,
-    bounds: Rect,
-    paint: ImagePaint,
-    clip: Option<Rect>,
-) -> Result<(), D::Error>
-where
-    D: EgDrawTarget,
-    D::Color: From<EgRgb888>,
-{
-    paint_image(
-        &mut EmbeddedGraphicsPixelSink { target },
-        image,
-        bounds,
-        paint,
-        clip,
-    )
-}
-
-struct EmbeddedGraphicsPixelSink<'a, D> {
-    target: &'a mut D,
-}
-
-impl<D> PixelSink for EmbeddedGraphicsPixelSink<'_, D>
-where
-    D: EgDrawTarget,
-    D::Color: From<EgRgb888>,
-{
-    type Error = D::Error;
-
-    fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error> {
-        let y = origin.y.get();
-
-        let pixels = pixels
-            .iter()
-            .zip(origin.x.get()..)
-            .map(|(&color, x)| EgPixel(EgPoint::new(x, y), to_rgb888(color)));
-
-        self.target.color_converted::<EgRgb888>().draw_iter(pixels)
     }
 }
