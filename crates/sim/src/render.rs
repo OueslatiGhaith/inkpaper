@@ -29,8 +29,6 @@ fn read_simulator_pixel(display: &SimulatorDisplay<Rgb888>, point: EgPoint) -> O
 fn paint_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion)
 where
     R: RenderRuntimeApi,
-    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
-        ResourcePainter<R::Resources>,
 {
     if damage.is_none() {
         return;
@@ -57,8 +55,6 @@ where
 pub(super) fn rebuild_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
 where
     R: RenderRuntimeApi,
-    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
-        ResourcePainter<R::Resources>,
 {
     runtime.rebuild().unwrap();
 
@@ -70,8 +66,6 @@ where
 pub(super) fn render_pending_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
 where
     R: RenderRuntimeApi,
-    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
-        ResourcePainter<R::Resources>,
 {
     let invalidation = runtime.take_render_invalidation();
 

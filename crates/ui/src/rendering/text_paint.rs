@@ -2,22 +2,15 @@
 //! only putting their coverage down to a [`Painter`].
 
 use crate::{
-    Color, FontInstance, FontRegistry, GlyphCache, GlyphCacheError, LineHeight, Painter, Pixels,
-    Point, Rect, ResolvedFont, ResolvedTextStyle, ShapeError, ShapeState, ShapedGlyph, ShapedRun,
-    SimpleShaper, TextAlign, TextDirection,
+    Color, FontInstance, FontRegistry, GlyphCache, LineHeight, PaintError, Painter, Pixels, Point,
+    Rect, ResolvedFont, ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper,
+    TextAlign, TextDirection,
     pair_cache::PairPositioningCache,
     px,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
 
 const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
-
-#[derive(Debug)]
-pub(crate) enum TextPaintError<E> {
-    Painter(E),
-    Font(GlyphCacheError),
-    Shape(ShapeError),
-}
 
 /// paints `text` wrapped, truncated and aligned inside `bounds`, returning how many
 /// glyphs it shaped
@@ -36,7 +29,7 @@ pub(crate) fn paint_text<
     glyph_cache: &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
     font: ResolvedFont<'_>,
     style: ResolvedTextStyle,
-) -> Result<u64, TextPaintError<P::Error>>
+) -> Result<u64, PaintError<P::Error>>
 where
     P: Painter,
 {
@@ -88,7 +81,7 @@ where
             ) {
                 Ok(summary) => summary,
                 Err(shape_error) => {
-                    error = Some(TextPaintError::Shape(shape_error));
+                    error = Some(PaintError::Shape(shape_error));
                     return;
                 }
             };
@@ -108,7 +101,7 @@ where
                 ) {
                     Ok(summary) => summary,
                     Err(shape_error) => {
-                        error = Some(TextPaintError::Shape(shape_error));
+                        error = Some(PaintError::Shape(shape_error));
                         return;
                     }
                 };
@@ -125,7 +118,7 @@ where
             ) {
                 Ok(run) => run,
                 Err(shape_error) => {
-                    error = Some(TextPaintError::Shape(shape_error));
+                    error = Some(PaintError::Shape(shape_error));
                     return;
                 }
             };
@@ -182,8 +175,8 @@ pub(crate) fn paint_text_run<
     glyph_cache: &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
     font: ResolvedFont<'_>,
     style: ResolvedTextStyle,
-    pair_positioning_cache: Option<&mut PairPositioningCache<PAIR_SLOTS>>,
-) -> Result<u64, TextPaintError<P::Error>>
+    pair_positioning_cache: &mut PairPositioningCache<PAIR_SLOTS>,
+) -> Result<u64, PaintError<P::Error>>
 where
     P: Painter,
 {
@@ -208,9 +201,9 @@ where
             size_px,
             text,
             &mut glyphs,
-            pair_positioning_cache,
+            Some(pair_positioning_cache),
         )
-        .map_err(TextPaintError::Shape)?;
+        .map_err(PaintError::Shape)?;
 
     let glyph_count = run.len();
 
@@ -236,7 +229,7 @@ where
     {
         painter
             .fill_rect(underline, style.color, clip)
-            .map_err(TextPaintError::Painter)?;
+            .map_err(PaintError::Painter)?;
     }
 
     Ok(u64::try_from(glyph_count).unwrap_or(u64::MAX))
@@ -254,14 +247,14 @@ fn paint_shaped_run<P, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH
     clip: Rect,
     pen_x: &mut Pixels,
     word_spacing: WordSpacing<'_>,
-) -> Result<(), TextPaintError<P::Error>>
+) -> Result<(), PaintError<P::Error>>
 where
     P: Painter,
 {
     for shaped in run.glyphs().iter().copied() {
         let bitmap = glyph_cache
             .get_or_rasterize(registry, shaped.font_instance(), shaped.glyph(), size_px)
-            .map_err(TextPaintError::Font)?;
+            .map_err(PaintError::Font)?;
 
         let metrics = bitmap.metrics();
         let offset = shaped.offset();
@@ -273,7 +266,7 @@ where
 
         painter
             .draw_glyph(&bitmap, origin, color, clip)
-            .map_err(TextPaintError::Painter)?;
+            .map_err(PaintError::Painter)?;
 
         *pen_x += shaped.advance() + word_spacing.after(shaped);
     }

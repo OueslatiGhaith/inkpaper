@@ -40,23 +40,11 @@ impl EInkTone {
 pub struct EInkPaintReport {
     tone: EInkTone,
     #[cfg(feature = "metrics")]
-    text_draw_calls: u64,
-    #[cfg(feature = "metrics")]
-    shaped_glyphs: u64,
-    #[cfg(feature = "metrics")]
     coverage_bitmaps: u64,
     #[cfg(feature = "metrics")]
     coverage_samples: u64,
     #[cfg(feature = "metrics")]
     coverage_accepted: u64,
-    #[cfg(feature = "metrics")]
-    pair_positioning_cache_lookups: u64,
-    #[cfg(feature = "metrics")]
-    pair_positioning_cache_hits: u64,
-    #[cfg(feature = "metrics")]
-    pair_positioning_cache_misses: u64,
-    #[cfg(feature = "metrics")]
-    pair_positioning_cache_collisions: u64,
 }
 
 impl EInkPaintReport {
@@ -66,16 +54,6 @@ impl EInkPaintReport {
 
     pub const fn has_native_gray(self) -> bool {
         self.tone.has_native_gray()
-    }
-
-    #[cfg(feature = "metrics")]
-    pub const fn text_draw_calls(self) -> u64 {
-        self.text_draw_calls
-    }
-
-    #[cfg(feature = "metrics")]
-    pub const fn shaped_glyphs(self) -> u64 {
-        self.shaped_glyphs
     }
 
     #[cfg(feature = "metrics")]
@@ -93,34 +71,8 @@ impl EInkPaintReport {
         self.coverage_accepted
     }
 
-    #[cfg(feature = "metrics")]
-    pub const fn pair_positioning_cache_lookups(self) -> u64 {
-        self.pair_positioning_cache_lookups
-    }
-
-    #[cfg(feature = "metrics")]
-    pub const fn pair_positioning_cache_hits(self) -> u64 {
-        self.pair_positioning_cache_hits
-    }
-
-    #[cfg(feature = "metrics")]
-    pub const fn pair_positioning_cache_misses(self) -> u64 {
-        self.pair_positioning_cache_misses
-    }
-
-    #[cfg(feature = "metrics")]
-    pub const fn pair_positioning_cache_collisions(self) -> u64 {
-        self.pair_positioning_cache_collisions
-    }
-
     pub(super) fn include(&mut self, tone: EInkTone) {
         self.tone = self.tone.merged(tone);
-    }
-
-    #[cfg(feature = "metrics")]
-    pub(super) fn record_text_draw(&mut self, shaped_glyphs: u64) {
-        self.text_draw_calls = self.text_draw_calls.saturating_add(1);
-        self.shaped_glyphs = self.shaped_glyphs.saturating_add(shaped_glyphs);
     }
 
     #[cfg(feature = "metrics")]
@@ -128,27 +80,6 @@ impl EInkPaintReport {
         self.coverage_bitmaps = self.coverage_bitmaps.saturating_add(1);
         self.coverage_samples = self.coverage_samples.saturating_add(samples);
         self.coverage_accepted = self.coverage_accepted.saturating_add(accepted);
-    }
-
-    #[cfg(feature = "metrics")]
-    pub(super) fn record_pair_positioning_cache(
-        &mut self,
-        lookups: u64,
-        hits: u64,
-        misses: u64,
-        collisions: u64,
-    ) {
-        self.pair_positioning_cache_lookups =
-            self.pair_positioning_cache_lookups.saturating_add(lookups);
-
-        self.pair_positioning_cache_hits = self.pair_positioning_cache_hits.saturating_add(hits);
-
-        self.pair_positioning_cache_misses =
-            self.pair_positioning_cache_misses.saturating_add(misses);
-
-        self.pair_positioning_cache_collisions = self
-            .pair_positioning_cache_collisions
-            .saturating_add(collisions);
     }
 }
 
@@ -309,5 +240,4 @@ mod tests {
         assert_eq!(gray2_tone(Gray2::new(2)), EInkTone::Gray4);
         assert_eq!(gray2_tone(Gray2::new(3)), EInkTone::Binary);
     }
-
 }

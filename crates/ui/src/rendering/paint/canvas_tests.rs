@@ -1,6 +1,6 @@
 use super::*;
 use crate::*;
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use std::{rc::Rc, string::String, vec, vec::Vec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,18 +14,92 @@ enum Draw {
 
 #[derive(Default)]
 struct Recorder {
-    draws: Vec<Draw>,
+    draws: Rc<RefCell<Vec<Draw>>>,
     fail: bool,
 }
 
 impl Recorder {
     fn record(&mut self, draw: Draw) -> Result<(), &'static str> {
-        self.draws.push(draw);
+        self.draws.borrow_mut().push(draw);
+        self.result()
+    }
+
+    fn result(&self) -> Result<(), &'static str> {
         if self.fail {
             Err("backend failure")
         } else {
             Ok(())
         }
+    }
+
+    fn draws(&self) -> Vec<Draw> {
+        self.draws.borrow().clone()
+    }
+
+    /// resources recording their text and images among this recorder's draws
+    fn resources(&self) -> RecordingResources {
+        RecordingResources {
+            draws: Rc::clone(&self.draws),
+        }
+    }
+}
+
+/// records each text and image, then fills it so a failing recorder fails it
+#[derive(Default)]
+struct RecordingResources {
+    draws: Rc<RefCell<Vec<Draw>>>,
+}
+
+impl RecordingResources {
+    fn record<P: Painter>(
+        &mut self,
+        painter: &mut P,
+        draw: Draw,
+        bounds: Rect,
+        clip: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        self.draws.borrow_mut().push(draw);
+
+        painter
+            .fill_rect(bounds, Color::BLACK, clip.unwrap_or(bounds))
+            .map_err(PaintError::Painter)
+    }
+}
+
+impl PaintResources for RecordingResources {
+    fn paint_text<P: Painter>(
+        &mut self,
+        painter: &mut P,
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        let draw = Draw::Text(bounds, clip, String::from(text), style);
+        self.record(painter, draw, bounds, clip)
+    }
+
+    fn paint_text_run<P: Painter>(
+        &mut self,
+        painter: &mut P,
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        let draw = Draw::TextRun(bounds, clip, String::from(text), style);
+        self.record(painter, draw, bounds, clip)
+    }
+
+    fn paint_image<P: Painter>(
+        &mut self,
+        painter: &mut P,
+        _: ImageSource,
+        bounds: Rect,
+        paint: ImagePaint,
+        clip: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        self.record(painter, Draw::Image(bounds, clip, paint), bounds, clip)
     }
 }
 
@@ -67,7 +141,7 @@ impl Painter for Recorder {
     }
 
     fn fill_rect(&mut self, _: Rect, _: Color, _: Rect) -> Result<(), Self::Error> {
-        Ok(())
+        self.result()
     }
 
     fn draw_pixels(&mut self, _: Point, _: &[Color]) -> Result<(), Self::Error> {
@@ -75,42 +149,7 @@ impl Painter for Recorder {
     }
 }
 
-impl ResourcePainter for Recorder {
-    fn draw_text(
-        &mut self,
-        _: &mut (),
-        text: &str,
-        bounds: Rect,
-        style: ResolvedTextStyle,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.record(Draw::Text(bounds, clip, String::from(text), style))
-    }
-
-    fn draw_text_run(
-        &mut self,
-        _: &mut (),
-        text: &str,
-        bounds: Rect,
-        style: ResolvedTextStyle,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.record(Draw::TextRun(bounds, clip, String::from(text), style))
-    }
-
-    fn draw_image(
-        &mut self,
-        _: &mut (),
-        _: ImageSource,
-        bounds: Rect,
-        paint: ImagePaint,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.record(Draw::Image(bounds, clip, paint))
-    }
-}
-
-type TestRuntime = Runtime<TestStorage<1024, 4, 1024, 8, 16, 64, 8>>;
+type TestRuntime = Runtime<TestStorage<1024, 4, 1024, 8, 16, 64, 8>, RecordingResources>;
 
 fn rect(x: i32, y: i32, width: i32, height: i32) -> Rect {
     Rect::new(Point::new(px(x), px(y)), Size::new(px(width), px(height)))
@@ -160,6 +199,8 @@ fn canvas_paint_preserves_local_bounds_clips_styles_and_damage() {
     runtime.rebuild().unwrap();
 
     let mut recorder = Recorder::default();
+    *runtime.resources_mut() = recorder.resources();
+
     runtime.layout_with_measurer(Size::new(px(100), px(100)), &recorder);
 
     assert_eq!(runtime.frame_node_count(), 3);
@@ -167,7 +208,7 @@ fn canvas_paint_preserves_local_bounds_clips_styles_and_damage() {
 
     let report = runtime.paint(&mut recorder).unwrap().unwrap();
     let text_draws: Vec<_> = recorder
-        .draws
+        .draws()
         .iter()
         .filter(|draw| matches!(draw, Draw::Text(..)))
         .cloned()
@@ -201,13 +242,13 @@ fn canvas_paint_preserves_local_bounds_clips_styles_and_damage() {
     assert!(report.content().has_text());
     assert!(!report.content().has_graphics());
 
-    recorder.draws.clear();
+    recorder.draws.borrow_mut().clear();
 
     let damage = DamageRegion::from_rect(rect(16, 27, 2, 3));
     runtime.paint_with_damage(damage, &mut recorder).unwrap();
 
     let text_draws: Vec<_> = recorder
-        .draws
+        .draws()
         .into_iter()
         .filter(|draw| matches!(draw, Draw::Text(..)))
         .collect();
@@ -264,6 +305,7 @@ fn canvas_paint_reports_images_and_reads_updated_entity_state() {
     let mut runtime = TestRuntime::default();
     let view = runtime.create_root(|_| View { value: "old" }).unwrap();
     let mut recorder = Recorder::default();
+    *runtime.resources_mut() = recorder.resources();
 
     for value in ["first", "second"] {
         runtime
@@ -275,11 +317,11 @@ fn canvas_paint_reports_images_and_reads_updated_entity_state() {
 
         runtime.rebuild().unwrap();
         runtime.layout_with_measurer(Size::new(px(40), px(30)), &recorder);
-        recorder.draws.clear();
+        recorder.draws.borrow_mut().clear();
 
         let report = runtime.paint(&mut recorder).unwrap().unwrap();
 
-        assert!(matches!(&recorder.draws[0], Draw::Text(_, _, text, _) if text == value));
+        assert!(matches!(&recorder.draws()[0], Draw::Text(_, _, text, _) if text == value));
         assert_eq!(runtime.frame_node_count(), 2);
         assert!(report.content().has_text());
         assert!(report.content().has_monochrome_images());
@@ -329,11 +371,15 @@ fn canvas_paint_returns_first_backend_error_and_stops_drawing() {
             fail: true,
             ..Recorder::default()
         };
+        *runtime.resources_mut() = recorder.resources();
 
         runtime.layout_with_measurer(Size::new(px(20), px(20)), &recorder);
 
-        assert_eq!(runtime.paint(&mut recorder), Err("backend failure"));
-        assert_eq!(recorder.draws.len(), 1);
+        assert!(matches!(
+            runtime.paint(&mut recorder),
+            Err(PaintError::Painter("backend failure"))
+        ));
+        assert_eq!(recorder.draws().len(), 1);
     }
 }
 
@@ -381,6 +427,7 @@ fn canvas_paint_callbacks_validate_kind_borrow_and_generation_and_drop_captures(
     .unwrap();
 
     let mut recorder = Recorder::default();
+
     let mut resources = ();
     let mut report = PaintReport::default();
 
@@ -498,12 +545,15 @@ fn static_canvas_paints_text_without_runtime_callback_context() {
         .unwrap();
 
     let mut recorder = Recorder::default();
+
     frame.layout(root, Size::new(px(20), px(10)), &recorder);
 
-    let report = frame.paint(root, &mut recorder).unwrap();
+    let report = frame
+        .paint(root, &mut recorder.resources(), &mut recorder)
+        .unwrap();
 
     assert_eq!(
-        recorder.draws,
+        recorder.draws(),
         vec![Draw::Text(
             rect(0, 0, 20, 10),
             Some(rect(0, 0, 20, 10)),
@@ -534,13 +584,14 @@ fn canvas_routes_prelaid_out_text_runs_to_run_painter() {
     runtime.rebuild().unwrap();
 
     let mut recorder = Recorder::default();
+    *runtime.resources_mut() = recorder.resources();
 
     runtime.layout_with_measurer(Size::new(px(40), px(30)), &recorder);
 
     runtime.paint(&mut recorder).unwrap().unwrap();
 
     assert_eq!(
-        recorder.draws,
+        recorder.draws(),
         vec![Draw::TextRun(
             rect(3, 4, 20, 12),
             Some(rect(0, 0, 40, 30)),

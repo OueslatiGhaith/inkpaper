@@ -351,7 +351,6 @@ impl SimpleShaper {
             .shape_into(registry, size_px, text, output)
     }
 
-    #[cfg(any(feature = "eink", feature = "embedded-graphics"))]
     pub(crate) fn shape_into_with_pair_positioning_cache<
         'out,
         const FONTS: usize,

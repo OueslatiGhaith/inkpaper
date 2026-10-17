@@ -6,8 +6,9 @@ use alloc::boxed::Box;
 use crate::{
     ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
     EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageRegistryError,
-    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintReport,
-    Point, Render, RenderInvalidation, ResourcePainter, RuntimeStorage, Size, TextMeasurer,
+    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintError,
+    PaintReport, PaintResources, Painter, Point, Render, RenderInvalidation, RuntimeStorage, Size,
+    TextMeasurer,
     callback::ListenerInvokeError,
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     entity::{EntityStore, create_entity},
@@ -19,7 +20,7 @@ use crate::{
     storage::{CallbackStorage, FrameStorage, GlobalStorage},
 };
 #[cfg(feature = "metrics")]
-use crate::{GlyphCacheMetrics, PerformanceMetrics};
+use crate::{GlyphCacheMetrics, PerformanceMetrics, TextPaintMetrics};
 
 mod api;
 mod cx;
@@ -438,9 +439,15 @@ where
         self.rebuild_damage.unwrap_or(DamageRegion::full())
     }
 
-    pub fn paint<P>(&mut self, painter: &mut P) -> Result<Option<PaintReport>, P::Error>
+    #[cfg(test)]
+    pub(crate) fn resources_mut(&mut self) -> &mut RESOURCES {
+        &mut self.resources
+    }
+
+    pub fn paint<P>(&mut self, painter: &mut P) -> Result<Option<PaintReport>, PaintError<P::Error>>
     where
-        P: ResourcePainter<RESOURCES>,
+        RESOURCES: PaintResources,
+        P: Painter,
     {
         let Some(root) = self.root else {
             return Ok(None);
@@ -461,9 +468,10 @@ where
         &mut self,
         damage: DamageRegion,
         painter: &mut P,
-    ) -> Result<Option<PaintReport>, P::Error>
+    ) -> Result<Option<PaintReport>, PaintError<P::Error>>
     where
-        P: ResourcePainter<RESOURCES>,
+        RESOURCES: PaintResources,
+        P: Painter,
     {
         let Some(root) = self.root else {
             return Ok(None);
@@ -1222,6 +1230,16 @@ where
     #[cfg(feature = "metrics")]
     pub const fn glyph_cache_metrics(&self) -> GlyphCacheMetrics {
         self.resources.glyph_cache_metrics()
+    }
+
+    #[cfg(feature = "metrics")]
+    pub fn reset_text_paint_metrics(&mut self) {
+        self.resources.reset_text_paint_metrics();
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn text_paint_metrics(&self) -> TextPaintMetrics {
+        self.resources.text_paint_metrics()
     }
 }
 

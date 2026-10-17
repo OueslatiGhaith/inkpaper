@@ -7,8 +7,6 @@ use embedded_graphics::{
 
 use crate::{GlyphBitmap, Point, Rect};
 
-use super::EmbeddedGraphicsError;
-
 #[derive(Debug)]
 pub enum CoverageMode<D> {
     BinaryThreshold,
@@ -46,7 +44,7 @@ pub(super) fn draw_coverage_bitmap<D>(
     color: EgRgb888,
     clip: Rect,
     coverage_mode: CoverageMode<D>,
-) -> Result<(), EmbeddedGraphicsError<D::Error>>
+) -> Result<(), D::Error>
 where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,
@@ -80,9 +78,7 @@ where
                     Some(EgPixel(point, D::Color::from(color)))
                 });
 
-            target
-                .draw_iter(pixels)
-                .map_err(EmbeddedGraphicsError::Target)
+            target.draw_iter(pixels)
         }
         CoverageMode::OrderedDither4x4 => {
             let pixels = coverage
@@ -102,9 +98,7 @@ where
                     Some(EgPixel(point, D::Color::from(color)))
                 });
 
-            target
-                .draw_iter(pixels)
-                .map_err(EmbeddedGraphicsError::Target)
+            target.draw_iter(pixels)
         }
         CoverageMode::AlphaBlend { read_pixel } => {
             // fully covered pixels need no destination readback. Keep those together in
@@ -127,9 +121,7 @@ where
                         Some(EgPixel(point, D::Color::from(color)))
                     });
 
-            target
-                .draw_iter(solid_pixels)
-                .map_err(EmbeddedGraphicsError::Target)?;
+            target.draw_iter(solid_pixels)?;
 
             for (index, coverage) in coverage.iter().copied().enumerate() {
                 if coverage == 0 || coverage == 255 {
@@ -150,9 +142,7 @@ where
 
                 let blended = alpha_blend_rgb888(color, background, coverage);
 
-                target
-                    .draw_iter(core::iter::once(EgPixel(point, D::Color::from(blended))))
-                    .map_err(EmbeddedGraphicsError::Target)?;
+                target.draw_iter(core::iter::once(EgPixel(point, D::Color::from(blended))))?;
             }
 
             Ok(())

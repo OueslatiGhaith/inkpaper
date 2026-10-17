@@ -1274,8 +1274,6 @@ fn to_ui_point(point: EgPoint) -> Point {
 fn update_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
 where
     R: RenderRuntimeApi,
-    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
-        ResourcePainter<R::Resources>,
 {
     let invalidation = runtime.take_render_invalidation();
     match invalidation.kind() {
@@ -1296,8 +1294,6 @@ fn layout_ui(runtime: &mut impl RenderRuntimeApi) {
 fn paint_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion)
 where
     R: RenderRuntimeApi,
-    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
-        ResourcePainter<R::Resources>,
 {
     if damage.is_none() {
         return;
@@ -1315,8 +1311,6 @@ where
 fn rebuild_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
 where
     R: RenderRuntimeApi,
-    for<'target> EmbeddedGraphicsPainter<'target, SimulatorDisplay<Rgb888>>:
-        ResourcePainter<R::Resources>,
 {
     runtime.rebuild().unwrap();
     layout_ui(runtime);

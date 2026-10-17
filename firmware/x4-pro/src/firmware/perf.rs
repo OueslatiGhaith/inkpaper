@@ -722,7 +722,7 @@ pub(crate) fn record_ui_metrics(metrics: inkpaper_ui::PerformanceMetrics) {
 }
 
 pub(crate) fn record_text_metrics(
-    paint: inkpaper_ui::backend::EInkPaintReport,
+    text: inkpaper_ui::TextPaintMetrics,
     cache: inkpaper_ui::GlyphCacheMetrics,
     bytes_used: usize,
     bytes_capacity: usize,
@@ -730,13 +730,13 @@ pub(crate) fn record_text_metrics(
     inkpaper_trace::gauge!(
         target: "ui.text",
         "draw_calls",
-        paint.text_draw_calls(),
+        text.draw_calls,
     );
 
     inkpaper_trace::gauge!(
         target: "ui.text",
         "shaped_glyphs",
-        paint.shaped_glyphs(),
+        text.shaped_glyphs,
     );
 
     inkpaper_trace::gauge!(
@@ -799,25 +799,25 @@ pub(crate) fn record_text_metrics(
     inkpaper_trace::gauge!(
         target: "ui.pair_cache",
         "lookups",
-        paint.pair_positioning_cache_lookups(),
+        text.pair_cache_lookups,
     );
 
     inkpaper_trace::gauge!(
         target: "ui.pair_cache",
         "hits",
-        paint.pair_positioning_cache_hits(),
+        text.pair_cache_hits,
     );
 
     inkpaper_trace::gauge!(
         target: "ui.pair_cache",
         "misses",
-        paint.pair_positioning_cache_misses(),
+        text.pair_cache_misses,
     );
 
     inkpaper_trace::gauge!(
         target: "ui.pair_cache",
         "collisions",
-        paint.pair_positioning_cache_collisions(),
+        text.pair_cache_collisions,
     );
 }
 

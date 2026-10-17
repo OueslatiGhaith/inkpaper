@@ -157,32 +157,6 @@ impl Painter for BenchPainter {
     }
 }
 
-impl ResourcePainter for BenchPainter {
-    fn draw_text(
-        &mut self,
-        _: &mut (),
-        _: &str,
-        _: Rect,
-        _: ResolvedTextStyle,
-        _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.record_draw();
-        Ok(())
-    }
-
-    fn draw_image(
-        &mut self,
-        _: &mut (),
-        _: ImageSource,
-        _: Rect,
-        _: ImagePaint,
-        _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.record_draw();
-        Ok(())
-    }
-}
-
 struct BenchCanvasPainter;
 
 impl CanvasPainter for BenchCanvasPainter {

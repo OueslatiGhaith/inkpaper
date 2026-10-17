@@ -1,28 +1,28 @@
 use crate::{
-    CanvasDraw, CanvasPainter, ImagePaint, ImageSource, PaintCx, PaintReport, PaintSink, Rect,
-    ResolvedTextStyle, ResourcePainter, paint::PaintRuntime,
+    CanvasDraw, CanvasPainter, ImagePaint, ImageSource, PaintCx, PaintError, PaintReport,
+    PaintResources, PaintSink, Painter, Rect, ResolvedTextStyle, paint::PaintRuntime,
 };
 
 #[cfg(test)]
 #[path = "canvas_tests.rs"]
 mod tests;
 
-struct CanvasPaintSink<'a, R: ?Sized, P: ResourcePainter<R>> {
+struct CanvasPaintSink<'a, R: PaintResources, P: Painter> {
     painter: &'a mut P,
     resources: &'a mut R,
     report: &'a mut PaintReport,
-    error: Option<P::Error>,
+    error: Option<PaintError<P::Error>>,
 }
 
-impl<'a, R: ?Sized, P: ResourcePainter<R>> PaintSink for CanvasPaintSink<'a, R, P> {
+impl<'a, R: PaintResources, P: Painter> PaintSink for CanvasPaintSink<'a, R, P> {
     fn text(&mut self, bounds: Rect, clip: Rect, text: &str, style: ResolvedTextStyle) {
         if self.error.is_some() {
             return;
         }
 
         match self
-            .painter
-            .draw_text(self.resources, text, bounds, style, Some(clip))
+            .resources
+            .paint_text(self.painter, text, bounds, style, Some(clip))
         {
             Ok(()) => self.report.mark_text(),
             Err(error) => self.error = Some(error),
@@ -35,8 +35,8 @@ impl<'a, R: ?Sized, P: ResourcePainter<R>> PaintSink for CanvasPaintSink<'a, R, 
         }
 
         match self
-            .painter
-            .draw_text_run(self.resources, text, bounds, style, Some(clip))
+            .resources
+            .paint_text_run(self.painter, text, bounds, style, Some(clip))
         {
             Ok(()) => self.report.mark_text(),
             Err(error) => self.error = Some(error),
@@ -49,8 +49,8 @@ impl<'a, R: ?Sized, P: ResourcePainter<R>> PaintSink for CanvasPaintSink<'a, R, 
         }
 
         match self
-            .painter
-            .draw_image(self.resources, source, bounds, paint, Some(clip))
+            .resources
+            .paint_image(self.painter, source, bounds, paint, Some(clip))
         {
             Ok(()) => self.report.mark_image(paint.color_mode),
             Err(error) => self.error = Some(error),
@@ -67,7 +67,7 @@ impl<'a, R: ?Sized, P: ResourcePainter<R>> PaintSink for CanvasPaintSink<'a, R, 
                 self.report.mark_graphics()
             }
             Ok(()) => {}
-            Err(error) => self.error = Some(error),
+            Err(error) => self.error = Some(PaintError::Painter(error)),
         }
     }
 
@@ -83,13 +83,13 @@ impl<'a, R: ?Sized, P: ResourcePainter<R>> PaintSink for CanvasPaintSink<'a, R, 
 
         match self.painter.draw_canvas(bounds, Some(clip), draw) {
             Ok(()) => self.report.mark_graphics(),
-            Err(error) => self.error = Some(error),
+            Err(error) => self.error = Some(PaintError::Painter(error)),
         }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn paint_canvas<R: ?Sized, P: ResourcePainter<R>>(
+pub(super) fn paint_canvas<R: PaintResources, P: Painter>(
     draw: CanvasDraw,
     bounds: Rect,
     clip: Option<Rect>,
@@ -98,7 +98,7 @@ pub(super) fn paint_canvas<R: ?Sized, P: ResourcePainter<R>>(
     resources: &mut R,
     report: &mut PaintReport,
     painter: &mut P,
-) -> Result<(), P::Error> {
+) -> Result<(), PaintError<P::Error>> {
     if !bounds.has_area() || clip.is_some_and(|clip| bounds.intersection(clip).is_none()) {
         return Ok(());
     }

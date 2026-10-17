@@ -1,7 +1,7 @@
 use inkpaper_app::AppResources;
 use inkpaper_ui::{
-    HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapFrame, HeapGlobalArena,
-    backend::{EInkError, EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
+    HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapFrame, HeapGlobalArena, PaintError,
+    backend::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode},
     prelude::*,
 };
 
@@ -163,6 +163,7 @@ impl Presenter {
         {
             runtime.reset_performance_metrics();
             runtime.reset_glyph_cache_metrics();
+            runtime.reset_text_paint_metrics();
         }
 
         let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
@@ -197,6 +198,7 @@ impl Presenter {
         {
             runtime.reset_performance_metrics();
             runtime.reset_glyph_cache_metrics();
+            runtime.reset_text_paint_metrics();
         }
 
         let invalidation = runtime.take_render_invalidation();
@@ -371,9 +373,9 @@ fn render_invalidation(
                 // drawn instead of taking the device down over one bad text run
                 Err(error) => {
                     match error {
-                        EInkError::Font(error) => defmt::error!("paint failed: {}", error),
-                        EInkError::Shape(error) => defmt::error!("paint failed: {}", error),
-                        EInkError::Target(never) => match never {},
+                        PaintError::Font(error) => defmt::error!("paint failed: {}", error),
+                        PaintError::Shape(error) => defmt::error!("paint failed: {}", error),
+                        PaintError::Painter(never) => match never {},
                     }
 
                     PaintReport::new(damage)
@@ -424,7 +426,7 @@ fn render_invalidation(
         crate::firmware::perf::record_ui_metrics(runtime.performance_metrics());
 
         crate::firmware::perf::record_text_metrics(
-            eink_report,
+            runtime.text_paint_metrics(),
             runtime.glyph_cache_metrics(),
             runtime.glyph_cache_used_bytes(),
             runtime.glyph_cache_capacity_bytes(),

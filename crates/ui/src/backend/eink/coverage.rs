@@ -11,8 +11,6 @@ use crate::{
     increment_metric,
 };
 
-use super::EInkError;
-
 /// the least coverage that inks a pixel in binary output: 7/16 of a pixel.
 ///
 /// crosspoint inks from 25% coverage, but its outlines are hinted so stems already sit
@@ -191,7 +189,7 @@ pub(super) fn draw_coverage_bitmap<D>(
     color: Color,
     clip: Rect,
     coverage_mode: EInkCoverageMode<D>,
-) -> Result<(), EInkError<D::Error>>
+) -> Result<(), D::Error>
 where
     D: EgDrawTarget<Color = Gray2>,
 {
@@ -242,7 +240,7 @@ where
                     Some(EgPixel(point, foreground))
                 });
 
-            let result = target.draw_iter(pixels).map_err(EInkError::Target);
+            let result = target.draw_iter(pixels);
 
             #[cfg(feature = "metrics")]
             report.record_coverage_bitmap(samples, accepted);
@@ -301,7 +299,7 @@ where
                     Some(EgPixel(point, binary_dither_gray2(foreground, point)))
                 });
 
-            let result = target.draw_iter(pixels).map_err(EInkError::Target);
+            let result = target.draw_iter(pixels);
 
             #[cfg(feature = "metrics")]
             report.record_coverage_bitmap(samples, accepted);
@@ -337,7 +335,7 @@ where
                         Some(EgPixel(point, foreground))
                     });
 
-            target.draw_iter(solid_pixels).map_err(EInkError::Target)?;
+            target.draw_iter(solid_pixels)?;
 
             for (index, coverage) in coverage.iter().copied().enumerate() {
                 if coverage == 0 || coverage == u8::MAX {
@@ -358,9 +356,7 @@ where
 
                 let color = alpha_blend_gray2(color, background, coverage);
 
-                target
-                    .draw_iter(core::iter::once(EgPixel(point, color)))
-                    .map_err(EInkError::Target)?;
+                target.draw_iter(core::iter::once(EgPixel(point, color)))?;
 
                 increment_metric!(accepted);
             }

@@ -160,6 +160,7 @@ impl Painter for TextCounter {
     }
 
     fn fill_rect(&mut self, _: Rect, _: Color, _: Rect) -> Result<(), Self::Error> {
+        self.0 += 1;
         Ok(())
     }
 
@@ -168,34 +169,39 @@ impl Painter for TextCounter {
     }
 }
 
-impl ResourcePainter for TextCounter {
-    fn draw_text(
+/// paints each text as one filled rectangle
+#[derive(Default)]
+struct BlockText;
+
+impl PaintResources for BlockText {
+    fn paint_text<P: Painter>(
         &mut self,
-        _: &mut (),
+        painter: &mut P,
         _: &str,
-        _: Rect,
+        bounds: Rect,
         _: ResolvedTextStyle,
-        _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.0 += 1;
-        Ok(())
+        clip: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        painter
+            .fill_rect(bounds, Color::BLACK, clip.unwrap_or(bounds))
+            .map_err(PaintError::Painter)
     }
 
-    fn draw_image(
+    fn paint_image<P: Painter>(
         &mut self,
-        _: &mut (),
+        _: &mut P,
         _: ImageSource,
         _: Rect,
         _: ImagePaint,
         _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), PaintError<P::Error>> {
         unreachable!("screen contains no images")
     }
 }
 
 #[test]
 fn dynamic_runtime_allocates_on_growth_and_reuses_storage_for_rebuild_layout_and_paint() {
-    let mut runtime = Runtime::<Heap<4, 4, 1, 1, 8>>::default();
+    let mut runtime = Runtime::<Heap<4, 4, 1, 1, 8>, BlockText>::default();
 
     let screen = runtime.create_root(|_| Screen).unwrap();
 

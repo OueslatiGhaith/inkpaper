@@ -294,9 +294,9 @@ fn embedded_graphics_backend_draws_registered_image() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-        painter
-            .draw_image(
-                &mut resources,
+        resources
+            .paint_image(
+                &mut painter,
                 source,
                 Rect::new(Point::new(px(2), px(3)), source.size()),
                 ImagePaint::default(),
@@ -332,9 +332,9 @@ fn embedded_graphics_backend_clips_image_to_layout_bounds() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-        painter
-            .draw_image(
-                &mut resources,
+        resources
+            .paint_image(
+                &mut painter,
                 source,
                 Rect::new(Point::new(px(10), px(10)), Size::new(px(2), px(2))),
                 ImagePaint::default(),
@@ -371,9 +371,9 @@ fn embedded_graphics_backend_combines_image_bounds_with_ancestor_clip() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-        painter
-            .draw_image(
-                &mut resources,
+        resources
+            .paint_image(
+                &mut painter,
                 source,
                 Rect::new(Point::new(px(4), px(4)), source.size()),
                 ImagePaint::default(),
@@ -410,9 +410,9 @@ fn embedded_graphics_backend_scales_image_with_contain() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-        painter
-            .draw_image(
-                &mut resources,
+        resources
+            .paint_image(
+                &mut painter,
                 source,
                 Rect::new(Point::ZERO, Size::new(px(8), px(8))),
                 ImagePaint {
@@ -614,9 +614,9 @@ fn embedded_graphics_backend_draws_text_through_font_resources() {
         let mut resources = test_resources::<0>();
         let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-        painter
-            .draw_text(
-                &mut resources,
+        resources
+            .paint_text(
+                &mut painter,
                 "A",
                 Rect::new(Point::ZERO, Size::new(px(20), px(20))),
                 ResolvedTextStyle::default(),
@@ -641,9 +641,9 @@ fn text_run_ink_columns(word_spacing: Pixels) -> impl Iterator<Item = i32> {
         let mut resources = test_resources::<0>();
         let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-        painter
-            .draw_text_run(
-                &mut resources,
+        resources
+            .paint_text_run(
+                &mut painter,
                 "A A",
                 Rect::new(Point::ZERO, Size::new(px(40), px(10))),
                 ResolvedTextStyle {
@@ -679,9 +679,9 @@ fn text_run_solid_rows(underline: bool) -> alloc::vec::Vec<i32> {
         let mut resources = test_resources::<0>();
         let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-        painter
-            .draw_text_run(
-                &mut resources,
+        resources
+            .paint_text_run(
+                &mut painter,
                 "AA",
                 Rect::new(Point::ZERO, Size::new(px(12), px(16))),
                 ResolvedTextStyle {
@@ -795,9 +795,9 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut left_display);
 
-        painter
-            .draw_image(
-                &mut resources,
+        resources
+            .paint_image(
+                &mut painter,
                 source,
                 bounds,
                 ImagePaint {
@@ -816,9 +816,9 @@ fn embedded_graphics_backend_cover_position_selects_horizontal_crop() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut right_display);
 
-        painter
-            .draw_image(
-                &mut resources,
+        resources
+            .paint_image(
+                &mut painter,
                 source,
                 bounds,
                 ImagePaint {
@@ -855,9 +855,9 @@ fn embedded_graphics_backend_bilinear_sampling_blends_neighboring_pixels() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut display);
 
-        painter
-            .draw_image(
-                &mut resources,
+        resources
+            .paint_image(
+                &mut painter,
                 source,
                 Rect::new(Point::ZERO, Size::new(px(3), px(3))),
                 ImagePaint {
@@ -905,8 +905,8 @@ fn embedded_graphics_backend_bilinear_sampling_is_stable_when_clipped() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut full_display);
 
-        painter
-            .draw_image(&mut resources, source, bounds, paint, None)
+        resources
+            .paint_image(&mut painter, source, bounds, paint, None)
             .unwrap();
     }
 
@@ -917,8 +917,8 @@ fn embedded_graphics_backend_bilinear_sampling_is_stable_when_clipped() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display);
 
-        painter
-            .draw_image(&mut resources, source, bounds, paint, Some(clip))
+        resources
+            .paint_image(&mut painter, source, bounds, paint, Some(clip))
             .unwrap();
     }
 
@@ -960,8 +960,8 @@ fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut full_display);
 
-        painter
-            .draw_image(&mut resources, source, bounds, paint, None)
+        resources
+            .paint_image(&mut painter, source, bounds, paint, None)
             .unwrap();
     }
 
@@ -972,8 +972,8 @@ fn embedded_graphics_backend_monochrome_dither_is_stable_when_clipped() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display);
 
-        painter
-            .draw_image(&mut resources, source, bounds, paint, Some(clip))
+        resources
+            .paint_image(&mut painter, source, bounds, paint, Some(clip))
             .unwrap();
     }
 
@@ -1014,8 +1014,8 @@ fn embedded_graphics_backend_area_sampling_is_stable_when_clipped() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut full_display);
 
-        painter
-            .draw_image(&mut resources, source, bounds, paint, None)
+        resources
+            .paint_image(&mut painter, source, bounds, paint, None)
             .unwrap();
     }
 
@@ -1026,8 +1026,8 @@ fn embedded_graphics_backend_area_sampling_is_stable_when_clipped() {
     {
         let mut painter = EmbeddedGraphicsPainter::new(&mut clipped_display);
 
-        painter
-            .draw_image(&mut resources, source, bounds, paint, Some(clip))
+        resources
+            .paint_image(&mut painter, source, bounds, paint, Some(clip))
             .unwrap();
     }
 

@@ -1,8 +1,8 @@
 use crate::{
-    Axis, CanvasPainter, Color, DamageRegion, FrameArena, GlyphBitmap, ImageColorMode, ImagePaint,
-    ImageSource, NodeId, NodeKind, Offset, Pixels, Point, Position, Rect, ResolvedTextStyle,
-    callback::CallbackStore, count_metric, entity::EntityStore, flow_axis, storage::FrameStorage,
-    visual::VisualNode,
+    Axis, CanvasPainter, Color, DamageRegion, FrameArena, GlyphBitmap, GlyphCacheError,
+    ImageColorMode, ImagePaint, ImageSource, NodeId, NodeKind, Offset, Pixels, Point, Position,
+    Rect, ResolvedTextStyle, ShapeError, callback::CallbackStore, count_metric,
+    entity::EntityStore, flow_axis, storage::FrameStorage, visual::VisualNode,
 };
 
 mod canvas;
@@ -135,43 +135,75 @@ pub trait Painter {
     fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error>;
 }
 
-pub trait ResourcePainter<R: ?Sized = ()>: Painter {
-    fn draw_text(
+/// why painting stopped: the painter failed, or text couldn't be rasterized or shaped
+#[derive(Debug)]
+pub enum PaintError<E> {
+    Painter(E),
+    Font(GlyphCacheError),
+    Shape(ShapeError),
+}
+
+/// the fonts and images text and image nodes paint with, turning them into the
+/// [`Painter`]'s glyphs and pixel rows
+pub trait PaintResources {
+    fn paint_text<P: Painter>(
         &mut self,
-        resources: &mut R,
+        painter: &mut P,
         text: &str,
         bounds: Rect,
         style: ResolvedTextStyle,
         clip: Option<Rect>,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), PaintError<P::Error>>;
 
     /// paints text whose external layout has already been decided.
     ///
-    /// the caller supplies the final run bounds and position. Backends may use this to skip
-    /// line breaking, width measurement, ellipsis and alignment work and shape the run
-    /// exactly once.
-    ///
-    /// the default implementation preserves compatibility for painters that don't
-    /// have a specialized run path.
-    fn draw_text_run(
+    /// the caller supplies the final run bounds and position, so line breaking, width
+    /// measurement, ellipsis and alignment can be skipped and the run shaped exactly
+    /// once.
+    fn paint_text_run<P: Painter>(
         &mut self,
-        resources: &mut R,
+        painter: &mut P,
         text: &str,
         bounds: Rect,
         style: ResolvedTextStyle,
         clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.draw_text(resources, text, bounds, style, clip)
+    ) -> Result<(), PaintError<P::Error>> {
+        self.paint_text(painter, text, bounds, style, clip)
     }
 
-    fn draw_image(
+    fn paint_image<P: Painter>(
         &mut self,
-        resources: &mut R,
+        painter: &mut P,
         source: ImageSource,
         bounds: Rect,
         paint: ImagePaint,
         clip: Option<Rect>,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), PaintError<P::Error>>;
+}
+
+/// no fonts or images: text and image nodes paint nothing
+impl PaintResources for () {
+    fn paint_text<P: Painter>(
+        &mut self,
+        _: &mut P,
+        _: &str,
+        _: Rect,
+        _: ResolvedTextStyle,
+        _: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        Ok(())
+    }
+
+    fn paint_image<P: Painter>(
+        &mut self,
+        _: &mut P,
+        _: ImageSource,
+        _: Rect,
+        _: ImagePaint,
+        _: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -182,7 +214,7 @@ struct PaintRuntime<'a> {
 
 impl<F: FrameStorage> FrameArena<F> {
     #[allow(clippy::too_many_arguments)]
-    fn paint_node<R: ?Sized, P>(
+    fn paint_node<R, P>(
         &self,
         node_id: NodeId,
         bounds: Rect,
@@ -191,9 +223,10 @@ impl<F: FrameStorage> FrameArena<F> {
         resources: &mut R,
         report: &mut PaintReport,
         painter: &mut P,
-    ) -> Result<(), P::Error>
+    ) -> Result<(), PaintError<P::Error>>
     where
-        P: ResourcePainter<R>,
+        R: PaintResources,
+        P: Painter,
     {
         let node = self.node(node_id);
         match node.kind {
@@ -214,7 +247,9 @@ impl<F: FrameStorage> FrameArena<F> {
                     radius: style.border_radius,
                 };
 
-                painter.draw_box(bounds, paint, clip)?;
+                painter
+                    .draw_box(bounds, paint, clip)
+                    .map_err(PaintError::Painter)?;
 
                 if paint.background.is_some() || paint.border.is_some() {
                     report.mark_graphics();
@@ -226,7 +261,7 @@ impl<F: FrameStorage> FrameArena<F> {
             NodeKind::Text { text } => {
                 let text = self.text(text);
 
-                painter.draw_text(resources, text, bounds, node.effective_text_style, clip)?;
+                resources.paint_text(painter, text, bounds, node.effective_text_style, clip)?;
 
                 if !text.is_empty() {
                     report.mark_text();
@@ -247,7 +282,7 @@ impl<F: FrameStorage> FrameArena<F> {
             ),
 
             NodeKind::Image { source, style } => {
-                painter.draw_image(resources, source, bounds, style.paint, clip)?;
+                resources.paint_image(painter, source, bounds, style.paint, clip)?;
 
                 report.mark_image(style.paint.color_mode);
 
@@ -261,13 +296,14 @@ impl<F: FrameStorage> FrameArena<F> {
                 node.effective_text_style,
                 report,
                 painter,
-            ),
+            )
+            .map_err(PaintError::Painter),
 
             NodeKind::Entity { .. } => Ok(()),
         }
     }
 
-    fn paint_visual_node<R: ?Sized, P>(
+    fn paint_visual_node<R, P>(
         &self,
         visual: VisualNode,
         damage: DamageRegion,
@@ -275,9 +311,10 @@ impl<F: FrameStorage> FrameArena<F> {
         resources: &mut R,
         report: &mut PaintReport,
         painter: &mut P,
-    ) -> Result<(), P::Error>
+    ) -> Result<(), PaintError<P::Error>>
     where
-        P: ResourcePainter<R>,
+        R: PaintResources,
+        P: Painter,
     {
         count_metric!(self, visual_nodes_visited);
         if !visual.is_visible() {
@@ -463,16 +500,17 @@ impl<F: FrameStorage> FrameArena<F> {
         self.direct_child_for_mount_index(parent, low)
     }
 
-    fn paint_internal<R: ?Sized, P>(
+    fn paint_internal<R, P>(
         &self,
         root: NodeId,
         runtime: Option<PaintRuntime<'_>>,
         damage: DamageRegion,
         resources: &mut R,
         painter: &mut P,
-    ) -> Result<PaintReport, P::Error>
+    ) -> Result<PaintReport, PaintError<P::Error>>
     where
-        P: ResourcePainter<R>,
+        R: PaintResources,
+        P: Painter,
     {
         let mut report = PaintReport::new(damage);
 
@@ -567,38 +605,45 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     #[cfg(test)]
-    pub fn paint<P>(&self, root: NodeId, painter: &mut P) -> Result<PaintReport, P::Error>
+    pub fn paint<R, P>(
+        &self,
+        root: NodeId,
+        resources: &mut R,
+        painter: &mut P,
+    ) -> Result<PaintReport, PaintError<P::Error>>
     where
-        P: ResourcePainter,
+        R: PaintResources,
+        P: Painter,
     {
-        let mut resources = ();
-        self.paint_internal(root, None, DamageRegion::full(), &mut resources, painter)
+        self.paint_internal(root, None, DamageRegion::full(), resources, painter)
     }
 
     #[cfg(test)]
-    pub fn paint_with_damage<P>(
+    pub fn paint_with_damage<R, P>(
         &self,
         root: NodeId,
         damage: DamageRegion,
+        resources: &mut R,
         painter: &mut P,
-    ) -> Result<PaintReport, P::Error>
+    ) -> Result<PaintReport, PaintError<P::Error>>
     where
-        P: ResourcePainter,
+        R: PaintResources,
+        P: Painter,
     {
-        let mut resources = ();
-        self.paint_internal(root, None, damage, &mut resources, painter)
+        self.paint_internal(root, None, damage, resources, painter)
     }
 
-    pub(crate) fn paint_with_runtime<R: ?Sized, P>(
+    pub(crate) fn paint_with_runtime<R, P>(
         &self,
         root: NodeId,
         entities: &dyn EntityStore,
         callbacks: &dyn CallbackStore,
         resources: &mut R,
         painter: &mut P,
-    ) -> Result<PaintReport, P::Error>
+    ) -> Result<PaintReport, PaintError<P::Error>>
     where
-        P: ResourcePainter<R>,
+        R: PaintResources,
+        P: Painter,
     {
         let runtime = PaintRuntime {
             entities,
@@ -614,7 +659,7 @@ impl<F: FrameStorage> FrameArena<F> {
         )
     }
 
-    pub(crate) fn paint_with_runtime_and_damage<R: ?Sized, P>(
+    pub(crate) fn paint_with_runtime_and_damage<R, P>(
         &self,
         root: NodeId,
         entities: &dyn EntityStore,
@@ -622,9 +667,10 @@ impl<F: FrameStorage> FrameArena<F> {
         resources: &mut R,
         damage: DamageRegion,
         painter: &mut P,
-    ) -> Result<PaintReport, P::Error>
+    ) -> Result<PaintReport, PaintError<P::Error>>
     where
-        P: ResourcePainter<R>,
+        R: PaintResources,
+        P: Painter,
     {
         let runtime = PaintRuntime {
             entities,

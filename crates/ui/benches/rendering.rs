@@ -78,30 +78,6 @@ impl Painter for NullPainter {
     }
 }
 
-impl ResourcePainter for NullPainter {
-    fn draw_text(
-        &mut self,
-        _: &mut (),
-        _: &str,
-        _: Rect,
-        _: ResolvedTextStyle,
-        _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn draw_image(
-        &mut self,
-        _: &mut (),
-        _: ImageSource,
-        _: Rect,
-        _: ImagePaint,
-        _: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
 struct NullCanvasPainter;
 
 impl CanvasPainter for NullCanvasPainter {

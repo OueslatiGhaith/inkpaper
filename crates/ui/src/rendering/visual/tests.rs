@@ -1,5 +1,5 @@
-use core::convert::Infallible;
-use std::vec::Vec;
+use core::{cell::RefCell, convert::Infallible};
+use std::{rc::Rc, vec::Vec};
 
 use super::*;
 use crate::*;
@@ -162,7 +162,24 @@ enum Command {
 
 #[derive(Default)]
 struct RecordingPainter {
-    commands: Vec<Command>,
+    commands: Rc<RefCell<Vec<Command>>>,
+}
+
+impl RecordingPainter {
+    fn commands(&self) -> Vec<Command> {
+        self.commands.borrow().clone()
+    }
+
+    /// resources recording their text and images among this painter's commands
+    fn resources(&self) -> RecordingResources {
+        RecordingResources {
+            commands: Rc::clone(&self.commands),
+        }
+    }
+}
+
+struct RecordingResources {
+    commands: Rc<RefCell<Vec<Command>>>,
 }
 
 impl TextMeasurer for RecordingPainter {
@@ -190,7 +207,7 @@ impl Painter for RecordingPainter {
         paint: BoxPaint,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
-        self.commands.push(Command::Box {
+        self.commands.borrow_mut().push(Command::Box {
             bounds,
             paint,
             clip,
@@ -226,16 +243,16 @@ impl Painter for RecordingPainter {
     }
 }
 
-impl ResourcePainter for RecordingPainter {
-    fn draw_text(
+impl PaintResources for RecordingResources {
+    fn paint_text<P: Painter>(
         &mut self,
-        _: &mut (),
+        _: &mut P,
         text: &str,
         bounds: Rect,
         style: ResolvedTextStyle,
         clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.commands.push(Command::Text {
+    ) -> Result<(), PaintError<P::Error>> {
+        self.commands.borrow_mut().push(Command::Text {
             bounds,
             length: text.len(),
             style,
@@ -245,15 +262,15 @@ impl ResourcePainter for RecordingPainter {
         Ok(())
     }
 
-    fn draw_image(
+    fn paint_image<P: Painter>(
         &mut self,
-        _: &mut (),
+        _: &mut P,
         source: ImageSource,
         bounds: Rect,
         _: ImagePaint,
         clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.commands.push(Command::Image {
+    ) -> Result<(), PaintError<P::Error>> {
+        self.commands.borrow_mut().push(Command::Image {
             source,
             bounds,
             clip,
@@ -285,10 +302,12 @@ fn painting_uses_carried_scroll_and_clip_context() {
 
     frame.layout(root, Size::new(px(50), px(30)), &painter);
     frame.node_mut(root).interaction.scroll_offset = Offset::new(px(0), px(10));
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     assert_eq!(
-        painter.commands[1],
+        painter.commands()[1],
         Command::Box {
             bounds: Rect::new(Point::new(px(1), px(-9)), Size::new(px(50), px(60))),
             paint: BoxPaint {

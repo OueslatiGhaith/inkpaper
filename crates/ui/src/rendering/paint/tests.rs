@@ -1,5 +1,5 @@
-use core::convert::Infallible;
-use std::{vec, vec::Vec};
+use core::{cell::RefCell, convert::Infallible};
+use std::{rc::Rc, vec, vec::Vec};
 
 use crate::*;
 
@@ -64,8 +64,25 @@ enum CanvasCommand {
 
 #[derive(Default)]
 struct RecordingPainter {
-    commands: Vec<Command>,
+    commands: Rc<RefCell<Vec<Command>>>,
     canvas_commands: Vec<CanvasCommand>,
+}
+
+impl RecordingPainter {
+    fn commands(&self) -> Vec<Command> {
+        self.commands.borrow().clone()
+    }
+
+    /// resources recording their text and images among this painter's commands
+    fn resources(&self) -> RecordingResources {
+        RecordingResources {
+            commands: Rc::clone(&self.commands),
+        }
+    }
+}
+
+struct RecordingResources {
+    commands: Rc<RefCell<Vec<Command>>>,
 }
 
 impl TextMeasurer for RecordingPainter {
@@ -93,7 +110,7 @@ impl Painter for RecordingPainter {
         paint: BoxPaint,
         clip: Option<Rect>,
     ) -> Result<(), Self::Error> {
-        self.commands.push(Command::Box {
+        self.commands.borrow_mut().push(Command::Box {
             bounds,
             paint,
             clip,
@@ -107,7 +124,9 @@ impl Painter for RecordingPainter {
         clip: Option<Rect>,
         draw: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
     ) -> Result<(), Self::Error> {
-        self.commands.push(Command::Canvas { bounds, clip });
+        self.commands
+            .borrow_mut()
+            .push(Command::Canvas { bounds, clip });
 
         let local_bounds = Rect::new(Point::ZERO, Size::new(bounds.width(), bounds.height()));
 
@@ -139,16 +158,16 @@ impl Painter for RecordingPainter {
     }
 }
 
-impl ResourcePainter for RecordingPainter {
-    fn draw_text(
+impl PaintResources for RecordingResources {
+    fn paint_text<P: Painter>(
         &mut self,
-        _: &mut (),
+        _: &mut P,
         text: &str,
         bounds: Rect,
         style: ResolvedTextStyle,
         clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.commands.push(Command::Text {
+    ) -> Result<(), PaintError<P::Error>> {
+        self.commands.borrow_mut().push(Command::Text {
             bounds,
             length: text.len(),
             style,
@@ -158,15 +177,15 @@ impl ResourcePainter for RecordingPainter {
         Ok(())
     }
 
-    fn draw_image(
+    fn paint_image<P: Painter>(
         &mut self,
-        _: &mut (),
+        _: &mut P,
         source: ImageSource,
         bounds: Rect,
         paint: ImagePaint,
         clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        self.commands.push(Command::Image {
+    ) -> Result<(), PaintError<P::Error>> {
+        self.commands.borrow_mut().push(Command::Image {
             source,
             bounds,
             paint,
@@ -254,11 +273,13 @@ fn frame_paints_backend_independent_commands_in_tree_order() {
 
     let mut painter = RecordingPainter::default();
     frame.layout(root, Size::new(px(80), px(40)), &painter);
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
-    assert_eq!(painter.commands.len(), 3);
+    assert_eq!(painter.commands().len(), 3);
     assert_eq!(
-        painter.commands[0],
+        painter.commands()[0],
         Command::Box {
             bounds: Rect::new(Point::new(px(0), px(0)), Size::new(px(80), px(40))),
             paint: BoxPaint {
@@ -271,7 +292,7 @@ fn frame_paints_backend_independent_commands_in_tree_order() {
     );
 
     assert_eq!(
-        painter.commands[1],
+        painter.commands()[1],
         Command::Box {
             bounds: Rect::new(Point::new(px(0), px(0)), Size::new(px(20), px(10))),
             paint: BoxPaint {
@@ -284,7 +305,7 @@ fn frame_paints_backend_independent_commands_in_tree_order() {
     );
 
     assert_eq!(
-        painter.commands[2],
+        painter.commands()[2],
         Command::Text {
             bounds: Rect::new(Point::new(px(0), px(10)), Size::new(px(12), px(10))),
             length: 2,
@@ -315,10 +336,12 @@ fn frame_converts_style_to_box_paint() {
 
     let mut painter = RecordingPainter::default();
     frame.layout(root, Size::new(px(40), px(20)), &painter);
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     assert_eq!(
-        painter.commands,
+        painter.commands(),
         vec![Command::Box {
             bounds: Rect::new(Point::new(px(0), px(0)), Size::new(px(40), px(20))),
             paint: BoxPaint {
@@ -354,13 +377,15 @@ fn overflow_hidden_clips_descendant_painting() {
     let mut painter = RecordingPainter::default();
 
     frame.layout(root, Size::new(px(100), px(100)), &painter);
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     let child = frame.node(root).first_child.unwrap();
     let expected_clip = frame.bounds(root);
 
     assert_eq!(
-        painter.commands[1],
+        painter.commands()[1],
         Command::Box {
             bounds: frame.bounds(child),
             paint: BoxPaint {
@@ -395,12 +420,14 @@ fn overflow_hidden_clips_children_inside_parent_border() {
     let mut painter = RecordingPainter::default();
 
     frame.layout(root, Size::new(px(100), px(100)), &painter);
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     let child = frame.node(root).first_child.unwrap();
 
     assert_eq!(
-        painter.commands[1],
+        painter.commands()[1],
         Command::Box {
             bounds: frame.visual_bounds(child),
             paint: BoxPaint {
@@ -436,10 +463,12 @@ fn painting_receives_resolved_text_style() {
     let mut painter = RecordingPainter::default();
 
     frame.layout(root, Size::new(px(100), px(100)), &painter);
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     assert_eq!(
-        painter.commands[1],
+        painter.commands()[1],
         Command::Text {
             bounds: Rect::new(Point::ZERO, Size::new(px(30), px(10))),
             length: "Hello".len(),
@@ -484,12 +513,14 @@ fn frame_emits_image_paint_command() {
     let mut painter = RecordingPainter::default();
 
     frame.layout(root, Size::new(px(80), px(40)), &painter);
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
-    assert_eq!(painter.commands.len(), 2);
+    assert_eq!(painter.commands().len(), 2);
 
     assert_eq!(
-        painter.commands[1],
+        painter.commands()[1],
         Command::Image {
             source,
             bounds: Rect::new(Point::new(px(0), px(0)), Size::new(px(20), px(12))),
@@ -526,7 +557,9 @@ fn canvas_callback_draws_in_local_coordinates() {
     let mut painter = RecordingPainter::default();
 
     frame.layout(root, Size::new(px(100), px(100)), &painter);
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     assert_eq!(
         painter.canvas_commands[0],
@@ -677,12 +710,17 @@ fn partial_damage_skips_non_intersecting_nodes() {
     let damage = Rect::new(Point::new(px(0), px(25)), Size::new(px(100), px(10)));
 
     frame
-        .paint_with_damage(root, DamageRegion::from_rect(damage), &mut painter)
+        .paint_with_damage(
+            root,
+            DamageRegion::from_rect(damage),
+            &mut painter.resources(),
+            &mut painter,
+        )
         .unwrap();
 
-    assert_eq!(painter.commands.len(), 2);
+    assert_eq!(painter.commands().len(), 2);
     assert_eq!(
-        painter.commands[0],
+        painter.commands()[0],
         Command::Box {
             bounds: Rect::new(Point::ZERO, Size::new(px(100), px(60))),
             paint: BoxPaint {
@@ -694,7 +732,7 @@ fn partial_damage_skips_non_intersecting_nodes() {
         },
     );
     assert_eq!(
-        painter.commands[1],
+        painter.commands()[1],
         Command::Box {
             bounds: Rect::new(Point::new(px(0), px(20)), Size::new(px(100), px(20))),
             paint: BoxPaint {
@@ -726,10 +764,12 @@ fn disjoint_damage_rectangles_produce_disjoint_paint_clips() {
 
     let damage = DamageRegion::none().add_rect(first).add_rect(second);
 
-    frame.paint_with_damage(root, damage, &mut painter).unwrap();
+    frame
+        .paint_with_damage(root, damage, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     assert_eq!(
-        painter.commands,
+        painter.commands(),
         vec![
             Command::Box {
                 bounds: Rect::new(Point::ZERO, Size::new(px(100), px(40))),
@@ -780,9 +820,11 @@ fn partial_damage_respects_existing_visual_clip() {
         Size::new(px(10), px(20)),
     ));
 
-    frame.paint_with_damage(root, damage, &mut painter).unwrap();
+    frame
+        .paint_with_damage(root, damage, &mut painter.resources(), &mut painter)
+        .unwrap();
 
-    assert!(painter.commands.is_empty());
+    assert!(painter.commands().is_empty());
 }
 
 #[cfg(feature = "metrics")]
@@ -801,7 +843,12 @@ fn empty_damage_performs_no_visual_work() {
     frame.layout(root, Size::new(px(100), px(40)), &painter);
     frame.reset_performance_metrics();
     frame
-        .paint_with_damage(root, DamageRegion::none(), &mut painter)
+        .paint_with_damage(
+            root,
+            DamageRegion::none(),
+            &mut painter.resources(),
+            &mut painter,
+        )
         .unwrap();
 
     let metrics = frame.performance_metrics();
@@ -810,7 +857,7 @@ fn empty_damage_performs_no_visual_work() {
     assert_eq!(metrics.visual_traversal_nodes, 0);
     assert_eq!(metrics.visual_nodes_visited, 0);
     assert_eq!(metrics.nodes_painted, 0);
-    assert!(painter.commands.is_empty());
+    assert!(painter.commands().is_empty());
 }
 
 #[cfg(feature = "metrics")]
@@ -873,9 +920,9 @@ fn damage_paint_prunes_subtree_when_inherited_clip_misses_damage() {
     // only the black root intersects the damage.
     // the clipped red subtree must produce no command.
 
-    assert_eq!(painter.commands.len(), 1);
+    assert_eq!(painter.commands().len(), 1);
     assert_eq!(
-        painter.commands[0],
+        painter.commands()[0],
         Command::Box {
             bounds: Rect::new(Point::ZERO, Size::new(px(100), px(100))),
             paint: BoxPaint {
@@ -922,7 +969,9 @@ fn damage_paint_prunes_off_damage_child_subtrees_by_extent() {
     ));
 
     frame.reset_performance_metrics();
-    frame.paint_with_damage(root, damage, &mut painter).unwrap();
+    frame
+        .paint_with_damage(root, damage, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     let metrics = frame.performance_metrics();
 
@@ -986,7 +1035,7 @@ fn partial_paint_before_layout_does_not_use_stale_subtree_bounds() {
     ));
 
     frame
-        .paint_with_damage(second_root, damage, &mut painter)
+        .paint_with_damage(second_root, damage, &mut painter.resources(), &mut painter)
         .unwrap();
 
     let metrics = frame.performance_metrics();
@@ -1037,7 +1086,9 @@ fn damage_paint_prunes_ordered_vertical_sibling_tail() {
     ));
 
     frame.reset_performance_metrics();
-    frame.paint_with_damage(root, damage, &mut painter).unwrap();
+    frame
+        .paint_with_damage(root, damage, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     let metrics = frame.performance_metrics();
 
@@ -1099,7 +1150,9 @@ fn damage_paint_prunes_ordered_horizontal_leaf_sibling_tail() {
     ));
 
     frame.reset_performance_metrics();
-    frame.paint_with_damage(root, damage, &mut painter).unwrap();
+    frame
+        .paint_with_damage(root, damage, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     let metrics = frame.performance_metrics();
 
@@ -1151,7 +1204,9 @@ fn damage_paint_binary_searches_ordered_sibling_prefix() {
     ));
 
     frame.reset_performance_metrics();
-    frame.paint_with_damage(root, damage, &mut painter).unwrap();
+    frame
+        .paint_with_damage(root, damage, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     let metrics = frame.performance_metrics();
 
@@ -1208,7 +1263,9 @@ fn ordered_prefix_search_preserves_earlier_overflowing_subtree() {
     let damage = DamageRegion::from_rect(damage_rect);
 
     frame.reset_performance_metrics();
-    frame.paint_with_damage(root, damage, &mut painter).unwrap();
+    frame
+        .paint_with_damage(root, damage, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     let metrics = frame.performance_metrics();
 
@@ -1217,7 +1274,7 @@ fn ordered_prefix_search_preserves_earlier_overflowing_subtree() {
     // over it.
     assert_eq!(metrics.damage_pruned_sibling_prefixes, 0);
 
-    let painted_overflow = painter.commands.iter().any(|command| match command {
+    let painted_overflow = painter.commands().iter().any(|command| match command {
         Command::Box { paint, clip, .. } => {
             paint.background == Some(Color::RED) && *clip == Some(damage_rect)
         }
@@ -1266,10 +1323,12 @@ fn partial_damage_keeps_relative_sibling_shifted_back_into_damage() {
         Size::new(px(10), px(40)),
     ));
 
-    frame.paint_with_damage(root, damage, &mut painter).unwrap();
+    frame
+        .paint_with_damage(root, damage, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     assert!(
-        painter.commands.iter().any(|command| {
+        painter.commands().iter().any(|command| {
             matches!(
                 command,
                 Command::Box {
@@ -1317,7 +1376,9 @@ fn paint_report_records_painted_content_classes() {
 
     frame.layout(root, Size::new(px(80), px(60)), &painter);
 
-    let report = frame.paint(root, &mut painter).unwrap();
+    let report = frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     assert_eq!(report.damage(), DamageRegion::full());
 
@@ -1359,7 +1420,9 @@ fn partial_paint_report_only_records_content_inside_damage() {
         Size::new(px(80), px(10)),
     ));
 
-    let report = frame.paint_with_damage(root, damage, &mut painter).unwrap();
+    let report = frame
+        .paint_with_damage(root, damage, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     assert_eq!(report.damage(), damage);
 
@@ -1385,7 +1448,9 @@ fn grown_frame_lays_out_and_paints_after_storage_reuse_and_shrink() {
         .unwrap();
 
     frame.layout(root, Size::new(px(80), px(40)), &painter);
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     let first = frame.node(root).first_child.unwrap();
     let second = frame.node(first).next_sibling.unwrap();
@@ -1394,7 +1459,7 @@ fn grown_frame_lays_out_and_paints_after_storage_reuse_and_shrink() {
     assert_eq!(frame.bounds(second).origin.y, px(10));
     assert_eq!(
         painter
-            .commands
+            .commands()
             .iter()
             .filter(|command| matches!(command, Command::Text { length: 5, .. }))
             .count(),
@@ -1402,7 +1467,7 @@ fn grown_frame_lays_out_and_paints_after_storage_reuse_and_shrink() {
     );
 
     frame.clear();
-    painter.commands.clear();
+    painter.commands.borrow_mut().clear();
 
     let root = frame
         .mount("Again", AppContext::from_globals(&globals))
@@ -1410,10 +1475,12 @@ fn grown_frame_lays_out_and_paints_after_storage_reuse_and_shrink() {
 
     frame.shrink_to_fit();
     frame.layout(root, Size::new(px(80), px(40)), &painter);
-    frame.paint(root, &mut painter).unwrap();
+    frame
+        .paint(root, &mut painter.resources(), &mut painter)
+        .unwrap();
 
     assert!(matches!(
-        painter.commands.as_slice(),
+        painter.commands().as_slice(),
         [Command::Text { length: 5, .. }]
     ));
 }

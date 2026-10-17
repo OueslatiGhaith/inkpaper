@@ -8,13 +8,11 @@ mod mono_font;
 
 #[cfg(feature = "eink")]
 pub use eink::{
-    DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkCoverageBlitter, EInkCoverageMode, EInkError,
+    DEFAULT_MIN_INK_COVERAGE, EInkCoverageBitmap, EInkCoverageBlitter, EInkCoverageMode,
     EInkPaintReport, EInkPainter, EInkTone, EInkUiMode, Gray2, inks,
 };
 
 #[cfg(feature = "embedded-graphics")]
-pub use embedded_graphics::{
-    CoverageMode, EmbeddedGraphicsError, EmbeddedGraphicsImage, EmbeddedGraphicsPainter,
-};
+pub use embedded_graphics::{CoverageMode, EmbeddedGraphicsImage, EmbeddedGraphicsPainter};
 
 pub use mono_font::MonoFontFace;

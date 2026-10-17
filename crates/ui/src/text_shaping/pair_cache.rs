@@ -2,7 +2,6 @@ use crate::{
     FontInstance, FontRegistry, GlyphId, PairPositioning, PreparedFont, increment_metric, px,
 };
 
-#[cfg(feature = "eink")]
 pub(crate) const PAIR_POSITIONING_CACHE_SLOTS: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,18 +26,6 @@ pub(crate) struct PairPositioningCacheMetrics {
     pub(crate) hits: u64,
     pub(crate) misses: u64,
     pub(crate) collisions: u64,
-}
-
-#[cfg(feature = "metrics")]
-impl PairPositioningCacheMetrics {
-    pub(crate) fn delta_since(self, previous: Self) -> Self {
-        Self {
-            lookups: self.lookups.saturating_sub(previous.lookups),
-            hits: self.hits.saturating_sub(previous.hits),
-            misses: self.misses.saturating_sub(previous.misses),
-            collisions: self.collisions.saturating_sub(previous.collisions),
-        }
-    }
 }
 
 pub(crate) struct PairPositioningCache<const SLOTS: usize> {
@@ -179,6 +166,11 @@ impl<const SLOTS: usize> PairPositioningCache<SLOTS> {
     #[cfg(feature = "metrics")]
     pub(crate) const fn metrics(&self) -> PairPositioningCacheMetrics {
         self.metrics
+    }
+
+    #[cfg(feature = "metrics")]
+    pub(crate) fn reset_metrics(&mut self) {
+        self.metrics = PairPositioningCacheMetrics::default();
     }
 }
 

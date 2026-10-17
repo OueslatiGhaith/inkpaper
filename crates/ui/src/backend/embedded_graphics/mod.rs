@@ -8,19 +8,12 @@ use embedded_graphics::{
 };
 
 use crate::{
-    BoxPaint, CanvasPainter, Color, DamageRegion, GlyphBitmap, GlyphCacheError, ImagePaint,
-    ImageSource, Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError,
+    BoxPaint, CanvasPainter, Color, DamageRegion, GlyphBitmap, Painter, Point, Rect,
     backend::{
         embedded::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
         embedded_graphics::coverage::draw_coverage_bitmap,
     },
-    pair_cache::PairPositioningCache,
     px,
-    rendering::{
-        image_paint::paint_image,
-        text_paint::{TextPaintError, paint_text, paint_text_run},
-    },
-    resources::RuntimeResources,
 };
 
 mod canvas;
@@ -34,13 +27,6 @@ use canvas::EmbeddedGraphicsCanvasPainter;
 
 #[cfg(test)]
 mod tests;
-
-#[derive(Debug)]
-pub enum EmbeddedGraphicsError<E> {
-    Target(E),
-    Font(GlyphCacheError),
-    Shape(ShapeError),
-}
 
 pub struct EmbeddedGraphicsPainter<'target, D>
 where
@@ -115,7 +101,7 @@ where
     D: EgDrawTarget,
     D::Color: From<EgRgb888>,
 {
-    type Error = EmbeddedGraphicsError<D::Error>;
+    type Error = D::Error;
 
     fn draw_box(
         &mut self,
@@ -125,15 +111,13 @@ where
     ) -> Result<(), Self::Error> {
         let mut target = self.target.color_converted::<EgRgb888>();
 
-        let result = if let Some(clip) = clip {
+        if let Some(clip) = clip {
             let clip = to_embedded_rect(clip);
             let mut clipped = target.clipped(&clip);
             draw_box_to(&mut clipped, bounds, paint, to_rgb888)
         } else {
             draw_box_to(&mut target, bounds, paint, to_rgb888)
-        };
-
-        result.map_err(EmbeddedGraphicsError::Target)
+        }
     }
 
     fn draw_canvas(
@@ -175,9 +159,7 @@ where
 
         draw(local_bounds, &mut canvas_painter);
 
-        canvas_painter
-            .finish()
-            .map_err(EmbeddedGraphicsError::Target)
+        canvas_painter.finish()
     }
 
     fn draw_glyph(
@@ -203,7 +185,6 @@ where
         to_embedded_rect(rect)
             .into_styled(EgPrimitiveStyle::with_fill(to_rgb888(color)))
             .draw(&mut target.clipped(&to_embedded_rect(clip)))
-            .map_err(EmbeddedGraphicsError::Target)
     }
 
     fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error> {
@@ -214,136 +195,7 @@ where
             .zip(origin.x.get()..)
             .map(|(&color, x)| EgPixel(EgPoint::new(x, y), to_rgb888(color)));
 
-        self.target
-            .color_converted::<EgRgb888>()
-            .draw_iter(pixels)
-            .map_err(EmbeddedGraphicsError::Target)
-    }
-}
-
-impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
-    ResourcePainter<RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
-    for EmbeddedGraphicsPainter<'_, D>
-where
-    D: EgDrawTarget,
-    D::Color: From<EgRgb888>,
-{
-    fn draw_text(
-        &mut self,
-        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
-        text: &str,
-        bounds: Rect,
-        style: ResolvedTextStyle,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
-            return Ok(());
-        }
-
-        let Some(text_clip) = (match clip {
-            Some(clip) => clip.intersection(bounds),
-            None => Some(bounds),
-        }) else {
-            return Ok(());
-        };
-
-        let (registry, glyph_cache) = resources.fonts_and_glyph_cache();
-
-        let font = registry
-            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
-            .expect("EmbeddedGraphicsPainter requires a default font");
-
-        paint_text(
-            self,
-            text,
-            bounds,
-            text_clip,
-            registry,
-            glyph_cache,
-            font,
-            style,
-        )
-        .map(|_| ())
-        .map_err(text_error)
-    }
-
-    fn draw_text_run(
-        &mut self,
-        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
-        text: &str,
-        bounds: Rect,
-        style: ResolvedTextStyle,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        if text.is_empty() || bounds.width().is_non_positive() || bounds.height().is_non_positive()
-        {
-            return Ok(());
-        }
-
-        // glyph ink may overflow a run, so only the caller's clip applies
-        let text_clip = clip.unwrap_or(bounds);
-
-        let (registry, glyph_cache) = resources.fonts_and_glyph_cache();
-
-        let font = registry
-            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
-            .expect("EmbeddedGraphicsPainter requires a default font");
-
-        paint_text_run(
-            self,
-            text,
-            bounds,
-            text_clip,
-            registry,
-            glyph_cache,
-            font,
-            style,
-            None::<&mut PairPositioningCache<1>>,
-        )
-        .map(|_| ())
-        .map_err(text_error)
-    }
-
-    fn draw_image(
-        &mut self,
-        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
-        source: ImageSource,
-        bounds: Rect,
-        paint: ImagePaint,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
-            return Ok(());
-        }
-
-        let Some(image) = resources.image(source.id()) else {
-            debug_assert!(false, "image {:?} is not registered", source.id());
-            return Ok(());
-        };
-
-        debug_assert_eq!(
-            image.size(),
-            source.size(),
-            "registered image size differs from ImageSource size for {:?}",
-            source.id(),
-        );
-
-        let Some(image_clip) = (match clip {
-            Some(clip) => clip.intersection(bounds),
-            None => Some(bounds),
-        }) else {
-            return Ok(());
-        };
-
-        paint_image(self, image, bounds, paint, Some(image_clip))
-    }
-}
-
-fn text_error<E>(error: TextPaintError<EmbeddedGraphicsError<E>>) -> EmbeddedGraphicsError<E> {
-    match error {
-        TextPaintError::Painter(error) => error,
-        TextPaintError::Font(error) => EmbeddedGraphicsError::Font(error),
-        TextPaintError::Shape(error) => EmbeddedGraphicsError::Shape(error),
+        self.target.color_converted::<EgRgb888>().draw_iter(pixels)
     }
 }
 

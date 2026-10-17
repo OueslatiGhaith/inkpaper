@@ -1,8 +1,16 @@
-use std::{convert::Infallible, format, rc::Rc, string::String, vec, vec::Vec};
+use std::{
+    convert::Infallible,
+    format,
+    hash::{DefaultHasher, Hash, Hasher},
+    rc::Rc,
+    string::String,
+    vec,
+    vec::Vec,
+};
 
 use crate::{frame::NodeKind, *};
 
-type TestRuntime = Runtime<TestStorage<8192, 16, 8192, 128, 256, 1024, 32, 64, 2>>;
+type TestRuntime = Runtime<TestStorage<8192, 16, 8192, 128, 256, 1024, 32, 64, 2>, KeyedText>;
 
 struct Label {
     text: &'static str,
@@ -581,7 +589,8 @@ impl Painter for Raster {
         Ok(())
     }
 
-    fn fill_rect(&mut self, _: Rect, _: Color, _: Rect) -> Result<(), Self::Error> {
+    fn fill_rect(&mut self, rect: Rect, color: Color, clip: Rect) -> Result<(), Self::Error> {
+        self.fill(rect, Some(clip), &format!("{color:?}"));
         Ok(())
     }
 
@@ -590,27 +599,36 @@ impl Painter for Raster {
     }
 }
 
-impl ResourcePainter for Raster {
-    fn draw_text(
+/// paints each text as a solid area in a color keyed by the text
+#[derive(Default)]
+struct KeyedText;
+
+impl PaintResources for KeyedText {
+    fn paint_text<P: Painter>(
         &mut self,
-        _: &mut (),
+        painter: &mut P,
         text: &str,
         bounds: Rect,
         _: ResolvedTextStyle,
         clip: Option<Rect>,
-    ) -> Result<(), Infallible> {
-        self.fill(bounds, clip, text);
-        Ok(())
+    ) -> Result<(), PaintError<P::Error>> {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        let [r, g, b, ..] = hasher.finish().to_le_bytes();
+
+        painter
+            .fill_rect(bounds, Color::rgb(r, g, b), clip.unwrap_or(bounds))
+            .map_err(PaintError::Painter)
     }
 
-    fn draw_image(
+    fn paint_image<P: Painter>(
         &mut self,
-        _: &mut (),
+        _: &mut P,
         _: ImageSource,
         _: Rect,
         _: ImagePaint,
         _: Option<Rect>,
-    ) -> Result<(), Infallible> {
+    ) -> Result<(), PaintError<P::Error>> {
         Ok(())
     }
 }

@@ -8,18 +8,12 @@ use embedded_graphics::{
 };
 
 use crate::{
-    BoxPaint, CanvasPainter, Color, DamageRegion, GlyphBitmap, GlyphCacheError, ImagePaint,
-    ImageSource, Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError,
+    BoxPaint, CanvasPainter, Color, DamageRegion, GlyphBitmap, Painter, Point, Rect,
     backend::{
         eink::tone::{BinaryDitherTarget, gray2_tone},
         embedded::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
     },
     px,
-    rendering::{
-        image_paint::paint_image,
-        text_paint::{TextPaintError, paint_text, paint_text_run},
-    },
-    resources::RuntimeResources,
 };
 
 mod canvas;
@@ -35,13 +29,6 @@ pub use embedded_graphics::pixelcolor::Gray2;
 
 use canvas::EInkCanvasPainter;
 use coverage::{color_to_gray2, draw_coverage_bitmap};
-
-#[derive(Debug)]
-pub enum EInkError<E> {
-    Target(E),
-    Font(GlyphCacheError),
-    Shape(ShapeError),
-}
 
 pub struct EInkPainter<'target, D>
 where
@@ -156,7 +143,7 @@ impl<D> Painter for EInkPainter<'_, D>
 where
     D: EgDrawTarget<Color = Gray2>,
 {
-    type Error = EInkError<D::Error>;
+    type Error = D::Error;
 
     fn draw_box(
         &mut self,
@@ -172,7 +159,7 @@ where
             self.record_native_ui_color(border.color);
         }
 
-        let result = match self.ui_mode {
+        match self.ui_mode {
             EInkUiMode::NativeGray2 => {
                 if let Some(clip) = clip {
                     let clip = to_embedded_rect(clip);
@@ -197,9 +184,7 @@ where
                     draw_box_to(&mut dithered, bounds, paint, color_to_gray2)
                 }
             }
-        };
-
-        result.map_err(EInkError::Target)
+        }
     }
 
     fn draw_canvas(
@@ -250,7 +235,7 @@ where
 
         draw(local_bounds, &mut painter);
 
-        painter.finish().map_err(EInkError::Target)
+        painter.finish()
     }
 
     fn draw_glyph(
@@ -260,6 +245,16 @@ where
         color: Color,
         clip: Rect,
     ) -> Result<(), Self::Error> {
+        if self.ui_mode == EInkUiMode::NativeGray2 {
+            self.record_native_ui_color(color);
+
+            if matches!(self.coverage_mode, EInkCoverageMode::AlphaBlend { .. }) {
+                // partial glyph coverage can create intermediate Gray2 output even
+                // for a binary foreground color.
+                self.report.include(EInkTone::Gray4);
+            }
+        }
+
         let coverage_mode = self.effective_coverage_mode();
 
         draw_coverage_bitmap(
@@ -274,10 +269,11 @@ where
     }
 
     fn fill_rect(&mut self, rect: Rect, color: Color, clip: Rect) -> Result<(), Self::Error> {
+        self.record_native_ui_color(color);
+
         to_embedded_rect(rect)
             .into_styled(EgPrimitiveStyle::with_fill(color_to_gray2(color)))
             .draw(&mut self.target.clipped(&to_embedded_rect(clip)))
-            .map_err(EInkError::Target)
     }
 
     fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error> {
@@ -294,171 +290,6 @@ where
             EgPixel(EgPoint::new(x, y), gray)
         });
 
-        self.target.draw_iter(pixels).map_err(EInkError::Target)
-    }
-}
-
-impl<D, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
-    ResourcePainter<RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
-    for EInkPainter<'_, D>
-where
-    D: EgDrawTarget<Color = Gray2>,
-{
-    fn draw_text(
-        &mut self,
-        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
-        text: &str,
-        bounds: Rect,
-        style: ResolvedTextStyle,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
-            return Ok(());
-        }
-
-        let Some(clip) = (match clip {
-            Some(clip) => clip.intersection(bounds),
-            None => Some(bounds),
-        }) else {
-            return Ok(());
-        };
-
-        let (registry, glyph_cache) = resources.fonts_and_glyph_cache();
-
-        let font = registry
-            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
-            .expect("EInkPainter requires a default font");
-
-        if self.ui_mode == EInkUiMode::NativeGray2 {
-            self.record_native_ui_color(style.color);
-
-            if matches!(self.coverage_mode, EInkCoverageMode::AlphaBlend { .. }) {
-                // partial glyph coverage can create intermediate Gray2 output even
-                // for a binary foreground color.
-                self.report.include(EInkTone::Gray4);
-            }
-        }
-
-        let shaped_glyphs =
-            paint_text(self, text, bounds, clip, registry, glyph_cache, font, style)
-                .map_err(text_error)?;
-
-        #[cfg(feature = "metrics")]
-        self.report.record_text_draw(shaped_glyphs);
-
-        #[cfg(not(feature = "metrics"))]
-        let _ = shaped_glyphs;
-
-        Ok(())
-    }
-
-    fn draw_text_run(
-        &mut self,
-        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
-        text: &str,
-        bounds: Rect,
-        style: ResolvedTextStyle,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        if text.is_empty() || bounds.width().is_non_positive() || bounds.height().is_non_positive()
-        {
-            return Ok(());
-        }
-
-        // glyph ink may overflow a run, so only the caller's clip applies
-        let clip = clip.unwrap_or(bounds);
-
-        let (registry, glyph_cache, pair_positioning_cache) = resources.fonts_and_caches();
-
-        let font = registry
-            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
-            .expect("EInkPainter requires a default font");
-
-        if self.ui_mode == EInkUiMode::NativeGray2 {
-            self.record_native_ui_color(style.color);
-
-            if matches!(self.coverage_mode, EInkCoverageMode::AlphaBlend { .. }) {
-                self.report.include(EInkTone::Gray4);
-            }
-        }
-
-        #[cfg(feature = "metrics")]
-        let pair_cache_before = pair_positioning_cache.metrics();
-
-        let shaped_glyphs = paint_text_run(
-            self,
-            text,
-            bounds,
-            clip,
-            registry,
-            glyph_cache,
-            font,
-            style,
-            Some(&mut *pair_positioning_cache),
-        )
-        .map_err(text_error)?;
-
-        #[cfg(feature = "metrics")]
-        {
-            let pair_cache_delta = pair_positioning_cache
-                .metrics()
-                .delta_since(pair_cache_before);
-
-            self.report.record_pair_positioning_cache(
-                pair_cache_delta.lookups,
-                pair_cache_delta.hits,
-                pair_cache_delta.misses,
-                pair_cache_delta.collisions,
-            );
-
-            self.report.record_text_draw(shaped_glyphs);
-        }
-
-        #[cfg(not(feature = "metrics"))]
-        let _ = shaped_glyphs;
-
-        Ok(())
-    }
-
-    fn draw_image(
-        &mut self,
-        resources: &mut RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>,
-        source: ImageSource,
-        bounds: Rect,
-        paint: ImagePaint,
-        clip: Option<Rect>,
-    ) -> Result<(), Self::Error> {
-        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
-            return Ok(());
-        }
-
-        let Some(image) = resources.image(source.id()) else {
-            debug_assert!(false, "image {:?} is not registered", source.id());
-            return Ok(());
-        };
-
-        debug_assert_eq!(
-            image.size(),
-            source.size(),
-            "registered image size differs from ImageSource size for {:?}",
-            source.id(),
-        );
-
-        let Some(clip) = (match clip {
-            Some(clip) => clip.intersection(bounds),
-            None => Some(bounds),
-        }) else {
-            return Ok(());
-        };
-
-        paint_image(self, image, bounds, paint, Some(clip))
-    }
-}
-
-fn text_error<E>(error: TextPaintError<EInkError<E>>) -> EInkError<E> {
-    match error {
-        TextPaintError::Painter(error) => error,
-        TextPaintError::Font(error) => EInkError::Font(error),
-        TextPaintError::Shape(error) => EInkError::Shape(error),
+        self.target.draw_iter(pixels)
     }
 }

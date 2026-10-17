@@ -4,8 +4,8 @@ use alloc::boxed::Box;
 use crate::{
     Context, DamageRegion, ElementId, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
     FontRegistryError, FrameBuildError, ImageRegistryError, ImageResource, ImageSource, Offset,
-    PaintReport, Point, RenderInvalidation, ResourcePainter, Runtime, RuntimeResources,
-    RuntimeStorage, Size, TextMeasurer, callback::ListenerInvokeError,
+    PaintError, PaintReport, PaintResources, Painter, Point, RenderInvalidation, Runtime,
+    RuntimeResources, RuntimeStorage, Size, TextMeasurer, callback::ListenerInvokeError,
 };
 
 /// application-facing runtime operations.
@@ -84,9 +84,9 @@ pub trait ResourceRuntimeApi<'resource> {
 /// platform-facing rendering operations.
 ///
 /// this interface is backend-independent. It knows about the runtime's abstract resource
-/// type and `ResourcePainter`, but not about embedded-graphics, framebuffers, SDL, e-ink, or any other backend.
+/// type and [`Painter`], but not about embedded-graphics, framebuffers, SDL, e-ink, or any other backend.
 pub trait RenderRuntimeApi {
-    type Resources: TextMeasurer;
+    type Resources: TextMeasurer + PaintResources;
 
     fn rebuild(&mut self) -> Result<(), FrameBuildError>;
 
@@ -102,9 +102,9 @@ pub trait RenderRuntimeApi {
         &mut self,
         damage: DamageRegion,
         painter: &mut P,
-    ) -> Result<Option<PaintReport>, P::Error>
+    ) -> Result<Option<PaintReport>, PaintError<P::Error>>
     where
-        P: ResourcePainter<Self::Resources>;
+        P: Painter;
 }
 
 impl<S, RESOURCES> RuntimeApi for Runtime<S, RESOURCES>
@@ -229,7 +229,7 @@ where
 impl<S, RESOURCES> RenderRuntimeApi for Runtime<S, RESOURCES>
 where
     S: RuntimeStorage,
-    RESOURCES: TextMeasurer,
+    RESOURCES: TextMeasurer + PaintResources,
 {
     type Resources = RESOURCES;
 
@@ -253,9 +253,9 @@ where
         &mut self,
         damage: DamageRegion,
         painter: &mut P,
-    ) -> Result<Option<PaintReport>, P::Error>
+    ) -> Result<Option<PaintReport>, PaintError<P::Error>>
     where
-        P: ResourcePainter<Self::Resources>,
+        P: Painter,
     {
         self.paint_with_damage(damage, painter)
     }

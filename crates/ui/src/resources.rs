@@ -3,14 +3,30 @@ use alloc::boxed::Box;
 
 #[cfg(feature = "metrics")]
 use crate::GlyphCacheMetrics;
-#[cfg(feature = "eink")]
-use crate::pair_cache::{PAIR_POSITIONING_CACHE_SLOTS, PairPositioningCache};
 use crate::{
     FontFace, FontFamilyId, FontId, FontInstance, FontRegistry, FontRegistryError, FontResources,
-    FontStyle, FontWeight, GlyphBitmap, GlyphCache, GlyphCacheError, GlyphId, ImageId,
-    ImageRegistry, ImageRegistryError, ImageResource, ImageSource, ResolvedFont, ResolvedTextStyle,
-    Size, TextMeasurer,
+    FontStyle, FontWeight, GlyphBitmap, GlyphCache, GlyphCacheError, GlyphId, ImageId, ImagePaint,
+    ImageRegistry, ImageRegistryError, ImageResource, ImageSource, PaintError, PaintResources,
+    Painter, Rect, ResolvedFont, ResolvedTextStyle, Size, TextMeasurer,
+    pair_cache::{PAIR_POSITIONING_CACHE_SLOTS, PairPositioningCache},
+    rendering::{
+        image_paint::paint_image,
+        text_paint::{paint_text, paint_text_run},
+    },
 };
+
+/// how much text painting did since the last reset
+#[cfg(feature = "metrics")]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct TextPaintMetrics {
+    pub draw_calls: u64,
+    pub shaped_glyphs: u64,
+    pub pair_cache_lookups: u64,
+    pub pair_cache_hits: u64,
+    pub pair_cache_misses: u64,
+    pub pair_cache_collisions: u64,
+}
 
 pub struct RuntimeResources<
     'resource,
@@ -21,8 +37,9 @@ pub struct RuntimeResources<
 > {
     fonts: FontResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES>,
     images: ImageRegistry<'resource, IMAGES>,
-    #[cfg(feature = "eink")]
     pair_positioning_cache: PairPositioningCache<PAIR_POSITIONING_CACHE_SLOTS>,
+    #[cfg(feature = "metrics")]
+    text_paint_metrics: TextPaintMetrics,
 }
 
 impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
@@ -32,8 +49,9 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, con
         Self {
             fonts: FontResources::default(),
             images: ImageRegistry::default(),
-            #[cfg(feature = "eink")]
             pair_positioning_cache: PairPositioningCache::default(),
+            #[cfg(feature = "metrics")]
+            text_paint_metrics: TextPaintMetrics::default(),
         }
     }
 }
@@ -108,20 +126,6 @@ impl<
         self.fonts.registry_and_glyph_cache()
     }
 
-    /// [`Self::fonts_and_glyph_cache`] with the cache of positioned glyph pairs
-    #[cfg(feature = "eink")]
-    pub(crate) fn fonts_and_caches(
-        &mut self,
-    ) -> (
-        &FontRegistry<'resource, FONTS>,
-        &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
-        &mut PairPositioningCache<PAIR_POSITIONING_CACHE_SLOTS>,
-    ) {
-        let (registry, glyph_cache) = self.fonts.registry_and_glyph_cache();
-
-        (registry, glyph_cache, &mut self.pair_positioning_cache)
-    }
-
     pub const fn font_registry(&self) -> &FontRegistry<'resource, FONTS> {
         self.fonts.registry()
     }
@@ -184,6 +188,159 @@ impl<
     #[cfg(feature = "metrics")]
     pub const fn glyph_cache_metrics(&self) -> GlyphCacheMetrics {
         self.fonts.glyph_cache_metrics()
+    }
+
+    #[cfg(feature = "metrics")]
+    pub fn reset_text_paint_metrics(&mut self) {
+        self.text_paint_metrics = TextPaintMetrics::default();
+        self.pair_positioning_cache.reset_metrics();
+    }
+
+    #[cfg(feature = "metrics")]
+    pub const fn text_paint_metrics(&self) -> TextPaintMetrics {
+        let pair_cache = self.pair_positioning_cache.metrics();
+
+        TextPaintMetrics {
+            pair_cache_lookups: pair_cache.lookups,
+            pair_cache_hits: pair_cache.hits,
+            pair_cache_misses: pair_cache.misses,
+            pair_cache_collisions: pair_cache.collisions,
+            ..self.text_paint_metrics
+        }
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_text_draw(&mut self, shaped_glyphs: u64) {
+        let metrics = &mut self.text_paint_metrics;
+
+        metrics.draw_calls = metrics.draw_calls.saturating_add(1);
+        metrics.shaped_glyphs = metrics.shaped_glyphs.saturating_add(shaped_glyphs);
+    }
+}
+
+impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
+    PaintResources for RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>
+{
+    fn paint_text<P: Painter>(
+        &mut self,
+        painter: &mut P,
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
+            return Ok(());
+        }
+
+        let Some(clip) = (match clip {
+            Some(clip) => clip.intersection(bounds),
+            None => Some(bounds),
+        }) else {
+            return Ok(());
+        };
+
+        let (registry, glyph_cache) = self.fonts.registry_and_glyph_cache();
+
+        let font = registry
+            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
+            .expect("painting text requires a default font");
+
+        let shaped_glyphs = paint_text(
+            painter,
+            text,
+            bounds,
+            clip,
+            registry,
+            glyph_cache,
+            font,
+            style,
+        )?;
+
+        #[cfg(feature = "metrics")]
+        self.record_text_draw(shaped_glyphs);
+
+        #[cfg(not(feature = "metrics"))]
+        let _ = shaped_glyphs;
+
+        Ok(())
+    }
+
+    fn paint_text_run<P: Painter>(
+        &mut self,
+        painter: &mut P,
+        text: &str,
+        bounds: Rect,
+        style: ResolvedTextStyle,
+        clip: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        if text.is_empty() || bounds.width().is_non_positive() || bounds.height().is_non_positive()
+        {
+            return Ok(());
+        }
+
+        // glyph ink may overflow a run, so only the caller's clip applies
+        let clip = clip.unwrap_or(bounds);
+
+        let (registry, glyph_cache) = self.fonts.registry_and_glyph_cache();
+
+        let font = registry
+            .resolve_family_font(style.font_family, style.font_weight, style.font_style)
+            .expect("painting text requires a default font");
+
+        let shaped_glyphs = paint_text_run(
+            painter,
+            text,
+            bounds,
+            clip,
+            registry,
+            glyph_cache,
+            font,
+            style,
+            &mut self.pair_positioning_cache,
+        )?;
+
+        #[cfg(feature = "metrics")]
+        self.record_text_draw(shaped_glyphs);
+
+        #[cfg(not(feature = "metrics"))]
+        let _ = shaped_glyphs;
+
+        Ok(())
+    }
+
+    fn paint_image<P: Painter>(
+        &mut self,
+        painter: &mut P,
+        source: ImageSource,
+        bounds: Rect,
+        paint: ImagePaint,
+        clip: Option<Rect>,
+    ) -> Result<(), PaintError<P::Error>> {
+        if bounds.width().is_non_positive() || bounds.height().is_non_positive() {
+            return Ok(());
+        }
+
+        let Some(image) = self.images.get(source.id()) else {
+            debug_assert!(false, "image {:?} is not registered", source.id());
+            return Ok(());
+        };
+
+        debug_assert_eq!(
+            image.size(),
+            source.size(),
+            "registered image size differs from ImageSource size for {:?}",
+            source.id(),
+        );
+
+        let Some(clip) = (match clip {
+            Some(clip) => clip.intersection(bounds),
+            None => Some(bounds),
+        }) else {
+            return Ok(());
+        };
+
+        paint_image(painter, image, bounds, paint, Some(clip)).map_err(PaintError::Painter)
     }
 }
 
