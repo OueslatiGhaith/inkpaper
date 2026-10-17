@@ -9,10 +9,12 @@ use crate::{
         embedded::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
         embedded_graphics::{
             image::draw_image_to,
-            text::{draw_text_run_to, draw_text_to},
+            text::{EmbeddedGraphicsGlyphSink, text_error},
         },
     },
+    pair_cache::PairPositioningCache,
     px,
+    rendering::text_paint::{paint_text, paint_text_run},
     resources::RuntimeResources,
 };
 
@@ -207,8 +209,13 @@ where
             .resolve_family_font(style.font_family, style.font_weight, style.font_style)
             .expect("EmbeddedGraphicsPainter requires a default font");
 
-        draw_text_to(
-            self.target,
+        let mut sink = EmbeddedGraphicsGlyphSink {
+            target: self.target,
+            coverage_mode: self.coverage_mode,
+        };
+
+        paint_text(
+            &mut sink,
             text,
             bounds,
             text_clip,
@@ -216,8 +223,9 @@ where
             glyph_cache,
             font,
             style,
-            self.coverage_mode,
         )
+        .map(|_| ())
+        .map_err(text_error)
     }
 
     fn draw_text_run(
@@ -242,8 +250,13 @@ where
             .resolve_family_font(style.font_family, style.font_weight, style.font_style)
             .expect("EmbeddedGraphicsPainter requires a default font");
 
-        draw_text_run_to(
-            self.target,
+        let mut sink = EmbeddedGraphicsGlyphSink {
+            target: self.target,
+            coverage_mode: self.coverage_mode,
+        };
+
+        paint_text_run(
+            &mut sink,
             text,
             bounds,
             text_clip,
@@ -251,8 +264,10 @@ where
             glyph_cache,
             font,
             style,
-            self.coverage_mode,
+            None::<&mut PairPositioningCache<1>>,
         )
+        .map(|_| ())
+        .map_err(text_error)
     }
 
     fn draw_image(

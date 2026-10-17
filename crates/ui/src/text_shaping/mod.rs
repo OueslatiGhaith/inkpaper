@@ -351,7 +351,7 @@ impl SimpleShaper {
             .shape_into(registry, size_px, text, output)
     }
 
-    #[cfg(feature = "eink")]
+    #[cfg(any(feature = "eink", feature = "embedded-graphics"))]
     pub(crate) fn shape_into_with_pair_positioning_cache<
         'out,
         const FONTS: usize,
@@ -363,14 +363,14 @@ impl SimpleShaper {
         size_px: u16,
         text: &str,
         output: &'out mut [ShapedGlyph],
-        pair_positioning_cache: &mut pair_cache::PairPositioningCache<SLOTS>,
+        pair_positioning_cache: Option<&mut pair_cache::PairPositioningCache<SLOTS>>,
     ) -> Result<ShapedRun<'out>, ShapeError> {
         self.prepare(registry, preferred_font).shape_into_with(
             registry,
             size_px,
             text,
             output,
-            Some(pair_positioning_cache),
+            pair_positioning_cache,
         )
     }
 

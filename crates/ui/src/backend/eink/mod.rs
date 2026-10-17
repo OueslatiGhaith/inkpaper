@@ -5,13 +5,14 @@ use crate::{
     Painter, Point, Rect, ResolvedTextStyle, ResourcePainter, ShapeError,
     backend::{
         eink::{
-            text::draw_text_run_to,
+            text::{EInkGlyphSink, text_error},
             tone::{BinaryDitherTarget, gray2_tone},
         },
         embedded::{draw_box_to, from_embedded_size, to_embedded_point, to_embedded_rect},
     },
     pair_cache::{PAIR_POSITIONING_CACHE_SLOTS, PairPositioningCache},
     px,
+    rendering::text_paint::{paint_text, paint_text_run},
     resources::RuntimeResources,
 };
 
@@ -31,7 +32,6 @@ pub use embedded_graphics::pixelcolor::Gray2;
 use canvas::EInkCanvasPainter;
 use coverage::color_to_gray2;
 use image::draw_image_to;
-use text::draw_text_to;
 
 #[derive(Debug)]
 pub enum EInkError<E> {
@@ -296,9 +296,14 @@ where
             }
         }
 
-        let shaped_glyphs = draw_text_to(
-            self.target,
-            &mut self.report,
+        let mut sink = EInkGlyphSink {
+            target: self.target,
+            report: &mut self.report,
+            coverage_mode,
+        };
+
+        let shaped_glyphs = paint_text(
+            &mut sink,
             text,
             bounds,
             clip,
@@ -306,8 +311,8 @@ where
             glyph_cache,
             font,
             style,
-            coverage_mode,
-        )?;
+        )
+        .map_err(text_error)?;
 
         #[cfg(feature = "metrics")]
         self.report.record_text_draw(shaped_glyphs);
@@ -353,9 +358,14 @@ where
         #[cfg(feature = "metrics")]
         let pair_cache_before = self.pair_positioning_cache.metrics();
 
-        let shaped_glyphs = draw_text_run_to(
-            self.target,
-            &mut self.report,
+        let mut sink = EInkGlyphSink {
+            target: self.target,
+            report: &mut self.report,
+            coverage_mode,
+        };
+
+        let shaped_glyphs = paint_text_run(
+            &mut sink,
             text,
             bounds,
             clip,
@@ -363,9 +373,9 @@ where
             glyph_cache,
             font,
             style,
-            coverage_mode,
-            &mut self.pair_positioning_cache,
-        )?;
+            Some(&mut self.pair_positioning_cache),
+        )
+        .map_err(text_error)?;
 
         #[cfg(feature = "metrics")]
         {

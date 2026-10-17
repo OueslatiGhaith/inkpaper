@@ -9,12 +9,13 @@ use embedded_graphics::{
     primitives::Rectangle as EgRectangle,
 };
 
-use super::{EmbeddedGraphicsImage, text::aligned_line_x};
+use super::EmbeddedGraphicsImage;
 use crate::{
     backend::{
         EmbeddedGraphicsPainter, MonoFontFace,
         embedded_graphics::coverage::{alpha_blend_rgb888, ordered_dither_accepts},
     },
+    rendering::text_paint::aligned_line_x,
     *,
 };
 
