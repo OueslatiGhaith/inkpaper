@@ -541,17 +541,16 @@ fn mirror_odd_level_glyphs<const FONTS: usize>(
             // registered fallback order.
             // do not use replacement fallback here: if the actual mirrored character
             // doesn't exist, keeping the original glyph is better than rendering '?'.
-            let Some(resolved) = registry.resolve_character_exact(shaped.font(), mirrored) else {
+            let Some((resolved, base_advance)) = registry.resolve_character_with_advance_exact(
+                shaped.font_instance(),
+                mirrored,
+                size_px,
+            ) else {
                 continue;
             };
 
-            let Some(base_advance) = resolved.face().glyph_advance(resolved.glyph(), size_px)
-            else {
-                continue;
-            };
-
-            *glyph = ShapedGlyph::new(
-                resolved.font(),
+            *glyph = ShapedGlyph::new_with_instance(
+                resolved.font_instance(),
                 resolved.glyph(),
                 shaped.cluster(),
                 base_advance,

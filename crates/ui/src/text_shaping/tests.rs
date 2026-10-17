@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::{
-    FontFace, FontMetrics, FontRasterError, GlyphMetrics, px,
+    FontFace, FontMetrics, FontRasterError, FontWeight, FontWeightRange, GlyphMetrics, px,
     text_shaping::logical::{
         ARABIC_FINA_FEATURE, ARABIC_INIT_FEATURE, ARABIC_ISOL_FEATURE, ARABIC_MEDI_FEATURE,
         ARABIC_RLIG_FEATURE,
@@ -1446,6 +1446,83 @@ fn mirrored_brackets_can_resolve_through_font_fallback() {
     assert_eq!(run.glyphs()[3].font(), fallback_id);
     // mirroring does not alter measured line width.
     assert_eq!(run.advance(), px(32));
+}
+
+/// a variable font whose advances follow the weight: 4 px at normal, 7 px at bold
+struct WeightedFont {
+    characters: &'static [char],
+}
+
+impl FontFace for WeightedFont {
+    fn weight_range(&self) -> FontWeightRange {
+        FontWeightRange::new(FontWeight::NORMAL, FontWeight::NORMAL, FontWeight::BOLD)
+    }
+
+    fn glyph_id(&self, character: char) -> Option<GlyphId> {
+        let index = self
+            .characters
+            .iter()
+            .position(|candidate| *candidate == character)?;
+
+        let index = u16::try_from(index).ok()?;
+
+        Some(GlyphId::new(index.saturating_add(1)))
+    }
+
+    fn metrics(&self, _: u16) -> FontMetrics {
+        FontMetrics::new(px(8), px(2), px(0))
+    }
+
+    fn glyph_metrics(&self, _: GlyphId, _: u16) -> Option<GlyphMetrics> {
+        Some(GlyphMetrics::new(1, 1, px(0), px(-1), px(4)))
+    }
+
+    fn glyph_advance_with_properties(
+        &self,
+        properties: FontProperties,
+        _: GlyphId,
+        _: u16,
+    ) -> Option<Pixels> {
+        Some(px(i32::from(properties.weight().value() / 100)))
+    }
+
+    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+        let Some(pixel) = coverage.first_mut() else {
+            return Err(FontRasterError::BufferTooSmall);
+        };
+
+        *pixel = 255;
+
+        Ok(())
+    }
+}
+
+#[test]
+fn mirrored_brackets_keep_the_runs_weight() {
+    static CHARACTERS: [char; 4] = ['ب', '(', ')', '?'];
+
+    let font = WeightedFont {
+        characters: &CHARACTERS,
+    };
+
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+    let mut output = [ShapedGlyph::EMPTY; 3];
+
+    let run = SimpleShaper::with_properties(FontProperties::new(FontWeight::BOLD))
+        .shape_into(&registry, font_id, 16, "(ب)", &mut output)
+        .unwrap();
+
+    assert_eq!(run.direction(), TextDirection::RightToLeft);
+
+    // visual: the logical ')' first, drawn as '(', then ب, then '(' drawn as ')'
+    assert_eq!(run.glyphs()[0].glyph(), font.glyph_id('(').unwrap());
+    assert_eq!(run.glyphs()[2].glyph(), font.glyph_id(')').unwrap());
+
+    for glyph in run.glyphs() {
+        assert_eq!(glyph.font_instance().weight(), FontWeight::BOLD);
+        assert_eq!(glyph.advance(), px(7));
+    }
 }
 
 #[test]
