@@ -2,9 +2,9 @@
 //! only putting their coverage down to a [`Painter`].
 
 use crate::{
-    Color, FontInstance, FontRegistry, GlyphCache, LineHeight, PaintError, Painter, Pixels, Point,
-    Rect, ResolvedFont, ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper,
-    TextAlign, TextDarkness, TextDirection,
+    FontInstance, FontRegistry, GlyphCache, LineHeight, PaintError, Painter, Pixels, Point, Rect,
+    ResolvedFont, ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign,
+    TextDirection,
     pair_cache::PairPositioningCache,
     px,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
@@ -43,7 +43,6 @@ where
     let line_advance = text_line_advance(font, size_px, style);
 
     let baseline_offset = font.metrics(size_px).ascent;
-    let color = style.color;
 
     let shaper = SimpleShaper::with_properties(font.properties());
 
@@ -136,8 +135,7 @@ where
                 size_px,
                 &run,
                 baseline,
-                color,
-                style.text_darkness,
+                style,
                 clip,
                 &mut pen_x,
                 WordSpacing::NONE,
@@ -219,8 +217,7 @@ where
         size_px,
         &run,
         baseline,
-        style.color,
-        style.text_darkness,
+        style,
         clip,
         &mut pen_x,
         WordSpacing::new(text, style.word_spacing),
@@ -245,8 +242,7 @@ fn paint_shaped_run<P, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH
     size_px: u16,
     run: &ShapedRun<'_>,
     baseline: Pixels,
-    color: Color,
-    darkness: TextDarkness,
+    style: ResolvedTextStyle,
     clip: Rect,
     pen_x: &mut Pixels,
     word_spacing: WordSpacing<'_>,
@@ -258,7 +254,8 @@ where
         let bitmap = glyph_cache
             .get_or_rasterize(registry, shaped.font_instance(), shaped.glyph(), size_px)
             .map_err(PaintError::Font)?
-            .with_darkness(darkness);
+            .with_darkness(style.text_darkness)
+            .with_antialias(style.text_antialias);
 
         let metrics = bitmap.metrics();
         let offset = shaped.offset();
@@ -269,7 +266,7 @@ where
         );
 
         painter
-            .draw_glyph(&bitmap, origin, color, clip)
+            .draw_glyph(&bitmap, origin, style.color, clip)
             .map_err(PaintError::Painter)?;
 
         *pen_x += shaped.advance() + word_spacing.after(shaped);

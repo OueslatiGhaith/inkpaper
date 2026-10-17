@@ -46,6 +46,7 @@ where
     coverage_blitter: Option<EInkCoverageBlitter<D>>,
     min_ink_coverage: u8,
     ui_mode: EInkUiMode,
+    read_pixel: Option<fn(&D, EgPoint) -> Option<Gray2>>,
     report: EInkPaintReport,
 }
 
@@ -60,6 +61,7 @@ where
             coverage_blitter: None,
             min_ink_coverage: DEFAULT_MIN_INK_COVERAGE,
             ui_mode: EInkUiMode::NativeGray2,
+            read_pixel: None,
             report: EInkPaintReport::default(),
         }
     }
@@ -82,6 +84,14 @@ where
 
     pub fn with_ui_mode(mut self, ui_mode: EInkUiMode) -> Self {
         self.ui_mode = ui_mode;
+        self
+    }
+
+    /// reads back the target's pixels, so antialiased glyphs blend into what's
+    /// under them in `BinaryDither` mode. Without it, they're black and white
+    /// like other text
+    pub fn with_pixel_reader(mut self, read_pixel: fn(&D, EgPoint) -> Option<Gray2>) -> Self {
+        self.read_pixel = Some(read_pixel);
         self
     }
 
@@ -262,7 +272,12 @@ where
             }
         }
 
-        let coverage_mode = self.effective_coverage_mode();
+        let coverage_mode = match self.read_pixel {
+            Some(read_pixel) if bitmap.antialias() && self.ui_mode == EInkUiMode::BinaryDither => {
+                EInkCoverageMode::alpha_blend(read_pixel)
+            }
+            _ => self.effective_coverage_mode(),
+        };
 
         draw_coverage_bitmap(
             self.target,
@@ -298,5 +313,73 @@ where
         });
 
         self.target.draw_iter(pixels)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use embedded_graphics::{mock_display::MockDisplay, pixelcolor::GrayColor};
+    use inkpaper_ui::{GlyphMetrics, Size};
+
+    use super::*;
+
+    /// a black glyph a row of four pixels wide, from empty to fully covered
+    const COVERAGE: [u8; 4] = [0, 64, 160, 255];
+
+    fn white_display() -> MockDisplay<Gray2> {
+        let mut display = MockDisplay::new();
+        display.set_allow_overdraw(true);
+        display.clear(Gray2::WHITE).unwrap();
+        display
+    }
+
+    fn read_pixel(display: &MockDisplay<Gray2>, point: EgPoint) -> Option<Gray2> {
+        display.get_pixel(point)
+    }
+
+    /// the row's levels after drawing the glyph, and the frame's tone
+    fn draw(antialias: bool, reader: bool) -> ([u8; 4], EInkTone) {
+        let mut display = white_display();
+
+        let metrics = GlyphMetrics {
+            width: 4,
+            height: 1,
+            ..GlyphMetrics::default()
+        };
+        let bitmap = GlyphBitmap::new(&COVERAGE, metrics).with_antialias(antialias);
+        let clip = Rect::new(Point::ZERO, Size::new(px(4), px(1)));
+
+        let tone = {
+            let painter = EInkPainter::new(&mut display).with_ui_mode(EInkUiMode::BinaryDither);
+            let mut painter = if reader {
+                painter.with_pixel_reader(read_pixel)
+            } else {
+                painter
+            };
+
+            painter
+                .draw_glyph(&bitmap, Point::ZERO, Color::BLACK, clip)
+                .unwrap();
+
+            painter.report().tone()
+        };
+
+        let levels =
+            core::array::from_fn(|x| display.get_pixel(EgPoint::new(x as i32, 0)).unwrap().luma());
+
+        (levels, tone)
+    }
+
+    #[test]
+    fn antialiased_glyphs_blend_into_native_gray() {
+        assert_eq!(draw(true, true), ([3, 2, 1, 0], EInkTone::Gray4));
+    }
+
+    #[test]
+    fn glyphs_stay_binary_without_antialiasing_or_a_reader() {
+        let binary = ([3, 3, 0, 0], EInkTone::Binary);
+
+        assert_eq!(draw(false, true), binary);
+        assert_eq!(draw(true, false), binary);
     }
 }

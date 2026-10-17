@@ -303,6 +303,12 @@ macro_rules! inkpaper_style_schema {
                             text_darkness(darkness: TextDarkness) => darkness;
                         },
 
+                        // keep glyph edges' gray tones on painters that otherwise
+                        // reduce text to black and white
+                        text_antialias: bool = false => {
+                            text_antialias(antialias: bool) => antialias;
+                        },
+
                         // a line just below the baseline. Only text runs draw it
                         underline: bool = false => {
                             underline => true;

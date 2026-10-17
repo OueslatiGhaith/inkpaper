@@ -64,9 +64,21 @@ pub struct GlyphBitmap<'a> {
     coverage: &'a [u8],
     metrics: GlyphMetrics,
     darkness: TextDarkness,
+    antialias: bool,
 }
 
 impl<'a> GlyphBitmap<'a> {
+    /// a glyph's `coverage`, a byte per pixel row by row, as rasterized:
+    /// normal darkness and not antialiased
+    pub const fn new(coverage: &'a [u8], metrics: GlyphMetrics) -> Self {
+        Self {
+            coverage,
+            metrics,
+            darkness: TextDarkness::NORMAL,
+            antialias: false,
+        }
+    }
+
     pub const fn coverage(&self) -> &'a [u8] {
         self.coverage
     }
@@ -90,6 +102,16 @@ impl<'a> GlyphBitmap<'a> {
 
     pub const fn with_darkness(self, darkness: TextDarkness) -> Self {
         Self { darkness, ..self }
+    }
+
+    /// whether the glyph's edges keep their gray tones on a painter that
+    /// otherwise reduces text to black and white
+    pub const fn antialias(&self) -> bool {
+        self.antialias
+    }
+
+    pub const fn with_antialias(self, antialias: bool) -> Self {
+        Self { antialias, ..self }
     }
 }
 
@@ -206,11 +228,10 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
             if slot.key == key {
                 increment_metric!(self.metrics.hits);
 
-                return Ok(GlyphBitmap {
-                    coverage: &self.storage[slot.offset..slot.offset + slot.len],
-                    metrics: slot.metrics,
-                    darkness: TextDarkness::NORMAL,
-                });
+                return Ok(GlyphBitmap::new(
+                    &self.storage[slot.offset..slot.offset + slot.len],
+                    slot.metrics,
+                ));
             }
         }
 
@@ -274,10 +295,6 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
             metrics,
         };
 
-        Ok(GlyphBitmap {
-            coverage: &self.storage[offset..end],
-            metrics,
-            darkness: TextDarkness::NORMAL,
-        })
+        Ok(GlyphBitmap::new(&self.storage[offset..end], metrics))
     }
 }

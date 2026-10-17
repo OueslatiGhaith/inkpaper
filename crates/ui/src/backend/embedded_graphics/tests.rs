@@ -1075,3 +1075,70 @@ fn text_darkness_scales_coverage_before_the_threshold() {
     assert!(text_run_inks(TextDarkness::percent(51)));
     assert!(!text_run_inks(TextDarkness::percent(50)));
 }
+
+/// records how each glyph is asked to be drawn
+#[derive(Default)]
+struct GlyphFlagsPainter {
+    glyphs: alloc::vec::Vec<(TextDarkness, bool)>,
+}
+
+impl Painter for GlyphFlagsPainter {
+    type Error = core::convert::Infallible;
+
+    fn draw_box(&mut self, _: Rect, _: BoxPaint, _: Option<Rect>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_canvas(
+        &mut self,
+        _: Rect,
+        _: Option<Rect>,
+        _: &mut dyn FnMut(Rect, &mut dyn CanvasPainter),
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_glyph(
+        &mut self,
+        bitmap: &GlyphBitmap<'_>,
+        _: Point,
+        _: Color,
+        _: Rect,
+    ) -> Result<(), Self::Error> {
+        self.glyphs.push((bitmap.darkness(), bitmap.antialias()));
+        Ok(())
+    }
+
+    fn fill_rect(&mut self, _: Rect, _: Color, _: Rect) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn draw_pixels(&mut self, _: Point, _: &[Color]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+#[test]
+fn text_style_reaches_every_glyph_of_a_run() {
+    let mut resources = test_resources::<0>();
+    let mut painter = GlyphFlagsPainter::default();
+
+    resources
+        .paint_text_run(
+            &mut painter,
+            "AA",
+            Rect::new(Point::ZERO, Size::new(px(12), px(16))),
+            ResolvedTextStyle {
+                text_darkness: TextDarkness::percent(140),
+                text_antialias: true,
+                ..ResolvedTextStyle::default()
+            },
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(
+        painter.glyphs,
+        [(TextDarkness::percent(140), true); 2].to_vec()
+    );
+}

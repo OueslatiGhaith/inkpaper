@@ -7,7 +7,10 @@ use embedded_graphics::{
 
 use inkpaper_ui::{Color, GlyphBitmap, Luminance, Point, Rect};
 
-use crate::{EInkPaintReport, tone::binary_dither_gray2};
+use crate::{
+    EInkPaintReport,
+    tone::{binary_dither_gray2, gray2_tone},
+};
 
 /// the least coverage that inks a pixel in binary output: 7/16 of a pixel.
 ///
@@ -326,6 +329,9 @@ where
         }
 
         EInkCoverageMode::AlphaBlend { read_pixel } => {
+            // the frame needs native gray only where blending produced it
+            report.include(gray2_tone(foreground));
+
             #[cfg(feature = "metrics")]
             let mut accepted = 0u64;
 
@@ -375,6 +381,8 @@ where
                 };
 
                 let color = alpha_blend_gray2(color, background, coverage);
+
+                report.include(gray2_tone(color));
 
                 target.draw_iter(core::iter::once(EgPixel(point, color)))?;
 
