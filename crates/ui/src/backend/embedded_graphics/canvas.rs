@@ -170,6 +170,12 @@ where
         self.draw(EgCircle::with_center(to_embedded_point(center), diameter).into_styled(style));
     }
 
+    fn clip_bounds(&self) -> Option<Rect> {
+        let origin = Point::new(self.clip.x() - self.origin.x, self.clip.y() - self.origin.y);
+
+        Some(Rect::new(origin, self.clip.size))
+    }
+
     fn fill_pixel_coverage(&mut self, point: Point, color: Color, coverage: u8) {
         if self.error.is_some() || coverage == 0 {
             return;

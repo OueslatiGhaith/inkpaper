@@ -244,11 +244,19 @@ pub(super) fn paint_filled_path<P>(
         return;
     }
 
-    let start_x = libm::floorf(bounds.min_x) as i32;
-    let end_x = libm::ceilf(bounds.max_x) as i32;
+    let mut start_x = libm::floorf(bounds.min_x) as i32;
+    let mut end_x = libm::ceilf(bounds.max_x) as i32;
 
-    let start_y = libm::floorf(bounds.min_y) as i32;
-    let end_y = libm::ceilf(bounds.max_y) as i32;
+    let mut start_y = libm::floorf(bounds.min_y) as i32;
+    let mut end_y = libm::ceilf(bounds.max_y) as i32;
+
+    // a path can reach far past what's drawn, so only scan the visible part
+    if let Some(clip) = painter.clip_bounds() {
+        start_x = start_x.max(clip.x().get());
+        end_x = end_x.min(clip.right().get());
+        start_y = start_y.max(clip.y().get());
+        end_y = end_y.min(clip.bottom().get());
+    }
 
     let mut y = start_y;
 
@@ -468,7 +476,7 @@ mod tests {
 
     use crate::{
         AffineTransform, CanvasPainter, Color, FillRule, PathCommand, PathFill, Pixels, Point,
-        Rect, VectorPath, VectorPoint, px,
+        Rect, Size, VectorPath, VectorPoint, px,
     };
 
     #[derive(Default)]
@@ -566,6 +574,53 @@ mod tests {
         );
 
         assert_eq!(painted_area(&painter), 36);
+    }
+
+    /// records fills, and can only draw inside `clip`
+    struct ClippedPainter {
+        clip: Rect,
+        fills: Vec<Rect>,
+    }
+
+    impl CanvasPainter for ClippedPainter {
+        fn fill_rect(&mut self, rect: Rect, _: Color) {
+            self.fills.push(rect);
+        }
+
+        fn stroke_rect(&mut self, _: Rect, _: Pixels, _: Color) {}
+        fn line(&mut self, _: Point, _: Point, _: Pixels, _: Color) {}
+        fn fill_circle(&mut self, _: Point, _: Pixels, _: Color) {}
+        fn stroke_circle(&mut self, _: Point, _: Pixels, _: Pixels, _: Color) {}
+
+        fn clip_bounds(&self) -> Option<Rect> {
+            Some(self.clip)
+        }
+    }
+
+    #[test]
+    fn fills_only_scan_the_painters_clip() {
+        const COMMANDS: [PathCommand; 5] = [
+            PathCommand::MoveTo(VectorPoint::new(-100_000.0, 0.0)),
+            PathCommand::LineTo(VectorPoint::new(100_000.0, 0.0)),
+            PathCommand::LineTo(VectorPoint::new(100_000.0, 4.0)),
+            PathCommand::LineTo(VectorPoint::new(-100_000.0, 4.0)),
+            PathCommand::Close,
+        ];
+
+        let mut painter = ClippedPainter {
+            clip: Rect::new(Point::new(px(10), px(1)), Size::new(px(6), px(2))),
+            fills: Vec::new(),
+        };
+
+        painter.fill_path(
+            VectorPath::new(&COMMANDS),
+            AffineTransform::IDENTITY,
+            PathFill::new(Color::BLACK),
+        );
+
+        let row = |y| Rect::new(Point::new(px(10), px(y)), Size::new(px(6), px(1)));
+
+        assert_eq!(painter.fills, vec![row(1), row(2)]);
     }
 
     #[derive(Default)]

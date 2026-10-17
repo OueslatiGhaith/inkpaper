@@ -14,6 +14,12 @@ pub trait CanvasPainter {
     fn fill_circle(&mut self, center: Point, radius: Pixels, color: Color);
     fn stroke_circle(&mut self, center: Point, radius: Pixels, width: Pixels, color: Color);
 
+    /// The area drawing can reach, in canvas coordinates, or `None` when it's
+    /// unbounded. Paths are only rasterized inside it.
+    fn clip_bounds(&self) -> Option<Rect> {
+        None
+    }
+
     fn fill_pixel_coverage(&mut self, point: Point, color: Color, coverage: u8) {
         if coverage < 128 {
             return;
