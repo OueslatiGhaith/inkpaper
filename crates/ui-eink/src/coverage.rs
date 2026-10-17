@@ -209,12 +209,17 @@ where
     debug_assert_eq!(coverage.len(), width.saturating_mul(height));
 
     let foreground = color_to_gray2(color);
+    let darkness = bitmap.darkness();
 
     #[cfg(feature = "metrics")]
     let samples = u64::try_from(coverage.len()).unwrap_or(u64::MAX);
 
     match coverage_mode {
         EInkCoverageMode::BinaryThreshold => {
+            let Some(min_coverage) = darkness.min_coverage_for(128) else {
+                return Ok(());
+            };
+
             #[cfg(feature = "metrics")]
             let mut accepted = 0u64;
 
@@ -223,7 +228,7 @@ where
                 .copied()
                 .enumerate()
                 .filter_map(|(index, coverage)| {
-                    if coverage < 128 {
+                    if coverage < min_coverage {
                         return None;
                     }
 
@@ -256,6 +261,12 @@ where
             min_coverage,
             blitter,
         } => {
+            // the gain moves the threshold rather than each sample, so a fast
+            // blitter sees plain coverage
+            let Some(min_coverage) = darkness.min_coverage_for(min_coverage) else {
+                return Ok(());
+            };
+
             if let Some(blitter) = blitter {
                 let bitmap = EInkCoverageBitmap::new(
                     coverage,
@@ -324,7 +335,7 @@ where
                     .copied()
                     .enumerate()
                     .filter_map(|(index, coverage)| {
-                        if coverage != u8::MAX {
+                        if darkness.apply(coverage) != u8::MAX {
                             return None;
                         }
 
@@ -345,6 +356,8 @@ where
             target.draw_iter(solid_pixels)?;
 
             for (index, coverage) in coverage.iter().copied().enumerate() {
+                let coverage = darkness.apply(coverage);
+
                 if coverage == 0 || coverage == u8::MAX {
                     continue;
                 }

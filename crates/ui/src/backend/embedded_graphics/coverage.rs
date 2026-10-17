@@ -59,14 +59,20 @@ where
     let coverage = bitmap.coverage();
     debug_assert_eq!(coverage.len(), width.saturating_mul(height,),);
 
+    let darkness = bitmap.darkness();
+
     match coverage_mode {
         CoverageMode::BinaryThreshold => {
+            let Some(min_coverage) = darkness.min_coverage_for(128) else {
+                return Ok(());
+            };
+
             let pixels = coverage
                 .iter()
                 .copied()
                 .enumerate()
                 .filter_map(|(index, coverage)| {
-                    if coverage < 128 {
+                    if coverage < min_coverage {
                         return None;
                     }
 
@@ -91,7 +97,7 @@ where
                         return None;
                     }
 
-                    if !ordered_dither_accepts(coverage, point) {
+                    if !ordered_dither_accepts(darkness.apply(coverage), point) {
                         return None;
                     }
 
@@ -109,7 +115,7 @@ where
                     .copied()
                     .enumerate()
                     .filter_map(|(index, coverage)| {
-                        if coverage != 255 {
+                        if darkness.apply(coverage) != 255 {
                             return None;
                         }
 
@@ -124,6 +130,8 @@ where
             target.draw_iter(solid_pixels)?;
 
             for (index, coverage) in coverage.iter().copied().enumerate() {
+                let coverage = darkness.apply(coverage);
+
                 if coverage == 0 || coverage == 255 {
                     continue;
                 }

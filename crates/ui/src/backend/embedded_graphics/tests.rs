@@ -1041,3 +1041,37 @@ fn embedded_graphics_backend_area_sampling_is_stable_when_clipped() {
         }
     }
 }
+
+/// whether a 6 × 16 "A" in `darkness` inks any pixel
+fn text_run_inks(darkness: TextDarkness) -> bool {
+    let mut display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut resources = test_resources::<0>();
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
+
+        resources
+            .paint_text_run(
+                &mut painter,
+                "A",
+                Rect::new(Point::ZERO, Size::new(px(6), px(16))),
+                ResolvedTextStyle {
+                    text_darkness: darkness,
+                    ..ResolvedTextStyle::default()
+                },
+                None,
+            )
+            .unwrap();
+    }
+
+    (0..16).any(|y| (0..6).any(|x| display.get_pixel(EgPoint::new(x, y)).is_some()))
+}
+
+#[test]
+fn text_darkness_scales_coverage_before_the_threshold() {
+    // the mono font's glyphs are fully covered: half of that falls just short of
+    // the binary threshold
+    assert!(text_run_inks(TextDarkness::NORMAL));
+    assert!(text_run_inks(TextDarkness::percent(51)));
+    assert!(!text_run_inks(TextDarkness::percent(50)));
+}

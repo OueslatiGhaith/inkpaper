@@ -70,3 +70,34 @@ fn generated_line_height_preserves_non_negative_conversion() {
         Some(LineHeight::Pixels(px(0)))
     );
 }
+
+#[test]
+fn text_darkness_threshold_matches_its_gain() {
+    // a painter moving its threshold must ink exactly the pixels whose gained
+    // coverage reaches it
+    for percent in [0, 1, 50, 60, 99, 100, 101, 140, 200, 255] {
+        let darkness = TextDarkness::percent(percent);
+
+        for threshold in 0..=u8::MAX {
+            let min = darkness.min_coverage_for(threshold);
+
+            for coverage in 0..=u8::MAX {
+                assert_eq!(
+                    darkness.apply(coverage) >= threshold,
+                    min.is_some_and(|min| coverage >= min),
+                    "{percent}% at {threshold}, coverage {coverage}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn text_darkness_saturates_and_keeps_empty_coverage() {
+    let dark = TextDarkness::percent(200);
+
+    assert_eq!(dark.apply(0), 0);
+    assert_eq!(dark.apply(100), 200);
+    assert_eq!(dark.apply(200), u8::MAX);
+    assert_eq!(TextDarkness::NORMAL.apply(77), 77);
+}

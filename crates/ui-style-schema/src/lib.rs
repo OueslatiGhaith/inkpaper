@@ -298,6 +298,11 @@ macro_rules! inkpaper_style_schema {
                             word_spacing(spacing: impl Into<Pixels>) => spacing.into();
                         },
 
+                        // a gain on glyph coverage, darkening or lightening text
+                        text_darkness: TextDarkness = TextDarkness::NORMAL => {
+                            text_darkness(darkness: TextDarkness) => darkness;
+                        },
+
                         // a line just below the baseline. Only text runs draw it
                         underline: bool = false => {
                             underline => true;

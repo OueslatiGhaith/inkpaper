@@ -89,8 +89,9 @@ pub mod prelude {
         PathFill, PathStroke, Pixels, Point, Rect, Render, RenderInvalidation, RenderOnce,
         RenderRuntimeApi, ResourceRuntimeApi, Runtime, RuntimeApi, RuntimeStorage, Size,
         StatefulInteractiveElementExt, StrokeCap, StrokeJoin, Style, Styled, Svg, SvgFill,
-        SvgPaint, SvgPath, SvgSource, SvgStroke, SvgViewBox, TextAlign, TextMaxLines, TextOverflow,
-        TextStyled, TextWrap, VectorPath, VectorPoint, canvas, div, image, px, svg, text,
+        SvgPaint, SvgPath, SvgSource, SvgStroke, SvgViewBox, TextAlign, TextDarkness, TextMaxLines,
+        TextOverflow, TextStyled, TextWrap, VectorPath, VectorPoint, canvas, div, image, px, svg,
+        text,
     };
 
     #[cfg(feature = "alloc")]

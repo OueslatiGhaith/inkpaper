@@ -1,4 +1,4 @@
-use crate::{FontInstance, increment_metric, px};
+use crate::{FontInstance, TextDarkness, increment_metric, px};
 
 use super::{FontRasterError, GlyphId, GlyphMetrics, registry::FontRegistry};
 
@@ -63,6 +63,7 @@ pub struct GlyphCacheMetrics {
 pub struct GlyphBitmap<'a> {
     coverage: &'a [u8],
     metrics: GlyphMetrics,
+    darkness: TextDarkness,
 }
 
 impl<'a> GlyphBitmap<'a> {
@@ -80,6 +81,15 @@ impl<'a> GlyphBitmap<'a> {
 
     pub const fn height(&self) -> u16 {
         self.metrics.height
+    }
+
+    /// the gain painters apply to [`Self::coverage`]
+    pub const fn darkness(&self) -> TextDarkness {
+        self.darkness
+    }
+
+    pub const fn with_darkness(self, darkness: TextDarkness) -> Self {
+        Self { darkness, ..self }
     }
 }
 
@@ -199,6 +209,7 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
                 return Ok(GlyphBitmap {
                     coverage: &self.storage[slot.offset..slot.offset + slot.len],
                     metrics: slot.metrics,
+                    darkness: TextDarkness::NORMAL,
                 });
             }
         }
@@ -266,6 +277,7 @@ impl<const SLOTS: usize, const BYTES: usize> GlyphCache<SLOTS, BYTES> {
         Ok(GlyphBitmap {
             coverage: &self.storage[offset..end],
             metrics,
+            darkness: TextDarkness::NORMAL,
         })
     }
 }

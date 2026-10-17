@@ -4,7 +4,7 @@
 use crate::{
     Color, FontInstance, FontRegistry, GlyphCache, LineHeight, PaintError, Painter, Pixels, Point,
     Rect, ResolvedFont, ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper,
-    TextAlign, TextDirection,
+    TextAlign, TextDarkness, TextDirection,
     pair_cache::PairPositioningCache,
     px,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
@@ -137,6 +137,7 @@ where
                 &run,
                 baseline,
                 color,
+                style.text_darkness,
                 clip,
                 &mut pen_x,
                 WordSpacing::NONE,
@@ -219,6 +220,7 @@ where
         &run,
         baseline,
         style.color,
+        style.text_darkness,
         clip,
         &mut pen_x,
         WordSpacing::new(text, style.word_spacing),
@@ -244,6 +246,7 @@ fn paint_shaped_run<P, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH
     run: &ShapedRun<'_>,
     baseline: Pixels,
     color: Color,
+    darkness: TextDarkness,
     clip: Rect,
     pen_x: &mut Pixels,
     word_spacing: WordSpacing<'_>,
@@ -254,7 +257,8 @@ where
     for shaped in run.glyphs().iter().copied() {
         let bitmap = glyph_cache
             .get_or_rasterize(registry, shaped.font_instance(), shaped.glyph(), size_px)
-            .map_err(PaintError::Font)?;
+            .map_err(PaintError::Font)?
+            .with_darkness(darkness);
 
         let metrics = bitmap.metrics();
         let offset = shaped.offset();
