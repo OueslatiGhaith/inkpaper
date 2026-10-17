@@ -443,11 +443,16 @@ pub fn parse_hex(value: &str) -> Option<Rgb> {
             })
         }
 
-        6 => Some(Rgb {
-            red: parse_hex_byte(&value[0..2])?,
-            green: parse_hex_byte(&value[2..4])?,
-            blue: parse_hex_byte(&value[4..6])?,
-        }),
+        6 => {
+            let mut digits = value.bytes();
+            let mut byte = || Some(hex_digit(digits.next()?)? * 16 + hex_digit(digits.next()?)?);
+
+            Some(Rgb {
+                red: byte()?,
+                green: byte()?,
+                blue: byte()?,
+            })
+        }
 
         _ => None,
     }
@@ -468,10 +473,6 @@ fn shade_index(shade: &str) -> Option<usize> {
         "950" => Some(10),
         _ => None,
     }
-}
-
-fn parse_hex_byte(value: &str) -> Option<u8> {
-    u8::from_str_radix(value, 16).ok()
 }
 
 fn hex_digit(value: u8) -> Option<u8> {
@@ -563,6 +564,7 @@ mod tests {
                 blue: 0x3c,
             })
         );
+        assert_eq!(parse_hex("#1A2B3C"), parse_hex("#1a2b3c"));
     }
 
     #[test]
@@ -571,5 +573,7 @@ mod tests {
         assert_eq!(parse_hex("#ffff"), None);
         assert_eq!(parse_hex("#gggggg"), None);
         assert_eq!(parse_hex("#ffffffff"), None);
+        assert_eq!(parse_hex("#+f0000"), None);
+        assert_eq!(parse_hex("#a§bcde"), None);
     }
 }
