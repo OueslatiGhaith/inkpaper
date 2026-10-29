@@ -35,6 +35,18 @@ criterion = "0.8.2"
 embedded-graphics-simulator = { workspace = true }
 trybuild = "1.0.121"
 
+[[example]]
+name = "simulator"
+required-features = ["embedded-graphics"]
+
+[[test]]
+name = "render_once"
+required-features = ["embedded-graphics"]
+
+[[test]]
+name = "render_smoke"
+required-features = ["embedded-graphics"]
+
 [[bench]]
 name = "rendering"
 harness = false

@@ -9,9 +9,20 @@ firmware_elf := "target/" + x4_pro_target + "/firmware/" + firmware_package
 default:
     @just --list
 
-test:
+test: ui-features
     cargo nextest run
     cargo nextest run -p inkpaper-ui --all-features
+    # without alloc, the unit tests run against fixed storage
+    cargo nextest run -p inkpaper-ui
+
+# builds inkpaper-ui in the feature sets its users enable. Tests always enable hinting
+# through dev-dependencies, so the library is checked on its own too
+ui-features:
+    cargo check -p inkpaper-ui --lib --no-default-features
+    cargo check -p inkpaper-ui --lib --no-default-features --features embedded-graphics
+    cargo check -p inkpaper-ui --lib --no-default-features --features alloc,metrics
+    cargo check -p inkpaper-ui --tests --examples --benches --no-default-features
+    cargo check -p inkpaper-ui --tests --examples --benches --all-features
 
 sim:
     cargo run -p {{simulator_package}}
