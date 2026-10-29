@@ -12,6 +12,7 @@ pub mod backend;
 mod callback;
 mod color;
 mod context;
+mod dither;
 mod element;
 mod entity;
 mod font;
@@ -38,6 +39,7 @@ pub use callback::HeapCallbackArena;
 pub use callback::{CallbackAllocError, FixedCallbackArena, Listener, ListenerInvokeError};
 pub use color::*;
 pub use context::*;
+pub use dither::*;
 pub use element::*;
 #[cfg(feature = "alloc")]
 pub use entity::HeapEntityArena;

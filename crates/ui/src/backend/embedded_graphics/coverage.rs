@@ -5,7 +5,7 @@ use embedded_graphics::{
     prelude::DrawTarget as EgDrawTarget,
 };
 
-use crate::{GlyphBitmap, Point, Rect};
+use crate::{GlyphBitmap, Point, Rect, bayer_4x4_threshold};
 
 #[derive(Debug)]
 pub enum CoverageMode<D> {
@@ -203,8 +203,6 @@ fn alpha_blend_channel(foreground: u8, background: u8, coverage: u8) -> u8 {
     u8::try_from(value).unwrap_or(u8::MAX)
 }
 
-const BAYER_4X4: [u8; 16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
-
 pub(crate) fn ordered_dither_accepts(coverage: u8, point: EgPoint) -> bool {
     if coverage == 0 {
         return false;
@@ -214,10 +212,5 @@ pub(crate) fn ordered_dither_accepts(coverage: u8, point: EgPoint) -> bool {
         return true;
     }
 
-    let x = point.x.rem_euclid(4) as usize;
-    let y = point.y.rem_euclid(4) as usize;
-    let rank = BAYER_4X4[y * 4 + x];
-    let threshold = rank.saturating_mul(16).saturating_add(8);
-
-    coverage > threshold
+    coverage > bayer_4x4_threshold(point.x, point.y)
 }

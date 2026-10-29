@@ -5,6 +5,7 @@ use embedded_graphics::{
     prelude::{Dimensions, DrawTarget},
     primitives::{PointsIter, Rectangle},
 };
+use inkpaper_ui::bayer_4x4_threshold;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EInkUiMode {
@@ -147,7 +148,7 @@ pub(super) fn binary_dither_gray2(color: Gray2, point: Point) -> Gray2 {
         3 => Gray2::new(3),
         level => {
             let luminance = u16::from(level) * 85;
-            let threshold = u16::from(bayer_threshold(point));
+            let threshold = u16::from(bayer_4x4_threshold(point.x, point.y));
 
             if luminance > threshold {
                 Gray2::new(3)
@@ -156,16 +157,6 @@ pub(super) fn binary_dither_gray2(color: Gray2, point: Point) -> Gray2 {
             }
         }
     }
-}
-
-pub(super) fn bayer_threshold(point: Point) -> u8 {
-    const BAYER_4X4: [u8; 16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
-
-    let x = point.x.rem_euclid(4) as usize;
-    let y = point.y.rem_euclid(4) as usize;
-    let rank = BAYER_4X4[y * 4 + x];
-
-    rank.saturating_mul(16).saturating_add(8)
 }
 
 #[cfg(test)]

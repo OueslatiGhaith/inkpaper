@@ -1,17 +1,9 @@
-use crate::{Color, ImageColorMode, ImageDither, ImagePaint, Luminance};
+use crate::{Color, ImageColorMode, ImageDither, ImagePaint, Luminance, dither::BAYER_4X4};
 
 #[rustfmt::skip]
 const BAYER_2X2: [u8; 4] = [
     0, 2,
     3, 1,
-];
-
-#[rustfmt::skip]
-const BAYER_4X4: [u8; 16] = [
-    0, 8, 2, 10,
-    12, 4, 14, 6,
-    3, 11, 1, 9,
-    15, 7, 13, 5,
 ];
 
 pub(crate) fn process_image_pixel(color: Color, paint: ImagePaint, x: i32, y: i32) -> Color {
