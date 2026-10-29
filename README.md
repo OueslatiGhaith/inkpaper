@@ -2,7 +2,7 @@
 
 **Experimental firmware and e-reader stack for the XTEINK X4 PRO**
 
-The project is still taking shape. Its final feature set is not fixed yet. Most of 
+The project is still taking shape. Its final feature set is not fixed yet. Most of
 the current work is around the firmware architecture, hardware support, document handling,
 and the UI stack.
 
@@ -17,11 +17,9 @@ The main goals are:
 - keep the core firmware compatible with `no_std`
 - make device independent code testable on a host machine
 
-
-
 ## Architecture
 
-InkPaper is split into layers with different responsibilities. 
+InkPaper is split into layers with different responsibilities.
 
 ```mermaid
 flowchart TD
@@ -36,11 +34,11 @@ flowchart TD
   PERIPH["Device peripherals"]
   HW["XTEINK X4 Pro<br/>hardware"]
 
+  FW --> APP
+  SIM --> APP
   APP --> READER
   APP --> UI
   READER --> EPUB
-  UI --> FW
-  UI --> SIM
   FW --> DISPLAY
   FW --> INPUT
   FW --> PERIPH
@@ -49,13 +47,13 @@ flowchart TD
   PERIPH --> HW
 ```
 
-The diagram shows the rough structure of the project, not every dependency.
+Each arrow points from a layer to one it builds on. The diagram shows the rough structure of the project, not every dependency.
 
 ## UI Framework
 
-`inkpaper-ui` is a custom UI framework for embedded targets, inspired by 
+`inkpaper-ui` is a custom UI framework for embedded targets, inspired by
 [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui). It borrows some of its
-ideas around element composition, app state, contexts, and UI construction, adapted to 
+ideas around element composition, app state, contexts, and UI construction, adapted to
 `no_std` and memory constrained targets.
 
 The framework is designed to run in `no_std`, and can be used without heap allocation.
@@ -93,7 +91,7 @@ There's also an `rsx!` macro for html-like syntax:
 ```rs
 impl Render for ReaderView {
   fn render(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-    let theme = cx.global::<Theme>(); 
+    let theme = cx.global::<Theme>();
 
     rsx! {
       <div class="w-full flex flex-col bg-{theme.background}">
@@ -133,7 +131,7 @@ flowchart LR
 The firmware and development workflow are still changing.
 
 Until the project is more stable, the repository itself is the source of truth for supported
-targets, toolchain configuration, and build commands. 
+targets, toolchain configuration, and build commands.
 
 ### Running the simulator
 
@@ -145,19 +143,8 @@ Then, from the root of the repository, run:
 cargo run -p inkpaper-simulator
 ```
 
-To open an EPUB:
-
-```bash
-cargo run -p inkpaper-simulator -- --epub /path/to/book.epub
-```
-
-You can also provide a TTF or OTF font:
-
-```bash
-cargo run -p inkpaper-simulator -- \
-  --epub /path/to/book.epub \
-  --font /path/to/font.ttf
-```
+The simulator shows the repository's `fixtures` folder as the SD card: the EPUBs there appear under `/Fixtures`, and `fixtures/fonts` and
+`fixtures/dictionaries` serve as the card's `/fonts` and `/dictionaries`. To try another book, font, or dictionary, copy it into the matching folder.
 
 ### Running on hardware
 
@@ -173,7 +160,7 @@ The hardware development and flashing workflow is still evolving. Until it stabi
 
 InkPaper is still early and its internal design is changing quickly.
 
-PRs are not open at the moment. Issues and discussions are welcome. 
+PRs are not open at the moment. Issues and discussions are welcome.
 
 ## License
 
