@@ -557,6 +557,29 @@ fn damage_region_collapses_when_capacity_is_exceeded() {
     );
 }
 
+fn collapsed_damage() -> DamageRegion {
+    (0..5).fold(DamageRegion::none(), |damage, index| {
+        damage.add_rect(Rect::new(
+            Point::new(px(index * 10), px(0)),
+            Size::new(px(2), px(2)),
+        ))
+    })
+}
+
+#[test]
+fn collapsed_damage_equals_its_bounding_rectangle() {
+    let damage = collapsed_damage();
+
+    assert_eq!(damage, DamageRegion::from_rect(damage.rects()[0]));
+}
+
+#[test]
+fn merging_collapsed_damage_adds_only_its_rectangles() {
+    let damage = collapsed_damage().translated(Offset::new(px(0), px(100)));
+
+    assert_eq!(DamageRegion::none().merge(damage), damage);
+}
+
 #[test]
 fn full_damage_absorbs_partial_damage() {
     let partial = DamageRegion::from_rect(Rect::new(

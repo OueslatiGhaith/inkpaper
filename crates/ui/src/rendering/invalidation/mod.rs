@@ -1,16 +1,17 @@
 use crate::{Offset, Point, Rect, Size};
 
+use rects::RectList;
+
+mod rects;
 #[cfg(test)]
 mod tests;
 
 const DAMAGE_RECT_CAPACITY: usize = 4;
-const EMPTY_DAMAGE_RECT: Rect = Rect::new(Point::ZERO, Size::ZERO);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DamageRegion {
-    rects: [Rect; DAMAGE_RECT_CAPACITY],
-    len: u8,
+    rects: RectList<DAMAGE_RECT_CAPACITY>,
     full: bool,
 }
 
@@ -23,16 +24,14 @@ impl Default for DamageRegion {
 impl DamageRegion {
     pub const fn none() -> Self {
         Self {
-            rects: [EMPTY_DAMAGE_RECT; DAMAGE_RECT_CAPACITY],
-            len: 0,
+            rects: RectList::new(),
             full: false,
         }
     }
 
     pub const fn full() -> Self {
         Self {
-            rects: [EMPTY_DAMAGE_RECT; DAMAGE_RECT_CAPACITY],
-            len: 0,
+            rects: RectList::new(),
             full: true,
         }
     }
@@ -42,7 +41,7 @@ impl DamageRegion {
     }
 
     pub const fn is_none(self) -> bool {
-        !self.full && self.len == 0
+        !self.full && self.rects.len() == 0
     }
 
     pub const fn is_full(self) -> bool {
@@ -52,11 +51,11 @@ impl DamageRegion {
     // a full region has no rects, so `is_none` is the emptiness check
     #[allow(clippy::len_without_is_empty)]
     pub const fn len(self) -> usize {
-        self.len as usize
+        self.rects.len()
     }
 
     pub fn rects(&self) -> &[Rect] {
-        &self.rects[..self.len as usize]
+        self.rects.as_slice()
     }
 
     pub fn add_rect(mut self, rect: Rect) -> Self {
@@ -67,13 +66,13 @@ impl DamageRegion {
         let mut candidate = rect;
         let mut index = 0usize;
 
-        while index < self.len as usize {
-            let existing = self.rects[index];
+        while index < self.rects.len() {
+            let existing = self.rects.as_slice()[index];
 
             if damage_rects_touch_or_overlap(candidate, existing) {
                 candidate = damage_rect_union(candidate, existing);
 
-                self.remove_rect(index);
+                self.rects.remove(index);
 
                 /*
                  * The enlarged candidate can now overlap
@@ -86,24 +85,23 @@ impl DamageRegion {
             }
         }
 
-        if (self.len as usize) < DAMAGE_RECT_CAPACITY {
-            self.rects[self.len as usize] = candidate;
-
-            self.len += 1;
-
+        let Err(candidate) = self.rects.push(candidate) else {
             return self;
-        }
+        };
 
         // damage storage is deliberately bounded. If it fills up, correctness wins over
         // precision: collapse all rectangles into one conservative bounding rectangle.
-        let mut collapsed = candidate;
+        let collapsed = self
+            .rects
+            .as_slice()
+            .iter()
+            .copied()
+            .fold(candidate, damage_rect_union);
 
-        for index in 0..self.len as usize {
-            collapsed = damage_rect_union(collapsed, self.rects[index]);
-        }
-
-        self.rects[0] = collapsed;
-        self.len = 1;
+        self.rects.clear();
+        self.rects
+            .push(collapsed)
+            .expect("an emptied damage list has room");
 
         self
     }
@@ -113,7 +111,7 @@ impl DamageRegion {
             return Self::full();
         }
 
-        for rect in other.rects {
+        for &rect in other.rects() {
             self = self.add_rect(rect);
         }
 
@@ -125,8 +123,8 @@ impl DamageRegion {
             return self;
         }
 
-        for index in 0..self.len as usize {
-            self.rects[index] = self.rects[index].translated(delta);
+        for rect in self.rects.as_mut_slice() {
+            *rect = rect.translated(delta);
         }
 
         self
@@ -149,18 +147,6 @@ impl DamageRegion {
         }
 
         clipped
-    }
-
-    fn remove_rect(&mut self, index: usize) {
-        let len = self.len as usize;
-        debug_assert!(index < len);
-
-        for cursor in index..len - 1 {
-            self.rects[cursor] = self.rects[cursor + 1]
-        }
-
-        self.len -= 1;
-        self.rects[self.len as usize] = EMPTY_DAMAGE_RECT;
     }
 
     pub fn intersects_rect(self, rect: Rect) -> bool {
