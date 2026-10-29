@@ -28,12 +28,35 @@ enum DirectionalClass {
     Neutral,
 }
 
+/// a run of a line's text in one direction, from its byte offset up to the next run's.
+/// Offsets from the text's length on belong to the glyphs shaped after the text, such as
+/// an ellipsis
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TextRun {
+    start: usize,
+    class: DirectionalClass,
+    context_direction: TextDirection,
+    level: u8,
+}
+
+impl TextRun {
+    const EMPTY: Self = Self::new(0, DirectionalClass::Neutral);
+
+    const fn new(start: usize, class: DirectionalClass) -> Self {
+        Self {
+            start,
+            class,
+            context_direction: TextDirection::LeftToRight,
+            level: 0,
+        }
+    }
+}
+
+/// the glyphs of a [`TextRun`]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct DirectionalRun {
     pub(super) start: usize,
     pub(super) end: usize,
-    class: DirectionalClass,
-    context_direction: TextDirection,
     pub(super) level: u8,
 }
 
@@ -41,20 +64,8 @@ impl DirectionalRun {
     const EMPTY: Self = Self {
         start: 0,
         end: 0,
-        class: DirectionalClass::Neutral,
-        context_direction: TextDirection::LeftToRight,
         level: 0,
     };
-
-    const fn new(start: usize, end: usize, class: DirectionalClass) -> Self {
-        Self {
-            start,
-            end,
-            class,
-            context_direction: TextDirection::LeftToRight,
-            level: 0,
-        }
-    }
 
     const fn len(self) -> usize {
         self.end.saturating_sub(self.start)
@@ -119,12 +130,26 @@ impl SimpleShaper {
         }
 
         let text_glyph_count = text_glyph_count.min(glyphs.len());
+        let mut text_runs = [TextRun::EMPTY; DIRECTIONAL_RUN_CAPACITY];
+
+        let offsets = glyphs
+            .iter()
+            .enumerate()
+            .map(|(index, &glyph)| line_offset(text, text_glyph_count, index, glyph));
+        let run_count = build_text_runs(text, direction, offsets, &mut text_runs)?;
+
+        resolve_directional_run_levels(&mut text_runs[..run_count], direction);
+
+        let run_count = merge_same_level_runs(&mut text_runs[..run_count]);
+
         let mut runs = [DirectionalRun::EMPTY; DIRECTIONAL_RUN_CAPACITY];
-
-        let run_count =
-            build_directional_runs(text, direction, text_glyph_count, glyphs, &mut runs)?;
-
-        resolve_directional_run_levels(&mut runs[..run_count], direction);
+        glyph_runs(
+            text,
+            text_glyph_count,
+            glyphs,
+            &text_runs[..run_count],
+            &mut runs,
+        );
 
         mirror_odd_level_glyphs(
             registry,
@@ -134,8 +159,6 @@ impl SimpleShaper {
             glyphs,
             &runs[..run_count],
         );
-
-        let run_count = merge_same_level_runs(&mut runs[..run_count]);
 
         reorder_directional_runs(glyphs, &mut runs[..run_count]);
 
@@ -164,12 +187,23 @@ fn paragraph_direction(text: &str) -> TextDirection {
     TextDirection::LeftToRight
 }
 
-fn build_directional_runs(
+/// a glyph's byte offset in its line. Glyphs shaped after the text, currently the
+/// renderer's ellipsis suffix, take offsets after the text's
+fn line_offset(text: &str, text_glyph_count: usize, index: usize, glyph: ShapedGlyph) -> usize {
+    if index < text_glyph_count {
+        glyph.cluster()
+    } else {
+        text.len().saturating_add(glyph.cluster())
+    }
+}
+
+/// splits a line into directional runs, from the line offsets of its glyphs in logical
+/// order
+fn build_text_runs(
     text: &str,
     paragraph_direction: TextDirection,
-    text_glyph_count: usize,
-    glyphs: &[ShapedGlyph],
-    output: &mut [DirectionalRun],
+    offsets: impl Iterator<Item = usize>,
+    output: &mut [TextRun],
 ) -> Result<usize, ShapeError> {
     // without right-to-left text every glyph resolves to level 0, so the text is one run
     // however often words, numbers and punctuation alternate
@@ -181,7 +215,7 @@ fn build_directional_runs(
             return Err(ShapeError::TooManyDirectionalRuns);
         };
 
-        *destination = DirectionalRun::new(0, glyphs.len(), DirectionalClass::LeftToRight);
+        *destination = TextRun::new(0, DirectionalClass::LeftToRight);
 
         return Ok(1);
     }
@@ -194,18 +228,16 @@ fn build_directional_runs(
 
     let mut written = 0;
 
-    for (index, glyph) in glyphs.iter().copied().enumerate() {
-        let class = if index < text_glyph_count {
-            directional_class_for_cluster(text, glyph.cluster(), brackets)
+    for offset in offsets {
+        let class = if offset < text.len() {
+            directional_class_for_cluster(text, offset, brackets)
         } else {
-            // extr glyphs, currently the renderer's ellipsis suffix, don't have cluster
-            // offsets into `text`. Treat them as neutrals and let the paragraph context
-            // place them
+            // the glyphs after the text, currently the renderer's ellipsis suffix, aren't
+            // part of it. Treat them as neutrals and let the paragraph context place them
             DirectionalClass::Neutral
         };
 
         if written > 0 && output[written - 1].class == class {
-            output[written - 1].end = index.saturating_add(1);
             continue;
         }
 
@@ -222,7 +254,6 @@ fn build_directional_runs(
             && output[written - 1].class == DirectionalClass::Neutral
             && output[written - 2].class == class
         {
-            output[written - 2].end = index.saturating_add(1);
             written -= 1;
             continue;
         }
@@ -231,11 +262,46 @@ fn build_directional_runs(
             return Err(ShapeError::TooManyDirectionalRuns);
         };
 
-        *desstination = DirectionalRun::new(index, index.saturating_add(1), class);
+        *desstination = TextRun::new(offset, class);
         written = written.saturating_add(1);
     }
 
     Ok(written)
+}
+
+/// the glyphs of each text run. Glyphs are in logical order, so their line offsets
+/// never decrease
+fn glyph_runs(
+    text: &str,
+    text_glyph_count: usize,
+    glyphs: &[ShapedGlyph],
+    text_runs: &[TextRun],
+    output: &mut [DirectionalRun],
+) {
+    let offset = |index: usize| line_offset(text, text_glyph_count, index, glyphs[index]);
+    debug_assert!((1..glyphs.len()).all(|index| offset(index - 1) <= offset(index)));
+
+    let mut start = 0usize;
+
+    for (index, run) in text_runs.iter().enumerate() {
+        let mut end = start;
+
+        match text_runs.get(index + 1) {
+            Some(next) => {
+                while end < glyphs.len() && offset(end) < next.start {
+                    end += 1;
+                }
+            }
+            None => end = glyphs.len(),
+        }
+
+        output[index] = DirectionalRun {
+            start,
+            end,
+            level: run.level,
+        };
+        start = end;
+    }
 }
 
 fn directional_class_for_cluster(
@@ -460,7 +526,7 @@ fn directional_class(character: char) -> DirectionalClass {
     }
 }
 
-fn resolve_directional_run_levels(runs: &mut [DirectionalRun], paragraph_direction: TextDirection) {
+fn resolve_directional_run_levels(runs: &mut [TextRun], paragraph_direction: TextDirection) {
     for index in 0..runs.len() {
         let context_direction = match runs[index].class {
             DirectionalClass::LeftToRight => TextDirection::LeftToRight,
@@ -565,7 +631,7 @@ fn mirrored_character(character: char) -> Option<char> {
     MIRRORING_GLYPHS.get(character).mirroring_glyph
 }
 
-fn previous_strong_direction(runs: &[DirectionalRun], index: usize) -> Option<TextDirection> {
+fn previous_strong_direction(runs: &[TextRun], index: usize) -> Option<TextDirection> {
     for run in runs[..index].iter().rev() {
         match run.class {
             DirectionalClass::LeftToRight => return Some(TextDirection::LeftToRight),
@@ -577,7 +643,7 @@ fn previous_strong_direction(runs: &[DirectionalRun], index: usize) -> Option<Te
     None
 }
 
-fn next_strong_direction(runs: &[DirectionalRun], index: usize) -> Option<TextDirection> {
+fn next_strong_direction(runs: &[TextRun], index: usize) -> Option<TextDirection> {
     for run in runs[index.saturating_add(1)..].iter() {
         match run.class {
             DirectionalClass::LeftToRight => return Some(TextDirection::LeftToRight),
@@ -590,7 +656,7 @@ fn next_strong_direction(runs: &[DirectionalRun], index: usize) -> Option<TextDi
 }
 
 fn previous_context_direction(
-    runs: &[DirectionalRun],
+    runs: &[TextRun],
     index: usize,
     fallback: TextDirection,
 ) -> TextDirection {
@@ -604,7 +670,7 @@ fn previous_context_direction(
 }
 
 fn next_context_direction(
-    runs: &[DirectionalRun],
+    runs: &[TextRun],
     index: usize,
     fallback: TextDirection,
 ) -> TextDirection {
@@ -636,7 +702,7 @@ fn number_level(paragraph_direction: TextDirection, context_direction: TextDirec
     }
 }
 
-fn merge_same_level_runs(runs: &mut [DirectionalRun]) -> usize {
+fn merge_same_level_runs(runs: &mut [TextRun]) -> usize {
     if runs.is_empty() {
         return 0;
     }
@@ -646,8 +712,8 @@ fn merge_same_level_runs(runs: &mut [DirectionalRun]) -> usize {
     for read in 1..runs.len() {
         let run = runs[read];
 
+        // the earlier run reaches up to the next start it keeps
         if runs[written - 1].level == run.level {
-            runs[written - 1].end = run.end;
             continue;
         }
 
