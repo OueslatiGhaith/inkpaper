@@ -1,6 +1,5 @@
 use bitfield_struct::bitfield;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
@@ -10,11 +9,7 @@ pub(crate) enum Register {
     StateOfCharge = 0x04,
     Temperature = 0x06,
     Config = 0x08,
-    InterruptConfig = 0x0a,
     SocAlert = 0x0b,
-    TemperatureMax = 0x0c,
-    TemperatureMin = 0x0d,
-    IdVoltage = 0x0e,
     BatteryProfile = 0x10,
 }
 

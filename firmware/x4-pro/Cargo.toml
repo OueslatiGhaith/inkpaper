@@ -32,7 +32,6 @@ embedded-graphics = { workspace = true }
 embedded-hal-async = { workspace = true }
 hadris-fat = { version = "2.2.0", default-features = false, features = ["async", "defmt", "lfn", "read", "write"] }
 hadris-io = { version = "2.2.0", default-features = false, features = ["async"] }
-heapless = { workspace = true, features = ["defmt"] }
 skrifa = { version = "0.44.0", optional = true, default-features = false, features = ["libm"] }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]

@@ -2340,7 +2340,6 @@ dependencies = [
  "gt911",
  "hadris-fat",
  "hadris-io",
- "heapless 0.9.3",
  "inkpaper-app",
  "inkpaper-epub",
  "inkpaper-trace",

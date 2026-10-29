@@ -177,10 +177,6 @@ where
             .collect())
     }
 
-    pub fn into_source(self) -> S {
-        self.archive.into_source()
-    }
-
     pub async fn load_chapter(
         &mut self,
         path: &ArchivePath,

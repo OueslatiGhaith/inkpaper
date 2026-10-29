@@ -254,10 +254,6 @@ where
         Ok(sizes)
     }
 
-    pub(crate) fn into_source(self) -> S {
-        self.source
-    }
-
     async fn find_entry(&mut self, path: &ArchivePath) -> Result<Entry, Error<S::Error>> {
         let central_end = self
             .central_directory_offset

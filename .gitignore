@@ -3,3 +3,4 @@ bench.fish
 dhat-*.json
 *.log
 trace.*.json
+.DS_Store

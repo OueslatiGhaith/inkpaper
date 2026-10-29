@@ -203,10 +203,6 @@ impl Uc8279X4 {
         self.need_full_clear = true;
     }
 
-    pub fn skip_initial_clean(&mut self) {
-        self.need_full_clear = false;
-    }
-
     pub async fn initialize<B, D>(
         &mut self,
         bus: &mut B,
