@@ -2135,3 +2135,235 @@ fn prepared_shaper_matches_regular_shaper_across_repeated_calls() {
         }
     }
 }
+
+/// the glyphs of `text` and `suffix` from the whole-line shaper
+fn shape_whole_line<const FONTS: usize>(
+    registry: &FontRegistry<'_, FONTS>,
+    font_id: FontId,
+    text: &str,
+    suffix: &str,
+) -> Result<(std::vec::Vec<ShapedGlyph>, Pixels), ShapeError> {
+    let shaper = SimpleShaper::new();
+    let mut glyphs = std::vec![ShapedGlyph::EMPTY; 4 * (text.len() + suffix.len()) + 1];
+    let mut state = ShapeState::new();
+
+    let text_count = shaper
+        .shape_piece_into(registry, font_id, 16, text, &mut state, &mut glyphs)?
+        .glyph_count();
+    let suffix_count = shaper
+        .shape_piece_into(
+            registry,
+            font_id,
+            16,
+            suffix,
+            &mut state,
+            &mut glyphs[text_count..],
+        )?
+        .glyph_count();
+    let run = shaper.visual_order(
+        registry,
+        16,
+        text,
+        text_count,
+        &mut glyphs[..text_count + suffix_count],
+    )?;
+
+    Ok((run.glyphs().to_vec(), run.advance()))
+}
+
+/// the glyphs of `text` and `suffix` from the streaming shaper
+fn shape_streamed_line<const CHUNK: usize, const FONTS: usize>(
+    registry: &FontRegistry<'_, FONTS>,
+    font_id: FontId,
+    text: &str,
+    suffix: &str,
+) -> Result<(std::vec::Vec<ShapedGlyph>, Pixels), ShapeError> {
+    let mut glyphs = std::vec::Vec::new();
+    let summary = SimpleShaper::new()
+        .prepare(registry, font_id)
+        .shape_line_in_chunks::<CHUNK, FONTS>(registry, 16, text, suffix, |glyph| {
+            glyphs.push(glyph)
+        })?;
+
+    assert_eq!(summary.glyph_count(), glyphs.len());
+
+    Ok((glyphs, summary.advance()))
+}
+
+/// the most glyphs any cluster of `glyphs` holds
+fn longest_cluster(glyphs: &[ShapedGlyph]) -> usize {
+    glyphs
+        .chunk_by(|first, second| first.cluster() == second.cluster())
+        .map(<[ShapedGlyph]>::len)
+        .max()
+        .unwrap_or(0)
+}
+
+fn assert_streamed_line_matches<const CHUNK: usize>(
+    registry: &FontRegistry<'_, 1>,
+    font_id: FontId,
+    text: &str,
+    suffix: &str,
+) {
+    let whole = shape_whole_line(registry, font_id, text, suffix);
+    let streamed = shape_streamed_line::<CHUNK, 1>(registry, font_id, text, suffix);
+
+    match (&whole, &streamed) {
+        // a cluster must fit in a chunk
+        (Ok((glyphs, _)), Err(ShapeError::BufferTooSmall)) => assert!(
+            longest_cluster(glyphs) > CHUNK,
+            "{text:?} + {suffix:?} in chunks of {CHUNK}"
+        ),
+        _ => assert_eq!(
+            whole, streamed,
+            "{text:?} + {suffix:?} in chunks of {CHUNK}"
+        ),
+    }
+}
+
+/// lines from the shaping tests above, and random lines mixing their scripts, shape to
+/// the same glyphs whole and streamed in chunks, with and without an ellipsis
+#[test]
+fn streamed_lines_match_whole_lines() {
+    static TEXT: [char; 12] = ['a', 'b', 'A', ' ', '1', ',', '"', '(', ')', '≤', '≥', '?'];
+    static BIDI: [char; 9] = ['ب', 'א', 'ב', ' ', 'A', '(', ')', '1', '?'];
+    static MARKS: [char; 6] = ['e', '\u{0301}', '\u{0323}', 'ב', '\u{05B0}', '?'];
+    static ANCHORED: [char; 4] = ['\u{FE8F}', '\u{064E}', '\u{0651}', '?'];
+    static LAM_ALEF: [char; 3] = ['\u{FEFB}', '\u{064E}', '?'];
+    static CURSIVE: [char; 5] = ['\u{FE90}', '\u{FE92}', '\u{064E}', '\u{FE91}', '?'];
+    static GSUB: [char; 3] = ['\u{0644}', '\u{0627}', '?'];
+
+    let text_font = TestFont {
+        characters: &TEXT,
+        advance: px(5),
+        kerning: px(1),
+    };
+    let bidi_font = TestFont {
+        characters: &BIDI,
+        advance: px(5),
+        kerning: px(-1),
+    };
+    let marks_font = TestFont {
+        characters: &MARKS,
+        advance: px(5),
+        kerning: px(0),
+    };
+    let anchored_font = AnchoredMarkFont {
+        characters: &ANCHORED,
+        advance: px(5),
+    };
+    let lam_alef_font = LigatureAnchorFont {
+        characters: &LAM_ALEF,
+        advance: px(8),
+    };
+    let cursive_font = CursiveTestFont {
+        characters: &CURSIVE,
+        advance: px(7),
+    };
+    let gsub_font = GsubArabicFont {
+        characters: &GSUB,
+        advance: px(5),
+    };
+    let fonts: [&dyn FontFace; 7] = [
+        &text_font,
+        &bidi_font,
+        &marks_font,
+        &anchored_font,
+        &lam_alef_font,
+        &cursive_font,
+        &gsub_font,
+    ];
+
+    let lines = [
+        "",
+        "ب 12",
+        "a 1,\"",
+        "ب ب ب ب",
+        "ب AB",
+        "ب AB ب",
+        "אב A",
+        "A אב A",
+        "ب≤≥",
+        "ب (AB) ب",
+        "a (ب) b",
+        "ab ب (a) ()",
+        "AB (ب)",
+        "ب()",
+        "e\u{0301}\u{0323}b",
+        "ב\u{05B0}\u{05B9}",
+        "\u{0628}\u{064E}\u{0651}",
+        "\u{0644}\u{0627}\u{064E}",
+        "\u{0628}\u{0628}\u{064E}\u{0628}",
+        "\u{0644}\u{0627}",
+    ];
+
+    let mut alphabet: std::vec::Vec<char> = lines.iter().flat_map(|line| line.chars()).collect();
+    alphabet.extend([
+        '\u{200D}', '\u{200C}', '\u{00AD}', '[', ']', '«', '»', '١', '.', '-',
+    ]);
+    alphabet.sort_unstable();
+    alphabet.dedup();
+
+    let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+    let mut random = move |bound: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % bound as u64) as usize
+    };
+    let random_lines: std::vec::Vec<std::string::String> = (0..80)
+        .map(|_| {
+            let len = random(140);
+            (0..len).map(|_| alphabet[random(alphabet.len())]).collect()
+        })
+        .collect();
+
+    for font in fonts {
+        let mut registry = FontRegistry::<1>::default();
+        let font_id = registry.register(font).unwrap();
+
+        let all_lines = lines
+            .iter()
+            .copied()
+            .chain(random_lines.iter().map(std::string::String::as_str));
+
+        for line in all_lines {
+            for suffix in ["", crate::text_layout::ELLIPSIS] {
+                assert_streamed_line_matches::<3>(&registry, font_id, line, suffix);
+                assert_streamed_line_matches::<4>(&registry, font_id, line, suffix);
+                assert_streamed_line_matches::<7>(&registry, font_id, line, suffix);
+                assert_streamed_line_matches::<64>(&registry, font_id, line, suffix);
+            }
+        }
+    }
+}
+
+#[test]
+fn ellipsis_after_a_one_letter_rtl_line_stays_together() {
+    static CHARACTERS: [char; 3] = ['ب', '.', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+
+    // the letter's cluster and the first dot's are both 0, which must not make them one
+    // cluster when the line is reversed
+    let expected = [(2, 2), (2, 1), (2, 0), (1, 0)];
+
+    for (glyphs, _) in [
+        shape_whole_line(&registry, font_id, "ب", crate::text_layout::ELLIPSIS).unwrap(),
+        shape_streamed_line::<64, 1>(&registry, font_id, "ب", crate::text_layout::ELLIPSIS)
+            .unwrap(),
+    ] {
+        let order: std::vec::Vec<_> = glyphs
+            .iter()
+            .map(|glyph| (glyph.glyph().value(), glyph.cluster()))
+            .collect();
+
+        assert_eq!(order, expected);
+    }
+}

@@ -6,6 +6,7 @@ use self::marks::MarkPlacement;
 
 mod arabic;
 mod bidi;
+mod line;
 mod logical;
 mod marks;
 pub(crate) mod pair_cache;
@@ -146,6 +147,10 @@ impl ShapedGlyph {
             offset,
             advance: Pixels::ZERO,
         }
+    }
+
+    const fn with_cluster(self, cluster: usize) -> Self {
+        Self { cluster, ..self }
     }
 
     const fn with_positioning(self, offset: Offset, advance: Pixels) -> Self {

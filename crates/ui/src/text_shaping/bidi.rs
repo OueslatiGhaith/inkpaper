@@ -130,52 +130,50 @@ impl SimpleShaper {
         }
 
         let text_glyph_count = text_glyph_count.min(glyphs.len());
-        let mut text_runs = [TextRun::EMPTY; DIRECTIONAL_RUN_CAPACITY];
 
-        let offsets = glyphs
-            .iter()
-            .enumerate()
-            .map(|(index, &glyph)| line_offset(text, text_glyph_count, index, glyph));
-        let run_count = build_text_runs(text, direction, offsets, &mut text_runs)?;
+        let mut builder = TextRunBuilder::new(text, direction);
+        for (index, &glyph) in glyphs.iter().enumerate() {
+            builder.push(line_offset(text, text_glyph_count, index, glyph))?;
+        }
+        let line_runs = builder.finish();
 
-        resolve_directional_run_levels(&mut text_runs[..run_count], direction);
-
-        let run_count = merge_same_level_runs(&mut text_runs[..run_count]);
+        // the glyphs after the text number their clusters from 0 too. While they're
+        // reordered, give them their offsets in the line, so they never join a text
+        // cluster
+        for glyph in &mut glyphs[text_glyph_count..] {
+            *glyph = glyph.with_cluster(text.len().saturating_add(glyph.cluster()));
+        }
 
         let mut runs = [DirectionalRun::EMPTY; DIRECTIONAL_RUN_CAPACITY];
-        glyph_runs(
-            text,
-            text_glyph_count,
-            glyphs,
-            &text_runs[..run_count],
-            &mut runs,
-        );
+        let runs = &mut runs[..line_runs.len()];
+        glyph_runs(glyphs, &line_runs, runs);
 
-        mirror_odd_level_glyphs(
-            registry,
-            size_px,
-            text,
-            text_glyph_count,
-            glyphs,
-            &runs[..run_count],
-        );
+        for run in runs.iter() {
+            if run.level % 2 == 1 {
+                mirror_clusters(registry, size_px, text, &mut glyphs[run.start..run.end]);
+            }
+        }
 
-        reorder_directional_runs(glyphs, &mut runs[..run_count]);
+        reorder_directional_runs(glyphs, runs);
 
         let advance = apply_visual_positioning(
             registry,
             size_px,
             glyphs,
-            &runs[..run_count],
+            runs,
             prepared_font,
             pair_positioning_cache,
         );
+
+        for glyph in glyphs.iter_mut() {
+            *glyph = glyph.with_cluster(piece_cluster(text, glyph.cluster()));
+        }
 
         Ok(ShapedRun::new(glyphs, direction, advance))
     }
 }
 
-fn paragraph_direction(text: &str) -> TextDirection {
+pub(super) fn paragraph_direction(text: &str) -> TextDirection {
     for character in text.chars() {
         match directional_class(character) {
             DirectionalClass::LeftToRight => return TextDirection::LeftToRight,
@@ -197,48 +195,84 @@ fn line_offset(text: &str, text_glyph_count: usize, index: usize, glyph: ShapedG
     }
 }
 
+/// a glyph's cluster in the piece it was shaped from, given its offset in the line
+pub(super) fn piece_cluster(text: &str, line_offset: usize) -> usize {
+    if line_offset >= text.len() {
+        line_offset - text.len()
+    } else {
+        line_offset
+    }
+}
+
 /// splits a line into directional runs, from the line offsets of its glyphs in logical
 /// order
-fn build_text_runs(
-    text: &str,
+pub(super) struct TextRunBuilder<'text> {
+    text: &'text str,
     paragraph_direction: TextDirection,
-    offsets: impl Iterator<Item = usize>,
-    output: &mut [TextRun],
-) -> Result<usize, ShapeError> {
-    // without right-to-left text every glyph resolves to level 0, so the text is one run
-    // however often words, numbers and punctuation alternate
-    if !text
-        .chars()
-        .any(|character| directional_class(character) == DirectionalClass::RightToLeft)
-    {
-        let Some(destination) = output.first_mut() else {
-            return Err(ShapeError::TooManyDirectionalRuns);
+    /// without right-to-left text every glyph resolves to level 0, so the text is one
+    /// run however often words, numbers and punctuation alternate
+    single_run: bool,
+    brackets: [BracketPair; BRACKET_PAIR_CAPACITY],
+    bracket_count: usize,
+    runs: [TextRun; DIRECTIONAL_RUN_CAPACITY],
+    written: usize,
+}
+
+impl<'text> TextRunBuilder<'text> {
+    pub(super) fn new(text: &'text str, paragraph_direction: TextDirection) -> Self {
+        let single_run = !text
+            .chars()
+            .any(|character| directional_class(character) == DirectionalClass::RightToLeft);
+
+        let mut builder = Self {
+            text,
+            paragraph_direction,
+            single_run,
+            brackets: [BracketPair::EMPTY; BRACKET_PAIR_CAPACITY],
+            bracket_count: 0,
+            runs: [TextRun::EMPTY; DIRECTIONAL_RUN_CAPACITY],
+            written: 0,
         };
 
-        *destination = TextRun::new(0, DirectionalClass::LeftToRight);
+        if single_run {
+            builder.runs[0] = TextRun::new(0, DirectionalClass::LeftToRight);
+            builder.written = 1;
+        } else {
+            builder.bracket_count = find_bracket_pairs(text, &mut builder.brackets).unwrap_or(0);
+            resolve_bracket_pairs(
+                text,
+                paragraph_direction,
+                &mut builder.brackets[..builder.bracket_count],
+            );
+        }
 
-        return Ok(1);
+        builder
     }
 
-    let mut brackets = [BracketPair::EMPTY; BRACKET_PAIR_CAPACITY];
-    let bracket_count = find_bracket_pairs(text, &mut brackets).unwrap_or(0);
-    let brackets = &mut brackets[..bracket_count];
+    /// whether the runs are known without the glyphs' offsets
+    pub(super) const fn is_single_run(&self) -> bool {
+        self.single_run
+    }
 
-    resolve_bracket_pairs(text, paragraph_direction, brackets);
+    /// adds the next glyph, at `offset` in the line
+    pub(super) fn push(&mut self, offset: usize) -> Result<(), ShapeError> {
+        if self.single_run {
+            return Ok(());
+        }
 
-    let mut written = 0;
-
-    for offset in offsets {
-        let class = if offset < text.len() {
-            directional_class_for_cluster(text, offset, brackets)
+        let class = if offset < self.text.len() {
+            directional_class_for_cluster(self.text, offset, &self.brackets[..self.bracket_count])
         } else {
             // the glyphs after the text, currently the renderer's ellipsis suffix, aren't
             // part of it. Treat them as neutrals and let the paragraph context place them
             DirectionalClass::Neutral
         };
 
+        let written = self.written;
+        let output = &mut self.runs;
+
         if written > 0 && output[written - 1].class == class {
-            continue;
+            return Ok(());
         }
 
         // a neutral between two runs of the same strong direction resolves to that
@@ -254,51 +288,126 @@ fn build_text_runs(
             && output[written - 1].class == DirectionalClass::Neutral
             && output[written - 2].class == class
         {
-            written -= 1;
-            continue;
+            self.written -= 1;
+            return Ok(());
         }
 
-        let Some(desstination) = output.get_mut(written) else {
+        let Some(destination) = output.get_mut(written) else {
             return Err(ShapeError::TooManyDirectionalRuns);
         };
 
-        *desstination = TextRun::new(offset, class);
-        written = written.saturating_add(1);
+        *destination = TextRun::new(offset, class);
+        self.written += 1;
+
+        Ok(())
     }
 
-    Ok(written)
+    /// resolves the runs' levels and merges the runs that share one
+    pub(super) fn finish(mut self) -> LineRuns {
+        let runs = &mut self.runs[..self.written];
+
+        resolve_directional_run_levels(runs, self.paragraph_direction);
+        let len = merge_same_level_runs(runs);
+
+        LineRuns {
+            runs: self.runs,
+            len,
+        }
+    }
 }
 
-/// the glyphs of each text run. Glyphs are in logical order, so their line offsets
-/// never decrease
-fn glyph_runs(
-    text: &str,
-    text_glyph_count: usize,
-    glyphs: &[ShapedGlyph],
-    text_runs: &[TextRun],
-    output: &mut [DirectionalRun],
-) {
-    let offset = |index: usize| line_offset(text, text_glyph_count, index, glyphs[index]);
-    debug_assert!((1..glyphs.len()).all(|index| offset(index - 1) <= offset(index)));
+/// the directional runs of a line, in logical order
+pub(super) struct LineRuns {
+    runs: [TextRun; DIRECTIONAL_RUN_CAPACITY],
+    len: usize,
+}
+
+impl LineRuns {
+    pub(super) const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// the line offsets of run `index`'s glyphs
+    pub(super) fn range(&self, index: usize) -> core::ops::Range<usize> {
+        let end = match index + 1 < self.len {
+            true => self.runs[index + 1].start,
+            false => usize::MAX,
+        };
+
+        self.runs[index].start..end
+    }
+
+    pub(super) fn level(&self, index: usize) -> u8 {
+        self.runs[index].level
+    }
+
+    /// the runs' indices in visual order, reversing each span of runs at or above every
+    /// level down to the lowest odd one (UAX #9 L2)
+    pub(super) fn visual_order(&self) -> ([u8; DIRECTIONAL_RUN_CAPACITY], usize) {
+        let mut order = [0u8; DIRECTIONAL_RUN_CAPACITY];
+        for (index, slot) in order[..self.len].iter_mut().enumerate() {
+            *slot = index as u8;
+        }
+
+        let levels = &self.runs[..self.len];
+        let highest_level = levels.iter().map(|run| run.level).max().unwrap_or(0);
+        let lowest_odd_level = levels
+            .iter()
+            .map(|run| run.level)
+            .filter(|level| level % 2 == 1)
+            .min();
+
+        if let Some(lowest_odd_level) = lowest_odd_level {
+            let order = &mut order[..self.len];
+            let level_at =
+                |order: &[u8], position: usize| self.runs[order[position] as usize].level;
+
+            for level in (lowest_odd_level..=highest_level).rev() {
+                let mut cursor = 0usize;
+
+                while cursor < order.len() {
+                    if level_at(order, cursor) < level {
+                        cursor += 1;
+                        continue;
+                    }
+
+                    let start = cursor;
+                    while cursor < order.len() && level_at(order, cursor) >= level {
+                        cursor += 1;
+                    }
+
+                    order[start..cursor].reverse();
+                }
+            }
+        }
+
+        (order, self.len)
+    }
+}
+
+/// the glyphs of each run. Glyphs are in logical order with their line offsets as
+/// clusters, so their clusters never decrease
+fn glyph_runs(glyphs: &[ShapedGlyph], line_runs: &LineRuns, output: &mut [DirectionalRun]) {
+    debug_assert!(
+        glyphs
+            .windows(2)
+            .all(|pair| pair[0].cluster() <= pair[1].cluster())
+    );
 
     let mut start = 0usize;
 
-    for (index, run) in text_runs.iter().enumerate() {
+    for (index, run) in output.iter_mut().enumerate() {
+        let range = line_runs.range(index);
         let mut end = start;
 
-        match text_runs.get(index + 1) {
-            Some(next) => {
-                while end < glyphs.len() && offset(end) < next.start {
-                    end += 1;
-                }
-            }
-            None => end = glyphs.len(),
+        while end < glyphs.len() && glyphs[end].cluster() < range.end {
+            end += 1;
         }
 
-        output[index] = DirectionalRun {
+        *run = DirectionalRun {
             start,
             end,
-            level: run.level,
+            level: line_runs.level(index),
         };
         start = end;
     }
@@ -563,67 +672,59 @@ fn resolve_directional_run_levels(runs: &mut [TextRun], paragraph_direction: Tex
     }
 }
 
-fn mirror_odd_level_glyphs<const FONTS: usize>(
+/// mirrors the characters of whole clusters of a right-to-left run, in logical order
+/// with their line offsets as clusters. Glyphs after the text are left alone
+pub(super) fn mirror_clusters<const FONTS: usize>(
     registry: &FontRegistry<'_, FONTS>,
     size_px: u16,
     text: &str,
-    text_glyph_count: usize,
     glyphs: &mut [ShapedGlyph],
-    runs: &[DirectionalRun],
 ) {
-    for run in runs.iter().copied() {
-        if run.level % 2 == 0 {
+    let mut previous_cluster = None;
+
+    for glyph in glyphs.iter_mut() {
+        let shaped = *glyph;
+        let cluster = shaped.cluster();
+
+        // multiple glyphs can share a shaping cluster, such as an Arabic base
+        // + transparent mark. Mirroring is a source-character operation,
+        // so process the cluster once.
+        if previous_cluster == Some(cluster) {
             continue;
         }
 
-        let start = run.start.min(text_glyph_count).min(glyphs.len());
-        let end = run.end.min(text_glyph_count).min(glyphs.len());
-        let mut previous_cluster = None;
+        previous_cluster = Some(cluster);
 
-        for glyph in &mut glyphs[start..end] {
-            let shaped = *glyph;
-            let cluster = shaped.cluster();
+        let Some(remaining) = text.get(cluster..) else {
+            continue;
+        };
+        let Some(character) = remaining.chars().next() else {
+            continue;
+        };
+        let Some(mirrored) = mirrored_character(character) else {
+            continue;
+        };
 
-            // multiple glyphs can share a shaping cluster, such as an Arabic base
-            // + transparent mark. Mirroring is a source-character operation,
-            // so process the cluster once.
-            if previous_cluster == Some(cluster) {
-                continue;
-            }
+        // prefer the face that produced the original glyph, then use the normal
+        // registered fallback order.
+        // do not use replacement fallback here: if the actual mirrored character
+        // doesn't exist, keeping the original glyph is better than rendering '?'.
+        let Some((resolved, base_advance)) = registry.resolve_character_with_advance_exact(
+            shaped.font_instance(),
+            mirrored,
+            size_px,
+        ) else {
+            continue;
+        };
 
-            previous_cluster = Some(cluster);
-
-            let Some(remaining) = text.get(cluster..) else {
-                continue;
-            };
-            let Some(character) = remaining.chars().next() else {
-                continue;
-            };
-            let Some(mirrored) = mirrored_character(character) else {
-                continue;
-            };
-
-            // prefer the face that produced the original glyph, then use the normal
-            // registered fallback order.
-            // do not use replacement fallback here: if the actual mirrored character
-            // doesn't exist, keeping the original glyph is better than rendering '?'.
-            let Some((resolved, base_advance)) = registry.resolve_character_with_advance_exact(
-                shaped.font_instance(),
-                mirrored,
-                size_px,
-            ) else {
-                continue;
-            };
-
-            *glyph = ShapedGlyph::new_with_instance(
-                resolved.font_instance(),
-                resolved.glyph(),
-                shaped.cluster(),
-                base_advance,
-                Offset::ZERO,
-                base_advance,
-            );
-        }
+        *glyph = ShapedGlyph::new_with_instance(
+            resolved.font_instance(),
+            resolved.glyph(),
+            shaped.cluster(),
+            base_advance,
+            Offset::ZERO,
+            base_advance,
+        );
     }
 }
 
@@ -801,7 +902,7 @@ fn reverse_directional_span(glyphs: &mut [ShapedGlyph], runs: &mut [DirectionalR
     debug_assert_eq!(cursor, end);
 }
 
-fn reverse_glyph_clusters(glyphs: &mut [ShapedGlyph]) {
+pub(super) fn reverse_glyph_clusters(glyphs: &mut [ShapedGlyph]) {
     glyphs.reverse();
 
     let mut start = 0usize;

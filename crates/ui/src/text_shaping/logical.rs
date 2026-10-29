@@ -54,7 +54,7 @@ impl SimpleShaper {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn try_shape_piece_with_prepared_font<'font, const FONTS: usize, F, E>(
+    pub(super) fn try_shape_piece_with_prepared_font<'font, const FONTS: usize, F, E>(
         &self,
         registry: &'font FontRegistry<'_, FONTS>,
         preferred_font: FontInstance,

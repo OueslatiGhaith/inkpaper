@@ -26,7 +26,7 @@ pub(super) fn apply_visual_positioning<'font, const FONTS: usize, const SLOTS: u
             continue;
         }
 
-        advance += apply_visual_run_positioning(
+        advance += RunPositioner::new().position(
             registry,
             size_px,
             &mut glyphs[run.start..run.end],
@@ -39,7 +39,45 @@ pub(super) fn apply_visual_positioning<'font, const FONTS: usize, const SLOTS: u
     advance
 }
 
-fn apply_visual_run_positioning<'font, const FONTS: usize, const SLOTS: usize>(
+/// positions the glyphs of one visual run, a few clusters at a time if need be. The
+/// glyph before each call's first one is remembered, so a run positions the same
+/// whether it arrives whole or in pieces
+pub(super) struct RunPositioner {
+    previous_base: Option<ShapedGlyph>,
+}
+
+impl RunPositioner {
+    pub(super) const fn new() -> Self {
+        Self {
+            previous_base: None,
+        }
+    }
+
+    /// positions `glyphs`, whole clusters in visual order that follow the ones
+    /// positioned before, and returns their advance
+    pub(super) fn position<'font, const FONTS: usize, const SLOTS: usize>(
+        &mut self,
+        registry: &'font FontRegistry<'_, FONTS>,
+        size_px: u16,
+        glyphs: &mut [ShapedGlyph],
+        right_to_left: bool,
+        prepared_font: Option<&PreparedFont<'font>>,
+        pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
+    ) -> Pixels {
+        position_run_glyphs(
+            &mut self.previous_base,
+            registry,
+            size_px,
+            glyphs,
+            right_to_left,
+            prepared_font,
+            pair_positioning_cache,
+        )
+    }
+}
+
+fn position_run_glyphs<'font, const FONTS: usize, const SLOTS: usize>(
+    previous_base: &mut Option<ShapedGlyph>,
     registry: &'font FontRegistry<'_, FONTS>,
     size_px: u16,
     glyphs: &mut [ShapedGlyph],
@@ -47,7 +85,6 @@ fn apply_visual_run_positioning<'font, const FONTS: usize, const SLOTS: usize>(
     prepared_font: Option<&PreparedFont<'font>>,
     mut pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
 ) -> Pixels {
-    let mut previous_base: Option<ShapedGlyph> = None;
     let mut visual_advance = px(0);
     let mut index = 0usize;
 
@@ -69,7 +106,7 @@ fn apply_visual_run_positioning<'font, const FONTS: usize, const SLOTS: usize>(
             continue;
         }
 
-        let pair_positioning = match previous_base {
+        let pair_positioning = match *previous_base {
             Some(previous) if previous.font_instance() == shaped.font_instance() => {
                 match pair_positioning_cache.as_deref_mut() {
                     Some(cache) => cache.get_or_compute(
@@ -146,7 +183,7 @@ fn apply_visual_run_positioning<'font, const FONTS: usize, const SLOTS: usize>(
             &mut glyphs[index.saturating_add(1)..mark_end],
         );
 
-        previous_base = Some(positioned_base);
+        *previous_base = Some(positioned_base);
         index = mark_end;
     }
 
