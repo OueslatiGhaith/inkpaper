@@ -173,7 +173,8 @@ impl SimpleShaper {
     }
 }
 
-pub(super) fn paragraph_direction(text: &str) -> TextDirection {
+/// the direction of a line's text: the direction of its first strong character
+pub(crate) fn paragraph_direction(text: &str) -> TextDirection {
     for character in text.chars() {
         match directional_class(character) {
             DirectionalClass::LeftToRight => return TextDirection::LeftToRight,

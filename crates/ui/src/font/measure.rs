@@ -1,10 +1,8 @@
 use crate::{
-    FontInstance, FontRegistry, FontResources, LineHeight, Pixels, ResolvedFont, ResolvedTextStyle,
-    ShapeState, ShapedGlyph, SimpleShaper, Size, TextMeasurer, px,
-    text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
+    FontRegistry, FontResources, LineHeight, Pixels, PreparedSimpleShaper, ResolvedFont,
+    ResolvedTextStyle, SimpleShaper, Size, TextMeasurer, px,
+    text_layout::{ELLIPSIS, LineWidth, for_each_visible_text_line_with_boundaries},
 };
-
-pub(crate) const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
 
 impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> TextMeasurer
     for FontResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES>
@@ -18,10 +16,9 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
             .resolve_family_font(style.font_family, style.font_weight, style.font_style)
             .expect("text measurement requires a default font");
 
-        let font_instance = font.instance();
-
         let registry = self.registry();
-        let shaper = SimpleShaper::with_properties(font.properties());
+        let shaper = SimpleShaper::with_properties(font.properties())
+            .prepare(registry, font.instance().font());
 
         let size_px = font_size_px(style);
         let glyph_height = font.metrics(size_px).line_height();
@@ -36,13 +33,13 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
             max_size.width,
             style.max_lines,
             style.overflow,
-            |line, from| {
-                shaper.next_cluster_boundary(registry, font_instance.font(), size_px, line, from)
-            },
-            |line| measure_shaped_line(registry, font_instance, size_px, line),
-            |line| measure_shaped_line_with_ellipsis(registry, font_instance, size_px, line),
+            |line, from| shaper.next_cluster_boundary(registry, size_px, line, from),
+            |line| line_width(&shaper, registry, size_px, line, ""),
+            |line| line_width(&shaper, registry, size_px, line, ELLIPSIS),
             |line| {
-                longest_line = longest_line.max(line.width);
+                // a line the shaper can't shape can't be painted either. It takes the
+                // whole width, so the layout around it still leaves room for it
+                longest_line = longest_line.max(line.width.unwrap_or(max_size.width));
                 line_count = line_count.saturating_add(1);
             },
         );
@@ -63,71 +60,17 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
     }
 }
 
-pub(crate) fn measure_shaped_line<const FONTS: usize>(
-    registry: &FontRegistry<'_, FONTS>,
-    font: FontInstance,
+/// the width of `text` followed by `suffix`, such as an ellipsis, on one line
+pub(crate) fn line_width<'font, const FONTS: usize>(
+    shaper: &PreparedSimpleShaper<'font>,
+    registry: &'font FontRegistry<'_, FONTS>,
     size_px: u16,
     text: &str,
-) -> Pixels {
-    let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
-
-    let shaper = SimpleShaper::with_properties(font.properties());
-
-    match shaper.measure(registry, font.font(), size_px, text, &mut glyphs) {
-        Ok(summary) => summary.advance(),
-        Err(_) => Pixels::MAX,
-    }
-}
-
-fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
-    registry: &FontRegistry<'_, FONTS>,
-    font: FontInstance,
-    size_px: u16,
-    text: &str,
-) -> Pixels {
-    let shaper = SimpleShaper::with_properties(font.properties());
-    let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
-    let mut state = ShapeState::new();
-
-    let text_summary = match shaper.shape_piece_into(
-        registry,
-        font.font(),
-        size_px,
-        text,
-        &mut state,
-        &mut glyphs,
-    ) {
-        Ok(summary) => summary,
-        Err(_) => return Pixels::MAX,
-    };
-
-    let text_glyph_count = text_summary.glyph_count();
-    let mut glyph_count = text_glyph_count;
-
-    let ellipsis_summary = match shaper.shape_piece_into(
-        registry,
-        font.font(),
-        size_px,
-        ELLIPSIS,
-        &mut state,
-        &mut glyphs[glyph_count..],
-    ) {
-        Ok(summary) => summary,
-        Err(_) => return Pixels::MAX,
-    };
-
-    glyph_count = glyph_count.saturating_add(ellipsis_summary.glyph_count());
-
-    match shaper.visual_order(
-        registry,
-        size_px,
-        text,
-        text_glyph_count,
-        &mut glyphs[..glyph_count],
-    ) {
-        Ok(run) => run.advance(),
-        Err(_) => Pixels::MAX,
-    }
+    suffix: &str,
+) -> LineWidth {
+    shaper
+        .shape_line_with(registry, size_px, text, suffix, |_| {})
+        .map(|summary| summary.advance())
 }
 
 pub(crate) fn text_line_advance(

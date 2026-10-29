@@ -16,6 +16,7 @@ mod tests;
 #[cfg(feature = "metrics")]
 pub use cache::GlyphCacheMetrics;
 pub use cache::{GlyphBitmap, GlyphCache, GlyphCacheError};
+pub(crate) use measure::line_width;
 pub use registry::{FontRegistry, FontRegistryError, ResolvedGlyph};
 pub use resources::FontResources;
 

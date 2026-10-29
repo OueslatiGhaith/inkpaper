@@ -2,15 +2,13 @@
 //! only putting their coverage down to a [`Painter`].
 
 use crate::{
-    FontInstance, FontRegistry, GlyphCache, LineHeight, PaintError, Painter, Pixels, Point, Rect,
-    ResolvedFont, ResolvedTextStyle, ShapeState, ShapedGlyph, ShapedRun, SimpleShaper, TextAlign,
-    TextDirection,
+    FontRegistry, GlyphCache, LineHeight, PaintError, Painter, Pixels, Point, Rect, ResolvedFont,
+    ResolvedTextStyle, ShapedGlyph, SimpleShaper, TextAlign, TextDirection,
+    font::line_width,
     pair_cache::PairPositioningCache,
-    px,
+    paragraph_direction, px,
     text_layout::{ELLIPSIS, for_each_visible_text_line_with_boundaries},
 };
-
-const SHAPED_LINE_GLYPH_CAPACITY: usize = 128;
 
 /// paints `text` wrapped, truncated and aligned inside `bounds`, returning how many
 /// glyphs it shaped
@@ -37,14 +35,13 @@ where
         return Ok(0);
     }
 
-    let font_instance = font.instance();
-
     let size_px = font_size_px(style);
     let line_advance = text_line_advance(font, size_px, style);
 
     let baseline_offset = font.metrics(size_px).ascent;
 
-    let shaper = SimpleShaper::with_properties(font.properties());
+    let shaper =
+        SimpleShaper::with_properties(font.properties()).prepare(registry, font.instance().font());
 
     let mut y = bounds.origin.y;
     let mut error = None;
@@ -56,95 +53,60 @@ where
         bounds.width(),
         style.max_lines,
         style.overflow,
-        |line, from| {
-            shaper.next_cluster_boundary(registry, font_instance.font(), size_px, line, from)
-        },
-        |line| measure_shaped_line(registry, font_instance, size_px, line),
-        |line| measure_shaped_line_with_ellipsis(registry, font_instance, size_px, line),
+        |line, from| shaper.next_cluster_boundary(registry, size_px, line, from),
+        |line| line_width(&shaper, registry, size_px, line, ""),
+        |line| line_width(&shaper, registry, size_px, line, ELLIPSIS),
         |line| {
             if error.is_some() {
                 return;
             }
 
-            let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
-
-            let mut shape_state = ShapeState::new();
-
-            let text_summary = match shaper.shape_piece_into(
-                registry,
-                font_instance.font(),
-                size_px,
-                line.text,
-                &mut shape_state,
-                &mut glyphs,
-            ) {
-                Ok(summary) => summary,
+            let width = match line.width {
+                Ok(width) => width,
                 Err(shape_error) => {
                     error = Some(PaintError::Shape(shape_error));
                     return;
                 }
             };
 
-            let text_glyph_count = text_summary.glyph_count();
-
-            let mut glyph_count = text_glyph_count;
-
-            if line.ellipsis {
-                let ellipsis_summary = match shaper.shape_piece_into(
-                    registry,
-                    font_instance.font(),
-                    size_px,
-                    ELLIPSIS,
-                    &mut shape_state,
-                    &mut glyphs[glyph_count..],
-                ) {
-                    Ok(summary) => summary,
-                    Err(shape_error) => {
-                        error = Some(PaintError::Shape(shape_error));
-                        return;
-                    }
-                };
-
-                glyph_count = glyph_count.saturating_add(ellipsis_summary.glyph_count());
-            }
-
-            let run = match shaper.visual_order(
-                registry,
-                size_px,
-                line.text,
-                text_glyph_count,
-                &mut glyphs[..glyph_count],
-            ) {
-                Ok(run) => run,
-                Err(shape_error) => {
-                    error = Some(PaintError::Shape(shape_error));
-                    return;
-                }
-            };
-
-            debug_assert_eq!(run.advance(), line.width);
-
-            let mut pen_x = aligned_line_x(bounds, line.width, style.align, run.direction());
-
+            let mut pen_x =
+                aligned_line_x(bounds, width, style.align, paragraph_direction(line.text));
             let baseline = y + baseline_offset;
+            let suffix = if line.ellipsis { ELLIPSIS } else { "" };
+            let mut painted = Ok(());
 
-            if let Err(draw_error) = paint_shaped_run(
-                painter,
-                registry,
-                glyph_cache,
-                size_px,
-                &run,
-                baseline,
-                style,
-                clip,
-                &mut pen_x,
-                WordSpacing::NONE,
-            ) {
-                error = Some(draw_error);
-                return;
-            }
+            let shaped = shaper.shape_line_with(registry, size_px, line.text, suffix, |glyph| {
+                if painted.is_ok() {
+                    painted = paint_glyph(
+                        painter,
+                        registry,
+                        glyph_cache,
+                        size_px,
+                        glyph,
+                        baseline,
+                        style,
+                        clip,
+                        &mut pen_x,
+                        WordSpacing::NONE,
+                    );
+                }
+            });
 
-            shaped_glyphs = shaped_glyphs.saturating_add(glyph_count as u64);
+            let summary = match (shaped, painted) {
+                (Ok(summary), Ok(())) => summary,
+                (Err(shape_error), _) => {
+                    error = Some(PaintError::Shape(shape_error));
+                    return;
+                }
+                (_, Err(paint_error)) => {
+                    error = Some(paint_error);
+                    return;
+                }
+            };
+
+            debug_assert_eq!(summary.advance(), width);
+
+            shaped_glyphs = shaped_glyphs.saturating_add(summary.glyph_count() as u64);
 
             y += line_advance;
         },
@@ -183,45 +145,46 @@ where
         return Ok(0);
     }
 
-    let font_instance = font.instance();
     let size_px = font_size_px(style);
 
     let baseline_offset = font.metrics(size_px).ascent;
     let baseline = bounds.origin.y + baseline_offset;
 
-    let shaper = SimpleShaper::with_properties(font.properties());
-
-    let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
-
-    let run = shaper
-        .shape_into_with_pair_positioning_cache(
-            registry,
-            font_instance.font(),
-            size_px,
-            text,
-            &mut glyphs,
-            Some(pair_positioning_cache),
-        )
-        .map_err(PaintError::Shape)?;
-
-    let glyph_count = run.len();
+    let shaper =
+        SimpleShaper::with_properties(font.properties()).prepare(registry, font.instance().font());
 
     // this run was already positioned by its caller. Do not perform another
     // alignment/layout pass here.
     let mut pen_x = bounds.origin.x;
+    let word_spacing = WordSpacing::new(text, style.word_spacing);
+    let mut painted = Ok(());
 
-    paint_shaped_run(
-        painter,
-        registry,
-        glyph_cache,
-        size_px,
-        &run,
-        baseline,
-        style,
-        clip,
-        &mut pen_x,
-        WordSpacing::new(text, style.word_spacing),
-    )?;
+    let summary = shaper
+        .shape_line_with_pair_positioning_cache(
+            registry,
+            size_px,
+            text,
+            "",
+            pair_positioning_cache,
+            |glyph| {
+                if painted.is_ok() {
+                    painted = paint_glyph(
+                        painter,
+                        registry,
+                        glyph_cache,
+                        size_px,
+                        glyph,
+                        baseline,
+                        style,
+                        clip,
+                        &mut pen_x,
+                        word_spacing,
+                    );
+                }
+            },
+        )
+        .map_err(PaintError::Shape)?;
+    painted?;
 
     if style.underline
         && let Some(underline) = underline_rect(bounds.origin.x, pen_x, baseline, size_px)
@@ -231,16 +194,16 @@ where
             .map_err(PaintError::Painter)?;
     }
 
-    Ok(u64::try_from(glyph_count).unwrap_or(u64::MAX))
+    Ok(u64::try_from(summary.glyph_count()).unwrap_or(u64::MAX))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_shaped_run<P, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize>(
+fn paint_glyph<P, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize>(
     painter: &mut P,
     registry: &FontRegistry<'_, FONTS>,
     glyph_cache: &mut GlyphCache<GLYPH_SLOTS, GLYPH_BYTES>,
     size_px: u16,
-    run: &ShapedRun<'_>,
+    shaped: ShapedGlyph,
     baseline: Pixels,
     style: ResolvedTextStyle,
     clip: Rect,
@@ -250,93 +213,27 @@ fn paint_shaped_run<P, const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH
 where
     P: Painter,
 {
-    for shaped in run.glyphs().iter().copied() {
-        let bitmap = glyph_cache
-            .get_or_rasterize(registry, shaped.font_instance(), shaped.glyph(), size_px)
-            .map_err(PaintError::Font)?
-            .with_darkness(style.text_darkness)
-            .with_antialias(style.text_antialias);
+    let bitmap = glyph_cache
+        .get_or_rasterize(registry, shaped.font_instance(), shaped.glyph(), size_px)
+        .map_err(PaintError::Font)?
+        .with_darkness(style.text_darkness)
+        .with_antialias(style.text_antialias);
 
-        let metrics = bitmap.metrics();
-        let offset = shaped.offset();
+    let metrics = bitmap.metrics();
+    let offset = shaped.offset();
 
-        let origin = Point::new(
-            *pen_x + offset.x + metrics.bearing_x,
-            baseline + offset.y + metrics.bearing_y,
-        );
+    let origin = Point::new(
+        *pen_x + offset.x + metrics.bearing_x,
+        baseline + offset.y + metrics.bearing_y,
+    );
 
-        painter
-            .draw_glyph(&bitmap, origin, style.color, clip)
-            .map_err(PaintError::Painter)?;
+    painter
+        .draw_glyph(&bitmap, origin, style.color, clip)
+        .map_err(PaintError::Painter)?;
 
-        *pen_x += shaped.advance() + word_spacing.after(shaped);
-    }
+    *pen_x += shaped.advance() + word_spacing.after(shaped);
 
     Ok(())
-}
-
-fn measure_shaped_line<const FONTS: usize>(
-    registry: &FontRegistry<'_, FONTS>,
-    font: FontInstance,
-    size_px: u16,
-    text: &str,
-) -> Pixels {
-    let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
-
-    let shaper = SimpleShaper::with_properties(font.properties());
-
-    match shaper.measure(registry, font.font(), size_px, text, &mut glyphs) {
-        Ok(summary) => summary.advance(),
-        // textMeasurer cannot currently surface ShapeError.
-        // treat an unmeasurable candidate as wider than any available line. Word wrapping
-        // can then keep reducing the candidate until it fits the bounded shaper.
-        Err(_) => Pixels::MAX,
-    }
-}
-
-fn measure_shaped_line_with_ellipsis<const FONTS: usize>(
-    registry: &FontRegistry<'_, FONTS>,
-    font: FontInstance,
-    size_px: u16,
-    text: &str,
-) -> Pixels {
-    let shaper = SimpleShaper::with_properties(font.properties());
-    let font = font.font();
-    let mut glyphs = [ShapedGlyph::EMPTY; SHAPED_LINE_GLYPH_CAPACITY];
-    let mut state = ShapeState::new();
-
-    let text_summary =
-        match shaper.shape_piece_into(registry, font, size_px, text, &mut state, &mut glyphs) {
-            Ok(summary) => summary,
-            Err(_) => return Pixels::MAX,
-        };
-
-    let text_glyph_count = text_summary.glyph_count();
-    let mut glyph_count = text_glyph_count;
-    let ellipsis_summary = match shaper.shape_piece_into(
-        registry,
-        font,
-        size_px,
-        ELLIPSIS,
-        &mut state,
-        &mut glyphs[glyph_count..],
-    ) {
-        Ok(summary) => summary,
-        Err(_) => return Pixels::MAX,
-    };
-
-    glyph_count = glyph_count.saturating_add(ellipsis_summary.glyph_count());
-
-    match shaper.visual_order(
-        registry,
-        size_px,
-        text,
-        text_glyph_count,
-        &mut glyphs[..glyph_count],
-    ) {
-        Ok(run) => run.advance(),
-        Err(_) => Pixels::MAX,
-    }
 }
 
 fn text_line_advance(font: ResolvedFont<'_>, size_px: u16, style: ResolvedTextStyle) -> Pixels {

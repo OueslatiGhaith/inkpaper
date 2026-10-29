@@ -1,6 +1,15 @@
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 
-use crate::{Pixels, TextMaxLines, TextOverflow, TextWrap, px};
+use crate::{Pixels, ShapeError, TextMaxLines, TextOverflow, TextWrap, px};
+
+/// a line's width, or why the shaper couldn't shape it
+pub(crate) type LineWidth = Result<Pixels, ShapeError>;
+
+/// whether a line fits in `max_width`. A line the shaper can't shape never fits, so
+/// wrapping and ellipsis shorten it until it can
+fn fits(width: LineWidth, max_width: Pixels) -> bool {
+    width.is_ok_and(|width| width <= max_width)
+}
 
 fn next_scalar_boundary(text: &str, from: usize) -> Option<usize> {
     if from >= text.len() || !text.is_char_boundary(from) {
@@ -86,8 +95,8 @@ fn emit_oversized_word<'a, B, M, V>(
     visit: &mut V,
 ) where
     B: Fn(&str, usize) -> Option<usize>,
-    M: FnMut(&str) -> Pixels,
-    V: FnMut(&'a str, Pixels),
+    M: FnMut(&str) -> LineWidth,
+    V: FnMut(&'a str, LineWidth),
 {
     let mut start = 0usize;
 
@@ -102,7 +111,7 @@ fn emit_oversized_word<'a, B, M, V>(
             let candidate = &word[start..end];
             let width = measure(candidate);
 
-            if width <= max_width {
+            if fits(width, max_width) {
                 last_fit = Some((end, width));
             } else {
                 break;
@@ -136,11 +145,11 @@ fn wrap_paragraph<'a, B, M, V>(
     visit: &mut V,
 ) where
     B: Fn(&str, usize) -> Option<usize>,
-    M: FnMut(&str) -> Pixels,
-    V: FnMut(&'a str, Pixels),
+    M: FnMut(&str) -> LineWidth,
+    V: FnMut(&'a str, LineWidth),
 {
     if paragraph.is_empty() {
-        visit("", Pixels::ZERO);
+        visit("", Ok(Pixels::ZERO));
         return;
     }
 
@@ -166,7 +175,7 @@ fn wrap_paragraph<'a, B, M, V>(
             && content_end > start
         {
             let candidate = &paragraph[line..content_end];
-            if measure(candidate) <= max_width {
+            if fits(measure(candidate), max_width) {
                 line_end = content_end;
             } else {
                 let line = &paragraph[line..line_end];
@@ -186,7 +195,7 @@ fn wrap_paragraph<'a, B, M, V>(
                 let word = &paragraph[word_start..content_end];
                 let width = measure(word);
 
-                if width <= max_width {
+                if fits(width, max_width) {
                     line_start = Some(word_start);
                     line_end = content_end;
                 } else {
@@ -204,7 +213,7 @@ fn wrap_paragraph<'a, B, M, V>(
                     let line = &paragraph[start..line_end];
                     visit(line, measure(line));
                 }
-                None if !line_visited => visit("", Pixels::ZERO),
+                None if !line_visited => visit("", Ok(Pixels::ZERO)),
                 None => {}
             }
 
@@ -220,7 +229,7 @@ fn wrap_paragraph<'a, B, M, V>(
     }
 
     if !emitted {
-        visit("", Pixels::ZERO);
+        visit("", Ok(Pixels::ZERO));
     }
 }
 
@@ -233,8 +242,8 @@ pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
     mut visit: V,
 ) where
     B: Fn(&str, usize) -> Option<usize>,
-    M: FnMut(&str) -> Pixels,
-    V: FnMut(&'a str, Pixels),
+    M: FnMut(&str) -> LineWidth,
+    V: FnMut(&'a str, LineWidth),
 {
     if text.is_empty() {
         return;
@@ -271,7 +280,7 @@ pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
 
         paragraph_start = paragraph_end.saturating_add(1);
         if paragraph_start == text.len() {
-            visit("", Pixels::ZERO);
+            visit("", Ok(Pixels::ZERO));
             break;
         }
     }
@@ -285,8 +294,8 @@ pub(crate) fn for_each_text_line<'a, M, V>(
     measure: M,
     visit: V,
 ) where
-    M: FnMut(&str) -> Pixels,
-    V: FnMut(&'a str, Pixels),
+    M: FnMut(&str) -> LineWidth,
+    V: FnMut(&'a str, LineWidth),
 {
     for_each_text_line_with_boundaries(text, wrap, max_width, next_scalar_boundary, measure, visit);
 }
@@ -296,7 +305,7 @@ pub(crate) const ELLIPSIS: &str = "...";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VisibleTextLine<'a> {
     pub(crate) text: &'a str,
-    pub(crate) width: Pixels,
+    pub(crate) width: LineWidth,
     pub(crate) ellipsis: bool,
 }
 
@@ -308,18 +317,18 @@ fn ellipsize_line<'a, B, M>(
 ) -> VisibleTextLine<'a>
 where
     B: Fn(&str, usize) -> Option<usize>,
-    M: FnMut(&str) -> Pixels,
+    M: FnMut(&str) -> LineWidth,
 {
     if max_width.is_non_positive() {
         return VisibleTextLine {
             text: "",
-            width: px(0),
+            width: Ok(px(0)),
             ellipsis: false,
         };
     }
 
     let ellipsis_only_width = measured_ellipsized("");
-    if ellipsis_only_width > max_width {
+    if !fits(ellipsis_only_width, max_width) {
         return VisibleTextLine {
             text: "",
             width: ellipsis_only_width,
@@ -333,7 +342,7 @@ where
 
     while let Some(end) = next_text_boundary(line, cursor, next_boundary) {
         let width = measured_ellipsized(&line[..end]);
-        if width > max_width {
+        if !fits(width, max_width) {
             break;
         }
 
@@ -357,7 +366,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn emit_visible_line<'a, B, M, V>(
     line: &'a str,
-    width: Pixels,
+    width: LineWidth,
     max_width: Pixels,
     overflow: TextOverflow,
     force_ellipsis: bool,
@@ -366,10 +375,10 @@ fn emit_visible_line<'a, B, M, V>(
     visit: &mut V,
 ) where
     B: Fn(&str, usize) -> Option<usize>,
-    M: FnMut(&str) -> Pixels,
+    M: FnMut(&str) -> LineWidth,
     V: FnMut(VisibleTextLine<'a>),
 {
-    if overflow == TextOverflow::Ellipsis && (force_ellipsis || width > max_width) {
+    if overflow == TextOverflow::Ellipsis && (force_ellipsis || !fits(width, max_width)) {
         visit(ellipsize_line(
             line,
             max_width,
@@ -400,8 +409,8 @@ pub(crate) fn for_each_visible_text_line_with_boundaries<'a, B, M, E, V>(
     mut visit: V,
 ) where
     B: Fn(&str, usize) -> Option<usize>,
-    M: FnMut(&str) -> Pixels,
-    E: FnMut(&str) -> Pixels,
+    M: FnMut(&str) -> LineWidth,
+    E: FnMut(&str) -> LineWidth,
     V: FnMut(VisibleTextLine<'a>),
 {
     let limit = max_lines.limit();
@@ -479,8 +488,8 @@ pub(crate) fn for_each_visible_text_line<'a, M, E, V>(
     measured_ellipsized: E,
     visit: V,
 ) where
-    M: FnMut(&str) -> Pixels,
-    E: FnMut(&str) -> Pixels,
+    M: FnMut(&str) -> LineWidth,
+    E: FnMut(&str) -> LineWidth,
     V: FnMut(VisibleTextLine<'a>),
 {
     for_each_visible_text_line_with_boundaries(
@@ -502,15 +511,15 @@ mod tests {
 
     use crate::{
         text_layout::{
-            for_each_text_line, for_each_text_line_with_boundaries, for_each_visible_text_line,
-            for_each_visible_text_line_with_boundaries,
+            LineWidth, for_each_text_line, for_each_text_line_with_boundaries,
+            for_each_visible_text_line, for_each_visible_text_line_with_boundaries,
         },
         *,
     };
 
-    fn measure(text: &str) -> Pixels {
+    fn measure(text: &str) -> LineWidth {
         let count = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
-        px(count)
+        Ok(px(count))
     }
 
     fn combining_mark_cluster_boundary(text: &str, from: usize) -> Option<usize> {
@@ -543,7 +552,7 @@ mod tests {
             px(5),
             measure,
             |line, width| {
-                lines.push((line, width));
+                lines.push((line, width.unwrap()));
             },
         );
 
@@ -560,7 +569,7 @@ mod tests {
             px(5),
             measure,
             |line, width| {
-                lines.push((line, width));
+                lines.push((line, width.unwrap()));
             },
         );
 
@@ -622,7 +631,7 @@ mod tests {
         let mut lines = Vec::new();
 
         for_each_text_line("abcdef", TextWrap::Word, px(3), measure, |line, width| {
-            lines.push((line, width));
+            lines.push((line, width.unwrap()));
         });
 
         assert_eq!(lines, vec![("abc", px(3)), ("def", px(3)),]);
@@ -638,7 +647,7 @@ mod tests {
             px(20),
             measure,
             |line, width| {
-                lines.push((line, width));
+                lines.push((line, width.unwrap()));
             },
         );
 
@@ -658,7 +667,7 @@ mod tests {
             px(20),
             measure,
             |line, width| {
-                lines.push((line, width));
+                lines.push((line, width.unwrap()));
             },
         );
 
@@ -676,9 +685,9 @@ mod tests {
             TextMaxLines::Limited(2),
             TextOverflow::Clip,
             measure,
-            |text| measure(text) + px(1),
+            |text| measure(text).map(|width| width + px(1)),
             |line| {
-                lines.push((line.text, line.width, line.ellipsis));
+                lines.push((line.text, line.width.unwrap(), line.ellipsis));
             },
         );
 
@@ -699,10 +708,10 @@ mod tests {
             |text| {
                 let characters = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
 
-                px(characters.saturating_add(1))
+                Ok(px(characters.saturating_add(1)))
             },
             |line| {
-                lines.push((line.text, line.width, line.ellipsis));
+                lines.push((line.text, line.width.unwrap(), line.ellipsis));
             },
         );
 
@@ -723,10 +732,10 @@ mod tests {
             |text| {
                 let characters = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
 
-                px(characters.saturating_add(1))
+                Ok(px(characters.saturating_add(1)))
             },
             |line| {
-                lines.push((line.text, line.width, line.ellipsis));
+                lines.push((line.text, line.width.unwrap(), line.ellipsis));
             },
         );
 
@@ -747,10 +756,10 @@ mod tests {
             |text| {
                 let characters = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
 
-                px(characters.saturating_add(1))
+                Ok(px(characters.saturating_add(1)))
             },
             |line| {
-                lines.push((line.text, line.width, line.ellipsis));
+                lines.push((line.text, line.width.unwrap(), line.ellipsis));
             },
         );
 
@@ -768,7 +777,7 @@ mod tests {
             combining_mark_cluster_boundary,
             measure,
             |line, width| {
-                lines.push((line, width));
+                lines.push((line, width.unwrap()));
             },
         );
 
@@ -787,9 +796,9 @@ mod tests {
             TextOverflow::Ellipsis,
             combining_mark_cluster_boundary,
             measure,
-            |text| measure(text) + px(1),
+            |text| measure(text).map(|width| width + px(1)),
             |line| {
-                lines.push((line.text, line.width, line.ellipsis));
+                lines.push((line.text, line.width.unwrap(), line.ellipsis));
             },
         );
 
@@ -797,5 +806,51 @@ mod tests {
         // the ellipsis. We therefore render only the ellipsis instead of illegally
         // keeping just "a".
         assert_eq!(lines, vec![("", px(1), true)],);
+    }
+
+    /// measures like `measure`, but can't shape more than six characters at once
+    fn measure_up_to_six(text: &str) -> LineWidth {
+        if text.chars().count() > 6 {
+            return Err(ShapeError::TooManyDirectionalRuns);
+        }
+
+        measure(text)
+    }
+
+    #[test]
+    fn lines_the_shaper_cannot_shape_wrap_like_overlong_ones() {
+        let mut lines = Vec::new();
+
+        for_each_text_line(
+            "aa bb cc dd",
+            TextWrap::Word,
+            px(100),
+            measure_up_to_six,
+            |line, width| {
+                lines.push((line, width.unwrap()));
+            },
+        );
+
+        assert_eq!(lines, vec![("aa bb", px(5)), ("cc dd", px(5))]);
+    }
+
+    #[test]
+    fn lines_the_shaper_cannot_shape_are_ellipsized() {
+        let mut lines = Vec::new();
+
+        for_each_visible_text_line(
+            "abcdefgh",
+            TextWrap::NoWrap,
+            px(100),
+            TextMaxLines::Unlimited,
+            TextOverflow::Ellipsis,
+            measure_up_to_six,
+            |text| measure_up_to_six(text).map(|width| width + px(1)),
+            |line| {
+                lines.push((line.text, line.width.unwrap(), line.ellipsis));
+            },
+        );
+
+        assert_eq!(lines, vec![("abcdef", px(7), true)]);
     }
 }

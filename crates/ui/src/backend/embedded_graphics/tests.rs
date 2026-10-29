@@ -634,6 +634,34 @@ fn embedded_graphics_backend_draws_text_through_font_resources() {
     assert!(has_black_pixel);
 }
 
+#[test]
+fn embedded_graphics_backend_paints_lines_of_any_length() {
+    let mut display = MockDisplay::<Rgb888>::new();
+
+    {
+        let mut resources = test_resources::<0>();
+        let mut painter = EmbeddedGraphicsPainter::new(&mut display);
+        let text = "A".repeat(200);
+
+        // the line is 1200px wide. Only the display's part of it is drawn
+        resources
+            .paint_text(
+                &mut painter,
+                &text,
+                Rect::new(Point::ZERO, Size::new(px(2000), px(20))),
+                ResolvedTextStyle::default(),
+                Some(Rect::new(Point::ZERO, Size::new(px(64), px(20)))),
+            )
+            .unwrap();
+    }
+
+    let has_black_pixel = (0..10).any(|y| {
+        (58..64).any(|x| display.get_pixel(EgPoint::new(x, y)) == Some(Rgb888::new(0, 0, 0)))
+    });
+
+    assert!(has_black_pixel);
+}
+
 fn text_run_ink_columns(word_spacing: Pixels) -> impl Iterator<Item = i32> {
     let mut display = MockDisplay::<Rgb888>::new();
 

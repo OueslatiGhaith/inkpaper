@@ -2181,7 +2181,7 @@ fn shape_streamed_line<const CHUNK: usize, const FONTS: usize>(
     let mut glyphs = std::vec::Vec::new();
     let summary = SimpleShaper::new()
         .prepare(registry, font_id)
-        .shape_line_in_chunks::<CHUNK, FONTS>(registry, 16, text, suffix, |glyph| {
+        .shape_line_in_chunks::<CHUNK, FONTS, 1>(registry, 16, text, suffix, None, |glyph| {
             glyphs.push(glyph)
         })?;
 

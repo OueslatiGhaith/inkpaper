@@ -34,18 +34,43 @@ impl<'font> PreparedSimpleShaper<'font> {
         suffix: &str,
         visit: impl FnMut(ShapedGlyph),
     ) -> Result<ShapeSummary, ShapeError> {
-        self.shape_line_in_chunks::<LINE_CHUNK_GLYPHS, FONTS>(
-            registry, size_px, text, suffix, visit,
+        self.shape_line_in_chunks::<LINE_CHUNK_GLYPHS, FONTS, 1>(
+            registry, size_px, text, suffix, None, visit,
         )
     }
 
-    /// [`Self::shape_line_with`] through chunks of `CHUNK` glyphs
-    pub(super) fn shape_line_in_chunks<const CHUNK: usize, const FONTS: usize>(
+    /// [`Self::shape_line_with`], looking pair positioning up in `pair_positioning_cache`
+    pub(crate) fn shape_line_with_pair_positioning_cache<const FONTS: usize, const SLOTS: usize>(
         &self,
         registry: &'font FontRegistry<'_, FONTS>,
         size_px: u16,
         text: &str,
         suffix: &str,
+        pair_positioning_cache: &mut PairPositioningCache<SLOTS>,
+        visit: impl FnMut(ShapedGlyph),
+    ) -> Result<ShapeSummary, ShapeError> {
+        self.shape_line_in_chunks::<LINE_CHUNK_GLYPHS, FONTS, SLOTS>(
+            registry,
+            size_px,
+            text,
+            suffix,
+            Some(pair_positioning_cache),
+            visit,
+        )
+    }
+
+    /// [`Self::shape_line_with`] through chunks of `CHUNK` glyphs
+    pub(super) fn shape_line_in_chunks<
+        const CHUNK: usize,
+        const FONTS: usize,
+        const SLOTS: usize,
+    >(
+        &self,
+        registry: &'font FontRegistry<'_, FONTS>,
+        size_px: u16,
+        text: &str,
+        suffix: &str,
+        mut pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
         mut visit: impl FnMut(ShapedGlyph),
     ) -> Result<ShapeSummary, ShapeError> {
         let line = Line {
@@ -90,7 +115,7 @@ impl<'font> PreparedSimpleShaper<'font> {
                     chunk,
                     right_to_left,
                     self.prepared_font.as_ref(),
-                    None::<&mut PairPositioningCache<1>>,
+                    pair_positioning_cache.as_deref_mut(),
                 );
 
                 for glyph in chunk.iter() {

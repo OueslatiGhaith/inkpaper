@@ -2,6 +2,7 @@ use crate::{
     FontId, FontInstance, FontProperties, FontRegistry, GlyphId, Offset, Pixels, PreparedFont,
 };
 
+pub(crate) use self::bidi::paragraph_direction;
 use self::marks::MarkPlacement;
 
 mod arabic;
@@ -354,28 +355,6 @@ impl SimpleShaper {
     ) -> Result<ShapedRun<'out>, ShapeError> {
         self.prepare(registry, preferred_font)
             .shape_into(registry, size_px, text, output)
-    }
-
-    pub(crate) fn shape_into_with_pair_positioning_cache<
-        'out,
-        const FONTS: usize,
-        const SLOTS: usize,
-    >(
-        &self,
-        registry: &FontRegistry<'_, FONTS>,
-        preferred_font: FontId,
-        size_px: u16,
-        text: &str,
-        output: &'out mut [ShapedGlyph],
-        pair_positioning_cache: Option<&mut pair_cache::PairPositioningCache<SLOTS>>,
-    ) -> Result<ShapedRun<'out>, ShapeError> {
-        self.prepare(registry, preferred_font).shape_into_with(
-            registry,
-            size_px,
-            text,
-            output,
-            pair_positioning_cache,
-        )
     }
 
     pub fn prepare<'font, const FONTS: usize>(

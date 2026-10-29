@@ -1,5 +1,5 @@
 use super::*;
-use crate::px;
+use crate::{Size, TextMeasurer, px};
 
 struct TestFont {
     fill: u8,
@@ -633,4 +633,38 @@ fn glyph_cache_forgets_glyphs_of_cleared_faces() {
 
     let bitmap = cache.get_or_rasterize(&registry, new, glyph, 16).unwrap();
     assert_eq!(bitmap.coverage(), &[99; 4]);
+}
+
+#[test]
+fn long_lines_measure_their_full_width() {
+    let font = TestFont { fill: 10 };
+    let mut resources = FontResources::<1, 8, 256>::default();
+    resources.register(&font).unwrap();
+
+    let text = "x".repeat(200);
+    let style = crate::ResolvedTextStyle {
+        wrap: crate::TextWrap::NoWrap,
+        ..Default::default()
+    };
+    let size = resources.measure_text(&text, style, Size::new(px(10_000), px(10_000)));
+
+    // 200 glyphs advancing 3px each
+    assert_eq!(size.width, px(600));
+}
+
+#[test]
+fn long_lines_that_fit_stay_on_one_line() {
+    let font = TestFont { fill: 10 };
+    let mut resources = FontResources::<1, 8, 256>::default();
+    resources.register(&font).unwrap();
+
+    let style = crate::ResolvedTextStyle {
+        wrap: crate::TextWrap::Word,
+        ..Default::default()
+    };
+    let available = Size::new(px(10_000), px(10_000));
+    let one_line = resources.measure_text("x", style, available);
+    let size = resources.measure_text(&"x ".repeat(100), style, available);
+
+    assert_eq!(size.height, one_line.height);
 }
