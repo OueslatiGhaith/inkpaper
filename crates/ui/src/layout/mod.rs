@@ -10,6 +10,11 @@ mod measure;
 mod tests;
 
 pub trait TextMeasurer {
+    /// the size of `text` laid out within `max_size`.
+    ///
+    /// the height of `max_size` may only clamp the result: measuring with a smaller
+    /// height must give the same size as measuring with an unlimited one and clamping
+    /// its height. Layout measures each text once per width and relies on this
     fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size;
 }
 

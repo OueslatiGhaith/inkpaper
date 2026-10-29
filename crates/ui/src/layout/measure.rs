@@ -2,7 +2,7 @@ use super::*;
 
 use crate::{
     CanvasStyle, FrameArena, ImageSource, ImageStyle, NodeId, NodeKind, Position, SvgSource,
-    SvgStyle, count_metric, storage::FrameStorage,
+    SvgStyle, TextRange, count_metric, storage::FrameStorage,
 };
 
 impl<F: FrameStorage> FrameArena<F> {
@@ -14,6 +14,10 @@ impl<F: FrameStorage> FrameArena<F> {
     ) -> Size {
         count_metric!(self, measure_node_calls);
 
+        if let NodeKind::Text { text } = self.node(node).kind {
+            return self.measure_text_node(node, text, available, text_measurer);
+        }
+
         if let Some(measured) = self.cached_measurement(node, available) {
             count_metric!(self, measurement_cache_hits);
 
@@ -22,25 +26,7 @@ impl<F: FrameStorage> FrameArena<F> {
 
         count_metric!(self, measurement_cache_misses);
         let measured = match self.node(node).kind {
-            NodeKind::Text { text } => {
-                count_metric!(self, text_measurements);
-                let measured = text_measurer.measure_text(
-                    self.text(text),
-                    self.node(node).effective_text_style,
-                    available,
-                );
-
-                Size::new(
-                    measured
-                        .width
-                        .non_negative()
-                        .min(available.width.non_negative()),
-                    measured
-                        .height
-                        .non_negative()
-                        .min(available.height.non_negative()),
-                )
-            }
+            NodeKind::Text { .. } => unreachable!("text nodes are measured above"),
             NodeKind::Image { source, style } => measure_image(source, style, available),
             NodeKind::Svg { source, style } => measure_svg(source, style, available),
             NodeKind::Canvas { style, .. } => measure_canvas(style, available),
@@ -57,6 +43,52 @@ impl<F: FrameStorage> FrameArena<F> {
         self.cache_measurement(node, available, measured);
 
         measured
+    }
+
+    /// measures a text node once per available width. Wrapping depends only on the
+    /// width, so the cached size has an unlimited height, clamped for each request
+    fn measure_text_node(
+        &mut self,
+        node: NodeId,
+        text: TextRange,
+        available: Size,
+        text_measurer: &dyn TextMeasurer,
+    ) -> Size {
+        let unlimited = Size::new(available.width, Pixels::MAX);
+
+        let measured = match self.cached_measurement(node, unlimited) {
+            Some(measured) => {
+                count_metric!(self, measurement_cache_hits);
+
+                measured
+            }
+            None => {
+                count_metric!(self, measurement_cache_misses);
+                count_metric!(self, text_measurements);
+
+                let measured = text_measurer.measure_text(
+                    self.text(text),
+                    self.node(node).effective_text_style,
+                    unlimited,
+                );
+                let measured = Size::new(
+                    measured
+                        .width
+                        .non_negative()
+                        .min(available.width.non_negative()),
+                    measured.height.non_negative(),
+                );
+
+                self.cache_measurement(node, unlimited, measured);
+
+                measured
+            }
+        };
+
+        Size::new(
+            measured.width,
+            measured.height.min(available.height.non_negative()),
+        )
     }
     fn measure_div(
         &mut self,

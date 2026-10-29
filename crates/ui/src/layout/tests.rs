@@ -850,6 +850,60 @@ fn text_measurement_receives_resolved_text_style() {
 }
 
 #[test]
+fn text_is_measured_once_per_width_and_clamped_to_each_height() {
+    struct CountingMeasurer {
+        calls: Cell<usize>,
+    }
+
+    impl TextMeasurer for CountingMeasurer {
+        fn measure_text(&self, text: &str, _: ResolvedTextStyle, max_size: Size) -> Size {
+            self.calls.set(self.calls.get() + 1);
+
+            if text.is_empty() {
+                return Size::ZERO;
+            }
+
+            Size::new(
+                px(20).min(max_size.width.non_negative()),
+                px(10).min(max_size.height.non_negative()),
+            )
+        }
+    }
+
+    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
+    let cx = AppContext::from_globals(&globals);
+
+    let root = frame
+        .mount(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .child(div().w_full().h(px(16)).child("Tall"))
+                .child(div().w_full().h(px(6)).child("Short")),
+            cx,
+        )
+        .unwrap();
+
+    let measurer = CountingMeasurer {
+        calls: Cell::new(0),
+    };
+
+    frame.layout(root, Size::new(px(100), px(100)), &measurer);
+
+    assert_eq!(measurer.calls.get(), 2);
+
+    let tall_row = frame.node(root).first_child.unwrap();
+    let short_row = frame.node(tall_row).next_sibling.unwrap();
+    let tall_text = frame.node(tall_row).first_child.unwrap();
+    let short_text = frame.node(short_row).first_child.unwrap();
+
+    assert_bounds(frame.bounds(tall_text), 0, 0, 20, 10);
+    assert_bounds(frame.bounds(short_text), 0, 16, 20, 6);
+}
+
+#[test]
 fn image_uses_intrinsic_size() {
     let measurer = TestTextMeasurer::new(8, 10);
 
