@@ -1,11 +1,8 @@
 use defmt::Format;
 use embedded_hal_async::delay::DelayNs;
-use epd_bus::EpdInterface;
-use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Region as SsdRegion, Ssd1677};
-use uc8179::{
-    RefreshMode as Uc8179RefreshMode, Region as Uc8179Region, Uc8179,
-    X4_PRO_800X480 as UC8179_X4_PRO,
-};
+use epd_bus::{EpdInterface, Region};
+use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Ssd1677};
+use uc8179::{RefreshMode as Uc8179RefreshMode, Uc8179, X4_PRO_800X480 as UC8179_X4_PRO};
 use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC8279_X4_PRO};
 use xteink_display_probe::Controller;
 
@@ -281,7 +278,7 @@ impl X4Panel {
                         delay,
                         lsb,
                         msb,
-                        SsdRegion::new(damage.x, damage.y, damage.width, damage.height),
+                        Region::new(damage.x, damage.y, damage.width, damage.height),
                         mode,
                         true,
                     )
@@ -301,7 +298,7 @@ impl X4Panel {
                         delay,
                         lsb,
                         msb,
-                        Uc8179Region::new(damage.x, damage.y, damage.width, damage.height),
+                        Region::new(damage.x, damage.y, damage.width, damage.height),
                         mode,
                         power.turn_off(),
                     )
@@ -346,7 +343,7 @@ impl X4Panel {
                     delay,
                     lsb,
                     msb,
-                    SsdRegion::new(damage.x, damage.y, damage.width, damage.height),
+                    Region::new(damage.x, damage.y, damage.width, damage.height),
                     SsdRefreshMode::Fast,
                     true,
                 )
@@ -360,7 +357,7 @@ impl X4Panel {
                     delay,
                     lsb,
                     msb,
-                    Uc8179Region::new(damage.x, damage.y, damage.width, damage.height),
+                    Region::new(damage.x, damage.y, damage.width, damage.height),
                     power.turn_off(),
                 )
                 .await
@@ -444,7 +441,7 @@ where
                     delay,
                     frame,
                     None,
-                    SsdRegion::new(region.x, region.y, region.width, region.height),
+                    Region::new(region.x, region.y, region.width, region.height),
                 )
                 .await
                 .map(|_| ())

@@ -1,7 +1,9 @@
 #![no_std]
 
 use embedded_hal_async::delay::DelayNs;
-use epd_bus::{BusyPolarity, EpdInterface};
+use epd_bus::{BusyPolarity, EpdInterface, grayscale_base_byte, region_has_grayscale};
+
+pub use epd_bus::Region;
 
 use crate::{
     command::Command,
@@ -170,46 +172,6 @@ pub enum RefreshMode {
     Clean,
     /// differential page/UI refresh.
     Fast,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Region {
-    x: u16,
-    y: u16,
-    width: u16,
-    height: u16,
-}
-
-impl Region {
-    pub const fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
-        Self {
-            x,
-            y,
-            width,
-            height,
-        }
-    }
-
-    pub const fn x(self) -> u16 {
-        self.x
-    }
-
-    pub const fn y(self) -> u16 {
-        self.y
-    }
-
-    pub const fn width(self) -> u16 {
-        self.width
-    }
-
-    pub const fn height(self) -> u16 {
-        self.height
-    }
-
-    pub const fn is_empty(self) -> bool {
-        self.width == 0 || self.height == 0
-    }
 }
 
 #[derive(Debug)]
@@ -524,7 +486,7 @@ impl Uc8179 {
         // XTF_PRE_BW_MID.
         self.run_grayscale_precondition(bus, delay, region).await?;
 
-        if self.region_has_grayscale(lsb, msb, region) {
+        if region_has_grayscale(lsb, msb, self.config.width as usize / 8, region) {
             // our framebuffer already uses UC8179's absolute selector encoding:
             // black = 00
             // dark  = 10
@@ -586,7 +548,7 @@ impl Uc8179 {
 
         // a binary-preserving update is valid only if the damaged region itself contains
         // no native Gray4 pixels.
-        if self.region_has_grayscale(lsb, msb, region) {
+        if region_has_grayscale(lsb, msb, self.config.width as usize / 8, region) {
             return self
                 .display_grayscale_window(bus, delay, lsb, msb, region, RefreshMode::Fast, turn_off)
                 .await;
@@ -1143,11 +1105,11 @@ impl Uc8179 {
 
         let stride = self.config.width as usize / 8;
 
-        let first_byte = region.x as usize / 8;
-        let row_bytes = region.width as usize / 8;
+        let first_byte = region.x() as usize / 8;
+        let row_bytes = region.width() as usize / 8;
 
-        debug_assert!(region.x.is_multiple_of(8));
-        debug_assert!(region.width.is_multiple_of(8));
+        debug_assert!(region.x().is_multiple_of(8));
+        debug_assert!(region.width().is_multiple_of(8));
         debug_assert!(row_bytes > 0);
 
         self.enter_partial_window(bus, region).await?;
@@ -1159,8 +1121,8 @@ impl Uc8179 {
         let mut result = Ok(());
         let mut buffer = [0u8; STREAM_BUFFER_LEN];
 
-        let first_row = region.y as usize;
-        let end_row = first_row + region.height as usize;
+        let first_row = region.y() as usize;
+        let end_row = first_row + region.height() as usize;
 
         // UC8179/X4 Pro panel memory order is vertically reversed.
         //
@@ -1355,47 +1317,30 @@ impl Uc8179 {
             .await
     }
 
-    fn region_has_grayscale(&self, lsb: &[u8], msb: &[u8], region: Region) -> bool {
-        let stride = self.config.width as usize / 8;
-        let x_byte = region.x as usize / 8;
-        let row_bytes = region.width as usize / 8;
-
-        for row in 0..region.height as usize {
-            let start = (region.y as usize + row) * stride + x_byte;
-            let end = start + row_bytes;
-
-            if lsb[start..end] != msb[start..end] {
-                return true;
-            }
-        }
-
-        false
-    }
-
     fn normalize_region<E>(&self, region: Region) -> Result<Region, Error<E>> {
         if region.is_empty() {
             return Err(Error::EmptyRegion);
         }
 
-        let right = region.x as u32 + region.width as u32;
-        let bottom = region.y as u32 + region.height as u32;
+        let right = region.x() as u32 + region.width() as u32;
+        let bottom = region.y() as u32 + region.height() as u32;
         if right > self.config.width as u32 || bottom > self.config.visible_height as u32 {
             return Err(Error::RegionOutOfBounds { region });
         }
 
-        let x = region.x & !7;
+        let x = region.x() & !7;
         let right = ((right + 7) & !7).min(self.config.width as u32) as u16;
 
-        Ok(Region::new(x, region.y, right - x, region.height))
+        Ok(Region::new(x, region.y(), right - x, region.height()))
     }
 
     fn partial_window_data(&self, region: Region) -> [u8; 9] {
-        let x_start = region.x;
-        let x_end = region.x + region.width - 1;
+        let x_start = region.x();
+        let x_end = region.x() + region.width() - 1;
 
         // stream_plane() vertically reverses framebuffer rows.
-        let y_start = self.config.visible_height - region.y - region.height;
-        let y_end = y_start + region.height - 1;
+        let y_start = self.config.visible_height - region.y() - region.height();
+        let y_end = y_start + region.height() - 1;
 
         [
             (x_start >> 8) as u8,
@@ -1427,35 +1372,16 @@ impl Uc8179 {
     }
 }
 
-const fn grayscale_base_byte(lsb: u8, msb: u8) -> u8 {
-    lsb & msb
-}
-
 #[cfg(test)]
 const fn region_buffer_len(region: Region) -> usize {
-    region.width as usize * region.height as usize / 8
+    region.width() as usize * region.height() as usize / 8
 }
 
 #[cfg(test)]
 mod tests {
     use crate::region_buffer_len;
 
-    use super::{Error, Region, Uc8179, X4_PRO_800X480, grayscale_base_byte};
-
-    #[test]
-    fn absolute_grayscale_maps_to_expected_bw_base() {
-        // black: 00 -> black base
-        assert_eq!(grayscale_base_byte(0x00, 0x00), 0x00);
-
-        // dark: 10 -> black base
-        assert_eq!(grayscale_base_byte(0xff, 0x00), 0x00);
-
-        // light: 01 -> black base
-        assert_eq!(grayscale_base_byte(0x00, 0xff), 0x00);
-
-        // white: 11 -> white base
-        assert_eq!(grayscale_base_byte(0xff, 0xff), 0xff);
-    }
+    use super::{Error, Region, Uc8179, X4_PRO_800X480};
 
     #[test]
     fn partial_region_is_byte_aligned() {

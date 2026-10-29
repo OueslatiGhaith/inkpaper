@@ -1,7 +1,9 @@
 #![no_std]
 
 use embedded_hal_async::delay::DelayNs;
-use epd_bus::{BusyPolarity, EpdInterface};
+use epd_bus::{BusyPolarity, EpdInterface, grayscale_base_byte, region_has_grayscale};
+
+pub use epd_bus::Region;
 
 use crate::{
     command::Command,
@@ -147,46 +149,6 @@ pub enum RefreshMode {
     Full,
     Clean,
     Fast,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Region {
-    x: u16,
-    y: u16,
-    width: u16,
-    height: u16,
-}
-
-impl Region {
-    pub const fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
-        Self {
-            x,
-            y,
-            width,
-            height,
-        }
-    }
-
-    pub const fn x(self) -> u16 {
-        self.x
-    }
-
-    pub const fn y(self) -> u16 {
-        self.y
-    }
-
-    pub const fn width(self) -> u16 {
-        self.width
-    }
-
-    pub const fn height(self) -> u16 {
-        self.height
-    }
-
-    pub const fn is_empty(self) -> bool {
-        self.width == 0 || self.height == 0
-    }
 }
 
 #[derive(Debug)]
@@ -436,7 +398,7 @@ impl Ssd1677 {
         // produced its final result.
         // existing grayscale elsewhere on the physical panel is untouched because
         // the base update was windowed.
-        if self.region_has_grayscale(lsb, msb, base_region) {
+        if region_has_grayscale(lsb, msb, self.config.width as usize / 8, base_region) {
             self.write_overlay_masks(bus, lsb, msb, base_region).await?;
 
             self.activate_grayscale(bus, delay, &OVERLAY_GRAYSCALE_LUT, OVERLAY_GRAYSCALE_BORDER)
@@ -641,12 +603,12 @@ impl Ssd1677 {
     where
         B: EpdInterface,
     {
-        let x_start = region.x;
-        let x_end = region.x + region.width - 1;
+        let x_start = region.x();
+        let x_end = region.x() + region.width() - 1;
 
         // the panel gate order is physically reserved
-        let controller_y = self.config.height - region.y - region.height;
-        let y_start = controller_y + region.height - 1;
+        let controller_y = self.config.height - region.y() - region.height();
+        let y_start = controller_y + region.height() - 1;
         let y_end = controller_y;
 
         self.command_data(
@@ -785,16 +747,16 @@ impl Ssd1677 {
             return Err(Error::EmptyRegion);
         }
 
-        let right = region.x as u32 + region.width as u32;
-        let bottom = region.y as u32 + region.height as u32;
+        let right = region.x() as u32 + region.width() as u32;
+        let bottom = region.y() as u32 + region.height() as u32;
         if right > self.config.width as u32 || bottom > self.config.height as u32 {
             return Err(Error::RegionOutOfBounds { region });
         }
 
-        let x = region.x & !7;
+        let x = region.x() & !7;
         let right = ((right + 7) & !7).min(self.config.width as u32) as u16;
 
-        Ok(Region::new(x, region.y, right - x, region.height))
+        Ok(Region::new(x, region.y(), right - x, region.height()))
     }
 
     async fn write_window_plane<B>(
@@ -808,13 +770,13 @@ impl Ssd1677 {
         B: EpdInterface,
     {
         let framebuffer_stride = self.config.width as usize / 8;
-        let x_byte = region.x as usize / 8;
-        let row_bytes = region.width as usize / 8;
+        let x_byte = region.x() as usize / 8;
+        let row_bytes = region.width() as usize / 8;
 
         self.command(bus, command).await?;
 
-        for row in 0..region.height as usize {
-            let framebuffer_y = region.y as usize + row;
+        for row in 0..region.height() as usize {
+            let framebuffer_y = region.y() as usize + row;
             let start = framebuffer_y * framebuffer_stride + x_byte;
             let end = start + row_bytes;
 
@@ -1050,16 +1012,16 @@ impl Ssd1677 {
     {
         let stride = self.config.width as usize / 8;
 
-        let x_byte = region.x as usize / 8;
+        let x_byte = region.x() as usize / 8;
 
-        let row_bytes = region.width as usize / 8;
+        let row_bytes = region.width() as usize / 8;
 
         self.command(bus, command).await?;
 
         let mut buffer = [0u8; GRAYSCALE_STREAM_CHUNK];
 
-        for row in 0..region.height as usize {
-            let start = (region.y as usize + row) * stride + x_byte;
+        for row in 0..region.height() as usize {
+            let start = (region.y() as usize + row) * stride + x_byte;
 
             let mut offset = 0;
 
@@ -1095,11 +1057,11 @@ impl Ssd1677 {
     {
         let stride = self.config.width as usize / 8;
 
-        let x_start = region.x as usize / 8;
-        let x_end = x_start + region.width as usize / 8;
+        let x_start = region.x() as usize / 8;
+        let x_end = x_start + region.width() as usize / 8;
 
-        let y_start = region.y as usize;
-        let y_end = y_start + region.height as usize;
+        let y_start = region.y() as usize;
+        let y_end = y_start + region.height() as usize;
 
         self.command(bus, command).await?;
 
@@ -1194,29 +1156,6 @@ impl Ssd1677 {
         self.write_transformed_plane(bus, Command::WriteRedRam, lsb, msb, grayscale_base_byte)
             .await
     }
-
-    fn region_has_grayscale(&self, lsb: &[u8], msb: &[u8], region: Region) -> bool {
-        let stride = self.config.width as usize / 8;
-
-        let x_byte = region.x as usize / 8;
-
-        let row_bytes = region.width as usize / 8;
-
-        for row in 0..region.height as usize {
-            let start = (region.y as usize + row) * stride + x_byte;
-            let end = start + row_bytes;
-
-            if lsb[start..end] != msb[start..end] {
-                return true;
-            }
-        }
-
-        false
-    }
-}
-
-fn grayscale_base_byte(lsb: u8, msb: u8) -> u8 {
-    lsb & msb
 }
 
 fn overlay_lsb_byte(lsb: u8, msb: u8) -> u8 {

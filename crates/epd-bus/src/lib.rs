@@ -4,6 +4,10 @@ use embassy_futures::select::{Either, select};
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiBus};
 
+mod frame;
+
+pub use frame::{Region, grayscale_base_byte, region_has_grayscale};
+
 /// longest a BUSY wait may last before the panel is treated as stuck.
 ///
 /// a cold full refresh takes a few seconds; this matches crosspoint's bound
