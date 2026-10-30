@@ -12,6 +12,10 @@ struct PerformanceCapture {
     overwritten: u64,
     metric_dropped: u64,
     incomplete_frames: usize,
+
+    /// renders whose damage came out empty, so they painted and presented nothing
+    unpainted_renders: usize,
+    unpainted_render_cycles: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -395,31 +399,50 @@ fn build_performance_capture(captures: &[Capture]) -> Result<PerformanceCapture>
     let mut overwritten = 0u64;
     let mut metric_dropped = 0u64;
 
+    let mut unpainted_renders = 0usize;
+    let mut unpainted_render_cycles = 0u64;
+
     for capture in captures {
         overwritten = overwritten.saturating_add(capture.overwritten);
 
         metric_dropped = metric_dropped.saturating_add(u64::from(capture.metric_dropped));
 
-        if let Some((render_span, render_callsite)) =
-            find_unique_span(capture, "ui.render", "render")?
-        {
+        // a render that paints nothing doesn't capture the trace, so the renders
+        // before a painted one share its capture
+        let mut painted = None;
+
+        for (render_span, render_callsite) in spans_named(capture, "ui.render", "render")? {
+            if render_phase(capture, render_span, "paint")?.is_none() {
+                unpainted_renders += 1;
+                unpainted_render_cycles =
+                    unpainted_render_cycles.saturating_add(render_span.duration_cycles);
+                continue;
+            }
+
+            if painted.replace((render_span, render_callsite)).is_some() {
+                bail!(
+                    "capture {} contains more than one painted render",
+                    capture.capture_id,
+                );
+            }
+        }
+
+        if let Some((render_span, render_callsite)) = painted {
             let frame_id = span_u32_field(render_callsite, render_span, "frame")?;
+            let phase = |name| render_phase(capture, render_span, name);
 
             let render = RenderFrame {
                 render: render_span.duration_cycles,
 
-                rebuild: span_duration(capture, "ui.render", "rebuild")?.unwrap_or(0),
+                rebuild: phase("rebuild")?.unwrap_or(0),
 
-                layout: span_duration(capture, "ui.render", "layout")?.unwrap_or(0),
+                layout: phase("layout")?.unwrap_or(0),
 
-                clear: span_duration(capture, "ui.render", "clear")?
-                    .context("render capture is missing ui.render/clear span")?,
+                clear: phase("clear")?.context("render is missing ui.render/clear span")?,
 
-                paint: span_duration(capture, "ui.render", "paint")?
-                    .context("render capture is missing ui.render/paint span")?,
+                paint: phase("paint")?.context("render is missing ui.render/paint span")?,
 
-                damage: span_duration(capture, "ui.render", "damage")?
-                    .context("render capture is missing ui.render/damage span")?,
+                damage: phase("damage")?.context("render is missing ui.render/damage span")?,
 
                 framebuffer_pixels: gauge_value(capture, "ui.coverage", "framebuffer_pixels")?,
 
@@ -530,6 +553,8 @@ fn build_performance_capture(captures: &[Capture]) -> Result<PerformanceCapture>
         overwritten,
         metric_dropped,
         incomplete_frames,
+        unpainted_renders,
+        unpainted_render_cycles,
     })
 }
 
@@ -570,8 +595,22 @@ fn gauge_value(capture: &Capture, target: &str, name: &str) -> Result<u64> {
     })
 }
 
-fn span_duration(capture: &Capture, target: &str, name: &str) -> Result<Option<u64>> {
-    Ok(find_unique_span(capture, target, name)?.map(|(span, _)| span.duration_cycles))
+/// the `ui.render` span called `name` that started during `render`
+fn render_phase(capture: &Capture, render: &Span, name: &str) -> Result<Option<u64>> {
+    let during = render.start_cycles..=render.start_cycles.saturating_add(render.duration_cycles);
+    let mut phases = spans_named(capture, "ui.render", name)?
+        .into_iter()
+        .filter(|(span, _)| during.contains(&span.start_cycles));
+
+    let found = phases.next();
+    if phases.next().is_some() {
+        bail!(
+            "capture {} contains multiple ui.render/{name} spans in one render",
+            capture.capture_id,
+        );
+    }
+
+    Ok(found.map(|(span, _)| span.duration_cycles))
 }
 
 fn find_unique_span<'a>(
@@ -579,7 +618,25 @@ fn find_unique_span<'a>(
     target: &str,
     name: &str,
 ) -> Result<Option<(&'a Span, &'a Callsite)>> {
-    let mut found = None;
+    let mut spans = spans_named(capture, target, name)?.into_iter();
+
+    let found = spans.next();
+    if spans.next().is_some() {
+        bail!(
+            "capture {} contains multiple {target}/{name} spans",
+            capture.capture_id,
+        );
+    }
+
+    Ok(found)
+}
+
+fn spans_named<'a>(
+    capture: &'a Capture,
+    target: &str,
+    name: &str,
+) -> Result<Vec<(&'a Span, &'a Callsite)>> {
+    let mut found = Vec::new();
 
     for span in &capture.spans {
         let callsite = capture.callsites.get(&span.callsite_id).with_context(|| {
@@ -589,18 +646,9 @@ fn find_unique_span<'a>(
             )
         })?;
 
-        if callsite.target != target || callsite.name != name {
-            continue;
+        if callsite.target == target && callsite.name == name {
+            found.push((span, callsite));
         }
-
-        if found.is_some() {
-            bail!(
-                "capture {} contains multiple {target}/{name} spans",
-                capture.capture_id,
-            );
-        }
-
-        found = Some((span, callsite));
     }
 
     Ok(found)
@@ -717,6 +765,14 @@ fn print_health_warnings(label: Option<&str>, capture: &PerformanceCapture) {
         println!(
             "warning: {prefix}ignored {} incomplete frame(s)",
             capture.incomplete_frames,
+        );
+    }
+
+    if capture.unpainted_renders != 0 {
+        println!(
+            "note: {prefix}{} render(s) painted nothing, taking {:.1}ms",
+            capture.unpainted_renders,
+            cycles_ms(capture.unpainted_render_cycles, capture.hz),
         );
     }
 }
@@ -846,6 +902,37 @@ mod tests {
     }
 
     #[test]
+    fn renders_that_paint_nothing_share_the_next_renders_capture() {
+        // frame 0 found no damage after its layout, so it neither painted nor
+        // captured the trace
+        let log = performance_log()
+            .replace("spans=6", "spans=9")
+            .replace(
+                "1.007 INFO trace/v4 span id=1",
+                indoc! {r#"
+                    1.007 INFO trace/v4 span id=1 kind=sync depth=1 start=110 cycles=50 values=0
+                    1.007 INFO trace/v4 span id=2 kind=sync depth=1 start=170 cycles=200 values=0
+                    1.007 INFO trace/v4 span id=0 kind=sync depth=0 start=100 cycles=300 values=1 u:0
+                    1.007 INFO trace/v4 span id=1"#},
+            );
+        let captures = parse_captures(&log).unwrap();
+
+        let performance = build_performance_capture(&captures).unwrap();
+
+        assert_eq!(performance.frames.len(), 1);
+
+        let frame = &performance.frames[0];
+        assert_eq!(frame.id, 1);
+        assert_eq!(frame.render_cycles(), 1_500);
+        assert_eq!(frame.rebuild, 100);
+        assert_eq!(frame.layout, 200);
+
+        assert_eq!(performance.unpainted_renders, 1);
+        assert_eq!(performance.unpainted_render_cycles, 300);
+        assert_eq!(performance.incomplete_frames, 0);
+    }
+
+    #[test]
     fn workload_signature_detects_changed_output() {
         let captures = parse_captures(performance_log()).unwrap();
 
@@ -861,5 +948,4 @@ mod tests {
 
         assert_ne!(before.signature(), after.signature());
     }
-
 }
