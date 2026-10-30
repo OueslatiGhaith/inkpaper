@@ -10,7 +10,7 @@ mod measure;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::boxes::{BorderBox, ContentBox, PaddingBox};
+pub(crate) use self::boxes::{BorderBox, ContainingBlock, PaddingBox};
 
 pub trait TextMeasurer {
     /// the size of `text` laid out within `available_width`, at whatever height its
@@ -184,9 +184,11 @@ fn absolute_axis_available(
     .non_negative()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn absolute_axis_origin(
     containing_start: Pixels,
     containing_size: Pixels,
+    content_start: Pixels,
     child_size: Pixels,
     start: Option<Pixels>,
     end: Option<Pixels>,
@@ -201,7 +203,7 @@ fn absolute_axis_origin(
     } else if let Some(end) = end {
         containing_start + containing_size - end - margin_end - child_size
     } else {
-        containing_start + margin_start
+        content_start + margin_start
     }
 }
 

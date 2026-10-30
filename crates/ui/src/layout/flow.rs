@@ -14,7 +14,7 @@ impl<F: FrameStorage> FrameArena<F> {
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         let measured = self.measure_node(node, AvailableSize::definite(available), text_measurer);
-        let initial_containing_block = ContentBox::viewport(Rect::new(origin, available));
+        let initial_containing_block = ContainingBlock::viewport(Rect::new(origin, available));
         let subtree_bounds = self.layout_node_with_size(
             node,
             origin,
@@ -36,7 +36,7 @@ impl<F: FrameStorage> FrameArena<F> {
         style: Style,
         origin: Point,
         outer_size: Size,
-        containing_block: ContentBox,
+        containing_block: ContainingBlock,
         text_measurer: &dyn TextMeasurer,
         mut subtree_bounds: Rect,
     ) -> Rect {
@@ -240,7 +240,7 @@ impl<F: FrameStorage> FrameArena<F> {
     fn layout_absolute_child(
         &mut self,
         child: NodeId,
-        containing_block: ContentBox,
+        containing_block: ContainingBlock,
         text_measurer: &dyn TextMeasurer,
     ) -> Rect {
         let style = self
@@ -248,16 +248,18 @@ impl<F: FrameStorage> FrameArena<F> {
             .expect("absolute node must resolve to a styled element");
 
         let margin = self.node_margin(child);
+        let padding_box = containing_block.padding_box();
+        let content_start = containing_block.content_start();
 
         let horizontal_available = absolute_axis_available(
-            containing_block.rect().width(),
+            padding_box.width(),
             style.inset.left,
             style.inset.right,
             margin.left,
             margin.right,
         );
         let vertical_available = absolute_axis_available(
-            containing_block.rect().height(),
+            padding_box.height(),
             style.inset.top,
             style.inset.bottom,
             margin.top,
@@ -293,8 +295,9 @@ impl<F: FrameStorage> FrameArena<F> {
 
         let child_origin = Point::new(
             absolute_axis_origin(
-                containing_block.rect().x(),
-                containing_block.rect().width(),
+                padding_box.x(),
+                padding_box.width(),
+                content_start.x,
                 child_size.width,
                 style.inset.left,
                 style.inset.right,
@@ -302,8 +305,9 @@ impl<F: FrameStorage> FrameArena<F> {
                 margin.right,
             ),
             absolute_axis_origin(
-                containing_block.rect().y(),
-                containing_block.rect().height(),
+                padding_box.y(),
+                padding_box.height(),
+                content_start.y,
                 child_size.height,
                 style.inset.top,
                 style.inset.bottom,
@@ -323,7 +327,7 @@ impl<F: FrameStorage> FrameArena<F> {
     fn layout_absolute_children(
         &mut self,
         parent: NodeId,
-        containing_block: ContentBox,
+        containing_block: ContainingBlock,
         children_clip: Option<Rect>,
         text_measurer: &dyn TextMeasurer,
         mut subtree_bounds: Rect,
@@ -370,7 +374,7 @@ impl<F: FrameStorage> FrameArena<F> {
         node: NodeId,
         origin: Point,
         size: Size,
-        containing_block: ContentBox,
+        containing_block: ContainingBlock,
         text_measurer: &dyn TextMeasurer,
     ) -> Rect {
         count_metric!(self, nodes_laid_out);
@@ -446,7 +450,7 @@ impl<F: FrameStorage> FrameArena<F> {
                 let descendant_containing_block = match style.position {
                     Position::Static => containing_block,
                     Position::Relative | Position::Absolute => {
-                        BorderBox::new(Rect::new(positioned_origin, size)).content_box(style)
+                        BorderBox::new(Rect::new(positioned_origin, size)).containing_block(style)
                     }
                 };
 

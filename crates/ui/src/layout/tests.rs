@@ -1298,7 +1298,7 @@ fn absolute_child_does_not_contribute_to_auto_parent_size() {
 }
 
 #[test]
-fn absolute_child_uses_positioned_ancestor_content_box() {
+fn absolute_child_insets_measure_from_positioned_ancestor_padding_box() {
     let measurer = TestTextMeasurer::new(8, 10);
     let mut frame = FrameArena::<TestFrame<16, 128>>::default();
     let globals = TestGlobalArena::<0, 0>::default();
@@ -1321,14 +1321,43 @@ fn absolute_child_uses_positioned_ancestor_content_box() {
 
     let child = frame.node(root).first_child.unwrap();
 
-    // root content box:
-    //   origin = 2 border + 10 padding = (12, 12)
-    //   width  = 100 - 4 border - 20 padding = 76
-    //   height = 80  - 4 border - 20 padding = 56
+    // root padding box:
+    //   origin = 2 border = (2, 2)
+    //   width  = 100 - 4 border = 96
+    //   height = 80  - 4 border = 76
     //
-    // right: 4 => x = 12 + 76 - 4 - 20 = 64
-    // top:   3 => y = 12 + 3 = 15
-    assert_bounds(frame.bounds(child), 64, 15, 20, 10);
+    // right: 4 => x = 2 + 96 - 4 - 20 = 74
+    // top:   3 => y = 2 + 3 = 5
+    assert_bounds(frame.bounds(child), 74, 5, 20, 10);
+}
+
+#[test]
+fn absolute_child_without_insets_starts_at_positioned_ancestor_content() {
+    let measurer = TestTextMeasurer::new(8, 10);
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
+    let cx = AppContext::from_globals(&globals);
+
+    let root = frame
+        .mount(
+            div()
+                .relative()
+                .w(px(100))
+                .h(px(80))
+                .border(px(2))
+                .p(px(10))
+                .child(div().absolute().left(px(3)).w(px(20)).h(px(10))),
+            cx,
+        )
+        .unwrap();
+
+    frame.layout(root, Size::new(px(100), px(80)), &measurer);
+
+    let child = frame.node(root).first_child.unwrap();
+
+    // left: 3 => x = 2 border + 3 = 5
+    // no vertical inset => y = 2 border + 10 padding = 12, where it would sit in flow
+    assert_bounds(frame.bounds(child), 5, 12, 20, 10);
 }
 
 #[test]

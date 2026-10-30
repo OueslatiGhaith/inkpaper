@@ -40,6 +40,14 @@ impl BorderBox {
             content_size(style, self.0.size),
         ))
     }
+
+    /// where a positioned node with `style` places its absolute descendants
+    pub(crate) fn containing_block(self, style: Style) -> ContainingBlock {
+        ContainingBlock {
+            padding: self.padding_box(Some(style)),
+            content: self.content_box(style),
+        }
+    }
 }
 
 impl PaddingBox {
@@ -49,13 +57,35 @@ impl PaddingBox {
 }
 
 impl ContentBox {
-    /// the root lays out in the viewport as if it were a parent's content box
-    pub(crate) const fn viewport(viewport: Rect) -> Self {
-        Self(viewport)
-    }
-
     pub(crate) const fn rect(self) -> Rect {
         self.0
+    }
+}
+
+/// where absolute descendants are placed. Their insets measure from the positioned
+/// ancestor's padding box, and along an axis without insets they start where its
+/// content does, about where they would sit in flow
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ContainingBlock {
+    padding: PaddingBox,
+    content: ContentBox,
+}
+
+impl ContainingBlock {
+    /// the root's absolute descendants are placed in the viewport
+    pub(crate) const fn viewport(viewport: Rect) -> Self {
+        Self {
+            padding: PaddingBox(viewport),
+            content: ContentBox(viewport),
+        }
+    }
+
+    pub(crate) const fn padding_box(self) -> Rect {
+        self.padding.0
+    }
+
+    pub(crate) const fn content_start(self) -> Point {
+        self.content.0.origin
     }
 }
 
