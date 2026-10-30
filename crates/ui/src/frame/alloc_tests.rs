@@ -156,16 +156,24 @@ fn growing_storage_respects_node_and_binding_id_limits() {
     let event = TypeId::of::<ActivateEvent>();
     let callback = CallbackId::new(0, 0);
 
-    for _ in 0..=u16::MAX {
+    // one node holds at most u16::MAX bindings, so another takes the last id
+    let other = NodeId::new(1);
+    for _ in 0..u16::MAX {
         frame.bind_event(root, event, callback).unwrap();
     }
-
     assert_eq!(
         frame.bind_event(root, event, callback),
         Err(MountError::EventBindingsFull)
     );
+    frame.bind_event(other, event, callback).unwrap();
+
+    assert_eq!(
+        frame.bind_event(other, event, callback),
+        Err(MountError::EventBindingsFull)
+    );
     assert_eq!(
         frame.event_callbacks(root, event).count(),
-        usize::from(u16::MAX) + 1
+        usize::from(u16::MAX)
     );
+    assert_eq!(frame.event_callbacks(other, event).count(), 1);
 }

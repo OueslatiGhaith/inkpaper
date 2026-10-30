@@ -3,7 +3,7 @@
 //!
 //! the frame arena only appends, so a re-rendered entity's new subtree goes at the end
 //! and its entity node points at it. The old subtree stays in the arena as detached
-//! nodes until the next full rebuild clears the frame. Each entity's subtree was always
+//! nodes until the frame compacts after the rebuild. Each entity's subtree was always
 //! mounted apart from its parent's, so swapping subtrees at entity nodes keeps the
 //! sibling order that paint relies on.
 
@@ -17,6 +17,7 @@ use crate::{
 
 impl<F: FrameStorage> FrameArena<F> {
     /// how many nodes previous partial rebuilds left behind
+    #[cfg(test)]
     pub(crate) fn detached_node_count(&self) -> usize {
         self.detached_nodes
     }

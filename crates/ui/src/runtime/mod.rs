@@ -207,8 +207,8 @@ where
     }
 
     /// renders the frame again. With partial rebuilds on, only the entities that need
-    /// to render do, unless every entity needs to or the frame holds too many detached
-    /// nodes. A partial rebuild that fails falls back to a full one
+    /// to render do, unless every entity needs to. A partial rebuild that fails falls
+    /// back to a full one
     pub fn rebuild(&mut self) -> Result<(), FrameBuildError> {
         if self.can_rebuild_partially() && self.rebuild_partially().is_ok() {
             return Ok(());
@@ -223,8 +223,6 @@ where
             && !self.all_dirty.get()
             && !self.full_rebuild_pending.get()
             && self.entities.has_pending_render()
-            // detached nodes are only reclaimed by a full rebuild
-            && self.frame.detached_node_count() <= self.frame.node_count() / 2
             // element state ids would alias once the frame generation wraps
             && self.frame_generation < u32::MAX
     }
@@ -265,6 +263,9 @@ where
 
             return Err(error);
         }
+
+        // the next rebuild has the room the old subtrees took
+        self.root = Some(self.frame.compact(root));
 
         let stale = self.frame.stale_entities();
         for &entity in stale {

@@ -1,13 +1,14 @@
 use crate::{
     CanvasDraw, CanvasStyle, DamageRegion, ElementId, EntityAccessError, EntityId, EntityRenderFn,
-    EventBinding, EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size,
-    Style, StylePatch, SvgSource, SvgStyle, TextStyle, element::state::ElementStateId,
+    EventBinding, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size, Style,
+    StylePatch, SvgSource, SvgStyle, TextStyle, element::state::ElementStateId,
     frame::storage::FrameBuffer, interaction::scroll::ScrollAxes, layout::AvailableSize,
     storage::FrameStorage,
 };
 #[cfg(feature = "metrics")]
 use crate::{PerformanceMetrics, PerformanceMetricsCell};
 
+mod compact;
 mod mount;
 mod rerender;
 mod resolve;
@@ -85,8 +86,7 @@ pub(crate) struct Node {
     pub(crate) layout: NodeLayout,
     pub(crate) text_style: TextStyle,
     pub(crate) effective_text_style: ResolvedTextStyle,
-    pub(crate) first_event_binding: Option<EventBindingId>,
-    pub(crate) last_event_binding: Option<EventBindingId>,
+    pub(crate) event_bindings: BindingRun,
     /// left behind by a partial rebuild. Detached nodes keep their links, but are no
     /// longer in the tree, so passes over the whole arena skip them
     pub(crate) detached: bool,
@@ -106,10 +106,26 @@ impl Node {
             layout: NodeLayout::default(),
             text_style: TextStyle::default(),
             effective_text_style: ResolvedTextStyle::default(),
-            first_event_binding: None,
-            last_event_binding: None,
+            event_bindings: BindingRun::EMPTY,
             detached: false,
         }
+    }
+}
+
+/// where a node's event bindings sit in the frame's binding table
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BindingRun {
+    start: u16,
+    len: u16,
+}
+
+impl BindingRun {
+    const EMPTY: Self = Self { start: 0, len: 0 };
+
+    fn range(self) -> core::ops::Range<usize> {
+        let start = usize::from(self.start);
+
+        start..start + usize::from(self.len)
     }
 }
 
@@ -178,6 +194,8 @@ enum NodeCache {
     Empty,
     Measurement(MeasurementCache),
     SubtreePaintBounds(Rect),
+    /// while the frame compacts, where a live node moves
+    MovedTo(NodeId),
 }
 
 pub(crate) struct FrameArena<F: FrameStorage> {
@@ -204,7 +222,9 @@ pub(crate) struct FrameArena<F: FrameStorage> {
     pub(crate) event_bindings: FrameBuffer<EventBinding, F::Nodes<EventBinding>>,
     text: FrameBuffer<u8, F::Text>,
     node_cache: FrameBuffer<NodeCache, F::Nodes<NodeCache>>,
-    interaction_styles: FrameBuffer<InteractionStyles, F::InteractionStyles<InteractionStyles>>,
+    /// each with the node it belongs to
+    interaction_styles:
+        FrameBuffer<(NodeId, InteractionStyles), F::InteractionStyles<(NodeId, InteractionStyles)>>,
     /// the elements whose interaction styles apply
     focused: Option<ElementStateId>,
     pressed: Option<ElementStateId>,
@@ -326,7 +346,7 @@ impl<F: FrameStorage> FrameArena<F> {
             return Some(style);
         };
 
-        let styles = &self.interaction_styles[usize::from(index)];
+        let (_, styles) = &self.interaction_styles[usize::from(index)];
         let mut style = style;
         if self.focused == Some(element) {
             style = styles.focused.apply(style);
@@ -349,7 +369,7 @@ impl<F: FrameStorage> FrameArena<F> {
 
         node.interaction
             .styles
-            .map(|index| &self.interaction_styles[usize::from(index)])
+            .map(|index| &self.interaction_styles[usize::from(index)].1)
     }
 
     pub(crate) fn text(&self, range: TextRange) -> &str {
@@ -464,7 +484,7 @@ impl<F: FrameStorage> FrameArena<F> {
 
         match self.node_cache[node.index()] {
             NodeCache::SubtreePaintBounds(bounds) => Some(bounds),
-            NodeCache::Empty | NodeCache::Measurement(_) => None,
+            NodeCache::Empty | NodeCache::Measurement(_) | NodeCache::MovedTo(_) => None,
         }
     }
 

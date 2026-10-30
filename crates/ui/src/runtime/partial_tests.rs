@@ -44,6 +44,7 @@ impl Render for Label {
         div()
             .id(self.text)
             .bg(Color::rgb(200, 200, 200))
+            .when_focused(|style| style.bg(Color::BLACK))
             .on_activate(activate)
             .child(self.text)
             .child(Badge)
@@ -202,6 +203,17 @@ impl Fixture {
 
         outline
     }
+
+    /// every node's style in tree order, with focused styles applied
+    fn styles(&self) -> Vec<Option<Style>> {
+        let frame = self.runtime.frame();
+
+        core::iter::successors(self.runtime.root_node(), |&node| {
+            frame.next_depth_first_node(node)
+        })
+        .map(|node| frame.style(node))
+        .collect()
+    }
 }
 
 #[test]
@@ -266,7 +278,20 @@ fn partial_rebuild_matches_a_full_rebuild() {
     }
 
     assert_eq!(partial.outline(), full.outline());
-    assert!(partial.runtime.frame().detached_node_count() > 0);
+    // the partial rebuilds' leftovers were reclaimed
+    let (partial_frame, full_frame) = (partial.runtime.frame(), full.runtime.frame());
+    assert_eq!(partial_frame.detached_node_count(), 0);
+    assert_eq!(partial_frame.node_count(), full_frame.node_count());
+    assert_eq!(
+        partial_frame.text_bytes_used(),
+        full_frame.text_bytes_used()
+    );
+
+    for fixture in [&mut partial, &mut full] {
+        fixture.runtime.clear_focus();
+        assert!(fixture.runtime.focus_next());
+    }
+    assert_eq!(partial.styles(), full.styles());
 }
 
 #[test]
@@ -539,27 +564,30 @@ fn a_render_forgets_what_it_no_longer_reads() {
 }
 
 #[test]
-fn many_detached_nodes_lead_to_a_full_rebuild() {
+fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
     let mut fixture = fixture(true);
+    let frame = fixture.runtime.frame();
+    let (nodes, text) = (frame.node_count(), frame.text_bytes_used());
 
-    // each shell render detaches its div and two entity nodes. Once more than half the
-    // frame is detached, the next rebuild is full and renders the labels too
-    let mut partial_rebuilds = 0;
-    loop {
+    for _ in 0..50 {
+        fixture.notify(fixture.first);
+        fixture.present();
         fixture.notify(fixture.shell);
         fixture.present();
-
-        let frame = fixture.runtime.frame();
-        if frame.detached_node_count() == 0 {
-            break;
-        }
-
-        assert!(frame.detached_node_count() * 2 <= frame.node_count() + 6);
-        partial_rebuilds += 1;
     }
 
-    assert!(partial_rebuilds > 1);
-    assert_eq!(fixture.label(fixture.first).0, 2);
+    // no rebuild fell back to a full one, which would render the second label again
+    assert_eq!(fixture.shell_renders(), 51);
+    assert_eq!(fixture.label(fixture.second).0, 1);
+
+    let frame = fixture.runtime.frame();
+    assert_eq!((frame.node_count(), frame.text_bytes_used()), (nodes, text));
+
+    // the moved event bindings still reach both labels
+    assert!(fixture.activate(0));
+    assert!(fixture.activate(1));
+    assert_eq!(fixture.label(fixture.first), (51, 1));
+    assert_eq!(fixture.label(fixture.second), (1, 1));
 }
 
 const WIDTH: i32 = 80;
@@ -760,6 +788,21 @@ fn partial_rebuild_damages_only_the_rerendered_entity() {
     assert!(!damage.is_full());
     // the second label sits below the first, which needs no paint
     assert_eq!(damage.partial_damage_bounds().y(), px(10));
+    assert!(raster.cells == fixture.repaint().cells);
+}
+
+#[test]
+fn rendering_one_entity_many_times_keeps_its_damage_partial() {
+    let (mut fixture, mut raster) = painted_fixture();
+
+    for text in ["latest", "newest"].into_iter().cycle().take(20) {
+        set_text(&fixture, fixture.second, text);
+        let damage = fixture.present_damage(&mut raster);
+
+        assert!(!damage.is_full());
+        assert_eq!(damage.partial_damage_bounds().y(), px(10));
+    }
+
     assert!(raster.cells == fixture.repaint().cells);
 }
 

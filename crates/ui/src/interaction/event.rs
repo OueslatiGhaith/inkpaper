@@ -50,24 +50,12 @@ impl EventTarget {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct EventBindingId(u16);
-
-impl EventBindingId {
-    pub(crate) const fn new(index: u16) -> Self {
-        Self(index)
-    }
-
-    pub(crate) const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EventBinding {
     pub(crate) event_type: TypeId,
     pub(crate) callback: CallbackId,
-    pub(crate) next: Option<EventBindingId>,
+    /// the node it's bound to. A node's bindings sit next to each other
+    pub(crate) node: NodeId,
 }
 
 pub struct OnEvent<E, Event> {
@@ -153,20 +141,15 @@ where
 }
 
 pub(crate) struct EventCallbacks<'a> {
-    bindings: &'a [EventBinding],
-    next: Option<EventBindingId>,
+    /// one node's bindings
+    bindings: core::slice::Iter<'a, EventBinding>,
     event_type: TypeId,
 }
 
 impl<'a> EventCallbacks<'a> {
-    pub(crate) const fn new(
-        bindings: &'a [EventBinding],
-        first: Option<EventBindingId>,
-        event_type: TypeId,
-    ) -> Self {
+    pub(crate) fn new(bindings: &'a [EventBinding], event_type: TypeId) -> Self {
         Self {
-            bindings,
-            next: first,
+            bindings: bindings.iter(),
             event_type,
         }
     }
@@ -176,14 +159,10 @@ impl Iterator for EventCallbacks<'_> {
     type Item = CallbackId;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(id) = self.next {
-            let binding = &self.bindings[id.index()];
-            self.next = binding.next;
-            if binding.event_type == self.event_type {
-                return Some(binding.callback);
-            }
-        }
+        let event_type = self.event_type;
 
-        None
+        self.bindings
+            .find(|binding| binding.event_type == event_type)
+            .map(|binding| binding.callback)
     }
 }

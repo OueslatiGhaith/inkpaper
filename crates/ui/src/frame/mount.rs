@@ -1,11 +1,11 @@
 use core::any::TypeId;
 
-use super::{FrameArena, InteractionStyles, MountError, NodeId, NodeKind, TextRange};
+use super::{BindingRun, FrameArena, InteractionStyles, MountError, NodeId, NodeKind, TextRange};
 
 use crate::{
     AppContext, CanvasDraw, CanvasStyle, Element, ElementId, EntityId, EntityRenderFn,
-    EventBinding, EventBindingId, EventCallbacks, ImageSource, ImageStyle, IntoElement, Node,
-    RuntimeCx, StatefulInteractivity, Style, SvgSource, SvgStyle, TextStyle, callback::CallbackId,
+    EventBinding, EventCallbacks, ImageSource, ImageStyle, IntoElement, Node, RuntimeCx,
+    StatefulInteractivity, Style, SvgSource, SvgStyle, TextStyle, callback::CallbackId,
     count_metric, frame::NodeCache, storage::FrameStorage,
 };
 
@@ -61,32 +61,35 @@ impl<F: FrameStorage> FrameArena<F> {
     ) -> Result<(), MountError> {
         let index =
             u16::try_from(self.event_bindings.len()).map_err(|_| MountError::EventBindingsFull)?;
-        let binding_id = EventBindingId::new(index);
+        let run = self.nodes[node.index()].event_bindings;
+        let len = run
+            .len
+            .checked_add(1)
+            .ok_or(MountError::EventBindingsFull)?;
+        // event wrappers bind right after the element they wrap mounts, so nothing binds
+        // between one node's bindings
+        debug_assert!(
+            run.len == 0 || run.range().end == usize::from(index),
+            "a node's event bindings must be contiguous"
+        );
 
         self.event_bindings.push(
             EventBinding {
                 event_type,
                 callback,
-                next: None,
+                node,
             },
             MountError::EventBindingsFull,
         )?;
 
-        let node_index = node.index();
-
-        match self.nodes[node_index].last_event_binding {
-            Some(previous) => self.event_bindings[previous.index()].next = Some(binding_id),
-            None => self.nodes[node_index].first_event_binding = Some(binding_id),
-        }
-
-        self.nodes[node_index].last_event_binding = Some(binding_id);
+        let start = if run.len == 0 { index } else { run.start };
+        self.nodes[node.index()].event_bindings = BindingRun { start, len };
 
         Ok(())
     }
     pub(crate) fn event_callbacks(&self, node: NodeId, event_type: TypeId) -> EventCallbacks<'_> {
         EventCallbacks::new(
-            &self.event_bindings,
-            self.node(node).first_event_binding,
+            &self.event_bindings[self.node(node).event_bindings.range()],
             event_type,
         )
     }
@@ -250,14 +253,14 @@ impl<F: FrameStorage> FrameStore for FrameArena<F> {
         if !styles.is_empty() {
             match self.nodes[node.index()].interaction.styles {
                 Some(index) => {
-                    let existing = &mut self.interaction_styles[usize::from(index)];
+                    let (_, existing) = &mut self.interaction_styles[usize::from(index)];
                     *existing = existing.merge(styles);
                 }
                 None => {
                     let index = u16::try_from(self.interaction_styles.len())
                         .map_err(|_| MountError::InteractionStylesFull)?;
                     self.interaction_styles
-                        .push(styles, MountError::InteractionStylesFull)?;
+                        .push((node, styles), MountError::InteractionStylesFull)?;
                     self.nodes[node.index()].interaction.styles = Some(index);
                 }
             }
