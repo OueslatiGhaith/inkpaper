@@ -228,8 +228,8 @@ impl LineRuns {
     /// level down to the lowest odd one (UAX #9 L2)
     pub(super) fn visual_order(&self) -> ([u8; DIRECTIONAL_RUN_CAPACITY], usize) {
         let mut order = [0u8; DIRECTIONAL_RUN_CAPACITY];
-        for (index, slot) in order[..self.len].iter_mut().enumerate() {
-            *slot = index as u8;
+        for (index, slot) in (0..=u8::MAX).zip(&mut order[..self.len]) {
+            *slot = index;
         }
 
         let levels = &self.runs[..self.len];

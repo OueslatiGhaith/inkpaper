@@ -84,3 +84,10 @@ required-features = ["metrics"]
 name = "glyph_hinting"
 harness = false
 required-features = ["hinting"]
+
+[lints.clippy]
+# casts that silently change a value. Convert with `try_from`, round floats through
+# `float`, or `#[expect]` the lint with the reason the value fits
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"

@@ -98,6 +98,10 @@ impl TextDarkness {
 
     /// `coverage` as this darkness paints it: two straight segments through
     /// the pivot, keeping 0 and 255
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "both curve halves map 0..=255 into 0..=255"
+    )]
     pub const fn apply(self, coverage: u8) -> u8 {
         if self.0 == 100 {
             return coverage;

@@ -1,3 +1,4 @@
+use crate::float::{ceil_i32, floor_i32, round_i32};
 use ttf_parser::{Face, GlyphId as TtfGlyphId};
 
 use crate::{GlyphMetrics, Pixels, px};
@@ -20,7 +21,7 @@ pub(super) fn positive_scaled_units(units: i32, scale: f32) -> Pixels {
         return px(0);
     }
 
-    px(libm::ceilf(units as f32 * scale) as i32)
+    px(ceil_i32(units as f32 * scale))
 }
 
 pub(super) fn glyph_advance_for_face(
@@ -31,7 +32,7 @@ pub(super) fn glyph_advance_for_face(
     let scale = font_scale(face, size_px)?;
     let advance = face.glyph_hor_advance(glyph)?;
 
-    Some(px(libm::roundf(f32::from(advance) * scale) as i32))
+    Some(px(round_i32(f32::from(advance) * scale)))
 }
 
 pub(super) fn glyph_metrics_for_face(
@@ -47,10 +48,10 @@ pub(super) fn glyph_metrics_for_face(
     };
 
     // font coordinates are Y-up. Our framebuffer coordinates are Y-down
-    let left = libm::floorf(f32::from(bounds.x_min) * scale) as i32;
-    let right = libm::ceilf(f32::from(bounds.x_max) * scale) as i32;
-    let top = libm::floorf(-f32::from(bounds.y_max) * scale) as i32;
-    let bottom = libm::ceilf(-f32::from(bounds.y_min) * scale) as i32;
+    let left = floor_i32(f32::from(bounds.x_min) * scale);
+    let right = ceil_i32(f32::from(bounds.x_max) * scale);
+    let top = floor_i32(-f32::from(bounds.y_max) * scale);
+    let bottom = ceil_i32(-f32::from(bounds.y_min) * scale);
     let width = right.saturating_sub(left).max(0);
     let height = bottom.saturating_sub(top).max(0);
 

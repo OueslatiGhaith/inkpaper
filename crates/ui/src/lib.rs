@@ -1,4 +1,12 @@
 #![no_std]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )
+)]
 
 #[cfg(test)]
 extern crate std;
@@ -15,6 +23,7 @@ mod context;
 mod dither;
 mod element;
 mod entity;
+mod float;
 mod font;
 mod frame;
 mod geometry;

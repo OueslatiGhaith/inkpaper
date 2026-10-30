@@ -23,10 +23,13 @@ impl ActivateEvent {
         self.id
     }
 
-    /// The number in the activated element's id, such as 3 for `("row", 3)`.
-    pub const fn index(self) -> Option<usize> {
+    /// The number in the activated element's id, such as 3 for `("row", 3)`. `None`
+    /// when the number doesn't fit a `usize`
+    pub fn index(self) -> Option<usize> {
         match self.id {
-            ElementId::Value(value) | ElementId::NamedValue(_, value) => Some(value as usize),
+            ElementId::Value(value) | ElementId::NamedValue(_, value) => {
+                usize::try_from(value).ok()
+            }
             ElementId::Name(_) => None,
         }
     }

@@ -1,3 +1,4 @@
+use crate::float::{ceil_i32, floor_i32};
 use crate::{
     AffineTransform, CanvasPainter, Color, FillRule, PathFill, Point, Rect, Size, VectorPath,
     VectorPoint, px,
@@ -244,11 +245,11 @@ pub(super) fn paint_filled_path<P>(
         return;
     }
 
-    let mut start_x = libm::floorf(bounds.min_x) as i32;
-    let mut end_x = libm::ceilf(bounds.max_x) as i32;
+    let mut start_x = floor_i32(bounds.min_x);
+    let mut end_x = ceil_i32(bounds.max_x);
 
-    let mut start_y = libm::floorf(bounds.min_y) as i32;
-    let mut end_y = libm::ceilf(bounds.max_y) as i32;
+    let mut start_y = floor_i32(bounds.min_y);
+    let mut end_y = ceil_i32(bounds.max_y);
 
     // a path can reach far past what's drawn, so only scan the visible part
     if let Some(clip) = painter.clip_bounds() {

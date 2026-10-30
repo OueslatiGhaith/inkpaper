@@ -52,6 +52,10 @@ impl Color {
         self.b
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "the weights sum to 256, so the quotient is at most 255"
+    )]
     pub const fn luminance(self) -> Luminance {
         // rec. 601 integer luminance
         let value = 77 * self.r as u32 + 150 * self.g as u32 + 29 * self.b as u32 + 128;

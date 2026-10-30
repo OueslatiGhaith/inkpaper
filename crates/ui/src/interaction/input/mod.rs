@@ -277,8 +277,7 @@ impl<F: FrameStorage> FrameArena<F> {
         &mut self,
         states: &mut ScrollStateTable<E>,
     ) {
-        for index in 0..self.nodes.len() {
-            let node_id = NodeId::new(index as u16);
+        for node_id in self.node_ids() {
             let node = self.node(node_id);
             if node.detached {
                 continue;
@@ -325,8 +324,7 @@ impl<F: FrameStorage> FrameArena<F> {
         &mut self,
         states: &mut ScrollStateTable<E>,
     ) {
-        for index in 0..self.nodes.len() {
-            let node_id = NodeId::new(index as u16);
+        for node_id in self.node_ids() {
             let node = self.node(node_id);
             if node.detached {
                 continue;

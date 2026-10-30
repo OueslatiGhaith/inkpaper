@@ -111,7 +111,7 @@ impl<E: ElementStateStorage> ElementStateTable<E> {
         };
 
         // first look for an existing identity
-        for (index, slot) in self.slots.iter_mut().enumerate() {
+        for (index, slot) in (0..=u16::MAX).zip(self.slots.iter_mut()) {
             let Some(entry) = slot.entry.as_mut() else {
                 continue;
             };
@@ -128,7 +128,7 @@ impl<E: ElementStateStorage> ElementStateTable<E> {
             entry.previous_seen_frame = entry.last_seen_frame;
             entry.last_seen_frame = frame;
 
-            return Ok(ElementStateId::new(index as u16, slot.generation));
+            return Ok(ElementStateId::new(index, slot.generation));
         }
 
         let index = match self.slots.iter().position(|slot| slot.entry.is_none()) {

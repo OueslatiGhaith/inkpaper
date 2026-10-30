@@ -1,4 +1,6 @@
 #![cfg(feature = "alloc")]
+// fixture sizes are small constants
+#![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 
 use inkpaper_ui::*;
 use std::{

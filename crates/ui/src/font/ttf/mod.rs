@@ -599,5 +599,5 @@ fn font_weight_from_f32(value: f32) -> FontWeight {
 
     let value = value.clamp(1.0, 1000.0);
 
-    FontWeight::new(libm::roundf(value) as u16)
+    u16::try_from(crate::float::round_i32(value)).map_or(FontWeight::NORMAL, FontWeight::new)
 }

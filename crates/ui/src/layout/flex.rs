@@ -145,7 +145,7 @@ impl<F: FrameStorage> FrameArena<F> {
             // aren't squeezed to nothing first
             FlexMode::Shrink => FlexShare {
                 weight: (self.node_flex_shrink(child, axis) as u64)
-                    .saturating_mul(base.non_negative().get() as u64),
+                    .saturating_mul(u64::from(unsigned(base))),
                 limit: Some((base - minimum.unwrap_or(Pixels::ZERO)).non_negative()),
             },
         }
@@ -325,8 +325,8 @@ impl FlexRatio {
             return true;
         }
 
-        u128::from(limit.non_negative().get() as u32) * u128::from(self.weight)
-            < u128::from(self.amount.non_negative().get() as u32) * u128::from(weight)
+        u128::from(unsigned(limit)) * u128::from(self.weight)
+            < u128::from(unsigned(self.amount)) * u128::from(weight)
     }
 }
 
@@ -383,6 +383,11 @@ struct FlexTotals {
     shrink: FlexWeights,
 }
 
+/// `pixels` as a count, with negative values as 0
+fn unsigned(pixels: Pixels) -> u32 {
+    pixels.non_negative().get().unsigned_abs()
+}
+
 fn weighted_share(
     amount: Pixels,
     previous_weight: u64,
@@ -393,7 +398,7 @@ fn weighted_share(
         return px(0);
     }
 
-    let amount = u128::from(amount.get() as u32);
+    let amount = u128::from(unsigned(amount));
     let total_weight = u128::from(total_weight);
     let previous = amount * u128::from(previous_weight) / total_weight;
     let next = amount * u128::from(next_weight) / total_weight;

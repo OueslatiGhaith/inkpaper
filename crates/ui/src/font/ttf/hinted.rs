@@ -5,6 +5,7 @@
 //! glyph outlines change: advances, kerning and every other metric come from the
 //! unhinted font, so line breaking and shaping are unaffected.
 
+use crate::float::{ceil_i32, floor_i32};
 use alloc::vec::Vec;
 
 use skrifa::{
@@ -303,10 +304,10 @@ impl OutlineRecorder {
     fn pixel_bounds(&self) -> Option<(i32, i32, i32, i32)> {
         let (left, bottom, right, top) = self.bounds?;
 
-        let left = libm::floorf(left) as i32;
-        let top = libm::floorf(-top) as i32;
-        let width = (libm::ceilf(right) as i32).saturating_sub(left).max(0);
-        let height = (libm::ceilf(-bottom) as i32).saturating_sub(top).max(0);
+        let left = floor_i32(left);
+        let top = floor_i32(-top);
+        let width = ceil_i32(right).saturating_sub(left).max(0);
+        let height = ceil_i32(-bottom).saturating_sub(top).max(0);
 
         Some((left, top, width, height))
     }

@@ -158,7 +158,11 @@ impl<F: FrameStorage> FrameArena<F> {
         let mut index = start;
 
         while index < self.nodes.len() {
-            let node = NodeId::new(index as u16);
+            // `push_node` never indexes a node past u16
+            let Ok(raw) = u16::try_from(index) else {
+                break;
+            };
+            let node = NodeId::new(raw);
             index += 1;
 
             let NodeKind::Entity {

@@ -61,7 +61,7 @@ fn apply_single_substitution(
 
             // OpenType SingleSubst format 1 adds the signed delta modulo 65536 to
             // the original glyph ID.
-            Some(TtfGlyphId(glyph.0.wrapping_add(delta as u16)))
+            Some(TtfGlyphId(glyph.0.wrapping_add_signed(delta)))
         }
         SingleSubstitution::Format2 {
             coverage,

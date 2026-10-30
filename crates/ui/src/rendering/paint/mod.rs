@@ -704,12 +704,12 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     fn has_non_monotonic_positioning(&self) -> bool {
-        (0..self.nodes.len()).any(|index| {
-            if self.nodes[index].detached {
+        self.node_ids().any(|node| {
+            if self.node(node).detached {
                 return false;
             }
 
-            let Some(style) = self.style(NodeId::new(index as u16)) else {
+            let Some(style) = self.style(node) else {
                 return false;
             };
 

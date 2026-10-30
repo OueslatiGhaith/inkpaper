@@ -1,7 +1,9 @@
+use crate::float::{ceil_i32, ceil_usize, floor_i32};
 use ttf_parser::OutlineBuilder;
 
 const SUPERSAMPLE_X: usize = 4;
 pub(super) const SUPERSAMPLE_Y: usize = 4;
+#[expect(clippy::cast_possible_truncation, reason = "16 samples")]
 const COVERAGE_SAMPLES: u16 = (SUPERSAMPLE_X * SUPERSAMPLE_Y) as u16;
 
 /// this is intentionally bounded
@@ -407,7 +409,7 @@ pub(super) fn curve_steps(points: &[RasterPoint]) -> usize {
     }
 
     let estimate = length / CURVE_PIXELS_PER_STEP;
-    let mut steps = libm::ceilf(estimate) as usize;
+    let mut steps = ceil_usize(estimate);
 
     if steps == 0 {
         steps = 1;
@@ -464,8 +466,8 @@ fn accumulate_interval(width: usize, row: usize, coverage: &mut [u8], start: f32
         return;
     }
 
-    let first_pixel = (libm::floorf(start) as i32).max(0);
-    let last_pixel = (libm::ceilf(end) as i32).min(i32::try_from(width).unwrap_or(i32::MAX));
+    let first_pixel = floor_i32(start).max(0);
+    let last_pixel = ceil_i32(end).min(i32::try_from(width).unwrap_or(i32::MAX));
     let Ok(first_pixel) = usize::try_from(first_pixel) else {
         return;
     };
@@ -496,9 +498,11 @@ pub(super) fn normalize_coverage(coverage: &mut [u8]) {
     for value in coverage {
         let samples = u16::from(*value);
 
-        *value = (samples
+        let normalized = samples
             .saturating_mul(255)
             .saturating_add(COVERAGE_SAMPLES / 2)
-            / COVERAGE_SAMPLES) as u8;
+            / COVERAGE_SAMPLES;
+
+        *value = u8::try_from(normalized).unwrap_or(u8::MAX);
     }
 }

@@ -1,3 +1,4 @@
+use crate::float::ceil_usize;
 use crate::{AffineTransform, PathCommand, VectorPath, VectorPoint};
 
 const CURVE_PIXELS_PER_STEP: f32 = 2.0;
@@ -177,7 +178,7 @@ fn curve_steps(points: &[VectorPoint]) -> usize {
     }
 
     let estimate = length / CURVE_PIXELS_PER_STEP;
-    let mut steps = libm::ceilf(estimate) as usize;
+    let mut steps = ceil_usize(estimate);
 
     if steps == 0 {
         steps = 1;

@@ -1,3 +1,6 @@
+// fixture sizes are small constants
+#![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+
 use embedded_graphics::{
     geometry::Size as EgSize, mono_font::ascii::FONT_6X10, pixelcolor::Rgb888,
 };

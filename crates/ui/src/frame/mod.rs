@@ -288,6 +288,12 @@ impl<F: FrameStorage> FrameArena<F> {
         self.interaction_styles.shrink_to_fit();
     }
 
+    /// every node in the frame, detached ones included. Doesn't borrow the frame
+    pub(crate) fn node_ids(&self) -> impl Iterator<Item = NodeId> + use<F> {
+        // `push_node` never indexes a node past u16
+        (0..=u16::MAX).take(self.nodes.len()).map(NodeId::new)
+    }
+
     pub(crate) fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.index()]
     }

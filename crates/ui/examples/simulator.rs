@@ -1,3 +1,6 @@
+// fixture sizes are small constants
+#![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+
 use std::{fmt::Write, path::Path};
 
 use embedded_graphics::{
