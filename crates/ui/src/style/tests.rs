@@ -39,6 +39,7 @@ fn generated_text_methods_preserve_existing_behavior() {
         .line_height_normal()
         .text_wrap(TextWrap::NoWrap)
         .no_wrap()
+        .wrap_anywhere()
         .wrap()
         .text_align(TextAlign::Start)
         .text_end()

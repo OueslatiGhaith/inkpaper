@@ -12,9 +12,14 @@ pub enum TextAlign {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TextWrap {
+    /// one line per paragraph
     #[default]
     NoWrap,
+    /// breaks between words. A word wider than the line splits between characters,
+    /// and the words after it can share the line its last piece starts
     Word,
+    /// breaks between any two characters, filling each line
+    Anywhere,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

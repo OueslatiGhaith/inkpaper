@@ -83,6 +83,7 @@ fn rsx_supports_tailwind_typography_defaults() {
     let tree = rsx! {
         <div class="text-lg leading-6 text-center wrap">
             {text("Hello")}
+            <div class="wrap-anywhere">{text("0123456789abcdef")}</div>
         </div>
     };
 

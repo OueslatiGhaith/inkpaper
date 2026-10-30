@@ -264,6 +264,7 @@ macro_rules! inkpaper_style_schema {
                         wrap: TextWrap = TextWrap::NoWrap => {
                             text_wrap(wrap: TextWrap) => wrap;
                             wrap => TextWrap::Word;
+                            wrap_anywhere => TextWrap::Anywhere;
                             no_wrap => TextWrap::NoWrap;
                         },
 

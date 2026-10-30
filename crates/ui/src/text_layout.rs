@@ -87,20 +87,23 @@ fn trim_hanging_whitespace(text: &str, start: usize, mut end: usize) -> usize {
     end
 }
 
-fn emit_oversized_word<'a, B, M, V>(
+/// visits the pieces of a word wider than the line, each as wide as fits, except the
+/// last. Returns where the last piece starts, so later words can share its line
+fn split_oversized_word<'a, B, M, V>(
     word: &'a str,
     max_width: Pixels,
     next_boundary: &B,
     measure: &mut M,
     visit: &mut V,
-) where
+) -> usize
+where
     B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> LineWidth,
     V: FnMut(&'a str, LineWidth),
 {
     let mut start = 0usize;
 
-    while start < word.len() {
+    loop {
         let first_end = next_text_boundary(word, start, next_boundary)
             .expect("non-empty word must contain a text boundary");
 
@@ -131,14 +134,19 @@ fn emit_oversized_word<'a, B, M, V>(
             Some(result) => result,
             None => (first_end, measure(&word[start..first_end])),
         };
+        if end == word.len() {
+            return start;
+        }
 
         visit(&word[start..end], width);
         start = end;
     }
 }
 
+/// wraps between words, or with `anywhere` between any two clusters
 fn wrap_paragraph<'a, B, M, V>(
     paragraph: &'a str,
+    anywhere: bool,
     max_width: Pixels,
     next_boundary: &B,
     measure: &mut M,
@@ -171,7 +179,37 @@ fn wrap_paragraph<'a, B, M, V>(
 
         let content_end = trim_hanging_whitespace(paragraph, start, segment_end);
 
-        if let Some(line) = line_start
+        if anywhere {
+            let mut cursor = match line_start {
+                Some(_) => start,
+                None => skip_hanging_whitespace(paragraph, start).min(content_end),
+            };
+
+            while cursor < content_end {
+                let end = next_text_boundary(&paragraph[..content_end], cursor, next_boundary)
+                    .expect("text before the content end must contain a boundary");
+
+                match line_start {
+                    Some(line) if !fits(measure(&paragraph[line..end]), max_width) => {
+                        let line = &paragraph[line..line_end];
+                        visit(line, measure(line));
+
+                        emitted = true;
+                        line_visited = true;
+                        line_start = None;
+                        // this cluster starts the next line
+                        continue;
+                    }
+                    Some(_) => line_end = end,
+                    None => {
+                        line_start = Some(cursor);
+                        line_end = end;
+                    }
+                }
+
+                cursor = end;
+            }
+        } else if let Some(line) = line_start
             && content_end > start
         {
             let candidate = &paragraph[line..content_end];
@@ -188,7 +226,7 @@ fn wrap_paragraph<'a, B, M, V>(
             }
         }
 
-        if line_start.is_none() {
+        if !anywhere && line_start.is_none() {
             let word_start = skip_hanging_whitespace(paragraph, start).min(content_end);
 
             if word_start < content_end {
@@ -199,10 +237,14 @@ fn wrap_paragraph<'a, B, M, V>(
                     line_start = Some(word_start);
                     line_end = content_end;
                 } else {
-                    emit_oversized_word(word, max_width, next_boundary, measure, visit);
+                    let tail = split_oversized_word(word, max_width, next_boundary, measure, visit);
+                    if tail > 0 {
+                        emitted = true;
+                        line_visited = true;
+                    }
 
-                    emitted = true;
-                    line_visited = true;
+                    line_start = Some(word_start + tail);
+                    line_end = content_end;
                 }
             }
         }
@@ -263,9 +305,10 @@ pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
 
         match wrap {
             TextWrap::NoWrap => visit(paragraph, measure(paragraph)),
-            TextWrap::Word => {
+            TextWrap::Word | TextWrap::Anywhere => {
                 wrap_paragraph(
                     paragraph,
+                    wrap == TextWrap::Anywhere,
                     max_width,
                     &next_boundary,
                     &mut measure,
@@ -635,6 +678,86 @@ mod tests {
         });
 
         assert_eq!(lines, vec![("abc", px(3)), ("def", px(3)),]);
+    }
+
+    #[test]
+    fn word_wrap_starts_the_next_line_with_an_oversized_words_tail() {
+        assert_eq!(wrap("abcdefgh ij", 6), vec!["abcdef", "gh ij"]);
+        assert_eq!(
+            wrap("abcdefghijklm no", 6),
+            vec!["abcdef", "ghijkl", "m no"]
+        );
+        // a word that fits a line of its own still moves to one before splitting
+        assert_eq!(wrap("x abcdefgh", 6), vec!["x", "abcdef", "gh"]);
+    }
+
+    #[test]
+    fn an_oversized_words_tail_shares_a_limited_line() {
+        let mut lines = Vec::new();
+
+        for_each_visible_text_line(
+            "abcdefgh ij",
+            TextWrap::Word,
+            px(6),
+            TextMaxLines::Limited(2),
+            TextOverflow::Ellipsis,
+            measure,
+            measure,
+            |line| lines.push((line.text, line.ellipsis)),
+        );
+
+        assert_eq!(lines, vec![("abcdef", false), ("gh ij", false)]);
+    }
+
+    fn wrap_anywhere(text: &str, max_width: i32) -> Vec<&str> {
+        let mut lines = Vec::new();
+
+        for_each_text_line(
+            text,
+            TextWrap::Anywhere,
+            px(max_width),
+            measure,
+            |line, _| {
+                lines.push(line);
+            },
+        );
+
+        lines
+    }
+
+    #[test]
+    fn anywhere_wrap_breaks_between_any_characters() {
+        assert_eq!(wrap_anywhere("x abcdefgh", 6), vec!["x abcd", "efgh"]);
+        assert_eq!(wrap_anywhere("hello world", 7), vec!["hello w", "orld"]);
+        assert_eq!(wrap_anywhere("abcdef", 3), vec!["abc", "def"]);
+    }
+
+    #[test]
+    fn anywhere_wrap_hangs_whitespace_and_forces_mandatory_breaks() {
+        assert_eq!(wrap_anywhere("hello world", 5), vec!["hello", "world"]);
+        assert_eq!(wrap_anywhere("  ab cd", 3), vec!["ab", "cd"]);
+        assert_eq!(wrap_anywhere("ab\u{2028}cd", 20), vec!["ab", "cd"]);
+        assert_eq!(
+            wrap_anywhere("ab\u{2028}\u{2028}cd", 20),
+            vec!["ab", "", "cd"]
+        );
+        assert_eq!(wrap_anywhere("ab\ncd", 1), vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn anywhere_wrap_breaks_only_at_supplied_cluster_boundaries() {
+        let mut lines = Vec::new();
+
+        for_each_text_line_with_boundaries(
+            "a\u{0301}bc",
+            TextWrap::Anywhere,
+            px(2),
+            combining_mark_cluster_boundary,
+            measure,
+            |line, _| lines.push(line),
+        );
+
+        assert_eq!(lines, vec!["a\u{0301}", "bc"]);
     }
 
     #[test]
