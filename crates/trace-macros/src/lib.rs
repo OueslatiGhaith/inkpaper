@@ -19,12 +19,14 @@ mod instrument;
 /// paginate(3);
 /// ```
 ///
-/// Async functions are deliberately unsupported until the trace
-/// runtime has an async span model.
+/// An async function gets an async span, which runs from the first poll of
+/// its future until it completes, including the time it waits.
 ///
-/// ```compile_fail
+/// ```
 /// #[inkpaper_trace::instrument]
 /// async fn present() {}
+///
+/// let _ = present();
 /// ```
 ///
 /// Instrumentation supports at most two explicit fields.

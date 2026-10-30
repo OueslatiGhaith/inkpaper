@@ -10,3 +10,6 @@ proc-macro = true
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true, features = ["full"] }
+[dev-dependencies]
+# the doc examples use the macro through the crate that re-exports it
+inkpaper-trace = { path = "../trace" }
