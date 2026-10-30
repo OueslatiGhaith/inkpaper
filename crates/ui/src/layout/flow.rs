@@ -84,15 +84,20 @@ impl<F: FrameStorage> FrameArena<F> {
         let available_main = main_size(viewport_content_size, axis);
         let available_cross = cross_size(viewport_content_size, axis);
 
-        let totals = if scrolling_main {
+        let line = if scrolling_main {
             None
         } else {
-            Some(self.flex_totals(node, axis, child_available, text_measurer))
+            self.flex_line(
+                node,
+                axis,
+                child_available,
+                available_main - total_gap,
+                text_measurer,
+            )
         };
 
         let mut occupied_main = total_gap;
-        let mut grow_before = 0u64;
-        let mut shrink_before = 0u64;
+        let mut flex_before = 0u64;
         let mut current = self.node(node).first_child;
 
         while let Some(child) = current {
@@ -103,24 +108,9 @@ impl<F: FrameStorage> FrameArena<F> {
 
             let margin = self.node_margin(child);
             let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
-            let target_main = self.flex_item_main_size(
-                child,
-                axis,
-                base,
-                available_main,
-                total_gap,
-                grow_before,
-                shrink_before,
-                totals,
-            );
+            let target_main = self.flex_item_main_size(child, axis, base, line, &mut flex_before);
 
             occupied_main += target_main + main_margin_total(margin, axis);
-            grow_before = grow_before.saturating_add(self.node_flex_grow(child, axis) as u64);
-
-            let shrink_factor = (self.node_flex_shrink(child, axis) as u64)
-                .saturating_mul(base.non_negative().get() as u64);
-
-            shrink_before = shrink_before.saturating_add(shrink_factor);
             current = self.node(child).next_sibling;
         }
 
@@ -153,8 +143,7 @@ impl<F: FrameStorage> FrameArena<F> {
         };
 
         let mut cursor = content_main_origin + leading_main;
-        let mut grow_before = 0;
-        let mut shrink_before = 0;
+        let mut flex_before = 0u64;
         let mut flow_index = 0;
         let mut current = self.node(node).first_child;
         let mut sibling_prefix_bounds = Rect::new(Point::ZERO, Size::ZERO);
@@ -168,16 +157,7 @@ impl<F: FrameStorage> FrameArena<F> {
 
             let margin = self.node_margin(child);
             let base = self.flex_base_main_size(child, axis, child_available, text_measurer);
-            let target_main = self.flex_item_main_size(
-                child,
-                axis,
-                base,
-                available_main,
-                total_gap,
-                grow_before,
-                shrink_before,
-                totals,
-            );
+            let target_main = self.flex_item_main_size(child, axis, base, line, &mut flex_before);
 
             let constraint = child_constraint(child_available, margin, axis, Some(target_main));
             let measured = self.measure_node(child, constraint, text_measurer);
@@ -246,12 +226,6 @@ impl<F: FrameStorage> FrameArena<F> {
                 }
             }
 
-            grow_before = grow_before.saturating_add(self.node_flex_grow(child, axis) as u64);
-
-            let shrink_factor = (self.node_flex_shrink(child, axis) as u64)
-                .saturating_mul(base.non_negative().get() as u64);
-
-            shrink_before = shrink_before.saturating_add(shrink_factor);
             current = next;
         }
 

@@ -89,13 +89,6 @@ pub(crate) enum Axis {
     Vertical,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct FlexTotals {
-    base_size: Pixels,
-    grow_weight: u64,
-    shrink_factor: u64,
-}
-
 fn main_size(size: Size, axis: Axis) -> Pixels {
     match axis {
         Axis::Horizontal => size.width,
@@ -341,24 +334,6 @@ fn child_constraint(
     let cross = available_cross(content, axis).shrink(cross_margin_total(margin, axis));
 
     available_from_axes(main, cross, axis)
-}
-
-fn weighted_share(
-    amount: Pixels,
-    previous_weight: u64,
-    next_weight: u64,
-    total_weight: u64,
-) -> Pixels {
-    if amount.is_non_positive() || total_weight <= previous_weight {
-        return px(0);
-    }
-
-    let amount = amount.get() as u64;
-    let previous = amount.saturating_mul(previous_weight) / total_weight;
-    let next = amount.saturating_mul(next_weight) / total_weight;
-    let share = next.saturating_sub(previous);
-
-    px(i32::try_from(share).unwrap_or(i32::MAX))
 }
 
 fn size_with_main(size: Size, main: Pixels, axis: Axis) -> Size {

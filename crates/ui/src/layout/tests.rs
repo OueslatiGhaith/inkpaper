@@ -1808,3 +1808,196 @@ fn scroll_padding_only_extends_overflowing_content() {
     // past that, the scroll range is the overflow, ending at the bottom padding
     assert_eq!(max_offset(30), Offset::new(px(0), px(4)));
 }
+
+fn flex_row_widths<const N: usize>(row_width: i32, children: [Div; N]) -> [i32; N] {
+    let measurer = TestTextMeasurer::new(8, 10);
+    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let globals = TestGlobalArena::<0, 0>::default();
+    let cx = AppContext::from_globals(&globals);
+
+    let root = frame
+        .mount(
+            div().flex().w(px(row_width)).h(px(20)).children(children),
+            cx,
+        )
+        .unwrap();
+    frame.layout(root, Size::new(px(row_width), px(20)), &measurer);
+
+    let mut widths = [0; N];
+    let mut current = frame.node(root).first_child;
+    for width in &mut widths {
+        let child = current.unwrap();
+        *width = frame.bounds(child).width().get();
+        current = frame.node(child).next_sibling;
+    }
+
+    widths
+}
+
+#[test]
+fn growing_child_at_its_max_leaves_the_rest_to_its_siblings() {
+    let widths = flex_row_widths(
+        100,
+        [
+            div().w_full().max_w(px(20)).h(px(10)),
+            div().w_full().h(px(10)),
+        ],
+    );
+
+    assert_eq!(widths, [20, 80]);
+}
+
+#[test]
+fn shrinking_child_at_its_min_leaves_the_rest_to_its_siblings() {
+    let widths = flex_row_widths(
+        100,
+        [
+            div().w(px(80)).flex_shrink(1).h(px(10)),
+            div().w(px(80)).min_w(px(70)).flex_shrink(1).h(px(10)),
+        ],
+    );
+
+    assert_eq!(widths, [30, 70]);
+}
+
+#[test]
+fn child_shrunk_to_nothing_leaves_the_rest_to_its_siblings() {
+    // both weigh 100, so an even split would take 25px from a 10px child
+    let widths = flex_row_widths(
+        60,
+        [
+            div().w(px(10)).flex_shrink(10).h(px(10)),
+            div().w(px(100)).flex_shrink(1).h(px(10)),
+        ],
+    );
+
+    assert_eq!(widths, [0, 60]);
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FlexChildSpec {
+    /// `None` fills
+    width: Option<i32>,
+    min: Option<i32>,
+    max: Option<i32>,
+    grow: u16,
+    shrink: u16,
+}
+
+impl FlexChildSpec {
+    fn random(rng: &mut XorShift) -> Self {
+        let limit = |rng: &mut XorShift| (rng.below(3) == 0).then(|| rng.below(120) as i32);
+
+        Self {
+            width: (rng.below(4) != 0).then(|| rng.below(120) as i32),
+            min: limit(rng),
+            max: limit(rng),
+            grow: rng.below(4) as u16,
+            shrink: rng.below(4) as u16,
+        }
+    }
+
+    fn element(self) -> Div {
+        let mut child = div()
+            .h(px(10))
+            .flex_grow(self.grow)
+            .flex_shrink(self.shrink);
+        child = match self.width {
+            Some(width) => child.w(px(width)),
+            None => child.w_full(),
+        };
+        if let Some(min) = self.min {
+            child = child.min_w(px(min));
+        }
+        if let Some(max) = self.max {
+            child = child.max_w(px(max));
+        }
+
+        child
+    }
+
+    fn clamp(self, width: i32) -> i32 {
+        let width = self.max.map_or(width, |max| width.min(max));
+        self.min.map_or(width, |min| width.max(min))
+    }
+
+    fn base(self) -> i32 {
+        self.clamp(self.width.unwrap_or(0))
+    }
+
+    fn grows(self) -> bool {
+        self.grow > 0 || self.width.is_none()
+    }
+
+    fn shrinks(self) -> bool {
+        (self.shrink > 0 || self.width.is_none()) && self.base() > 0
+    }
+}
+
+struct XorShift(u64);
+
+impl XorShift {
+    fn below(&mut self, bound: u64) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0 % bound
+    }
+}
+
+#[test]
+fn flex_children_share_the_row_within_their_limits() {
+    let mut rng = XorShift(0x9e37_79b9_7f4a_7c15);
+
+    for _ in 0..2000 {
+        let specs: [FlexChildSpec; 4] = core::array::from_fn(|_| FlexChildSpec::random(&mut rng));
+        let row_width = rng.below(300) as i32;
+        let widths = flex_row_widths(row_width, specs.map(FlexChildSpec::element));
+
+        let base: i32 = specs.iter().map(|spec| spec.base()).sum();
+        let total: i32 = widths.iter().sum();
+        let case = || std::format!("row {row_width}, {specs:?} -> {widths:?}");
+
+        for (spec, &width) in specs.iter().zip(&widths) {
+            assert_eq!(
+                width,
+                spec.clamp(width).max(0),
+                "outside its limits: {}",
+                case()
+            );
+        }
+
+        if base < row_width {
+            for (spec, &width) in specs.iter().zip(&widths) {
+                assert!(width >= spec.base(), "grow shrank a child: {}", case());
+            }
+            // the row fills unless every growing child is at its max
+            let all_at_max = specs
+                .iter()
+                .zip(&widths)
+                .all(|(spec, &width)| !spec.grows() || spec.max.is_some_and(|max| width >= max));
+            assert!(
+                total == row_width || (total < row_width && all_at_max),
+                "row not filled: {}",
+                case()
+            );
+        } else if base > row_width {
+            for (spec, &width) in specs.iter().zip(&widths) {
+                assert!(width <= spec.base(), "shrink grew a child: {}", case());
+            }
+            // the row fits unless every shrinking child is at its min
+            let all_at_min = specs
+                .iter()
+                .zip(&widths)
+                .all(|(spec, &width)| !spec.shrinks() || width <= spec.min.unwrap_or(0).max(0));
+            assert!(
+                total == row_width || (total > row_width && all_at_min),
+                "row overflowed: {}",
+                case()
+            );
+        } else {
+            let bases = specs.map(FlexChildSpec::base);
+            assert_eq!(widths, bases, "fitting row changed: {}", case());
+        }
+    }
+}
