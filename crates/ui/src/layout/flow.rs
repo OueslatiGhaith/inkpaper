@@ -1,4 +1,4 @@
-use super::*;
+use super::{boxes::ChildrenExtent, *};
 
 use crate::{
     AlignItems, FrameArena, JustifyContent, NodeId, NodeKind, Position, count_metric,
@@ -14,7 +14,7 @@ impl<F: FrameStorage> FrameArena<F> {
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         let measured = self.measure_node(node, AvailableSize::definite(available), text_measurer);
-        let initial_containing_block = Rect::new(origin, available);
+        let initial_containing_block = ContentBox::viewport(Rect::new(origin, available));
         let subtree_bounds = self.layout_node_with_size(
             node,
             origin,
@@ -36,7 +36,7 @@ impl<F: FrameStorage> FrameArena<F> {
         style: Style,
         origin: Point,
         outer_size: Size,
-        containing_block: Rect,
+        containing_block: ContentBox,
         text_measurer: &dyn TextMeasurer,
         mut subtree_bounds: Rect,
     ) -> Rect {
@@ -45,13 +45,11 @@ impl<F: FrameStorage> FrameArena<F> {
         }
 
         let axis = flow_axis(style);
-        let border = border_width(style);
-        let content_origin = Point::new(
-            origin.x + border + style.padding.left.non_negative(),
-            origin.y + border + style.padding.top.non_negative(),
-        );
-
-        let viewport_content_size = content_size(style, outer_size);
+        let content_box = BorderBox::new(Rect::new(origin, outer_size))
+            .content_box(style)
+            .rect();
+        let content_origin = content_box.origin;
+        let viewport_content_size = content_box.size;
         let child_available =
             self.child_layout_available(node, AvailableSize::definite(viewport_content_size));
         let scroll_axes = self.node(node).interaction.scroll_axes;
@@ -67,7 +65,7 @@ impl<F: FrameStorage> FrameArena<F> {
         // if children are clipped, every non-empty child subtree contributes
         // at most this viewport to the parent's own conservative subtree extent.
         let children_clip = if self.node_clips_children(node) {
-            Some(self.children_clip_layout_bounds(node))
+            Some(self.padding_box(node).rect())
         } else {
             None
         };
@@ -268,7 +266,7 @@ impl<F: FrameStorage> FrameArena<F> {
     fn layout_absolute_child(
         &mut self,
         child: NodeId,
-        containing_block: Rect,
+        containing_block: ContentBox,
         text_measurer: &dyn TextMeasurer,
     ) -> Rect {
         let style = self
@@ -278,14 +276,14 @@ impl<F: FrameStorage> FrameArena<F> {
         let margin = self.node_margin(child);
 
         let horizontal_available = absolute_axis_available(
-            containing_block.width(),
+            containing_block.rect().width(),
             style.inset.left,
             style.inset.right,
             margin.left,
             margin.right,
         );
         let vertical_available = absolute_axis_available(
-            containing_block.height(),
+            containing_block.rect().height(),
             style.inset.top,
             style.inset.bottom,
             margin.top,
@@ -321,8 +319,8 @@ impl<F: FrameStorage> FrameArena<F> {
 
         let child_origin = Point::new(
             absolute_axis_origin(
-                containing_block.x(),
-                containing_block.width(),
+                containing_block.rect().x(),
+                containing_block.rect().width(),
                 child_size.width,
                 style.inset.left,
                 style.inset.right,
@@ -330,8 +328,8 @@ impl<F: FrameStorage> FrameArena<F> {
                 margin.right,
             ),
             absolute_axis_origin(
-                containing_block.y(),
-                containing_block.height(),
+                containing_block.rect().y(),
+                containing_block.rect().height(),
                 child_size.height,
                 style.inset.top,
                 style.inset.bottom,
@@ -351,7 +349,7 @@ impl<F: FrameStorage> FrameArena<F> {
     fn layout_absolute_children(
         &mut self,
         parent: NodeId,
-        containing_block: Rect,
+        containing_block: ContentBox,
         children_clip: Option<Rect>,
         text_measurer: &dyn TextMeasurer,
         mut subtree_bounds: Rect,
@@ -398,7 +396,7 @@ impl<F: FrameStorage> FrameArena<F> {
         node: NodeId,
         origin: Point,
         size: Size,
-        containing_block: Rect,
+        containing_block: ContentBox,
         text_measurer: &dyn TextMeasurer,
     ) -> Rect {
         count_metric!(self, nodes_laid_out);
@@ -474,7 +472,7 @@ impl<F: FrameStorage> FrameArena<F> {
                 let descendant_containing_block = match style.position {
                     Position::Static => containing_block,
                     Position::Relative | Position::Absolute => {
-                        content_rect(style, positioned_origin, size)
+                        BorderBox::new(Rect::new(positioned_origin, size)).content_box(style)
                     }
                 };
 
@@ -513,36 +511,24 @@ impl<F: FrameStorage> FrameArena<F> {
         )
     }
     pub(crate) fn max_scroll_offset(&self, node: NodeId) -> Offset {
-        let viewport = self.children_clip_layout_bounds(node);
-        let style = self.style(node);
-
-        let mut right = viewport.right();
-        let mut bottom = viewport.bottom();
-        let mut has_children = false;
         let mut current = self.node(node).first_child;
+        // don't make an otherwise empty container scroll just because it has padding.
+        let Some(first) = current else {
+            return Offset::ZERO;
+        };
 
+        let mut extent = ChildrenExtent::new(self.scroll_layout_extent(first));
+        current = self.node(first).next_sibling;
         while let Some(child) = current {
-            has_children = true;
-
-            let extent = self.scroll_layout_extent(child);
-
-            right = right.max(extent.right());
-            bottom = bottom.max(extent.bottom());
+            extent = extent.include(self.scroll_layout_extent(child));
             current = self.node(child).next_sibling;
         }
 
-        // child origins already include leading padding. Trailing padding still
-        // belongs after the final content extent.
-        // don't make an otherwise empty container scroll just because it has padding.
-        if has_children && let Some(style) = style {
-            right += style.padding.right.non_negative();
-            bottom += style.padding.bottom.non_negative();
-        }
-
-        Offset::new(
-            (right - viewport.right()).non_negative(),
-            (bottom - viewport.bottom()).non_negative(),
-        )
+        extent.scroll_range(self.padding_box(node), self.style(node))
+    }
+    /// what `node` clips its children to and scrolls them within
+    pub(crate) fn padding_box(&self, node: NodeId) -> PaddingBox {
+        BorderBox::new(self.node(node).layout.bounds).padding_box(self.style(node))
     }
     fn scroll_layout_extent(&self, node: NodeId) -> Rect {
         let bounds = self.node(node).layout.bounds;
@@ -559,7 +545,7 @@ impl<F: FrameStorage> FrameArena<F> {
         );
 
         let children_clip = if self.node_clips_children(node) {
-            Some(self.children_clip_layout_bounds(node))
+            Some(self.padding_box(node).rect())
         } else {
             None
         };

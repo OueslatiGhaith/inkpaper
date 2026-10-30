@@ -1,7 +1,7 @@
 use heapless::Vec;
 
 use crate::{
-    DamageRegion, FrameArena, NodeId, Offset, Point, Rect, count_metric, px, storage::FrameStorage,
+    DamageRegion, FrameArena, NodeId, Offset, Point, Rect, count_metric, storage::FrameStorage,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -430,17 +430,7 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     fn children_clip_bounds(&self, node: NodeId, context: VisualContext) -> Rect {
-        context.translate_rect(self.children_clip_layout_bounds(node))
-    }
-
-    pub(crate) fn children_clip_layout_bounds(&self, node: NodeId) -> Rect {
-        let bounds = self.node(node).layout.bounds;
-        let border = self
-            .style(node)
-            .map(|style| style.border_width.non_negative())
-            .unwrap_or(px(0));
-
-        bounds.inset(border)
+        context.translate_rect(self.padding_box(node).rect())
     }
 
     #[cfg(test)]

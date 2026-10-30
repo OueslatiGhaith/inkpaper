@@ -4,6 +4,7 @@ use crate::{
     DamageRegion, FrameArena, Invalidation, NodeId, Offset, Pixels, Point, Rect, count_metric,
     element::state::ElementStateId,
     interaction::scroll::{ScrollAxes, ScrollStateTable},
+    layout::BorderBox,
     px,
     storage::{ElementStateStorage, FrameStorage},
 };
@@ -462,12 +463,9 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     fn scroll_viewport_bounds(&self, node: NodeId, visual_bounds: Rect) -> Rect {
-        let border = self
-            .style(node)
-            .map(|s| s.border_width.non_negative())
-            .unwrap_or_default();
-
-        visual_bounds.inset(border)
+        BorderBox::new(visual_bounds)
+            .padding_box(self.style(node))
+            .rect()
     }
 
     pub(crate) fn scroll_element_into_view<E: ElementStateStorage>(

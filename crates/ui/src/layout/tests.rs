@@ -1776,3 +1776,35 @@ fn full_height_child_of_a_scrolled_row_fills_the_row() {
     assert_bounds(frame.bounds(row), 0, 0, 54, 30);
     assert_bounds(frame.bounds(bar), 0, 0, 4, 30);
 }
+
+#[test]
+fn scroll_padding_only_extends_overflowing_content() {
+    let measurer = TestTextMeasurer::new(8, 10);
+    let globals = TestGlobalArena::<0, 0>::default();
+    let cx = AppContext::from_globals(&globals);
+
+    let max_offset = |content_height: i32| {
+        let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+        let root = frame
+            .mount(
+                div()
+                    .id("scroll")
+                    .w(px(100))
+                    .h(px(40))
+                    .p(px(5))
+                    .border(px(2))
+                    .overflow_y_scroll()
+                    .child(div().w(px(50)).h(px(content_height))),
+                cx,
+            )
+            .unwrap();
+        frame.layout(root, Size::new(px(100), px(40)), &measurer);
+        frame.max_scroll_offset(root)
+    };
+
+    // 26px of content fit between the padding, so nothing scrolls
+    assert_eq!(max_offset(20), Offset::ZERO);
+    assert_eq!(max_offset(26), Offset::ZERO);
+    // past that, the scroll range is the overflow, ending at the bottom padding
+    assert_eq!(max_offset(30), Offset::new(px(0), px(4)));
+}

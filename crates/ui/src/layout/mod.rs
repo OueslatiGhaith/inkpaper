@@ -3,11 +3,14 @@ use crate::{
     Style, px,
 };
 
+mod boxes;
 mod flex;
 mod flow;
 mod measure;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use self::boxes::{BorderBox, ContentBox, PaddingBox};
 
 pub trait TextMeasurer {
     /// the size of `text` laid out within `available_width`, at whatever height its
@@ -170,18 +173,6 @@ fn content_available(style: Style, outer_available: AvailableSize) -> AvailableS
     AvailableSize::new(
         outer_available.width.shrink(horizontal_chrome(style)),
         outer_available.height.shrink(vertical_chrome(style)),
-    )
-}
-
-fn content_rect(style: Style, origin: Point, outer_size: Size) -> Rect {
-    let border = border_width(style);
-
-    Rect::new(
-        Point::new(
-            origin.x + border + style.padding.left.non_negative(),
-            origin.y + border + style.padding.top.non_negative(),
-        ),
-        content_size(style, outer_size),
     )
 }
 
