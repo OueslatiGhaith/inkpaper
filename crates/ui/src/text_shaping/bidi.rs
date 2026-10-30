@@ -3,12 +3,9 @@ use icu_properties::{
     props::{BidiClass, BidiMirroringGlyph, BidiPairedBracketType},
 };
 
-use crate::{FontRegistry, Offset, PreparedFont, pair_cache::PairPositioningCache, px};
+use crate::{FontRegistry, Offset};
 
-use super::{
-    ShapeError, ShapedGlyph, ShapedRun, SimpleShaper, TextDirection,
-    positioning::apply_visual_positioning,
-};
+use super::{ShapeError, ShapedGlyph, TextDirection};
 
 const DIRECTIONAL_RUN_CAPACITY: usize = 32;
 /// lines with more bracket pairs, or deeper nesting, leave their brackets as plain neutrals
@@ -52,26 +49,6 @@ impl TextRun {
     }
 }
 
-/// the glyphs of a [`TextRun`]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct DirectionalRun {
-    pub(super) start: usize,
-    pub(super) end: usize,
-    pub(super) level: u8,
-}
-
-impl DirectionalRun {
-    const EMPTY: Self = Self {
-        start: 0,
-        end: 0,
-        level: 0,
-    };
-
-    const fn len(self) -> usize {
-        self.end.saturating_sub(self.start)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct BracketPair {
     open: usize,
@@ -92,87 +69,6 @@ impl BracketPair {
     }
 }
 
-impl SimpleShaper {
-    pub fn visual_order<'out, const FONTS: usize>(
-        &self,
-        registry: &FontRegistry<'_, FONTS>,
-        size_px: u16,
-        text: &str,
-        text_glyph_count: usize,
-        glyphs: &'out mut [ShapedGlyph],
-    ) -> Result<ShapedRun<'out>, ShapeError> {
-        self.visual_order_impl(
-            registry,
-            size_px,
-            text,
-            text_glyph_count,
-            glyphs,
-            None::<&mut PairPositioningCache<1>>,
-            None,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn visual_order_impl<'out, 'font, const FONTS: usize, const SLOTS: usize>(
-        &self,
-        registry: &'font FontRegistry<'_, FONTS>,
-        size_px: u16,
-        text: &str,
-        text_glyph_count: usize,
-        glyphs: &'out mut [ShapedGlyph],
-        pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
-        prepared_font: Option<&PreparedFont<'font>>,
-    ) -> Result<ShapedRun<'out>, ShapeError> {
-        let direction = paragraph_direction(text);
-
-        if glyphs.is_empty() {
-            return Ok(ShapedRun::new(glyphs, direction, px(0)));
-        }
-
-        let text_glyph_count = text_glyph_count.min(glyphs.len());
-
-        let mut builder = TextRunBuilder::new(text, direction);
-        for (index, &glyph) in glyphs.iter().enumerate() {
-            builder.push(line_offset(text, text_glyph_count, index, glyph))?;
-        }
-        let line_runs = builder.finish();
-
-        // the glyphs after the text number their clusters from 0 too. While they're
-        // reordered, give them their offsets in the line, so they never join a text
-        // cluster
-        for glyph in &mut glyphs[text_glyph_count..] {
-            *glyph = glyph.with_cluster(text.len().saturating_add(glyph.cluster()));
-        }
-
-        let mut runs = [DirectionalRun::EMPTY; DIRECTIONAL_RUN_CAPACITY];
-        let runs = &mut runs[..line_runs.len()];
-        glyph_runs(glyphs, &line_runs, runs);
-
-        for run in runs.iter() {
-            if run.level % 2 == 1 {
-                mirror_clusters(registry, size_px, text, &mut glyphs[run.start..run.end]);
-            }
-        }
-
-        reorder_directional_runs(glyphs, runs);
-
-        let advance = apply_visual_positioning(
-            registry,
-            size_px,
-            glyphs,
-            runs,
-            prepared_font,
-            pair_positioning_cache,
-        );
-
-        for glyph in glyphs.iter_mut() {
-            *glyph = glyph.with_cluster(piece_cluster(text, glyph.cluster()));
-        }
-
-        Ok(ShapedRun::new(glyphs, direction, advance))
-    }
-}
-
 /// the direction of a line's text: the direction of its first strong character
 pub(crate) fn paragraph_direction(text: &str) -> TextDirection {
     for character in text.chars() {
@@ -184,16 +80,6 @@ pub(crate) fn paragraph_direction(text: &str) -> TextDirection {
     }
 
     TextDirection::LeftToRight
-}
-
-/// a glyph's byte offset in its line. Glyphs shaped after the text, currently the
-/// renderer's ellipsis suffix, take offsets after the text's
-fn line_offset(text: &str, text_glyph_count: usize, index: usize, glyph: ShapedGlyph) -> usize {
-    if index < text_glyph_count {
-        glyph.cluster()
-    } else {
-        text.len().saturating_add(glyph.cluster())
-    }
 }
 
 /// a glyph's cluster in the piece it was shaped from, given its offset in the line
@@ -324,10 +210,6 @@ pub(super) struct LineRuns {
 }
 
 impl LineRuns {
-    pub(super) const fn len(&self) -> usize {
-        self.len
-    }
-
     /// the line offsets of run `index`'s glyphs
     pub(super) fn range(&self, index: usize) -> core::ops::Range<usize> {
         let end = match index + 1 < self.len {
@@ -383,34 +265,6 @@ impl LineRuns {
         }
 
         (order, self.len)
-    }
-}
-
-/// the glyphs of each run. Glyphs are in logical order with their line offsets as
-/// clusters, so their clusters never decrease
-fn glyph_runs(glyphs: &[ShapedGlyph], line_runs: &LineRuns, output: &mut [DirectionalRun]) {
-    debug_assert!(
-        glyphs
-            .windows(2)
-            .all(|pair| pair[0].cluster() <= pair[1].cluster())
-    );
-
-    let mut start = 0usize;
-
-    for (index, run) in output.iter_mut().enumerate() {
-        let range = line_runs.range(index);
-        let mut end = start;
-
-        while end < glyphs.len() && glyphs[end].cluster() < range.end {
-            end += 1;
-        }
-
-        *run = DirectionalRun {
-            start,
-            end,
-            level: line_runs.level(index),
-        };
-        start = end;
     }
 }
 
@@ -824,83 +678,6 @@ fn merge_same_level_runs(runs: &mut [TextRun]) -> usize {
     }
 
     written
-}
-
-fn reorder_directional_runs(glyphs: &mut [ShapedGlyph], runs: &mut [DirectionalRun]) {
-    let mut highest_level = 0u8;
-    let mut lowest_odd_level: Option<u8> = None;
-
-    for run in runs.iter().copied() {
-        highest_level = highest_level.max(run.level);
-        if run.level % 2 == 1 {
-            lowest_odd_level = Some(match lowest_odd_level {
-                Some(current) => current.min(run.level),
-                None => run.level,
-            });
-        }
-    }
-
-    let Some(lowest_odd_level) = lowest_odd_level else {
-        return;
-    };
-
-    let mut level = highest_level;
-
-    loop {
-        reverse_level_spans(glyphs, runs, level);
-        if level == lowest_odd_level {
-            break;
-        }
-
-        level = level.saturating_sub(1);
-    }
-}
-
-fn reverse_level_spans(glyphs: &mut [ShapedGlyph], runs: &mut [DirectionalRun], level: u8) {
-    let mut cursor = 0usize;
-
-    while cursor < runs.len() {
-        if runs[cursor].level < level {
-            cursor = cursor.saturating_add(1);
-            continue;
-        }
-
-        let start = cursor;
-
-        while cursor < runs.len() && runs[cursor].level >= level {
-            cursor = cursor.saturating_add(1);
-        }
-
-        reverse_directional_span(glyphs, &mut runs[start..cursor]);
-    }
-}
-
-fn reverse_directional_span(glyphs: &mut [ShapedGlyph], runs: &mut [DirectionalRun]) {
-    let Some(first) = runs.first().copied() else {
-        return;
-    };
-    let Some(last) = runs.last().copied() else {
-        return;
-    };
-
-    let start = first.start;
-    let end = last.end;
-
-    reverse_glyph_clusters(&mut glyphs[start..end]);
-    runs.reverse();
-
-    let mut cursor = start;
-
-    for run in runs {
-        let len = run.len();
-
-        run.start = cursor;
-        run.end = cursor.saturating_add(len);
-
-        cursor = run.end;
-    }
-
-    debug_assert_eq!(cursor, end);
 }
 
 pub(super) fn reverse_glyph_clusters(glyphs: &mut [ShapedGlyph]) {

@@ -4,40 +4,9 @@ use crate::{
     px,
 };
 
-use super::{ShapedGlyph, bidi::DirectionalRun, marks::MarkPlacement};
+use super::{ShapedGlyph, marks::MarkPlacement};
 
 const MARK_GAP: Pixels = px(1);
-
-pub(super) fn apply_visual_positioning<'font, const FONTS: usize, const SLOTS: usize>(
-    registry: &'font FontRegistry<'_, FONTS>,
-    size_px: u16,
-    glyphs: &mut [ShapedGlyph],
-    runs: &[DirectionalRun],
-    prepared_font: Option<&PreparedFont<'font>>,
-    mut pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
-) -> Pixels {
-    let mut advance = px(0);
-
-    for run in runs.iter().copied() {
-        debug_assert!(run.start <= run.end);
-        debug_assert!(run.end <= glyphs.len());
-
-        if run.start >= run.end || run.end > glyphs.len() {
-            continue;
-        }
-
-        advance += RunPositioner::new().position(
-            registry,
-            size_px,
-            &mut glyphs[run.start..run.end],
-            run.level % 2 == 1,
-            prepared_font,
-            pair_positioning_cache.as_deref_mut(),
-        );
-    }
-
-    advance
-}
 
 /// positions the glyphs of one visual run, a few clusters at a time if need be. The
 /// glyph before each call's first one is remembered, so a run positions the same

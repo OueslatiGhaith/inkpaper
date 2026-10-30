@@ -24,8 +24,7 @@ const LINE_CHUNK_GLYPHS: usize = 64;
 
 impl<'font> PreparedSimpleShaper<'font> {
     /// shapes `text` followed by `suffix`, such as an ellipsis, and visits the positioned
-    /// glyphs in visual order. The glyphs are the ones [`Self::shape_into`] stores, but
-    /// the line can be any length
+    /// glyphs in visual order. The line can be any length
     pub fn shape_line_with<const FONTS: usize>(
         &self,
         registry: &'font FontRegistry<'_, FONTS>,

@@ -265,42 +265,6 @@ pub enum ShapeError {
     TooManyDirectionalRuns,
 }
 
-pub struct ShapedRun<'a> {
-    glyphs: &'a [ShapedGlyph],
-    direction: TextDirection,
-    advance: Pixels,
-}
-
-impl<'a> ShapedRun<'a> {
-    pub const fn new(glyphs: &'a [ShapedGlyph], direction: TextDirection, advance: Pixels) -> Self {
-        Self {
-            glyphs,
-            direction,
-            advance,
-        }
-    }
-
-    pub const fn glyphs(&self) -> &'a [ShapedGlyph] {
-        self.glyphs
-    }
-
-    pub const fn direction(&self) -> TextDirection {
-        self.direction
-    }
-
-    pub const fn advance(&self) -> Pixels {
-        self.advance
-    }
-
-    pub const fn len(&self) -> usize {
-        self.glyphs.len()
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.glyphs.is_empty()
-    }
-}
-
 /// this is deliberately a very small shaper
 ///
 /// it provides the architecture the renderer will use, but its current shaping rules
@@ -333,30 +297,6 @@ impl SimpleShaper {
         FontInstance::new(font, self.properties)
     }
 
-    pub fn measure<const FONTS: usize>(
-        &self,
-        registry: &FontRegistry<'_, FONTS>,
-        preferred_font: FontId,
-        size_px: u16,
-        text: &str,
-        output: &mut [ShapedGlyph],
-    ) -> Result<ShapeSummary, ShapeError> {
-        self.prepare(registry, preferred_font)
-            .measure(registry, size_px, text, output)
-    }
-
-    pub fn shape_into<'out, const FONTS: usize>(
-        &self,
-        registry: &FontRegistry<'_, FONTS>,
-        preferred_font: FontId,
-        size_px: u16,
-        text: &str,
-        output: &'out mut [ShapedGlyph],
-    ) -> Result<ShapedRun<'out>, ShapeError> {
-        self.prepare(registry, preferred_font)
-            .shape_into(registry, size_px, text, output)
-    }
-
     pub fn prepare<'font, const FONTS: usize>(
         self,
         registry: &'font FontRegistry<'_, FONTS>,
@@ -380,69 +320,6 @@ pub struct PreparedSimpleShaper<'font> {
 }
 
 impl<'font> PreparedSimpleShaper<'font> {
-    pub fn measure<const FONTS: usize>(
-        &self,
-        registry: &'font FontRegistry<'_, FONTS>,
-        size_px: u16,
-        text: &str,
-        output: &mut [ShapedGlyph],
-    ) -> Result<ShapeSummary, ShapeError> {
-        let run = self.shape_into(registry, size_px, text, output)?;
-
-        Ok(ShapeSummary::new(run.len(), run.advance()))
-    }
-
-    pub fn shape_into<'out, const FONTS: usize>(
-        &self,
-        registry: &'font FontRegistry<'_, FONTS>,
-        size_px: u16,
-        text: &str,
-        output: &'out mut [ShapedGlyph],
-    ) -> Result<ShapedRun<'out>, ShapeError> {
-        self.shape_into_with(
-            registry,
-            size_px,
-            text,
-            output,
-            None::<&mut pair_cache::PairPositioningCache<1>>,
-        )
-    }
-
-    /// Shapes `text`, caching pair positioning in `pair_positioning_cache`
-    /// when given one.
-    fn shape_into_with<'out, const FONTS: usize, const SLOTS: usize>(
-        &self,
-        registry: &'font FontRegistry<'_, FONTS>,
-        size_px: u16,
-        text: &str,
-        output: &'out mut [ShapedGlyph],
-        pair_positioning_cache: Option<&mut pair_cache::PairPositioningCache<SLOTS>>,
-    ) -> Result<ShapedRun<'out>, ShapeError> {
-        let mut state = ShapeState::new();
-
-        let summary = self.shaper.shape_piece_into_with_prepared_font(
-            registry,
-            self.preferred_font,
-            self.prepared_font.as_ref(),
-            size_px,
-            text,
-            &mut state,
-            output,
-        )?;
-
-        let glyph_count = summary.glyph_count();
-
-        self.shaper.visual_order_impl(
-            registry,
-            size_px,
-            text,
-            glyph_count,
-            &mut output[..glyph_count],
-            pair_positioning_cache,
-            self.prepared_font.as_ref(),
-        )
-    }
-
     pub fn next_cluster_boundary<const FONTS: usize>(
         &self,
         registry: &'font FontRegistry<'_, FONTS>,

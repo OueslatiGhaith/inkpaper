@@ -10,7 +10,7 @@ use crate::{
 };
 
 use super::{
-    ShapeError, ShapeState, ShapeSummary, ShapedGlyph, SimpleShaper,
+    ShapeState, ShapeSummary, ShapedGlyph, SimpleShaper,
     arabic::{contextual_form, has_contextual_forms, joining_type, lam_alef_form},
     marks::{MarkPlacement, extends_cluster, mark_placement},
 };
@@ -226,62 +226,6 @@ impl SimpleShaper {
             Ok(summary) => summary,
             Err(error) => match error {},
         }
-    }
-
-    pub fn shape_piece_into<const FONTS: usize>(
-        &self,
-        registry: &FontRegistry<'_, FONTS>,
-        preferred_font: FontId,
-        size_px: u16,
-        text: &str,
-        state: &mut ShapeState,
-        output: &mut [ShapedGlyph],
-    ) -> Result<ShapeSummary, ShapeError> {
-        let preferred_font = self.font_instance(preferred_font);
-        let prepared_font = registry.prepare_instance(preferred_font);
-
-        self.shape_piece_into_with_prepared_font(
-            registry,
-            preferred_font,
-            prepared_font.as_ref(),
-            size_px,
-            text,
-            state,
-            output,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn shape_piece_into_with_prepared_font<'font, const FONTS: usize>(
-        &self,
-        registry: &'font FontRegistry<'_, FONTS>,
-        preferred_font: FontInstance,
-        prepared_font: Option<&PreparedFont<'font>>,
-        size_px: u16,
-        text: &str,
-        state: &mut ShapeState,
-        output: &mut [ShapedGlyph],
-    ) -> Result<ShapeSummary, ShapeError> {
-        let mut written = 0usize;
-
-        self.try_shape_piece_with_prepared_font(
-            registry,
-            preferred_font,
-            prepared_font,
-            size_px,
-            text,
-            state,
-            |glyph| {
-                let Some(destination) = output.get_mut(written) else {
-                    return Err(ShapeError::BufferTooSmall);
-                };
-
-                *destination = glyph;
-                written = written.saturating_add(1);
-
-                Ok(())
-            },
-        )
     }
 
     pub fn next_cluster_boundary<const FONTS: usize>(

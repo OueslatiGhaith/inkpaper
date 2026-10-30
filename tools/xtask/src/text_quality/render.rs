@@ -50,8 +50,6 @@ const IDEAL_POSITION_SCALE: u16 = 64;
 /// the ideal image is rasterized at this multiple of the size and box-filtered down
 const IDEAL_RASTER_SCALE: u16 = 4;
 
-const SHAPED_GLYPHS: usize = 256;
-
 type MeasureResources = RuntimeResources<'static, 1, 1024, { 4 << 20 }, 0>;
 
 #[derive(Clone, Copy)]
@@ -230,11 +228,9 @@ fn glyph_id(font: ResolvedFont<'_>, character: char) -> Result<GlyphId> {
 
 fn measure(resources: &MeasureResources, font: FontInstance, size: u16, text: &str) -> Result<i32> {
     let registry = resources.font_registry();
-    let shaper = SimpleShaper::with_properties(font.properties());
-    let mut output = [ShapedGlyph::EMPTY; SHAPED_GLYPHS];
-
-    let summary = shaper
-        .measure(registry, font.font(), size, text, &mut output)
+    let summary = SimpleShaper::with_properties(font.properties())
+        .prepare(registry, font.font())
+        .shape_line_with(registry, size, text, "", |_| {})
         .map_err(|error| anyhow!("{error:?}"))?;
 
     Ok(summary.advance().get())
@@ -337,27 +333,18 @@ fn place_line(
     page_width: usize,
 ) -> Result<()> {
     let registry = resources.font_registry();
-    let shaper = SimpleShaper::with_properties(font.properties());
+    let shaper = SimpleShaper::with_properties(font.properties()).prepare(registry, font.font());
+    let shape = |size: u16| -> Result<Vec<ShapedGlyph>> {
+        let mut glyphs = Vec::new();
+        shaper
+            .shape_line_with(registry, size, text, "", |glyph| glyphs.push(glyph))
+            .map_err(|error| anyhow!("{error:?}"))?;
 
-    let mut actual = [ShapedGlyph::EMPTY; SHAPED_GLYPHS];
-    let actual = shaper
-        .shape_into(registry, font.font(), size, text, &mut actual)
-        .map_err(|error| anyhow!("{error:?}"))?
-        .glyphs()
-        .to_vec();
+        Ok(glyphs)
+    };
 
-    let mut scaled = [ShapedGlyph::EMPTY; SHAPED_GLYPHS];
-    let scaled = shaper
-        .shape_into(
-            registry,
-            font.font(),
-            size * IDEAL_POSITION_SCALE,
-            text,
-            &mut scaled,
-        )
-        .map_err(|error| anyhow!("{error:?}"))?
-        .glyphs()
-        .to_vec();
+    let actual = shape(size)?;
+    let scaled = shape(size * IDEAL_POSITION_SCALE)?;
 
     ensure!(
         actual.len() == scaled.len()

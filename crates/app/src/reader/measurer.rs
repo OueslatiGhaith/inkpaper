@@ -4,7 +4,7 @@ use inkpaper_epub::{
 use inkpaper_reader::{ImageMeasurer, TextMeasurer, TextStyle as ReaderTextStyle};
 use inkpaper_ui::{
     FontFamilyId, FontRegistry, FontRegistryError, PreparedSimpleShaper, ResolvedFont, ShapeError,
-    ShapedGlyph, SimpleShaper,
+    SimpleShaper,
 };
 
 use crate::{
@@ -19,8 +19,6 @@ use crate::{
     reader_page::reader_font,
     typography::{self, CARD_FAMILY, FONT_FACES, READER_FAMILY},
 };
-
-const READER_SHAPING_GLYPHS: usize = 128;
 
 /// The faces the reader measures with, registered like the runtime's, and
 /// the family it measures in.
@@ -56,7 +54,6 @@ pub(super) struct ReaderMeasurer<'fonts> {
     /// indexed by [`shaper_index`]
     shapers: [PreparedSimpleShaper<'fonts>; 4],
 
-    glyphs: [ShapedGlyph; READER_SHAPING_GLYPHS],
     images: ChapterImageMetrics,
 
     measure_cache: ReaderMeasureCache<READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES>,
@@ -79,7 +76,6 @@ impl<'fonts> ReaderMeasurer<'fonts> {
         Self {
             fonts,
             shapers,
-            glyphs: [ShapedGlyph::EMPTY; READER_SHAPING_GLYPHS],
             images,
             measure_cache: ReaderMeasureCache::default(),
         }
@@ -122,12 +118,8 @@ impl TextMeasurer for ReaderMeasurer<'_> {
 
         let shaper = &self.shapers[shaper_index(style.font_weight(), style.font_style())];
 
-        let summary = shaper.measure(
-            &self.fonts.registry,
-            style.font_size(),
-            text,
-            &mut self.glyphs,
-        )?;
+        let summary =
+            shaper.shape_line_with(&self.fonts.registry, style.font_size(), text, "", |_| {})?;
 
         let width = u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX);
 

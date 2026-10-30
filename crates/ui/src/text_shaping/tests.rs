@@ -8,6 +8,85 @@ use crate::{
     },
 };
 
+/// a line from the streaming shaper, collected so tests can index its glyphs
+#[derive(Debug, PartialEq)]
+struct ShapedLine {
+    glyphs: std::vec::Vec<ShapedGlyph>,
+    direction: TextDirection,
+    advance: Pixels,
+}
+
+impl ShapedLine {
+    fn glyphs(&self) -> &[ShapedGlyph] {
+        &self.glyphs
+    }
+
+    fn direction(&self) -> TextDirection {
+        self.direction
+    }
+
+    fn advance(&self) -> Pixels {
+        self.advance
+    }
+
+    fn len(&self) -> usize {
+        self.glyphs.len()
+    }
+}
+
+trait ShapeLine {
+    fn shape_line<const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'_, FONTS>,
+        font: FontId,
+        size_px: u16,
+        text: &str,
+    ) -> Result<ShapedLine, ShapeError>;
+
+    /// shapes without keeping the glyphs
+    fn measure_line<const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'_, FONTS>,
+        font: FontId,
+        size_px: u16,
+        text: &str,
+    ) -> Result<ShapeSummary, ShapeError>;
+}
+
+impl ShapeLine for SimpleShaper {
+    fn shape_line<const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'_, FONTS>,
+        font: FontId,
+        size_px: u16,
+        text: &str,
+    ) -> Result<ShapedLine, ShapeError> {
+        let mut glyphs = std::vec::Vec::new();
+        let summary =
+            self.prepare(registry, font)
+                .shape_line_with(registry, size_px, text, "", |glyph| glyphs.push(glyph))?;
+
+        assert_eq!(summary.glyph_count(), glyphs.len());
+
+        Ok(ShapedLine {
+            glyphs,
+            direction: paragraph_direction(text),
+            advance: summary.advance(),
+        })
+    }
+
+    fn measure_line<const FONTS: usize>(
+        &self,
+        registry: &FontRegistry<'_, FONTS>,
+        font: FontId,
+        size_px: u16,
+        text: &str,
+    ) -> Result<ShapeSummary, ShapeError> {
+        self.prepare(registry, font)
+            .shape_line_with(registry, size_px, text, "", |_| {})
+    }
+}
+
 struct TestFont {
     characters: &'static [char],
     advance: Pixels,
@@ -428,10 +507,8 @@ fn shaping_uses_font_fallback() {
     let mut registry = FontRegistry::<2>::default();
     let latin_id = registry.register(&latin).unwrap();
     let arabic_id = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 2];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, latin_id, 16, "Aب", &mut output)
+        .shape_line(&registry, latin_id, 16, "Aب")
         .unwrap();
 
     assert_eq!(run.len(), 2);
@@ -465,19 +542,17 @@ fn kerning_is_not_applied_across_fallback_faces() {
     registry.register(&arabic).unwrap();
 
     let shaper = SimpleShaper::new();
-    let mut latin_output = [ShapedGlyph::EMPTY; 2];
-    let mut mixed_output = [ShapedGlyph::EMPTY; 2];
 
     assert_eq!(
         shaper
-            .measure(&registry, latin_id, 16, "AA", &mut latin_output)
+            .measure_line(&registry, latin_id, 16, "AA")
             .unwrap()
             .advance(),
         px(9),
     );
     assert_eq!(
         shaper
-            .measure(&registry, latin_id, 16, "Aب", &mut mixed_output)
+            .measure_line(&registry, latin_id, 16, "Aب")
             .unwrap()
             .advance(),
         px(12),
@@ -496,31 +571,12 @@ fn missing_character_uses_replacement_fallback() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 1];
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "☃", &mut output)
+        .shape_line(&registry, font_id, 16, "☃")
         .unwrap();
 
     assert_eq!(run.len(), 1);
     assert_eq!(run.glyphs()[0].glyph(), font.glyph_id('?').unwrap());
-}
-
-#[test]
-fn shaped_run_uses_caller_owned_capacity() {
-    static CHARACTERS: [char; 3] = ['A', 'B', '?'];
-
-    let font = TestFont {
-        characters: &CHARACTERS,
-        advance: px(5),
-        kerning: px(0),
-    };
-
-    let mut registry = FontRegistry::<1>::default();
-    let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 1];
-    let result = SimpleShaper::new().shape_into(&registry, font_id, 16, "AB", &mut output);
-
-    assert!(matches!(result, Err(ShapeError::BufferTooSmall)));
 }
 
 #[test]
@@ -540,18 +596,12 @@ fn arabic_letters_select_contextual_forms() {
 
     let mut registry = FontRegistry::<1>::default();
     let font = registry.register(&arabic).unwrap();
-    let mut measured_output = [ShapedGlyph::EMPTY; 3];
-    let mut output = [ShapedGlyph::EMPTY; 3];
 
     let shaper = SimpleShaper::new();
 
-    let measured = shaper
-        .measure(&registry, font, 16, "ببب", &mut measured_output)
-        .unwrap();
+    let measured = shaper.measure_line(&registry, font, 16, "ببب").unwrap();
 
-    let run = shaper
-        .shape_into(&registry, font, 16, "ببب", &mut output)
-        .unwrap();
+    let run = shaper.shape_line(&registry, font, 16, "ببب").unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
     assert_eq!(run.len(), 3);
@@ -583,15 +633,9 @@ fn default_ignorables_draw_nothing() {
     // soft hyphen, zero-width space, zero-width joiner, variation selector 16
     let text = "a\u{00AD}\u{200B}\u{200D}\u{FE0F}b";
 
-    let mut measured_output = [ShapedGlyph::EMPTY; 6];
-    let measured = shaper
-        .measure(&registry, font_id, 16, text, &mut measured_output)
-        .unwrap();
+    let measured = shaper.measure_line(&registry, font_id, 16, text).unwrap();
 
-    let mut output = [ShapedGlyph::EMPTY; 6];
-    let run = shaper
-        .shape_into(&registry, font_id, 16, text, &mut output)
-        .unwrap();
+    let run = shaper.shape_line(&registry, font_id, 16, text).unwrap();
 
     assert_eq!(run.len(), 2);
     assert_eq!(run.glyphs()[0].glyph(), font.glyph_id('a').unwrap());
@@ -616,10 +660,8 @@ fn zero_width_non_joiner_breaks_arabic_joining() {
 
     let mut registry = FontRegistry::<1>::default();
     let font = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font, 16, "ب\u{200C}ب", &mut output)
+        .shape_line(&registry, font, 16, "ب\u{200C}ب")
         .unwrap();
 
     assert_eq!(run.len(), 2);
@@ -644,10 +686,8 @@ fn zero_width_joiner_forces_arabic_joining() {
 
     let mut registry = FontRegistry::<1>::default();
     let font = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font, 16, "ب\u{200D}ب", &mut output)
+        .shape_line(&registry, font, 16, "ب\u{200D}ب")
         .unwrap();
 
     // visual RTL order: final beh, then initial beh. The joiner draws nothing
@@ -680,10 +720,8 @@ fn arabic_extended_a_letters_join() {
 
     let mut registry = FontRegistry::<1>::default();
     let font = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font, 16, "ب\u{08A0}ب", &mut output)
+        .shape_line(&registry, font, 16, "ب\u{08A0}ب")
         .unwrap();
 
     // U+08A0 has no presentation forms, so its neighbours show the joins
@@ -720,17 +758,9 @@ fn transparent_arabic_marks_do_not_break_joining_or_advance() {
     let mut registry = FontRegistry::<1>::default();
     let arabic_id = registry.register(&arabic).unwrap();
     let shaper = SimpleShaper::new();
-    let mut measured_output = [ShapedGlyph::EMPTY; 3];
+    let measured = shaper.measure_line(&registry, arabic_id, 16, "بَب").unwrap();
 
-    let measured = shaper
-        .measure(&registry, arabic_id, 16, "بَب", &mut measured_output)
-        .unwrap();
-
-    let mut output = [ShapedGlyph::EMPTY; 3];
-
-    let run = shaper
-        .shape_into(&registry, arabic_id, 16, "بَب", &mut output)
-        .unwrap();
+    let run = shaper.shape_line(&registry, arabic_id, 16, "بَب").unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
     assert_eq!(run.len(), 3);
@@ -787,9 +817,8 @@ fn adjacent_lam_alef_uses_mandatory_ligature_when_font_has_it() {
 
     let mut registry = FontRegistry::<1>::default();
     let font = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 2];
     let run = SimpleShaper::new()
-        .shape_into(&registry, font, 16, "لا", &mut output)
+        .shape_line(&registry, font, 16, "لا")
         .unwrap();
 
     assert_eq!(run.len(), 1);
@@ -815,9 +844,8 @@ fn lam_alef_uses_final_ligature_when_connected_to_previous_letter() {
 
     let mut registry = FontRegistry::<1>::default();
     let font = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
     let run = SimpleShaper::new()
-        .shape_into(&registry, font, 16, "بلا", &mut output)
+        .shape_line(&registry, font, 16, "بلا")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -847,9 +875,8 @@ fn lam_alef_is_not_consumed_when_ligature_is_missing() {
 
     let mut registry = FontRegistry::<1>::default();
     let font = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 2];
     let run = SimpleShaper::new()
-        .shape_into(&registry, font, 16, "لا", &mut output)
+        .shape_line(&registry, font, 16, "لا")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -873,9 +900,8 @@ fn missing_presentation_form_falls_back_to_base_character() {
 
     let mut registry = FontRegistry::<1>::default();
     let font = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 2];
     let run = SimpleShaper::new()
-        .shape_into(&registry, font, 16, "بب", &mut output)
+        .shape_line(&registry, font, 16, "بب")
         .unwrap();
 
     assert_eq!(run.len(), 2);
@@ -898,15 +924,9 @@ fn arabic_with_numbers_keeps_digits_in_ltr_order() {
 
     let shaper = SimpleShaper::new();
 
-    let mut measured_output = [ShapedGlyph::EMPTY; 4];
-    let measured = shaper
-        .measure(&registry, font_id, 16, "ب 12", &mut measured_output)
-        .unwrap();
+    let measured = shaper.measure_line(&registry, font_id, 16, "ب 12").unwrap();
 
-    let mut output = [ShapedGlyph::EMPTY; 4];
-    let run = shaper
-        .shape_into(&registry, font_id, 16, "ب 12", &mut output)
-        .unwrap();
+    let run = shaper.shape_line(&registry, font_id, 16, "ب 12").unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
     assert_eq!(run.len(), 4);
@@ -942,10 +962,8 @@ fn long_ltr_line_is_not_limited_by_word_count() {
 
     // every word, number and punctuation mark switches directional class
     let text = "\"a, 1 ".repeat(20);
-    let mut output = [ShapedGlyph::EMPTY; 128];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, &text, &mut output)
+        .shape_line(&registry, font_id, 16, &text)
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::LeftToRight);
@@ -971,10 +989,8 @@ fn long_rtl_line_is_not_limited_by_word_count() {
     let font_id = registry.register(&font).unwrap();
 
     let text = "ب ".repeat(40);
-    let mut output = [ShapedGlyph::EMPTY; 128];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, text.trim_end(), &mut output)
+        .shape_line(&registry, font_id, 16, text.trim_end())
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -1001,15 +1017,9 @@ fn arabic_with_latin_preserves_ltr_run_order() {
 
     let shaper = SimpleShaper::new();
 
-    let mut measured_output = [ShapedGlyph::EMPTY; 4];
-    let measured = shaper
-        .measure(&registry, font_id, 16, "ب AB", &mut measured_output)
-        .unwrap();
+    let measured = shaper.measure_line(&registry, font_id, 16, "ب AB").unwrap();
 
-    let mut output = [ShapedGlyph::EMPTY; 4];
-    let run = shaper
-        .shape_into(&registry, font_id, 16, "ب AB", &mut output)
-        .unwrap();
+    let run = shaper.shape_line(&registry, font_id, 16, "ب AB").unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
 
@@ -1037,10 +1047,8 @@ fn ltr_run_between_arabic_runs_keeps_internal_order() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 6];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "ب AB ب", &mut output)
+        .shape_line(&registry, font_id, 16, "ب AB ب")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -1076,10 +1084,8 @@ fn hebrew_resolves_right_to_left() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 4];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "אב A", &mut output)
+        .shape_line(&registry, font_id, 16, "אב A")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -1110,10 +1116,8 @@ fn hebrew_run_inside_ltr_paragraph_is_reversed() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 4];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "A אב", &mut output)
+        .shape_line(&registry, font_id, 16, "A אב")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::LeftToRight);
@@ -1144,10 +1148,8 @@ fn rtl_mirroring_covers_unicode_mirrored_pairs() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "ب≤ب", &mut output)
+        .shape_line(&registry, font_id, 16, "ب≤ب")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -1175,10 +1177,8 @@ fn bidi_reordering_preserves_resolved_fallback_fonts() {
     let latin_id = registry.register(&latin).unwrap();
     let arabic_id = registry.register(&arabic).unwrap();
 
-    let mut output = [ShapedGlyph::EMPTY; 3];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, latin_id, 16, "ب A", &mut output)
+        .shape_line(&registry, latin_id, 16, "ب A")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -1276,10 +1276,8 @@ fn rtl_brackets_are_mirrored_around_ltr_run() {
 
     let font_id = registry.register(&font).unwrap();
 
-    let mut output = [ShapedGlyph::EMPTY; 6];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "ب (AB)", &mut output)
+        .shape_line(&registry, font_id, 16, "ب (AB)")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -1322,10 +1320,8 @@ fn bracket_pair_after_arabic_stays_with_it_at_line_end() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 7];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "a ب (ب)", &mut output)
+        .shape_line(&registry, font_id, 16, "a ب (ب)")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::LeftToRight);
@@ -1357,10 +1353,8 @@ fn bracket_pair_after_arabic_stays_with_it_before_english() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 9];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "a ب (ب) b", &mut output)
+        .shape_line(&registry, font_id, 16, "a ب (ب) b")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::LeftToRight);
@@ -1391,10 +1385,8 @@ fn ltr_brackets_around_rtl_run_are_not_mirrored() {
 
     let font_id = registry.register(&font).unwrap();
 
-    let mut output = [ShapedGlyph::EMPTY; 6];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "AB (ب)", &mut output)
+        .shape_line(&registry, font_id, 16, "AB (ب)")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::LeftToRight);
@@ -1430,10 +1422,8 @@ fn mirrored_brackets_can_resolve_through_font_fallback() {
     let mut registry = FontRegistry::<2>::default();
     let primary_id = registry.register(&primary).unwrap();
     let fallback_id = registry.register(&fallback).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 6];
-
     let run = SimpleShaper::new()
-        .shape_into(&registry, primary_id, 16, "ب (AB)", &mut output)
+        .shape_line(&registry, primary_id, 16, "ب (AB)")
         .unwrap();
 
     // the logical closing ')' originally came from the fallback face.
@@ -1507,10 +1497,8 @@ fn mirrored_brackets_keep_the_runs_weight() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
-
     let run = SimpleShaper::with_properties(FontProperties::new(FontWeight::BOLD))
-        .shape_into(&registry, font_id, 16, "(ب)", &mut output)
+        .shape_line(&registry, font_id, 16, "(ب)")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -1542,11 +1530,7 @@ fn rtl_kerning_is_measured_in_visual_order() {
     let font_id = registry.register(&font).unwrap();
     let shaper = SimpleShaper::new();
 
-    let mut measured_output = [ShapedGlyph::EMPTY; 2];
-
-    let measured = shaper
-        .measure(&registry, font_id, 16, "بب", &mut measured_output)
-        .unwrap();
+    let measured = shaper.measure_line(&registry, font_id, 16, "بب").unwrap();
 
     // logical glyph order:
     //     initial -> final
@@ -1556,11 +1540,7 @@ fn rtl_kerning_is_measured_in_visual_order() {
     //     5 + (5 - 3) = 7
     assert_eq!(measured.advance(), px(7));
 
-    let mut output = [ShapedGlyph::EMPTY; 2];
-
-    let run = shaper
-        .shape_into(&registry, font_id, 16, "بب", &mut output)
-        .unwrap();
+    let run = shaper.shape_line(&registry, font_id, 16, "بب").unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
 
@@ -1594,9 +1574,8 @@ fn ltr_kerning_stays_on_the_second_visual_glyph() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 2];
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "AA", &mut output)
+        .shape_line(&registry, font_id, 16, "AA")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::LeftToRight);
@@ -1627,10 +1606,8 @@ fn arabic_marks_stack_around_their_base() {
 
     let arabic_id = registry.register(&arabic).unwrap();
 
-    let mut output = [ShapedGlyph::EMPTY; 4];
-
     let run = SimpleShaper::new()
-        .shape_into(
+        .shape_line(
             &registry,
             arabic_id,
             16,
@@ -1640,7 +1617,6 @@ fn arabic_marks_stack_around_their_base() {
                 "\u{0651}", // shadda
                 "\u{0650}", // kasra
             ),
-            &mut output,
         )
         .unwrap();
 
@@ -1700,11 +1676,7 @@ fn latin_combining_marks_stack_on_their_base() {
 
     // e + combining acute + combining dot below, then b
     let text = "e\u{0301}\u{0323}b";
-    let mut output = [ShapedGlyph::EMPTY; 4];
-
-    let run = shaper
-        .shape_into(&registry, font_id, 16, text, &mut output)
-        .unwrap();
+    let run = shaper.shape_line(&registry, font_id, 16, text).unwrap();
 
     assert_eq!(run.len(), 4);
 
@@ -1737,11 +1709,9 @@ fn hebrew_points_are_placed_by_combining_class() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
-
     // bet + sheva + holam
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "ב\u{05B0}\u{05B9}", &mut output)
+        .shape_line(&registry, font_id, 16, "ב\u{05B0}\u{05B9}")
         .unwrap();
 
     assert_eq!(run.len(), 3);
@@ -1765,11 +1735,9 @@ fn hebrew_dagesh_is_centered_in_its_letter() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 2];
-
     // bet + dagesh
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "ב\u{05BC}", &mut output)
+        .shape_line(&registry, font_id, 16, "ב\u{05BC}")
         .unwrap();
 
     assert_eq!(run.len(), 2);
@@ -1796,11 +1764,9 @@ fn spacing_marks_join_the_cluster_and_keep_their_advance() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&font).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 2];
-
     // ka + vowel sign i
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "क\u{093F}", &mut output)
+        .shape_line(&registry, font_id, 16, "क\u{093F}")
         .unwrap();
 
     assert_eq!(run.len(), 2);
@@ -1824,9 +1790,8 @@ fn font_anchors_position_arabic_mark_chain() {
     };
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
     let run = SimpleShaper::new()
-        .shape_into(
+        .shape_line(
             &registry,
             font_id,
             16,
@@ -1835,7 +1800,6 @@ fn font_anchors_position_arabic_mark_chain() {
                 "\u{064E}", // fatha
                 "\u{0651}", // shadda
             ),
-            &mut output,
         )
         .unwrap();
 
@@ -1881,9 +1845,8 @@ fn mark_after_lam_alef_uses_ligature_component_anchor() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 2];
     let run = SimpleShaper::new()
-        .shape_into(
+        .shape_line(
             &registry,
             font_id,
             16,
@@ -1892,7 +1855,6 @@ fn mark_after_lam_alef_uses_ligature_component_anchor() {
                 "\u{0627}", // alef
                 "\u{064E}", // fatha
             ),
-            &mut output,
         )
         .unwrap();
 
@@ -1935,9 +1897,8 @@ fn rtl_cursive_attachment_chains_bases_and_marks() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 4];
     let run = SimpleShaper::new()
-        .shape_into(
+        .shape_line(
             &registry,
             font_id,
             16,
@@ -1947,7 +1908,6 @@ fn rtl_cursive_attachment_chains_bases_and_marks() {
                 "\u{064E}", // fatha
                 "\u{0628}", // beh
             ),
-            &mut output,
         )
         .unwrap();
 
@@ -2003,15 +1963,8 @@ fn gsub_shapes_arabic_contextual_forms_without_presentation_glyphs() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
     let run = SimpleShaper::new()
-        .shape_into(
-            &registry,
-            font_id,
-            16,
-            "\u{0628}\u{0628}\u{0628}",
-            &mut output,
-        )
+        .shape_line(&registry, font_id, 16, "\u{0628}\u{0628}\u{0628}")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -2044,15 +1997,8 @@ fn gsub_shapes_contextual_forms_for_letters_without_presentation_forms() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 3];
     let run = SimpleShaper::new()
-        .shape_into(
-            &registry,
-            font_id,
-            16,
-            "\u{08A0}\u{08A0}\u{08A0}",
-            &mut output,
-        )
+        .shape_line(&registry, font_id, 16, "\u{08A0}\u{08A0}\u{08A0}")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -2080,9 +2026,8 @@ fn gsub_required_ligature_shapes_lam_alef_without_presentation_glyphs() {
 
     let mut registry = FontRegistry::<1>::default();
     let font_id = registry.register(&arabic).unwrap();
-    let mut output = [ShapedGlyph::EMPTY; 2];
     let run = SimpleShaper::new()
-        .shape_into(&registry, font_id, 16, "\u{0644}\u{0627}", &mut output)
+        .shape_line(&registry, font_id, 16, "\u{0644}\u{0627}")
         .unwrap();
 
     assert_eq!(run.direction(), TextDirection::RightToLeft);
@@ -2111,21 +2056,15 @@ fn prepared_shaper_matches_regular_shaper_across_repeated_calls() {
     let prepared = shaper.prepare(&registry, font);
 
     for text in ["AB", "A B", "A \u{0628} B"] {
-        let mut regular = [ShapedGlyph::EMPTY; 16];
-
-        let mut reused = [ShapedGlyph::EMPTY; 16];
-
-        let regular_summary = shaper
-            .measure(&registry, font, 16, text, &mut regular)
+        let mut reused = std::vec::Vec::new();
+        let reused_summary = prepared
+            .shape_line_with(&registry, 16, text, "", |glyph| reused.push(glyph))
             .unwrap();
 
-        let prepared_summary = prepared.measure(&registry, 16, text, &mut reused).unwrap();
+        let regular = shaper.shape_line(&registry, font, 16, text).unwrap();
 
-        assert_eq!(prepared_summary, regular_summary);
-
-        let count = regular_summary.glyph_count();
-
-        assert_eq!(&reused[..count], &regular[..count]);
+        assert_eq!(reused, regular.glyphs);
+        assert_eq!(reused_summary.advance(), regular.advance());
 
         for from in text.char_indices().map(|(offset, _)| offset) {
             assert_eq!(
@@ -2134,41 +2073,6 @@ fn prepared_shaper_matches_regular_shaper_across_repeated_calls() {
             );
         }
     }
-}
-
-/// the glyphs of `text` and `suffix` from the whole-line shaper
-fn shape_whole_line<const FONTS: usize>(
-    registry: &FontRegistry<'_, FONTS>,
-    font_id: FontId,
-    text: &str,
-    suffix: &str,
-) -> Result<(std::vec::Vec<ShapedGlyph>, Pixels), ShapeError> {
-    let shaper = SimpleShaper::new();
-    let mut glyphs = std::vec![ShapedGlyph::EMPTY; 4 * (text.len() + suffix.len()) + 1];
-    let mut state = ShapeState::new();
-
-    let text_count = shaper
-        .shape_piece_into(registry, font_id, 16, text, &mut state, &mut glyphs)?
-        .glyph_count();
-    let suffix_count = shaper
-        .shape_piece_into(
-            registry,
-            font_id,
-            16,
-            suffix,
-            &mut state,
-            &mut glyphs[text_count..],
-        )?
-        .glyph_count();
-    let run = shaper.visual_order(
-        registry,
-        16,
-        text,
-        text_count,
-        &mut glyphs[..text_count + suffix_count],
-    )?;
-
-    Ok((run.glyphs().to_vec(), run.advance()))
 }
 
 /// the glyphs of `text` and `suffix` from the streaming shaper
@@ -2199,13 +2103,16 @@ fn longest_cluster(glyphs: &[ShapedGlyph]) -> usize {
         .unwrap_or(0)
 }
 
+/// more glyphs than any test line has, so each of its runs shapes in one chunk
+const UNCHUNKED: usize = 1024;
+
 fn assert_streamed_line_matches<const CHUNK: usize>(
     registry: &FontRegistry<'_, 1>,
     font_id: FontId,
     text: &str,
     suffix: &str,
 ) {
-    let whole = shape_whole_line(registry, font_id, text, suffix);
+    let whole = shape_streamed_line::<UNCHUNKED, 1>(registry, font_id, text, suffix);
     let streamed = shape_streamed_line::<CHUNK, 1>(registry, font_id, text, suffix);
 
     match (&whole, &streamed) {
@@ -2222,7 +2129,7 @@ fn assert_streamed_line_matches<const CHUNK: usize>(
 }
 
 /// lines from the shaping tests above, and random lines mixing their scripts, shape to
-/// the same glyphs whole and streamed in chunks, with and without an ellipsis
+/// the same glyphs whole and streamed in small chunks, with and without an ellipsis
 #[test]
 fn streamed_lines_match_whole_lines() {
     static TEXT: [char; 12] = ['a', 'b', 'A', ' ', '1', ',', '"', '(', ')', '≤', '≥', '?'];
@@ -2354,16 +2261,13 @@ fn ellipsis_after_a_one_letter_rtl_line_stays_together() {
     // cluster when the line is reversed
     let expected = [(2, 2), (2, 1), (2, 0), (1, 0)];
 
-    for (glyphs, _) in [
-        shape_whole_line(&registry, font_id, "ب", crate::text_layout::ELLIPSIS).unwrap(),
+    let (glyphs, _) =
         shape_streamed_line::<64, 1>(&registry, font_id, "ب", crate::text_layout::ELLIPSIS)
-            .unwrap(),
-    ] {
-        let order: std::vec::Vec<_> = glyphs
-            .iter()
-            .map(|glyph| (glyph.glyph().value(), glyph.cluster()))
-            .collect();
+            .unwrap();
+    let order: std::vec::Vec<_> = glyphs
+        .iter()
+        .map(|glyph| (glyph.glyph().value(), glyph.cluster()))
+        .collect();
 
-        assert_eq!(order, expected);
-    }
+    assert_eq!(order, expected);
 }
