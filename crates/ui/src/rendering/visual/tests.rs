@@ -7,18 +7,16 @@ use crate::*;
 struct TestTextMeasurer;
 
 impl TextMeasurer for TestTextMeasurer {
-    fn measure_text(&self, text: &str, _style: ResolvedTextStyle, max_size: Size) -> Size {
-        let width = px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
-            .saturating_mul(6)
-            .min(max_size.width.non_negative());
+    fn measure_text(
+        &self,
+        text: &str,
+        _style: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
+        let width = available_width
+            .limit(px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX)).saturating_mul(6));
 
-        let height = if text.is_empty() {
-            px(0)
-        } else {
-            px(0).min(max_size.height.non_negative())
-        };
-
-        Size::new(width, height)
+        Size::new(width, px(0))
     }
 }
 
@@ -183,15 +181,19 @@ struct RecordingResources {
 }
 
 impl TextMeasurer for RecordingPainter {
-    fn measure_text(&self, text: &str, _style: ResolvedTextStyle, max_size: Size) -> Size {
-        let width = px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
-            .saturating_mul(6)
-            .min(max_size.width.non_negative());
+    fn measure_text(
+        &self,
+        text: &str,
+        _style: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
+        let width = available_width
+            .limit(px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX)).saturating_mul(6));
 
         let height = if text.is_empty() {
             Pixels::ZERO
         } else {
-            px(10).min(max_size.height.non_negative())
+            px(10)
         };
 
         Size::new(width, height)

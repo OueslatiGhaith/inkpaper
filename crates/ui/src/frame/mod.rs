@@ -2,7 +2,8 @@ use crate::{
     CanvasDraw, CanvasStyle, DamageRegion, ElementId, EntityAccessError, EntityId, EntityRenderFn,
     EventBinding, EventBindingId, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size,
     Style, StylePatch, SvgSource, SvgStyle, TextStyle, element::state::ElementStateId,
-    frame::storage::FrameBuffer, interaction::scroll::ScrollAxes, storage::FrameStorage,
+    frame::storage::FrameBuffer, interaction::scroll::ScrollAxes, layout::AvailableSize,
+    storage::FrameStorage,
 };
 #[cfg(feature = "metrics")]
 use crate::{PerformanceMetrics, PerformanceMetricsCell};
@@ -168,7 +169,7 @@ const fn entity_order(entity: EntityId) -> (u16, u16) {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MeasurementCache {
-    available: Size,
+    available: AvailableSize,
     measured: Size,
 }
 
@@ -415,14 +416,23 @@ impl<F: FrameStorage> FrameArena<F> {
         self.metrics.snapshot()
     }
 
-    pub(crate) fn cached_measurement(&self, node: NodeId, available: Size) -> Option<Size> {
+    pub(crate) fn cached_measurement(
+        &self,
+        node: NodeId,
+        available: AvailableSize,
+    ) -> Option<Size> {
         match self.node_cache[node.index()] {
             NodeCache::Measurement(cache) if cache.available == available => Some(cache.measured),
             _ => None,
         }
     }
 
-    pub(crate) fn cache_measurement(&mut self, node: NodeId, available: Size, measured: Size) {
+    pub(crate) fn cache_measurement(
+        &mut self,
+        node: NodeId,
+        available: AvailableSize,
+        measured: Size,
+    ) {
         self.node_cache[node.index()] = NodeCache::Measurement(MeasurementCache {
             available,
             measured,

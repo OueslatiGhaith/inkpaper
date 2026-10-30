@@ -1,7 +1,9 @@
 use std::{convert::Infallible, hint::black_box};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use inkpaper_ui::{BoxPaint, GlyphBitmap, Painter, ResolvedTextStyle, TextMeasurer, prelude::*};
+use inkpaper_ui::{
+    AvailableSpace, BoxPaint, GlyphBitmap, Painter, ResolvedTextStyle, TextMeasurer, prelude::*,
+};
 
 const VIEWPORT: Size = Size::new(px(320), px(240));
 
@@ -21,15 +23,18 @@ type BenchRuntime = Runtime<
 struct NullPainter;
 
 impl TextMeasurer for NullPainter {
-    fn measure_text(&self, text: &str, _: ResolvedTextStyle, max_size: Size) -> Size {
+    fn measure_text(
+        &self,
+        text: &str,
+        _: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
         let characters = i32::try_from(text.len()).unwrap_or(i32::MAX);
 
-        let width = px(6)
-            .saturating_mul(characters)
-            .min(max_size.width.non_negative());
+        let width = available_width.limit(px(6).saturating_mul(characters));
         let height = match text.is_empty() {
             true => px(0),
-            false => px(10).min(max_size.height.non_negative()),
+            false => px(10),
         };
 
         Size::new(width, height)

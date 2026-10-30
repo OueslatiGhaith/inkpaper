@@ -4,10 +4,10 @@ use alloc::boxed::Box;
 #[cfg(feature = "metrics")]
 use crate::GlyphCacheMetrics;
 use crate::{
-    FontFace, FontFamilyId, FontId, FontInstance, FontRegistry, FontRegistryError, FontResources,
-    FontStyle, FontWeight, GlyphBitmap, GlyphCache, GlyphCacheError, GlyphId, ImageId, ImagePaint,
-    ImageRegistry, ImageRegistryError, ImageResource, ImageSource, PaintError, PaintResources,
-    Painter, Rect, ResolvedFont, ResolvedTextStyle, Size, TextMeasurer,
+    AvailableSpace, FontFace, FontFamilyId, FontId, FontInstance, FontRegistry, FontRegistryError,
+    FontResources, FontStyle, FontWeight, GlyphBitmap, GlyphCache, GlyphCacheError, GlyphId,
+    ImageId, ImagePaint, ImageRegistry, ImageRegistryError, ImageResource, ImageSource, PaintError,
+    PaintResources, Painter, Rect, ResolvedFont, ResolvedTextStyle, Size, TextMeasurer,
     pair_cache::{PAIR_POSITIONING_CACHE_SLOTS, PairPositioningCache},
     rendering::{
         image_paint::paint_image,
@@ -347,7 +347,12 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, con
 impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize, const IMAGES: usize>
     TextMeasurer for RuntimeResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>
 {
-    fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size {
-        self.fonts.measure_text(text, style, max_size)
+    fn measure_text(
+        &self,
+        text: &str,
+        style: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
+        self.fonts.measure_text(text, style, available_width)
     }
 }

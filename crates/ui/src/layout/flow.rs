@@ -13,7 +13,7 @@ impl<F: FrameStorage> FrameArena<F> {
         available: Size,
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
-        let measured = self.measure_node(node, available, text_measurer);
+        let measured = self.measure_node(node, AvailableSize::definite(available), text_measurer);
         let initial_containing_block = Rect::new(origin, available);
         let subtree_bounds = self.layout_node_with_size(
             node,
@@ -51,8 +51,9 @@ impl<F: FrameStorage> FrameArena<F> {
             origin.y + border + style.padding.top.non_negative(),
         );
 
-        let viewport_content_size = content_available(style, outer_size);
-        let child_available = self.child_layout_available(node, viewport_content_size);
+        let viewport_content_size = content_size(style, outer_size);
+        let child_available =
+            self.child_layout_available(node, AvailableSize::definite(viewport_content_size));
         let scroll_axes = self.node(node).interaction.scroll_axes;
         let scrolling_main = match axis {
             Axis::Horizontal => scroll_axes.horizontal(),
@@ -291,7 +292,8 @@ impl<F: FrameStorage> FrameArena<F> {
             margin.bottom,
         );
 
-        let available = Size::new(horizontal_available, vertical_available);
+        let available =
+            AvailableSize::definite(Size::new(horizontal_available, vertical_available));
         let measured = self.measure_node(child, available, text_measurer);
 
         let mut child_size = measured;
@@ -302,7 +304,7 @@ impl<F: FrameStorage> FrameArena<F> {
                 Length::Pixels(horizontal_available),
                 style.min_width,
                 style.max_width,
-                horizontal_available,
+                AvailableSpace::Definite(horizontal_available),
                 horizontal_available,
             );
         }
@@ -312,7 +314,7 @@ impl<F: FrameStorage> FrameArena<F> {
                 Length::Pixels(vertical_available),
                 style.min_height,
                 style.max_height,
-                vertical_available,
+                AvailableSpace::Definite(vertical_available),
                 vertical_available,
             );
         }
@@ -488,18 +490,23 @@ impl<F: FrameStorage> FrameArena<F> {
             }
         }
     }
-    pub(super) fn child_layout_available(&self, node: NodeId, viewport: Size) -> Size {
-        const SCROLL_LAYOUT_LIMIT: Pixels = px(i32::MAX / 4);
+    /// the space a node's children lay out in: its content box, unbounded along the
+    /// axes it scrolls
+    pub(super) fn child_layout_available(
+        &self,
+        node: NodeId,
+        viewport: AvailableSize,
+    ) -> AvailableSize {
         let axes = self.node(node).interaction.scroll_axes;
 
-        Size::new(
+        AvailableSize::new(
             if axes.horizontal() {
-                SCROLL_LAYOUT_LIMIT
+                AvailableSpace::Unbounded
             } else {
                 viewport.width
             },
             if axes.vertical() {
-                SCROLL_LAYOUT_LIMIT
+                AvailableSpace::Unbounded
             } else {
                 viewport.height
             },

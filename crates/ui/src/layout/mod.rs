@@ -10,12 +10,74 @@ mod measure;
 mod tests;
 
 pub trait TextMeasurer {
-    /// the size of `text` laid out within `max_size`.
-    ///
-    /// the height of `max_size` may only clamp the result: measuring with a smaller
-    /// height must give the same size as measuring with an unlimited one and clamping
-    /// its height. Layout measures each text once per width and relies on this
-    fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size;
+    /// the size of `text` laid out within `available_width`, at whatever height its
+    /// lines take. Layout clamps the height to the space it has
+    fn measure_text(
+        &self,
+        text: &str,
+        style: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size;
+}
+
+/// the space a node may take along one axis
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum AvailableSpace {
+    /// at most this much
+    Definite(Pixels),
+    /// as much as the content takes, such as along a scroll container's scrolling axis
+    Unbounded,
+}
+
+impl AvailableSpace {
+    pub const fn definite(self) -> Option<Pixels> {
+        match self {
+            Self::Definite(space) => Some(space),
+            Self::Unbounded => None,
+        }
+    }
+
+    /// `size`, cut down to fit the space
+    pub const fn limit(self, size: Pixels) -> Pixels {
+        match self {
+            Self::Definite(space) => size.min(space.non_negative()),
+            Self::Unbounded => size,
+        }
+    }
+
+    /// the space left after `used`
+    const fn shrink(self, used: Pixels) -> Self {
+        match self {
+            Self::Definite(space) => Self::Definite(space.saturating_sub(used).non_negative()),
+            Self::Unbounded => Self::Unbounded,
+        }
+    }
+}
+
+/// the space a node may take along both axes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AvailableSize {
+    pub(crate) width: AvailableSpace,
+    pub(crate) height: AvailableSpace,
+}
+
+impl AvailableSize {
+    pub(crate) const fn new(width: AvailableSpace, height: AvailableSpace) -> Self {
+        Self { width, height }
+    }
+
+    pub(crate) const fn definite(size: Size) -> Self {
+        Self::new(
+            AvailableSpace::Definite(size.width),
+            AvailableSpace::Definite(size.height),
+        )
+    }
+
+    /// `size`, cut down to fit the space
+    const fn limit(self, size: Size) -> Size {
+        Size::new(self.width.limit(size.width), self.height.limit(size.height))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +121,27 @@ fn point_from_axes(main: Pixels, cross: Pixels, axis: Axis) -> Point {
     }
 }
 
+fn available_main(available: AvailableSize, axis: Axis) -> AvailableSpace {
+    match axis {
+        Axis::Horizontal => available.width,
+        Axis::Vertical => available.height,
+    }
+}
+
+fn available_cross(available: AvailableSize, axis: Axis) -> AvailableSpace {
+    match axis {
+        Axis::Horizontal => available.height,
+        Axis::Vertical => available.width,
+    }
+}
+
+fn available_from_axes(main: AvailableSpace, cross: AvailableSpace, axis: Axis) -> AvailableSize {
+    match axis {
+        Axis::Horizontal => AvailableSize::new(main, cross),
+        Axis::Vertical => AvailableSize::new(cross, main),
+    }
+}
+
 fn requested_length(style: Style, axis: Axis) -> Length {
     match axis {
         Axis::Horizontal => style.width,
@@ -76,10 +159,17 @@ pub(crate) fn flow_axis(style: Style) -> Axis {
     }
 }
 
-fn content_available(style: Style, outer_available: Size) -> Size {
+fn content_size(style: Style, outer_size: Size) -> Size {
     Size::new(
-        (outer_available.width - horizontal_chrome(style)).non_negative(),
-        (outer_available.height - vertical_chrome(style)).non_negative(),
+        (outer_size.width - horizontal_chrome(style)).non_negative(),
+        (outer_size.height - vertical_chrome(style)).non_negative(),
+    )
+}
+
+fn content_available(style: Style, outer_available: AvailableSize) -> AvailableSize {
+    AvailableSize::new(
+        outer_available.width.shrink(horizontal_chrome(style)),
+        outer_available.height.shrink(vertical_chrome(style)),
     )
 }
 
@@ -91,7 +181,7 @@ fn content_rect(style: Style, origin: Point, outer_size: Size) -> Rect {
             origin.x + border + style.padding.left.non_negative(),
             origin.y + border + style.padding.top.non_negative(),
         ),
-        content_available(style, outer_size),
+        content_size(style, outer_size),
     )
 }
 
@@ -160,40 +250,55 @@ fn vertical_chrome(style: Style) -> Pixels {
     style.padding.top.non_negative() + style.padding.bottom.non_negative() + border_width(style) * 2
 }
 
+/// `length` resolved in `available` space. Without a bound to fill, a filling length
+/// takes its natural size
 fn resolve_dimension(
     length: Length,
     minimum: Option<Pixels>,
     maximum: Option<Pixels>,
-    available: Pixels,
+    available: AvailableSpace,
     natural: Pixels,
 ) -> Pixels {
-    let available = available.non_negative();
-    let base = match length {
-        Length::Auto => natural.non_negative().min(available),
-        Length::Pixels(value) => value.non_negative(),
-        Length::Fill => available,
+    let base = match (length, available) {
+        (Length::Pixels(value), _) => value.non_negative(),
+        (Length::Fill, AvailableSpace::Definite(space)) => space.non_negative(),
+        (Length::Auto | Length::Fill, _) => available.limit(natural.non_negative()),
     };
 
-    let minimum = minimum.map(Pixels::non_negative).unwrap_or(px(0));
-    let maximum = maximum
-        .map(Pixels::non_negative)
-        .unwrap_or(Pixels::MAX)
-        .max(minimum);
-
-    base.clamp(minimum, maximum)
+    clamp_to_limits(base, minimum, maximum)
 }
 
-fn measurement_limit(length: Length, maximum: Option<Pixels>, available: Pixels) -> Pixels {
-    let available = available.non_negative();
-    let requested = match length {
-        Length::Auto => available,
-        Length::Pixels(value) => value.non_negative(),
-        Length::Fill => available,
+/// `value` within a node's minimum and maximum. The minimum wins when they cross
+fn clamp_to_limits(value: Pixels, minimum: Option<Pixels>, maximum: Option<Pixels>) -> Pixels {
+    let minimum = minimum.map(Pixels::non_negative).unwrap_or(px(0));
+    let value = match maximum {
+        Some(maximum) => value.min(maximum.non_negative()),
+        None => value,
     };
 
-    let maximum = maximum.map(Pixels::non_negative).unwrap_or(Pixels::MAX);
+    value.max(minimum)
+}
 
-    requested.min(maximum)
+/// the space a node of `length` measures its content in
+fn measurement_limit(
+    length: Length,
+    maximum: Option<Pixels>,
+    available: AvailableSpace,
+) -> AvailableSpace {
+    let requested = match length {
+        Length::Pixels(value) => AvailableSpace::Definite(value.non_negative()),
+        Length::Auto | Length::Fill => available,
+    };
+
+    match (requested, maximum) {
+        (requested, None) => requested,
+        (AvailableSpace::Unbounded, Some(maximum)) => {
+            AvailableSpace::Definite(maximum.non_negative())
+        }
+        (AvailableSpace::Definite(requested), Some(maximum)) => {
+            AvailableSpace::Definite(requested.min(maximum.non_negative()))
+        }
+    }
 }
 
 fn main_margin_start(margin: Edges<Pixels>, axis: Axis) -> Pixels {
@@ -233,17 +338,18 @@ fn cross_margin_total(margin: Edges<Pixels>, axis: Axis) -> Pixels {
 }
 
 fn child_constraint(
-    content_size: Size,
+    content: AvailableSize,
     margin: Edges<Pixels>,
     axis: Axis,
     allocated_main: Option<Pixels>,
-) -> Size {
-    let main = allocated_main.unwrap_or_else(|| {
-        (main_size(content_size, axis) - main_margin_total(margin, axis)).non_negative()
-    });
-    let cross = (cross_size(content_size, axis) - cross_margin_total(margin, axis)).non_negative();
+) -> AvailableSize {
+    let main = match allocated_main {
+        Some(main) => AvailableSpace::Definite(main),
+        None => available_main(content, axis).shrink(main_margin_total(margin, axis)),
+    };
+    let cross = available_cross(content, axis).shrink(cross_margin_total(margin, axis));
 
-    size_from_axes(main, cross, axis)
+    available_from_axes(main, cross, axis)
 }
 
 fn weighted_share(

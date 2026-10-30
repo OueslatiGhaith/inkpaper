@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use inkpaper_ui::{ResolvedTextStyle, TextMeasurer, prelude::*};
+use inkpaper_ui::{AvailableSpace, ResolvedTextStyle, TextMeasurer, prelude::*};
 
 type TestRuntime = Runtime<
     FixedStorage<
@@ -18,7 +18,7 @@ type TestRuntime = Runtime<
 struct NoText;
 
 impl TextMeasurer for NoText {
-    fn measure_text(&self, _: &str, _: ResolvedTextStyle, _: Size) -> Size {
+    fn measure_text(&self, _: &str, _: ResolvedTextStyle, _: AvailableSpace) -> Size {
         Size::new(px(0), px(0))
     }
 }

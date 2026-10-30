@@ -1,5 +1,5 @@
 use super::*;
-use crate::{Size, TextMeasurer, px};
+use crate::{AvailableSpace, TextMeasurer, px};
 
 struct TestFont {
     fill: u8,
@@ -646,7 +646,7 @@ fn long_lines_measure_their_full_width() {
         wrap: crate::TextWrap::NoWrap,
         ..Default::default()
     };
-    let size = resources.measure_text(&text, style, Size::new(px(10_000), px(10_000)));
+    let size = resources.measure_text(&text, style, AvailableSpace::Definite(px(10_000)));
 
     // 200 glyphs advancing 3px each
     assert_eq!(size.width, px(600));
@@ -662,7 +662,7 @@ fn long_lines_that_fit_stay_on_one_line() {
         wrap: crate::TextWrap::Word,
         ..Default::default()
     };
-    let available = Size::new(px(10_000), px(10_000));
+    let available = AvailableSpace::Definite(px(10_000));
     let one_line = resources.measure_text("x", style, available);
     let size = resources.measure_text(&"x ".repeat(100), style, available);
 

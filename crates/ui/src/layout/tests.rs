@@ -19,7 +19,12 @@ impl TestTextMeasurer {
 }
 
 impl TextMeasurer for TestTextMeasurer {
-    fn measure_text(&self, text: &str, _style: ResolvedTextStyle, max_size: Size) -> Size {
+    fn measure_text(
+        &self,
+        text: &str,
+        _style: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
         let character_count = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
         let desired_width = self.character_width.saturating_mul(character_count);
         let desired_height = if text.is_empty() {
@@ -29,12 +34,8 @@ impl TextMeasurer for TestTextMeasurer {
         };
 
         Size::new(
-            desired_width
-                .non_negative()
-                .min(max_size.width.non_negative()),
-            desired_height
-                .non_negative()
-                .min(max_size.height.non_negative()),
+            available_width.limit(desired_width.non_negative()),
+            desired_height.non_negative(),
         )
     }
 }
@@ -803,17 +804,19 @@ fn text_measurement_receives_resolved_text_style() {
     }
 
     impl TextMeasurer for RecordingMeasurer {
-        fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size {
+        fn measure_text(
+            &self,
+            text: &str,
+            style: ResolvedTextStyle,
+            available_width: AvailableSpace,
+        ) -> Size {
             self.style.set(Some(style));
 
             if text.is_empty() {
                 return Size::ZERO;
             }
 
-            Size::new(
-                px(20).min(max_size.width.non_negative()),
-                px(10).min(max_size.height.non_negative()),
-            )
+            Size::new(available_width.limit(px(20)), px(10))
         }
     }
 
@@ -856,17 +859,19 @@ fn text_is_measured_once_per_width_and_clamped_to_each_height() {
     }
 
     impl TextMeasurer for CountingMeasurer {
-        fn measure_text(&self, text: &str, _: ResolvedTextStyle, max_size: Size) -> Size {
+        fn measure_text(
+            &self,
+            text: &str,
+            _: ResolvedTextStyle,
+            available_width: AvailableSpace,
+        ) -> Size {
             self.calls.set(self.calls.get() + 1);
 
             if text.is_empty() {
                 return Size::ZERO;
             }
 
-            Size::new(
-                px(20).min(max_size.width.non_negative()),
-                px(10).min(max_size.height.non_negative()),
-            )
+            Size::new(available_width.limit(px(20)), px(10))
         }
     }
 
@@ -1152,7 +1157,7 @@ fn canvas_size_is_clamped_to_available_space() {
 fn fixed_main_length_does_not_require_intrinsic_measurement() {
     struct PanicTextMeasurer;
     impl TextMeasurer for PanicTextMeasurer {
-        fn measure_text(&self, _: &str, _: ResolvedTextStyle, _: Size) -> Size {
+        fn measure_text(&self, _: &str, _: ResolvedTextStyle, _: AvailableSpace) -> Size {
             panic!("fixed main length should not require intrinsic measurement");
         }
     }
@@ -1174,7 +1179,7 @@ fn fixed_main_length_does_not_require_intrinsic_measurement() {
     let base = frame.flex_base_main_size(
         node,
         super::Axis::Vertical,
-        Size::new(px(100), px(100)),
+        AvailableSize::definite(Size::new(px(100), px(100))),
         &PanicTextMeasurer,
     );
 
@@ -1730,4 +1735,44 @@ fn relative_position_moves_entire_descendant_subtree() {
     // y =  3 + 5 =  8
     assert_eq!(frame.bounds(text).x(), px(23));
     assert_eq!(frame.bounds(text).y(), px(8));
+}
+
+#[test]
+fn full_height_child_of_a_scrolled_row_fills_the_row() {
+    struct App;
+    impl Render for App {
+        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .id("scroll")
+                .w(px(100))
+                .h(px(40))
+                .overflow_y_scroll()
+                .child(
+                    div()
+                        .flex()
+                        .child(div().w(px(4)).h_full())
+                        .child(div().w(px(50)).h(px(30))),
+                )
+        }
+    }
+
+    let mut runtime = TestRuntime::default();
+    runtime.create_root(|_| App).unwrap();
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(100), px(40)), &TestTextMeasurer::new(8, 10))
+        .unwrap();
+
+    let frame = runtime.frame();
+    let scroll = frame
+        .node(runtime.root_node().unwrap())
+        .first_child
+        .unwrap();
+    let row = frame.node(scroll).first_child.unwrap();
+    let bar = frame.node(row).first_child.unwrap();
+
+    // the list's height doesn't bound the row, so the bar has nothing to fill until
+    // the row takes its content's height
+    assert_bounds(frame.bounds(row), 0, 0, 54, 30);
+    assert_bounds(frame.bounds(bar), 0, 0, 4, 30);
 }

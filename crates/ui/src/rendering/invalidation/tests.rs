@@ -7,16 +7,16 @@ type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 64, 512, 32>>;
 
 struct TestTextMeasurer;
 impl TextMeasurer for TestTextMeasurer {
-    fn measure_text(&self, text: &str, _style: ResolvedTextStyle, max_size: Size) -> Size {
-        let width = px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
-            .saturating_mul(6)
-            .min(max_size.width.non_negative());
+    fn measure_text(
+        &self,
+        text: &str,
+        _style: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
+        let width = available_width
+            .limit(px(i32::try_from(text.chars().count()).unwrap_or(i32::MAX)).saturating_mul(6));
 
-        let height = if text.is_empty() {
-            px(0)
-        } else {
-            px(10).min(max_size.height.non_negative())
-        };
+        let height = if text.is_empty() { px(0) } else { px(10) };
 
         Size::new(width, height)
     }

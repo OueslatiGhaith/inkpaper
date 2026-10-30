@@ -128,7 +128,7 @@ impl Render for Screen {
 struct TextCounter(usize);
 
 impl TextMeasurer for TextCounter {
-    fn measure_text(&self, text: &str, _: ResolvedTextStyle, _: Size) -> Size {
+    fn measure_text(&self, text: &str, _: ResolvedTextStyle, _: AvailableSpace) -> Size {
         Size::new(px(text.len() as i32 * 6), px(10))
     }
 }

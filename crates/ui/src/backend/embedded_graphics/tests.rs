@@ -75,7 +75,7 @@ fn text_measurement_wraps_at_word_boundaries() {
             wrap: TextWrap::Word,
             ..ResolvedTextStyle::default()
         },
-        Size::new(px(30), px(100)),
+        AvailableSpace::Definite(px(30)),
     );
 
     assert_eq!(size, Size::new(px(30), px(20)));
@@ -91,7 +91,7 @@ fn custom_line_height_affects_multiline_measurement() {
             line_height: LineHeight::Pixels(px(15)),
             ..ResolvedTextStyle::default()
         },
-        Size::new(px(100), px(100)),
+        AvailableSpace::Definite(px(100)),
     );
 
     assert_eq!(size.height, px(25));
@@ -131,7 +131,7 @@ fn max_lines_limits_measured_height() {
             max_lines: TextMaxLines::Limited(2),
             ..ResolvedTextStyle::default()
         },
-        Size::new(px(30), px(100)),
+        AvailableSpace::Definite(px(30)),
     );
 
     assert_eq!(size.height, px(20));
@@ -147,7 +147,7 @@ fn ellipsis_respects_available_width() {
             overflow: TextOverflow::Ellipsis,
             ..ResolvedTextStyle::default()
         },
-        Size::new(px(30), px(100)),
+        AvailableSpace::Definite(px(30)),
     );
 
     assert_eq!(size, Size::new(px(30), px(10)));
@@ -165,7 +165,7 @@ fn wrapped_text_can_be_clamped_with_ellipsis() {
             overflow: TextOverflow::Ellipsis,
             ..ResolvedTextStyle::default()
         },
-        Size::new(px(30), px(100)),
+        AvailableSpace::Definite(px(30)),
     );
 
     assert_eq!(size, Size::new(px(30), px(10)));

@@ -3,8 +3,8 @@
 use std::convert::Infallible;
 
 use inkpaper_ui::{
-    BoxPaint, Element, GlyphBitmap, MountCx, MountError, NodeId, Painter, ResolvedTextStyle,
-    TextMeasurer, prelude::*,
+    AvailableSpace, BoxPaint, Element, GlyphBitmap, MountCx, MountError, NodeId, Painter,
+    ResolvedTextStyle, TextMeasurer, prelude::*,
 };
 
 pub const VIEWPORT: Size = Size::new(px(320), px(240));
@@ -95,18 +95,17 @@ impl BenchPainter {
 }
 
 impl TextMeasurer for BenchPainter {
-    fn measure_text(&self, text: &str, _: ResolvedTextStyle, max_size: Size) -> Size {
+    fn measure_text(
+        &self,
+        text: &str,
+        _: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
         let characters = i32::try_from(text.len()).unwrap_or(i32::MAX);
 
-        let width = px(6)
-            .saturating_mul(characters)
-            .min(max_size.width.non_negative());
+        let width = available_width.limit(px(6).saturating_mul(characters));
 
-        let height = if text.is_empty() {
-            px(0)
-        } else {
-            px(10).min(max_size.height.non_negative())
-        };
+        let height = if text.is_empty() { px(0) } else { px(10) };
 
         Size::new(width, height)
     }

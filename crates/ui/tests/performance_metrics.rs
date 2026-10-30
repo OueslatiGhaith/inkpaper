@@ -2,23 +2,25 @@
 
 use std::convert::Infallible;
 
-use inkpaper_ui::{BoxPaint, GlyphBitmap, Painter, ResolvedTextStyle, TextMeasurer, prelude::*};
+use inkpaper_ui::{
+    AvailableSpace, BoxPaint, GlyphBitmap, Painter, ResolvedTextStyle, TextMeasurer, prelude::*,
+};
 
 type TestRuntime = Runtime<FixedStorage<4096, 4, 4096, 16, 64, 512, 32>>;
 
 struct TestPainter;
 
 impl TextMeasurer for TestPainter {
-    fn measure_text(&self, text: &str, _: ResolvedTextStyle, max_size: Size) -> Size {
-        let width = px(i32::try_from(text.len()).unwrap_or(i32::MAX))
-            .saturating_mul(6)
-            .min(max_size.width.non_negative());
+    fn measure_text(
+        &self,
+        text: &str,
+        _: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
+        let width = available_width
+            .limit(px(i32::try_from(text.len()).unwrap_or(i32::MAX)).saturating_mul(6));
 
-        let height = if text.is_empty() {
-            px(0)
-        } else {
-            px(10).min(max_size.height.non_negative())
-        };
+        let height = if text.is_empty() { px(0) } else { px(10) };
 
         Size::new(width, height)
     }

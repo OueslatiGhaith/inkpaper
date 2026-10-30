@@ -513,8 +513,13 @@ const HEIGHT: i32 = 60;
 struct Measurer;
 
 impl TextMeasurer for Measurer {
-    fn measure_text(&self, text: &str, _: ResolvedTextStyle, max_size: Size) -> Size {
-        let width = px(4 * text.len() as i32).min(max_size.width.non_negative());
+    fn measure_text(
+        &self,
+        text: &str,
+        _: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
+        let width = available_width.limit(px(4 * text.len() as i32));
         let height = if text.is_empty() { px(0) } else { px(10) };
 
         Size::new(width, height)

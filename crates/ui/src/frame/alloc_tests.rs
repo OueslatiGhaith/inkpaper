@@ -16,7 +16,7 @@ fn growing_frame_preserves_text_links_bindings_and_caches() {
         frame
             .bind_event(node, event, CallbackId::new(index, 0))
             .unwrap();
-        frame.cache_measurement(node, Size::ZERO, Size::ZERO);
+        frame.cache_measurement(node, AvailableSize::definite(Size::ZERO), Size::ZERO);
 
         if let Some(previous) = previous {
             assert_eq!(frame.node(previous).next_sibling, Some(node));
@@ -38,7 +38,10 @@ fn growing_frame_preserves_text_links_bindings_and_caches() {
         };
 
         assert_eq!(frame.text(text), "مرحبا");
-        assert_eq!(frame.cached_measurement(node, Size::ZERO), Some(Size::ZERO));
+        assert_eq!(
+            frame.cached_measurement(node, AvailableSize::definite(Size::ZERO)),
+            Some(Size::ZERO)
+        );
         assert_eq!(
             frame.event_callbacks(node, event).next(),
             Some(CallbackId::new(index, 0))
@@ -82,7 +85,10 @@ fn clear_reuses_capacity_and_explicit_shrink_preserves_live_text() {
     frame.clear();
     let node = frame.push_text("small", TextStyle::default()).unwrap();
 
-    assert_eq!(frame.cached_measurement(node, Size::ZERO), None);
+    assert_eq!(
+        frame.cached_measurement(node, AvailableSize::definite(Size::ZERO)),
+        None
+    );
 
     frame.shrink_to_fit();
 

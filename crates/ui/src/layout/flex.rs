@@ -100,19 +100,13 @@ impl<F: FrameStorage> FrameArena<F> {
             Axis::Vertical => (style.min_height, style.max_height),
         };
 
-        let minimum = minimum.map(Pixels::non_negative).unwrap_or(px(0));
-        let maximum = maximum
-            .map(Pixels::non_negative)
-            .unwrap_or(Pixels::MAX)
-            .max(minimum);
-
-        value.clamp(minimum, maximum)
+        clamp_to_limits(value, minimum, maximum)
     }
     pub(super) fn flex_base_main_size(
         &mut self,
         node: NodeId,
         axis: Axis,
-        available: Size,
+        available: AvailableSize,
         text_measurer: &dyn TextMeasurer,
     ) -> Pixels {
         count_metric!(self, flex_base_main_size_calls);
@@ -137,7 +131,7 @@ impl<F: FrameStorage> FrameArena<F> {
         &mut self,
         parent: NodeId,
         axis: Axis,
-        available: Size,
+        available: AvailableSize,
         text_measurer: &dyn TextMeasurer,
     ) -> FlexTotals {
         let mut base_size = px(0);

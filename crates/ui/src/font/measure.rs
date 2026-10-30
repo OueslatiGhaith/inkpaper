@@ -1,13 +1,18 @@
 use crate::{
-    FontRegistry, FontResources, LineHeight, Pixels, PreparedSimpleShaper, ResolvedFont,
-    ResolvedTextStyle, SimpleShaper, Size, TextMeasurer, px,
+    AvailableSpace, FontRegistry, FontResources, LineHeight, Pixels, PreparedSimpleShaper,
+    ResolvedFont, ResolvedTextStyle, SimpleShaper, Size, TextMeasurer, px,
     text_layout::{ELLIPSIS, LineWidth, for_each_visible_text_line_with_boundaries},
 };
 
 impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> TextMeasurer
     for FontResources<'_, FONTS, GLYPH_SLOTS, GLYPH_BYTES>
 {
-    fn measure_text(&self, text: &str, style: ResolvedTextStyle, max_size: Size) -> Size {
+    fn measure_text(
+        &self,
+        text: &str,
+        style: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
         if text.is_empty() {
             return Size::ZERO;
         }
@@ -24,13 +29,16 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
         let glyph_height = font.metrics(size_px).line_height();
         let line_advance = text_line_advance(font, size_px, style);
 
+        // text layout only compares line widths with this, so without a bound every line
+        // fits
+        let max_width = available_width.definite().unwrap_or(Pixels::MAX);
         let mut longest_line = Pixels::ZERO;
         let mut line_count = 0i32;
 
         for_each_visible_text_line_with_boundaries(
             text,
             style.wrap,
-            max_size.width,
+            max_width,
             style.max_lines,
             style.overflow,
             |line, from| shaper.next_cluster_boundary(registry, size_px, line, from),
@@ -38,8 +46,12 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
             |line| line_width(&shaper, registry, size_px, line, ELLIPSIS),
             |line| {
                 // a line the shaper can't shape can't be painted either. It takes the
-                // whole width, so the layout around it still leaves room for it
-                longest_line = longest_line.max(line.width.unwrap_or(max_size.width));
+                // whole width, if there is one, so the layout around it still leaves room
+                // for it
+                let width = line
+                    .width
+                    .unwrap_or(available_width.definite().unwrap_or(Pixels::ZERO));
+                longest_line = longest_line.max(width);
                 line_count = line_count.saturating_add(1);
             },
         );
@@ -52,10 +64,8 @@ impl<const FONTS: usize, const GLYPH_SLOTS: usize, const GLYPH_BYTES: usize> Tex
             glyph_height.saturating_add(line_advance.saturating_mul(line_count.saturating_sub(1)));
 
         Size::new(
-            longest_line
-                .non_negative()
-                .min(max_size.width.non_negative()),
-            height.non_negative().min(max_size.height.non_negative()),
+            available_width.limit(longest_line.non_negative()),
+            height.non_negative(),
         )
     }
 }

@@ -104,7 +104,7 @@ impl PaintResources for RecordingResources {
 }
 
 impl TextMeasurer for Recorder {
-    fn measure_text(&self, _: &str, _: ResolvedTextStyle, _: Size) -> Size {
+    fn measure_text(&self, _: &str, _: ResolvedTextStyle, _: AvailableSpace) -> Size {
         panic!("custom canvas must not measure its painted text during layout");
     }
 }

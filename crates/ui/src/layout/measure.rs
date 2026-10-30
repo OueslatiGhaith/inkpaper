@@ -9,7 +9,7 @@ impl<F: FrameStorage> FrameArena<F> {
     pub(super) fn measure_node(
         &mut self,
         node: NodeId,
-        available: Size,
+        available: AvailableSize,
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         count_metric!(self, measure_node_calls);
@@ -46,17 +46,17 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     /// measures a text node once per available width. Wrapping depends only on the
-    /// width, so the cached size has an unlimited height, clamped for each request
+    /// width, so the cached size has an unbounded height, clamped for each request
     fn measure_text_node(
         &mut self,
         node: NodeId,
         text: TextRange,
-        available: Size,
+        available: AvailableSize,
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
-        let unlimited = Size::new(available.width, Pixels::MAX);
+        let unbounded = AvailableSize::new(available.width, AvailableSpace::Unbounded);
 
-        let measured = match self.cached_measurement(node, unlimited) {
+        let measured = match self.cached_measurement(node, unbounded) {
             Some(measured) => {
                 count_metric!(self, measurement_cache_hits);
 
@@ -69,37 +69,31 @@ impl<F: FrameStorage> FrameArena<F> {
                 let measured = text_measurer.measure_text(
                     self.text(text),
                     self.node(node).effective_text_style,
-                    unlimited,
+                    available.width,
                 );
-                let measured = Size::new(
-                    measured
-                        .width
-                        .non_negative()
-                        .min(available.width.non_negative()),
+                let measured = unbounded.limit(Size::new(
+                    measured.width.non_negative(),
                     measured.height.non_negative(),
-                );
+                ));
 
-                self.cache_measurement(node, unlimited, measured);
+                self.cache_measurement(node, unbounded, measured);
 
                 measured
             }
         };
 
-        Size::new(
-            measured.width,
-            measured.height.min(available.height.non_negative()),
-        )
+        available.limit(measured)
     }
     fn measure_div(
         &mut self,
         node: NodeId,
         style: Style,
-        available: Size,
+        available: AvailableSize,
         text_measurer: &dyn TextMeasurer,
     ) -> Size {
         let axis = flow_axis(style);
 
-        let outer_limit = Size::new(
+        let outer_limit = AvailableSize::new(
             measurement_limit(style.width, style.max_width, available.width),
             measurement_limit(style.height, style.max_height, available.height),
         );
@@ -164,7 +158,7 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 }
 
-fn measure_image(source: ImageSource, style: ImageStyle, available: Size) -> Size {
+fn measure_image(source: ImageSource, style: ImageStyle, available: AvailableSize) -> Size {
     let intrinsic = source.size();
     let natural = match (style.width, style.height) {
         (None, None) => intrinsic,
@@ -181,13 +175,10 @@ fn measure_image(source: ImageSource, style: ImageStyle, available: Size) -> Siz
         (Some(width), Some(height)) => Size::new(width.non_negative(), height.non_negative()),
     };
 
-    Size::new(
-        natural.width.min(available.width.non_negative()),
-        natural.height.min(available.height.non_negative()),
-    )
+    available.limit(natural)
 }
 
-fn measure_svg(source: SvgSource, style: SvgStyle, available: Size) -> Size {
+fn measure_svg(source: SvgSource, style: SvgStyle, available: AvailableSize) -> Size {
     let intrinsic = source.size();
 
     let natural = match (style.width, style.height) {
@@ -207,23 +198,12 @@ fn measure_svg(source: SvgSource, style: SvgStyle, available: Size) -> Size {
         (Some(width), Some(height)) => Size::new(width.non_negative(), height.non_negative()),
     };
 
-    Size::new(
-        natural.width.min(available.width.non_negative()),
-        natural.height.min(available.height.non_negative()),
-    )
+    available.limit(natural)
 }
 
-fn measure_canvas(style: CanvasStyle, available: Size) -> Size {
-    let width = style
-        .width
-        .unwrap_or(px(0))
-        .non_negative()
-        .min(available.width.non_negative());
-    let height = style
-        .height
-        .unwrap_or(px(0))
-        .non_negative()
-        .min(available.height.non_negative());
-
-    Size::new(width, height)
+fn measure_canvas(style: CanvasStyle, available: AvailableSize) -> Size {
+    available.limit(Size::new(
+        style.width.unwrap_or(px(0)).non_negative(),
+        style.height.unwrap_or(px(0)).non_negative(),
+    ))
 }
