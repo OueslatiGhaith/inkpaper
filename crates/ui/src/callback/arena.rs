@@ -1,4 +1,4 @@
-use core::{alloc::Layout, any::TypeId, ptr::NonNull};
+use core::{alloc::Layout, any::TypeId, cell::Cell, ptr::NonNull};
 
 #[cfg(feature = "alloc")]
 use crate::slot_table::HeapSlots;
@@ -79,12 +79,14 @@ struct CallbackMeta {
     owner: EntityId,
     target: EntityId,
     kind: CallbackKind,
+    /// the arena's generation when the callback was registered. Its id carries it too
+    generation: u32,
 }
 
-/// the callbacks registered so far. Slot numbers grow until the arena resets, so later
-/// callbacks have larger slots
+/// the arena generation a render started in. Callbacks registered before it have
+/// older generations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CallbackMark(usize);
+pub struct CallbackMark(u32);
 
 pub struct RawCallbackReservation {
     pub(crate) id: CallbackId,
@@ -146,9 +148,10 @@ pub type HeapCallbackArena<const INITIAL_SLOTS: usize = 0> =
 ///
 /// SAFETY INVARIANTS:
 ///
-/// 1. callback ids carry the generation of the frame that registered them, and only
-///    match while that frame's callbacks are stored and their slot is live. Released
-///    callbacks keep their slot number until reset, so their ids stay invalid.
+/// 1. callback ids carry the arena generation they were registered in, which their
+///    slot stores while the callback is live. Released slots are reused, but marks and
+///    resets advance the generation past every released callback's first, so an id
+///    only matches the callback it was issued for, and only while that is live.
 /// 2. event [`TypeId`] is checked before casting event pointer to E.
 /// 3. the callback trampoline used for a callback matches the concrete F, T, and E used when
 ///    that callback was registered.
@@ -159,25 +162,31 @@ pub type HeapCallbackArena<const INITIAL_SLOTS: usize = 0> =
 ///    invocation.
 pub struct CallbackArena<S: SlotStorage> {
     slots: SlotTable<S, CallbackMeta>,
-    generation: u32,
+    generation: Cell<u32>,
 }
 
 impl<S: SlotStorage> Default for CallbackArena<S> {
     fn default() -> Self {
         Self {
             slots: SlotTable::default(),
-            generation: 0,
+            generation: Cell::new(0),
         }
     }
 }
 
 impl<S: SlotStorage> CallbackArena<S> {
     fn lookup(&self, id: CallbackId) -> Option<(CallbackMeta, NonNull<u8>)> {
-        if id.generation() != self.generation {
-            return None;
-        }
+        self.slots
+            .live(usize::from(id.slot()))
+            .ok()
+            .filter(|(meta, _)| meta.generation == id.generation())
+    }
 
-        self.slots.live(usize::from(id.slot())).ok()
+    fn advance_generation(&self) -> u32 {
+        let generation = self.generation.get().wrapping_add(1);
+        self.generation.set(generation);
+
+        generation
     }
 
     /// runs a listener of this arena. `runtime` must refer to this arena as its callbacks
@@ -219,21 +228,21 @@ impl<S: SlotStorage> CallbackArena<S> {
     }
 
     pub(crate) fn reset(&mut self) {
-        // invalidate handles before dropping captures, including if a drop unwinds
-        self.generation = self.generation.wrapping_add(1);
+        self.advance_generation();
         self.slots.clear();
     }
 
     /// a mark that [`Self::release_owner`] can keep the callbacks registered after
     pub(crate) fn mark(&self) -> CallbackMark {
-        CallbackMark(self.slots.len())
+        CallbackMark(self.advance_generation())
     }
 
     /// drops the callbacks `owner` registered before `mark`, such as during its previous
-    /// render. Other callbacks stay callable. Returns how many callbacks were released.
+    /// render. Other callbacks stay callable, and later ones may reuse the released
+    /// slots. Returns how many callbacks were released.
     pub(crate) fn release_owner(&mut self, owner: EntityId, mark: CallbackMark) -> usize {
         self.slots
-            .remove_where(|slot, meta| slot < mark.0 && meta.owner == owner)
+            .remove_where(|meta| meta.generation < mark.0 && meta.owner == owner)
     }
 }
 
@@ -249,21 +258,23 @@ unsafe impl<S: SlotStorage> CallbackStore for CallbackArena<S> {
         kind: CallbackKind,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<RawCallbackReservation, CallbackAllocError> {
+        let generation = self.generation.get();
         let meta = CallbackMeta {
             owner,
             target,
             kind,
+            generation,
         };
-        let (slot, ptr) = self.slots.reserve(layout, meta, drop_fn)?;
+        let (slot, ptr) = self.slots.reserve_reusing(layout, meta, drop_fn)?;
 
         Ok(RawCallbackReservation {
-            id: CallbackId::new(slot, self.generation),
+            id: CallbackId::new(slot, generation),
             ptr,
         })
     }
 
     unsafe fn commit(&self, callback: CallbackId) {
-        debug_assert_eq!(callback.generation(), self.generation);
+        debug_assert_eq!(callback.generation(), self.generation.get());
 
         // SAFETY: the caller initialized the reserved closure
         unsafe { self.slots.commit(callback.slot()) };
@@ -709,7 +720,7 @@ mod tests {
             .unwrap();
         assert_eq!(entities.read(kept, |counter| counter.value), Ok(1));
 
-        // a new render gets a new slot, so the released id stays invalid
+        // a new render may reuse the released slot, but the released id stays invalid
         let replacement = Context::new_in(released, runtime).listener(Counter::increment);
 
         assert_ne!(replacement.id, released_listener.id);
@@ -797,6 +808,47 @@ mod tests {
                 Err(ListenerInvokeError::InvalidListener)
             ));
         }
+    }
+
+    #[test]
+    fn rendering_again_reuses_released_slots_and_memory() {
+        let entities = TestEntityArena::<1024, 16>::default();
+        // room for a render's callback and the previous render's
+        let mut callbacks = FixedCallbackArena::<32, 2>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
+        let counter = entities.insert(Counter { value: 0 }).unwrap();
+        let all_dirty = Cell::new(false);
+        let event = ActivateEvent::new(ElementId::Name("test"));
+        let capture = [1u8; 16];
+
+        let mut previous = None;
+        for _ in 0..100 {
+            let mark = callbacks.mark();
+            let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty);
+            let listener = Context::new_in(counter, runtime)
+                .try_listener::<ActivateEvent, _>(move |counter: &mut Counter, _, _| {
+                    counter.value += i32::from(capture[0]);
+                })
+                .unwrap();
+
+            callbacks.release_owner(counter.entity_id(), mark);
+
+            let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty);
+            callbacks
+                .invoke_listener(listener, &event, runtime)
+                .unwrap();
+            // the previous listener's slot holds this one now, and its id stays invalid
+            if let Some(previous) = previous {
+                assert!(matches!(
+                    callbacks.invoke_listener(previous, &event, runtime),
+                    Err(ListenerInvokeError::InvalidListener)
+                ));
+            }
+
+            previous = Some(listener);
+        }
+
+        assert_eq!(entities.read(counter, |counter| counter.value), Ok(100));
     }
 
     #[test]

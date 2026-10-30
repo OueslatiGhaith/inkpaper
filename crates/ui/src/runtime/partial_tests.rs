@@ -331,6 +331,61 @@ fn entities_that_leave_the_frame_release_their_listeners() {
     assert_eq!(fixture.label(fixture.second), (2, 1));
 }
 
+/// registers more listeners per render than half its runtime's callback slots
+struct Busy {
+    renders: u32,
+}
+
+impl Render for Busy {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        self.renders += 1;
+
+        for _ in 0..3 {
+            let _ = cx.listener(|_: &mut Busy, _: &ActivateEvent, _| {});
+        }
+        let activate = cx.listener(|_: &mut Busy, _: &ActivateEvent, _| {});
+
+        div().id("busy").on_activate(activate)
+    }
+}
+
+/// enough static nodes that re-rendering [`Busy`] detaches few of them
+struct BusyShell {
+    busy: Entity<Busy>,
+    renders: u32,
+}
+
+impl Render for BusyShell {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        self.renders += 1;
+
+        div().child(self.busy).children((0..64).map(|_| div()))
+    }
+}
+
+#[test]
+fn rendering_an_entity_again_reuses_its_released_callback_slots() {
+    // fixed storage whatever the features, with eight callback slots
+    let mut runtime =
+        Runtime::<FixedStorage<8192, 16, 1024, 8, 256, 1024, 32, 64, 2>, KeyedText>::default();
+    let busy = runtime.create(|_| Busy { renders: 0 }).unwrap();
+    let shell = runtime
+        .create_root(|_| BusyShell { busy, renders: 0 })
+        .unwrap();
+    runtime.set_partial_rebuilds(true);
+    runtime.rebuild().unwrap();
+
+    for _ in 0..20 {
+        runtime.update(busy, |_, cx| cx.notify()).unwrap();
+        runtime.take_invalidation();
+        runtime.rebuild().unwrap();
+    }
+
+    // every rebuild stayed partial, rather than falling back once the slots ran out
+    assert_eq!(runtime.update(shell, |shell, _| shell.renders).unwrap(), 1);
+    assert_eq!(runtime.update(busy, |busy, _| busy.renders).unwrap(), 21);
+}
+
 #[test]
 fn focus_in_a_clean_entity_survives_a_partial_rebuild() {
     let mut fixture = fixture(true);

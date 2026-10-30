@@ -68,6 +68,9 @@ pub trait ValueMemory: Default {
     /// releases an abandoned or removed place's memory early, if the memory can
     fn free(&self, place: &mut Self::Place);
 
+    /// whether a removed place still holds memory a value of `layout` fits in
+    fn fits(&self, place: &Self::Place, layout: Layout) -> bool;
+
     /// called once all places have been dropped
     fn reset(&mut self);
 
@@ -109,11 +112,16 @@ impl<const BYTES: usize> FixedMemory<BYTES> {
     }
 }
 
-impl<const BYTES: usize> ValueMemory for FixedMemory<BYTES> {
-    /// offset into the buffer
-    type Place = usize;
+/// where a value lives in a [`FixedMemory`] buffer
+pub struct FixedPlace {
+    offset: usize,
+    size: usize,
+}
 
-    fn place(&self, layout: Layout) -> Result<usize, ReserveError> {
+impl<const BYTES: usize> ValueMemory for FixedMemory<BYTES> {
+    type Place = FixedPlace;
+
+    fn place(&self, layout: Layout) -> Result<FixedPlace, ReserveError> {
         let alignment = layout.align();
         if alignment > FIXED_ALIGNMENT {
             return Err(ReserveError::UnsupportedAlignment {
@@ -123,24 +131,30 @@ impl<const BYTES: usize> ValueMemory for FixedMemory<BYTES> {
         }
 
         let offset = align_up(self.cursor.get(), alignment).ok_or(ReserveError::StorageFull)?;
-        let end = offset
-            .checked_add(layout.size().max(1))
-            .ok_or(ReserveError::StorageFull)?;
+        let size = layout.size().max(1);
+        let end = offset.checked_add(size).ok_or(ReserveError::StorageFull)?;
         if end > BYTES {
             return Err(ReserveError::StorageFull);
         }
 
         self.cursor.set(end);
 
-        Ok(offset)
+        Ok(FixedPlace { offset, size })
     }
 
-    fn ptr(&self, offset: &usize) -> NonNull<u8> {
+    fn ptr(&self, place: &FixedPlace) -> NonNull<u8> {
         // SAFETY: `place` checked that the offset lies inside the buffer
-        unsafe { NonNull::new_unchecked(self.base().add(*offset)) }
+        unsafe { NonNull::new_unchecked(self.base().add(place.offset)) }
     }
 
-    fn free(&self, _: &mut usize) {}
+    // a bump buffer only frees memory on reset, but a removed place can be refilled
+    fn free(&self, _: &mut FixedPlace) {}
+
+    fn fits(&self, place: &FixedPlace, layout: Layout) -> bool {
+        layout.align() <= FIXED_ALIGNMENT
+            && place.offset.is_multiple_of(layout.align())
+            && layout.size() <= place.size
+    }
 
     fn reset(&mut self) {
         self.cursor.set(0);
@@ -214,6 +228,11 @@ impl ValueMemory for HeapMemory {
             self.used.set(self.used.get() - layout.size());
             drop(core::mem::replace(place, HeapPlace(None)));
         }
+    }
+
+    /// removed places are freed, so a reused slot allocates again
+    fn fits(&self, _: &HeapPlace, _: Layout) -> bool {
+        false
     }
 
     fn reset(&mut self) {
@@ -364,6 +383,43 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
         Ok((slot, ptr))
     }
 
+    /// reserves like [`Self::reserve`], but in a removed slot when there is one,
+    /// refilling its memory if the value fits. The caller must make sure handles to
+    /// the removed value can't match the new one
+    pub(crate) fn reserve_reusing(
+        &self,
+        layout: Layout,
+        meta: M,
+        drop_fn: unsafe fn(*mut u8),
+    ) -> Result<(u16, NonNull<u8>), ReserveError> {
+        let mut slots = self.slots.borrow_mut();
+        let removed = || {
+            (0..=u16::MAX)
+                .zip(slots.iter())
+                .filter(|(_, slot)| slot.state == SlotState::Removed)
+        };
+        // prefer a slot whose memory the value fits, so a fixed buffer doesn't fill up
+        let Some(index) = removed()
+            .find(|(_, slot)| self.memory.fits(&slot.place, layout))
+            .or_else(|| removed().next())
+            .map(|(index, _)| index)
+        else {
+            drop(slots);
+            return self.reserve(layout, meta, drop_fn);
+        };
+
+        let slot = &mut slots[usize::from(index)];
+        if !self.memory.fits(&slot.place, layout) {
+            slot.place = self.memory.place(layout)?;
+        }
+        slot.meta = meta;
+        slot.drop_fn = drop_fn;
+        slot.state = SlotState::Initializing;
+        slot.borrow = BorrowState::Free;
+
+        Ok((index, self.memory.ptr(&slot.place)))
+    }
+
     /// marks a reserved slot's value as initialized
     ///
     /// # Safety
@@ -409,12 +465,12 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
     /// reverse reservation order, and releases their memory if the memory can. Their
     /// slot numbers stay taken, so handles to them become invalid. Returns how many
     /// values were removed.
-    pub(crate) fn remove_where(&mut self, mut predicate: impl FnMut(usize, &M) -> bool) -> usize {
+    pub(crate) fn remove_where(&mut self, mut predicate: impl FnMut(&M) -> bool) -> usize {
         let slots = self.slots.get_mut();
         let mut removed = 0;
 
-        for (index, slot) in slots.iter_mut().enumerate().rev() {
-            if slot.state != SlotState::Live || !predicate(index, &slot.meta) {
+        for slot in slots.iter_mut().rev() {
+            if slot.state != SlotState::Live || !predicate(&slot.meta) {
                 continue;
             }
 
