@@ -160,7 +160,7 @@ The hardware development and flashing workflow is still evolving. Until it stabi
 
 InkPaper is still early and its internal design is changing quickly.
 
-PRs are not open at the moment. Issues and discussions are welcome.
+PRs, issues, and discussions are welcome.
 
 ## License
 
