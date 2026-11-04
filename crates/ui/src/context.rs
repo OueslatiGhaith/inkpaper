@@ -31,8 +31,25 @@ impl<'a, T> Context<'a, T> {
         self.runtime.notify(self.entity.entity_id());
     }
 
+    /// creates an entity from the state `build` returns. `build` gets the new entity's
+    /// own context, so it can create listeners and child entities.
+    ///
+    /// # Panics
+    ///
+    /// when the entity table is full. See [`Self::try_new`]
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<U>(
+    #[track_caller]
+    pub fn new<U>(&mut self, build: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U>
+    where
+        U: 'static,
+    {
+        match self.try_new(build) {
+            Ok(entity) => entity,
+            Err(error) => panic!("could not allocate entity: {error:?}"),
+        }
+    }
+
+    pub fn try_new<U>(
         &mut self,
         build: impl FnOnce(&mut Context<'_, U>) -> U,
     ) -> Result<Entity<U>, EntityAllocError>
@@ -194,18 +211,58 @@ mod tests {
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
 
-        let counter = cx.new(|_| Counter { value: 1 }).unwrap();
+        let counter = cx.new(|_| Counter { value: 1 });
 
-        counter
-            .update(&cx, |counter, cx| {
-                counter.value += 1;
-                cx.notify();
-            })
-            .unwrap();
+        counter.update(&cx, |counter, cx| {
+            counter.value += 1;
+            cx.notify();
+        });
 
-        assert_eq!(counter.read(&cx, |counter| counter.value,), Ok(2));
+        assert_eq!(counter.read(&cx, |counter| counter.value), 2);
         assert!(arena.is_dirty(counter.entity_id()));
         assert!(!arena.is_dirty(root.entity_id()));
+    }
+
+    #[test]
+    fn entity_notify_works_while_the_entity_is_borrowed() {
+        let arena = TestEntityArena::<1024, 16>::default();
+        let callbacks = TestCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
+        let root = arena.insert(Root).unwrap();
+        let all_dirty = Cell::new(false);
+
+        let mut cx = Context::new_in(
+            root,
+            RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
+        );
+
+        let counter = cx.new(|_| Counter { value: 0 });
+
+        counter.update(&cx, |_, cx| counter.notify(cx));
+
+        assert!(arena.is_dirty(counter.entity_id()));
+        assert!(!arena.is_dirty(root.entity_id()));
+    }
+
+    #[test]
+    #[should_panic(expected = "could not read entity: NotReady")]
+    fn reading_an_initializing_entity_panics() {
+        let arena = TestEntityArena::<1024, 16>::default();
+        let callbacks = TestCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
+        let root = arena.insert(Root).unwrap();
+        let all_dirty = Cell::new(false);
+
+        let mut cx = Context::new_in(
+            root,
+            RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
+        );
+
+        cx.new(|cx| {
+            cx.entity().read(cx, |_| ());
+
+            Counter { value: 0 }
+        });
     }
 
     #[test]
@@ -229,16 +286,14 @@ mod tests {
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
 
-        let parent = cx
-            .new(|cx| {
-                let child = cx.new(|_| Child { value: 123 }).unwrap();
-                Parent { child }
-            })
-            .unwrap();
+        let parent = cx.new(|cx| {
+            let child = cx.new(|_| Child { value: 123 });
+            Parent { child }
+        });
 
-        let child = parent.read(&cx, |parent| parent.child).unwrap();
+        let child = parent.read(&cx, |parent| parent.child);
 
-        assert_eq!(child.read(&cx, |child| child.value,), Ok(123));
+        assert_eq!(child.read(&cx, |child| child.value), 123);
     }
 
     #[test]
@@ -262,19 +317,17 @@ mod tests {
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
 
-        let parent = cx
-            .new(|cx| {
-                let me = cx.entity();
+        let parent = cx.new(|cx| {
+            let me = cx.entity();
 
-                let child = cx.new(|_| Child { parent: me }).unwrap();
+            let child = cx.new(|_| Child { parent: me });
 
-                Parent { child }
-            })
-            .unwrap();
+            Parent { child }
+        });
 
-        let child = parent.read(&cx, |p| p.child).unwrap();
+        let child = parent.read(&cx, |p| p.child);
 
-        let referenced_parent = child.read(&cx, |c| c.parent).unwrap();
+        let referenced_parent = child.read(&cx, |c| c.parent);
 
         assert_eq!(referenced_parent, parent);
     }
@@ -292,17 +345,15 @@ mod tests {
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
 
-        let _ = cx
-            .new(|cx| {
-                let me = cx.entity();
+        cx.new(|cx| {
+            let me = cx.entity();
 
-                assert!(matches!(
-                    me.read(cx, |_| ()),
-                    Err(EntityAccessError::NotReady),
-                ));
+            assert!(matches!(
+                me.try_read(cx, |_| ()),
+                Err(EntityAccessError::NotReady),
+            ));
 
-                Counter { value: 0 }
-            })
-            .unwrap();
+            Counter { value: 0 }
+        });
     }
 }

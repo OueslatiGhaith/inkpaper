@@ -64,7 +64,52 @@ impl<T> Entity<T> {
 }
 
 impl<T: 'static> Entity<T> {
-    pub fn read<C, R>(
+    /// reads the entity's state, and records the read so the entity being rendered, if
+    /// any, renders again when this one changes.
+    ///
+    /// # Panics
+    ///
+    /// when the entity is gone, is still being built, or is being updated. See
+    /// [`Self::try_read`]
+    #[track_caller]
+    pub fn read<C, R>(self, cx: &Context<'_, C>, f: impl FnOnce(&T) -> R) -> R
+    where
+        C: 'static,
+    {
+        match self.try_read(cx, f) {
+            Ok(value) => value,
+            Err(error) => panic!("could not read entity: {error:?}"),
+        }
+    }
+
+    /// updates the entity's state through its own [`Context`].
+    ///
+    /// # Panics
+    ///
+    /// when the entity is gone, is still being built, or is already borrowed. See
+    /// [`Self::try_update`]
+    #[track_caller]
+    pub fn update<C, R>(
+        self,
+        cx: &Context<'_, C>,
+        f: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+    ) -> R
+    where
+        C: 'static,
+    {
+        match self.try_update(cx, f) {
+            Ok(value) => value,
+            Err(error) => panic!("could not update entity: {error:?}"),
+        }
+    }
+
+    /// marks the entity as changed, so it and the entities that read it render again.
+    /// Unlike [`Context::notify`] through [`Self::update`], it doesn't borrow the entity
+    pub fn notify<C>(self, cx: &Context<'_, C>) {
+        cx.runtime.notify(self.id);
+    }
+
+    pub fn try_read<C, R>(
         self,
         cx: &Context<'_, C>,
         f: impl FnOnce(&T) -> R,
@@ -86,7 +131,7 @@ impl<T: 'static> Entity<T> {
         Ok(f(value))
     }
 
-    pub fn update<C, R>(
+    pub fn try_update<C, R>(
         self,
         cx: &Context<'_, C>,
         f: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,

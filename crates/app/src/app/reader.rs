@@ -96,7 +96,7 @@ impl InkPaperApp {
 
     /// renders the reader's drawer again, for changes nothing else shows
     pub(crate) fn refresh_reader_menu(&self, cx: &mut Context<'_, Self>) {
-        self.reader_menu.update(cx, |_, cx| cx.notify()).ok();
+        self.reader_menu.notify(cx);
     }
 
     pub(crate) fn open_reader_menu(&mut self, cx: &mut Context<'_, Self>) {

@@ -383,11 +383,9 @@ impl App {
             "Feature gallery - pass a TTF/OTF path on the command line to enable the Arabic shaping + cluster layout demo."
         };
 
-        let header = cx
-            .new(|_| Header::new("InkPaper UI", subtitle, heading_font_family))
-            .unwrap();
+        let header = cx.new(|_| Header::new("InkPaper UI", subtitle, heading_font_family));
 
-        let counter = cx.new(|_| Counter::new()).unwrap();
+        let counter = cx.new(|_| Counter::new());
 
         Self {
             header,

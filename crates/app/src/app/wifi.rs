@@ -203,12 +203,12 @@ impl InkPaperApp {
 
     /// renders the password field again, for changes nothing else shows
     pub(crate) fn refresh_password_field(&self, cx: &mut Context<'_, Self>) {
-        self.password_field.update(cx, |_, cx| cx.notify()).ok();
+        self.password_field.notify(cx);
     }
 
     /// renders the password keyboard again, for changes nothing else shows
     pub(crate) fn refresh_password_keyboard(&self, cx: &mut Context<'_, Self>) {
-        self.password_keyboard.update(cx, |_, cx| cx.notify()).ok();
+        self.password_keyboard.notify(cx);
     }
 
     pub(crate) fn take_wifi_join_request(&mut self) -> Option<WifiCredentials> {

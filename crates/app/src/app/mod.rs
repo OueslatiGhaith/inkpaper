@@ -134,17 +134,17 @@ pub struct InkPaperApp {
 
 impl InkPaperApp {
     pub fn new(cx: &mut Context<'_, Self>) -> Self {
-        let battery = cx.new(|_| BatteryState::default()).unwrap();
-        let rtc = cx.new(|_| RtcState::default()).unwrap();
-        let battery_indicator = cx.new(|_| BatteryIndicator::new(battery)).unwrap();
-        let reader_battery_icon = cx.new(|_| ReaderBatteryIcon::default()).unwrap();
-        let frontlight = cx.new(|_| FrontlightState::default()).unwrap();
-        let frontlight_panel = cx.new(|_| FrontlightPanel::new(frontlight)).unwrap();
+        let battery = cx.new(|_| BatteryState::default());
+        let rtc = cx.new(|_| RtcState::default());
+        let battery_indicator = cx.new(|_| BatteryIndicator::new(battery));
+        let reader_battery_icon = cx.new(|_| ReaderBatteryIcon::default());
+        let frontlight = cx.new(|_| FrontlightState::default());
+        let frontlight_panel = cx.new(|_| FrontlightPanel::new(frontlight));
         let app = cx.entity();
-        let reader_menu = cx.new(|_| ReaderMenuView::new(app)).unwrap();
-        let password_field = cx.new(|_| PasswordFieldView::new(app)).unwrap();
-        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app)).unwrap();
-        let timezone = cx.new(|_| TimezoneView::new(app)).unwrap();
+        let reader_menu = cx.new(|_| ReaderMenuView::new(app));
+        let password_field = cx.new(|_| PasswordFieldView::new(app));
+        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app));
+        let timezone = cx.new(|_| TimezoneView::new(app));
 
         Self {
             navigation: NavigationStack::default(),
@@ -187,11 +187,7 @@ impl Render for InkPaperApp {
         let control_center_open = self.control_center.is_open();
         // read only while shown, so the app renders again for them only then
         let (battery, clock) = if control_center_open {
-            let battery = self
-                .battery
-                .read(cx, |battery| battery.get())
-                .ok()
-                .flatten();
+            let battery = self.battery.read(cx, |battery| battery.get());
 
             (battery, self.local_clock(cx))
         } else {

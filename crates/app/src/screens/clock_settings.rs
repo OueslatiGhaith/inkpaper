@@ -98,17 +98,14 @@ impl TimezoneView {
 impl Render for TimezoneView {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         // the listeners target the app, so its handlers can render this view again
-        let (clock, utc_offset, on_decrease, on_increase) = self
-            .app
-            .update(cx, |app, cx| {
-                (
-                    app.local_clock(cx),
-                    app.clock.utc_offset(),
-                    cx.listener(InkPaperApp::activate_decrease_utc_offset),
-                    cx.listener(InkPaperApp::activate_increase_utc_offset),
-                )
-            })
-            .expect("the app outlives its clock settings");
+        let (clock, utc_offset, on_decrease, on_increase) = self.app.update(cx, |app, cx| {
+            (
+                app.local_clock(cx),
+                app.clock.utc_offset(),
+                cx.listener(InkPaperApp::activate_decrease_utc_offset),
+                cx.listener(InkPaperApp::activate_increase_utc_offset),
+            )
+        });
 
         let (time, date) = match clock {
             None => (String::from("--:--"), String::from("Time not set")),

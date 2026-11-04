@@ -91,15 +91,13 @@ impl Render for Shell {
         }
         let mirrored = self
             .mirror_first
-            .then(|| self.first.read(cx, |label| label.text).unwrap());
+            .then(|| self.first.read(cx, |label| label.text));
 
         if self.touch_first {
-            self.first
-                .update(cx, |label, cx| {
-                    label.text = "touched";
-                    cx.notify();
-                })
-                .unwrap();
+            self.first.update(cx, |label, cx| {
+                label.text = "touched";
+                cx.notify();
+            });
         }
 
         div()

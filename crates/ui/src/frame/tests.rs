@@ -753,12 +753,10 @@ struct Controller {
 
 impl Controller {
     fn update_status(&mut self, _: &ActivateEvent, cx: &mut Context<Self>) {
-        self.status
-            .update(cx, |status, cx| {
-                status.value += 10;
-                cx.notify();
-            })
-            .unwrap();
+        self.status.update(cx, |status, cx| {
+            status.value += 10;
+            cx.notify();
+        });
     }
 }
 

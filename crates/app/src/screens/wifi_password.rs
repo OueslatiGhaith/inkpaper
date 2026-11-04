@@ -85,29 +85,25 @@ impl Render for PasswordFieldView {
         text.clear();
 
         // the listener targets the app, so its handler can render this field again
-        let field = self
-            .app
-            .update(cx, |app, cx| {
-                let entry = app.wifi.password_entry()?;
-                let keyboard = entry.keyboard();
-                text.push_str(keyboard.text());
+        let field = self.app.update(cx, |app, cx| {
+            let entry = app.wifi.password_entry()?;
+            let keyboard = entry.keyboard();
+            text.push_str(keyboard.text());
 
-                let hint = match entry.status() {
-                    // WPA passwords are at least 8 characters
-                    JoinStatus::Typing if !keyboard.can_submit() => "At least 8 characters",
-                    JoinStatus::Typing => "",
-                    JoinStatus::Checking => "Checking...",
-                    JoinStatus::Failed(failure) => failure.message(),
-                };
+            let hint = match entry.status() {
+                // WPA passwords are at least 8 characters
+                JoinStatus::Typing if !keyboard.can_submit() => "At least 8 characters",
+                JoinStatus::Typing => "",
+                JoinStatus::Checking => "Checking...",
+                JoinStatus::Failed(failure) => failure.message(),
+            };
 
-                Some((
-                    entry.shown(),
-                    hint,
-                    cx.listener(InkPaperApp::activate_toggle_wifi_password),
-                ))
-            })
-            .ok()
-            .flatten();
+            Some((
+                entry.shown(),
+                hint,
+                cx.listener(InkPaperApp::activate_toggle_wifi_password),
+            ))
+        });
 
         let Some((shown, hint, on_toggle)) = field else {
             return div().into_any_element();
@@ -149,19 +145,15 @@ impl PasswordKeyboardView {
 impl Render for PasswordKeyboardView {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         // the listener targets the app, so its handler can render this keyboard again
-        let keyboard = self
-            .app
-            .update(cx, |app, cx| {
-                let entry = app.wifi.password_entry()?;
+        let keyboard = self.app.update(cx, |app, cx| {
+            let entry = app.wifi.password_entry()?;
 
-                Some((
-                    entry.keyboard().rows(),
-                    keyboard_look(entry),
-                    cx.listener(InkPaperApp::activate_wifi_password_key),
-                ))
-            })
-            .ok()
-            .flatten();
+            Some((
+                entry.keyboard().rows(),
+                keyboard_look(entry),
+                cx.listener(InkPaperApp::activate_wifi_password_key),
+            ))
+        });
 
         let Some((rows, (layer, shift, can_submit), on_key)) = keyboard else {
             return div().into_any_element();

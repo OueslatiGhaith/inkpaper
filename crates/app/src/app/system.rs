@@ -11,28 +11,23 @@ impl InkPaperApp {
     /// the reader's icon when it changes. Nothing else renders, so reading a book
     /// doesn't wake the display for a new percentage.
     pub fn apply_battery_status(&mut self, battery: BatteryStatus, cx: &mut Context<'_, Self>) {
-        self.battery
-            .update(cx, |state, cx| {
-                if state.set(battery) {
-                    cx.notify();
-                }
-            })
-            .ok();
+        self.battery.update(cx, |state, cx| {
+            if state.set(battery) {
+                cx.notify();
+            }
+        });
         self.reader_battery_icon
-            .update(cx, |icon, cx| icon.set_battery(battery, cx))
-            .ok();
+            .update(cx, |icon, cx| icon.set_battery(battery, cx));
     }
 
     /// Renders again only what read the time, so the RTC's minute ticks don't wake the
     /// display on screens without a clock.
     pub fn apply_clock_status(&mut self, clock: Option<ClockStatus>, cx: &mut Context<'_, Self>) {
-        self.rtc
-            .update(cx, |state, cx| {
-                if state.set(clock) {
-                    cx.notify();
-                }
-            })
-            .ok();
+        self.rtc.update(cx, |state, cx| {
+            if state.set(clock) {
+                cx.notify();
+            }
+        });
     }
 
     /// The RTC's UTC time shifted to the chosen timezone. A render that calls this renders
@@ -42,8 +37,6 @@ impl InkPaperApp {
 
         self.rtc
             .read(cx, |rtc| rtc.get())
-            .ok()
-            .flatten()
             .map(|clock| clock.offset_by(minutes))
     }
 
@@ -73,7 +66,7 @@ impl InkPaperApp {
     /// renders the clock settings' time and timezone again. Only they show the
     /// timezone while it changes; other screens render again on the way back
     pub(crate) fn refresh_timezone(&self, cx: &mut Context<'_, Self>) {
-        self.timezone.update(cx, |_, cx| cx.notify()).ok();
+        self.timezone.notify(cx);
     }
 
     /// Saves a timezone left by a drag. Returns whether there was one.
@@ -161,16 +154,14 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
         change: impl FnOnce(&mut FrontlightState) -> bool,
     ) -> bool {
-        self.frontlight
-            .update(cx, |frontlight, cx| {
-                let changed = change(frontlight);
-                if changed {
-                    cx.notify();
-                }
+        self.frontlight.update(cx, |frontlight, cx| {
+            let changed = change(frontlight);
+            if changed {
+                cx.notify();
+            }
 
-                changed
-            })
-            .unwrap_or(false)
+            changed
+        })
     }
 
     /// reads or changes the frontlight's requests, which nothing shows
@@ -178,10 +169,8 @@ impl InkPaperApp {
         &mut self,
         cx: &mut Context<'_, Self>,
         f: impl FnOnce(&mut FrontlightState) -> R,
-    ) -> Option<R> {
-        self.frontlight
-            .update(cx, |frontlight, _| f(frontlight))
-            .ok()
+    ) -> R {
+        self.frontlight.update(cx, |frontlight, _| f(frontlight))
     }
 
     pub fn request_frontlight_apply(&mut self, cx: &mut Context<'_, Self>) {
@@ -193,7 +182,6 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
     ) -> Option<FrontlightSetting> {
         self.frontlight_requests(cx, FrontlightState::take_request)
-            .flatten()
     }
 
     pub(crate) fn take_frontlight_preferences_request(
@@ -201,7 +189,6 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
     ) -> Option<FrontlightPreferencesRequest> {
         self.frontlight_requests(cx, FrontlightState::take_preferences_request)
-            .flatten()
     }
 
     /// closes the control center, saving the frontlight it may have changed. Returns

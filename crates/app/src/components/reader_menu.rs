@@ -146,21 +146,18 @@ impl Render for ReaderMenuView {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         // the listeners target the app, so its handlers can render this drawer again
         // without borrowing it
-        let props = self
-            .app
-            .update(cx, |app, cx| ReaderMenuProps {
-                tab: app.reader.menu_tab(),
-                text: app.reader.menu_text_settings(),
-                font_name: app.reader_font_name(),
-                on_close: cx.listener(InkPaperApp::activate_close_reader_menu),
-                on_text_tab: cx.listener(InkPaperApp::activate_reader_text_tab),
-                on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),
-                on_text_row: cx.listener(InkPaperApp::activate_reader_text_row),
-                on_select_chapter: cx.listener(InkPaperApp::show_table_of_contents),
-                has_links: !app.reader.page_links().is_empty(),
-                on_links: cx.listener(InkPaperApp::activate_reader_links),
-            })
-            .expect("the app outlives its reader menu");
+        let props = self.app.update(cx, |app, cx| ReaderMenuProps {
+            tab: app.reader.menu_tab(),
+            text: app.reader.menu_text_settings(),
+            font_name: app.reader_font_name(),
+            on_close: cx.listener(InkPaperApp::activate_close_reader_menu),
+            on_text_tab: cx.listener(InkPaperApp::activate_reader_text_tab),
+            on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),
+            on_text_row: cx.listener(InkPaperApp::activate_reader_text_row),
+            on_select_chapter: cx.listener(InkPaperApp::show_table_of_contents),
+            has_links: !app.reader.page_links().is_empty(),
+            on_links: cx.listener(InkPaperApp::activate_reader_links),
+        });
 
         ReaderMenu::from(props)
     }

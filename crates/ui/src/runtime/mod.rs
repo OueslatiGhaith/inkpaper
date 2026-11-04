@@ -168,7 +168,7 @@ where
     {
         let cx = Context::new_in(entity, self.runtime_cx());
 
-        entity.update(&cx, update)
+        entity.try_update(&cx, update)
     }
 
     fn runtime_cx(&self) -> RuntimeCx<'_> {

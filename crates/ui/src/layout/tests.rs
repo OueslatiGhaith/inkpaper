@@ -221,7 +221,7 @@ struct App {
 
 impl App {
     fn new(cx: &mut Context<Self>) -> Self {
-        let child = cx.new(|_| Child).unwrap();
+        let child = cx.new(|_| Child);
 
         Self { child }
     }
