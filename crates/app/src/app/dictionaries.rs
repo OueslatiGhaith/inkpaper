@@ -4,7 +4,7 @@ use inkpaper_ui::prelude::*;
 
 use super::InkPaperApp;
 use crate::{
-    dictionaries::{DictionaryRequest, LookupOutcome, LookupState},
+    dictionaries::{LookupOutcome, LookupState},
     fonts::reader_family,
     paging::PageTurn,
     reader::layout_definition,
@@ -97,16 +97,18 @@ impl InkPaperApp {
         cx.notify();
     }
 
-    /// The service indexes the dictionary before it looks `request` up, once
-    /// a frame shows the indexing. It takes the request again for that.
-    pub(crate) fn apply_dictionary_deferred(
+    /// The service indexes the dictionary before it looks `word` up. Returns
+    /// whether `word` is still wanted.
+    pub(crate) fn apply_dictionary_indexing(
         &mut self,
-        request: DictionaryRequest,
+        word: &str,
         cx: &mut Context<'_, Self>,
-    ) {
-        if self.lookup.defer(request) {
+    ) -> bool {
+        if self.lookup.show_indexing(word) {
             cx.notify();
         }
+
+        self.lookup.waits_for(word)
     }
 
     /// The service's outcome for `word`, its definition laid out for the

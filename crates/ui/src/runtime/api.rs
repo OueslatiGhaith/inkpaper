@@ -36,6 +36,10 @@ pub trait RuntimeApi {
 
     fn scroll_at(&mut self, position: Point, delta: Offset) -> bool;
 
+    /// whether something changed since the last frame was prepared, so a frame is
+    /// waiting to render. Work that takes long can wait until it is on screen
+    fn has_pending_frame(&self) -> bool;
+
     /// Sends an event to the element under `position` that listens for it,
     /// built from that element's id. Returns whether any listener ran.
     fn dispatch_at_with<E>(
@@ -155,6 +159,10 @@ where
 
     fn scroll_at(&mut self, position: Point, delta: Offset) -> bool {
         self.scroll_at(position, delta)
+    }
+
+    fn has_pending_frame(&self) -> bool {
+        !self.render_invalidation().is_none()
     }
 
     fn dispatch_at_with<E>(

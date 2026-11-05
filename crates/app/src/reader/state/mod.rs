@@ -52,6 +52,14 @@ pub(crate) enum ReaderRequest {
     UpdateProgress(ReadingHistoryEntry),
 }
 
+impl ReaderRequest {
+    /// Whether the request takes long enough that the screen should first show
+    /// what asked for it, like the reader opening a book.
+    pub(crate) const fn takes_long(&self) -> bool {
+        matches!(self, Self::OpenEpub { .. })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PendingRepaginationRequest {
     spine: SpineIndex,
@@ -171,6 +179,13 @@ impl ReaderState {
 
     pub(crate) fn take_request(&mut self) -> Option<ReaderRequest> {
         self.pending.take()
+    }
+
+    /// Puts back a request the service took, unless a newer one is waiting.
+    pub(crate) fn restore_request(&mut self, request: ReaderRequest) {
+        if self.pending.is_none() {
+            self.pending = Some(request);
+        }
     }
 
     pub(crate) fn take_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
