@@ -1,7 +1,7 @@
 use inkpaper_app::AppResources;
 use inkpaper_ui::{
-    HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapFrame, HeapGlobalArena, PaintError,
-    prelude::*,
+    HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapEvents, HeapFrame, HeapGlobalArena,
+    PaintError, prelude::*,
 };
 use inkpaper_ui_eink::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode};
 
@@ -38,6 +38,7 @@ impl RuntimeStorage for UiStorage {
     type Globals = HeapGlobalArena<UI_GLOBAL_SLOTS>;
     type Frame = HeapFrame<UI_FRAME_NODES, UI_FRAME_TEXT_BYTES>;
     type ElementStates = HeapElementStates<UI_ELEMENT_STATES>;
+    type Events = HeapEvents;
 }
 
 pub type UiRuntime =

@@ -11,13 +11,14 @@ use crate::{
     TextMeasurer,
     callback::ListenerInvokeError,
     element::state::{ElementStateId, ElementStateTable, IdentityError},
+    emitter::{self, EventTable},
     entity::{EntityStore, create_entity},
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
     px,
     resources::RuntimeResources,
     runtime::root::RuntimeRoot,
-    storage::{CallbackStorage, FrameStorage, GlobalStorage},
+    storage::{CallbackStorage, EventStorage, FrameStorage, GlobalStorage},
 };
 #[cfg(feature = "metrics")]
 use crate::{GlyphCacheMetrics, PerformanceMetrics, TextPaintMetrics};
@@ -87,6 +88,33 @@ where
     activation: ActivationState,
     focused: Option<ElementStateId>,
     pending_scroll_into_view: Option<ElementStateId>,
+    /// subscriptions, and the events emitted during the runtime call running now
+    events: RuntimeEvents<S>,
+    /// how many runtime calls that run user code are running, nested. Events are
+    /// delivered when the outermost returns
+    call_depth: Cell<u32>,
+}
+
+type RuntimeEvents<S> = EventTable<
+    <<S as RuntimeStorage>::Events as EventStorage>::Subscriptions<emitter::Subscription>,
+    <<S as RuntimeStorage>::Events as EventStorage>::Pending<emitter::PendingEvent>,
+>;
+
+/// counts a runtime call while it runs, even when it unwinds
+struct CallDepth<'a>(&'a Cell<u32>);
+
+impl<'a> CallDepth<'a> {
+    fn enter(depth: &'a Cell<u32>) -> Self {
+        depth.set(depth.get() + 1);
+
+        Self(depth)
+    }
+}
+
+impl Drop for CallDepth<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
 }
 
 impl<S, RESOURCES> Default for Runtime<S, RESOURCES>
@@ -116,6 +144,8 @@ where
             activation: ActivationState::default(),
             focused: None,
             pending_scroll_into_view: None,
+            events: EventTable::default(),
+            call_depth: Cell::new(0),
         }
     }
 }
@@ -131,7 +161,7 @@ where
     where
         T: 'static,
     {
-        create_entity(self.runtime_cx(), build)
+        self.deliver_events_after(|| create_entity(self.runtime_cx(), build))
     }
 
     pub fn create_root<T>(
@@ -168,7 +198,7 @@ where
     {
         let cx = Context::new_in(entity, self.runtime_cx());
 
-        entity.try_update(&cx, update)
+        self.deliver_events_after(|| entity.try_update(&cx, update))
     }
 
     fn runtime_cx(&self) -> RuntimeCx<'_> {
@@ -179,6 +209,21 @@ where
             &self.all_dirty,
         )
         .with_dependencies(&self.dependencies)
+        .with_events(&self.events)
+    }
+
+    /// runs `call`, which runs user code, then delivers the events it emitted unless
+    /// an outer runtime call still runs, which delivers them when it returns
+    fn deliver_events_after<R>(&self, call: impl FnOnce() -> R) -> R {
+        let depth = CallDepth::enter(&self.call_depth);
+        let result = call();
+        drop(depth);
+
+        if self.call_depth.get() == 0 {
+            emitter::deliver(&self.events, self.runtime_cx());
+        }
+
+        result
     }
 
     fn next_frame_generation(&mut self) -> u32 {
@@ -210,11 +255,16 @@ where
     /// to render do, unless every entity needs to. A partial rebuild that fails falls
     /// back to a full one
     pub fn rebuild(&mut self) -> Result<(), FrameBuildError> {
-        if self.can_rebuild_partially() && self.rebuild_partially().is_ok() {
-            return Ok(());
-        }
+        let result = if self.can_rebuild_partially() && self.rebuild_partially().is_ok() {
+            Ok(())
+        } else {
+            self.rebuild_fully()
+        };
 
-        self.rebuild_fully()
+        // renders may emit too
+        emitter::deliver(&self.events, self.runtime_cx());
+
+        result
     }
 
     fn can_rebuild_partially(&self) -> bool {
@@ -241,7 +291,8 @@ where
             &self.callbacks,
             &self.all_dirty,
         )
-        .with_dependencies(&self.dependencies);
+        .with_dependencies(&self.dependencies)
+        .with_events(&self.events);
         let result = self
             .frame
             .rerender(root, runtime)
@@ -340,7 +391,8 @@ where
             &self.callbacks,
             &self.all_dirty,
         )
-        .with_dependencies(&self.dependencies);
+        .with_dependencies(&self.dependencies)
+        .with_events(&self.events);
         let root_node = self.frame.mount_and_expand(root, runtime)?;
 
         self.frame
@@ -395,8 +447,10 @@ where
     where
         E: 'static,
     {
-        self.callbacks
-            .invoke_listener(listener, event, self.runtime_cx())
+        self.deliver_events_after(|| {
+            self.callbacks
+                .invoke_listener(listener, event, self.runtime_cx())
+        })
     }
 
     pub fn layout_with_measurer(
@@ -1244,6 +1298,8 @@ where
     }
 }
 
+#[cfg(test)]
+mod event_tests;
 #[cfg(test)]
 mod partial_tests;
 

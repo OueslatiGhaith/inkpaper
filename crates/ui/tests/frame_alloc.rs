@@ -35,6 +35,7 @@ impl<
     type Globals = HeapGlobalArena<GLOBALS>;
     type Frame = HeapFrame<NODES, TEXT_BYTES>;
     type ElementStates = HeapElementStates<STATES>;
+    type Events = HeapEvents;
 }
 
 std::thread_local! {

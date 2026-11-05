@@ -1,8 +1,10 @@
 use core::any::TypeId;
 
 use crate::{
-    Canvas, Entity, EntityAllocError, EntityId, Listener, PaintCx, RuntimeCx,
+    Canvas, Entity, EntityAllocError, EntityId, EventEmitter, EventError, Listener, PaintCx,
+    RuntimeCx,
     callback::{CallbackAllocError, register_canvas_callback, register_listener},
+    emitter::{self, Handler},
     entity::create_entity,
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
     runtime::{DependencyStore, Source},
@@ -133,6 +135,61 @@ impl<T: 'static> Context<'_, T> {
     {
         self.try_canvas(callback)
             .unwrap_or_else(|error| panic!("could not allocate canvas callback: {error:?}"))
+    }
+
+    /// tells this entity's subscribers that `event` happened. They get it once the
+    /// runtime call running now returns, such as the listener of a tap, so they can
+    /// update this entity.
+    ///
+    /// # Panics
+    ///
+    /// when the queue of events waiting for delivery is full. See [`Self::try_emit`]
+    #[track_caller]
+    pub fn emit<E>(&mut self, event: E)
+    where
+        T: EventEmitter<E>,
+        E: Copy + 'static,
+    {
+        if let Err(error) = self.try_emit(event) {
+            panic!("could not emit event: {error:?}");
+        }
+    }
+
+    pub fn try_emit<E>(&mut self, event: E) -> Result<(), EventError>
+    where
+        T: EventEmitter<E>,
+        E: Copy + 'static,
+    {
+        emitter::emit(self.runtime.events, self.entity_id(), event)
+    }
+
+    /// calls `handler` with this entity, each `E` event `emitter` emits, and its own
+    /// context. Entities live as long as the runtime, and so do subscriptions.
+    ///
+    /// # Panics
+    ///
+    /// when the subscription table is full. See [`Self::try_subscribe`]
+    #[track_caller]
+    pub fn subscribe<U, E>(&mut self, emitter: Entity<U>, handler: Handler<T, U, E>)
+    where
+        U: EventEmitter<E>,
+        E: 'static,
+    {
+        if let Err(error) = self.try_subscribe(emitter, handler) {
+            panic!("could not subscribe: {error:?}");
+        }
+    }
+
+    pub fn try_subscribe<U, E>(
+        &mut self,
+        emitter: Entity<U>,
+        handler: Handler<T, U, E>,
+    ) -> Result<(), EventError>
+    where
+        U: EventEmitter<E>,
+        E: 'static,
+    {
+        emitter::subscribe(self.runtime.events, self.entity, emitter, handler)
     }
 }
 
