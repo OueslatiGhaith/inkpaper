@@ -25,7 +25,7 @@ where
         R: RuntimeApi + ResourceRuntimeApi<'resource>,
     {
         match request {
-            ReaderRequest::OpenEpub { path, text } => {
+            ReaderRequest::OpenEpub { path, text, .. } => {
                 self.open_document(runtime, app, path, text).await?;
             }
 

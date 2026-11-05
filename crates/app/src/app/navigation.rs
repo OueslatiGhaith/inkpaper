@@ -77,6 +77,10 @@ impl NavigationStack {
         true
     }
 
+    fn contains(&self, screen: Screen) -> bool {
+        self.screens.contains(&screen)
+    }
+
     fn pop(&mut self) -> Option<Screen> {
         if self.screens.len() == 1 {
             return None;
@@ -89,6 +93,11 @@ impl NavigationStack {
 impl InkPaperApp {
     pub(super) fn screen(&self) -> Screen {
         self.navigation.current()
+    }
+
+    /// Whether `screen` is open, shown or under the screens opened from it.
+    pub(super) fn is_open(&self, screen: Screen) -> bool {
+        self.navigation.contains(screen)
     }
 
     pub(super) fn open_screen(&mut self, screen: Screen, cx: &mut Context<'_, Self>) {

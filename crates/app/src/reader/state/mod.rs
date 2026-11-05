@@ -26,6 +26,8 @@ pub(crate) enum ReaderRequest {
     OpenEpub {
         path: String,
         text: TextSettings,
+        /// reopened at boot, where nothing on screen asked for it
+        resume: bool,
     },
 
     LoadAdjacentChapter {
@@ -54,9 +56,10 @@ pub(crate) enum ReaderRequest {
 
 impl ReaderRequest {
     /// Whether the request takes long enough that the screen should first show
-    /// what asked for it, like the toast of a book opening.
+    /// what asked for it, like the toast of a book opening. A book reopened at
+    /// boot has nothing to show first, so the first frame is its page.
     pub(crate) const fn takes_long(&self) -> bool {
-        matches!(self, Self::OpenEpub { .. })
+        matches!(self, Self::OpenEpub { resume: false, .. })
     }
 }
 
@@ -155,10 +158,20 @@ impl Default for ReaderState {
 
 impl ReaderState {
     pub(crate) fn open(&mut self, path: String, fallback_title: String) {
+        self.start_opening(path, fallback_title, false);
+    }
+
+    /// Reopens the book read when the device went to sleep.
+    pub(crate) fn resume(&mut self, path: String, fallback_title: String) {
+        self.start_opening(path, fallback_title, true);
+    }
+
+    fn start_opening(&mut self, path: String, fallback_title: String, resume: bool) {
         self.text = self.saved_text;
         self.pending = Some(ReaderRequest::OpenEpub {
             path: path.clone(),
             text: self.text,
+            resume,
         });
 
         self.pending_chapter = None;

@@ -82,6 +82,9 @@ fn main() {
         for event in window.events() {
             match event {
                 SimulatorEvent::Quit => {
+                    // closing the window is the device going to sleep, so the
+                    // book being read opens again at the next start
+                    let _ = app_service.prepare_for_sleep(&mut runtime, app);
                     let _ = future::block_on(app_service.flush());
                     break 'running;
                 }

@@ -23,6 +23,29 @@ impl InkPaperApp {
         self.show_toast(Toast::new(ToastId::OpeningBook, "Loading"), cx);
     }
 
+    /// Reopens at boot the book read when the device went to sleep. Nothing
+    /// shows before it, so the screen goes from the sleep screen straight to
+    /// its page. A book that can't be opened leaves Home under a toast.
+    pub(crate) fn resume_book(&mut self, path: String) {
+        let title = self
+            .reading_history
+            .entries()
+            .iter()
+            .find(|entry| entry.path() == path)
+            .map(|entry| String::from(entry.display_title()))
+            .unwrap_or_default();
+
+        self.reader.resume(path, title);
+    }
+
+    /// The book to reopen at boot: the one being read, in the reader or a
+    /// screen opened from it like its table of contents.
+    pub(crate) fn book_to_resume(&self) -> Option<String> {
+        let reading = self.is_open(Screen::Reader) && self.reader.document().is_some();
+
+        reading.then(|| String::from(self.reader.path()))
+    }
+
     pub(crate) fn apply_reader_document(
         &mut self,
         document: ReaderDocument,

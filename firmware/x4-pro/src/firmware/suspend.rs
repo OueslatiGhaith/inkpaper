@@ -50,6 +50,7 @@ where
     prepare_sleep_screen(
         runtime,
         app,
+        app_service,
         presenter,
         display_power,
         panel,
@@ -119,6 +120,7 @@ where
 async fn prepare_sleep_screen<B, D>(
     runtime: &mut UiRuntime,
     app: Entity<InkPaperApp>,
+    app_service: &mut AppService<X4Platform>,
     presenter: &mut Presenter,
     display_power: &mut DisplayPowerManager,
     panel: &mut X4Panel,
@@ -131,10 +133,7 @@ async fn prepare_sleep_screen<B, D>(
 {
     info!("suspend: preparing sleep screen");
 
-    if runtime
-        .update(app, |app, cx| app.prepare_for_sleep(cx))
-        .is_err()
-    {
+    if app_service.prepare_for_sleep(runtime, app).is_err() {
         warn!("failed to prepare sleep screen");
         return;
     }

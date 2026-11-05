@@ -181,7 +181,7 @@ impl InkPaperApp {
         !self.file_transfer.blocks_input()
     }
 
-    pub fn prepare_for_sleep(&mut self, cx: &mut Context<'_, Self>) {
+    pub(crate) fn prepare_for_sleep(&mut self, cx: &mut Context<'_, Self>) {
         self.close_control_center(cx);
         // so it isn't there to hide on waking
         self.hide_toast_on_input(cx);
