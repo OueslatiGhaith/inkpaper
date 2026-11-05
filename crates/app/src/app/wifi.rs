@@ -39,10 +39,6 @@ impl InkPaperApp {
         self.open_screen(Screen::WifiPassword, cx);
     }
 
-    pub(crate) fn take_wifi_networks_save_request(&mut self) -> Option<SavedNetworks> {
-        self.wifi.take_save_request()
-    }
-
     /// What the WiFi screen's taps mean.
     pub(super) fn on_wifi_networks_event(
         &mut self,
@@ -60,10 +56,6 @@ impl InkPaperApp {
             WifiNetworksEvent::Network(index) => self.activate_wifi_network(index, cx),
             WifiNetworksEvent::MenuItem(item) => self.activate_wifi_menu_item(view, item, cx),
         }
-    }
-
-    pub(crate) fn take_wifi_scan_request(&mut self) -> bool {
-        self.wifi.take_scan_request()
     }
 
     /// Reports the networks a scan started by the app found.
@@ -192,10 +184,6 @@ impl InkPaperApp {
         if keyboard_changed {
             keyboard.notify(cx);
         }
-    }
-
-    pub(crate) fn take_wifi_join_request(&mut self) -> Option<WifiCredentials> {
-        self.wifi.take_join_request()
     }
 
     /// Reports how joining a network with a typed password ended. A network

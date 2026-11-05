@@ -5,7 +5,6 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
-    ReaderPreferencesRequest, ReaderRequest,
     components::reader_menu::{DrawerEvent, ReaderDrawer},
     fonts::reader_family,
     reader::{JumpTarget, TableOfContents, TextSettings, TocEntry},
@@ -13,10 +12,6 @@ use crate::{
 };
 
 impl InkPaperApp {
-    pub(crate) fn take_reader_request(&mut self) -> Option<ReaderRequest> {
-        self.reader.take_request()
-    }
-
     pub(crate) fn apply_reader_document(
         &mut self,
         document: ReaderDocument,
@@ -264,10 +259,6 @@ impl InkPaperApp {
         if self.reader.follow_link(index) {
             cx.notify();
         }
-    }
-
-    pub(crate) fn take_reader_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
-        self.reader.take_preferences_request()
     }
 
     pub(crate) fn apply_reader_preferences(

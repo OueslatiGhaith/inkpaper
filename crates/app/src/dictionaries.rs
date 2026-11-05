@@ -165,6 +165,9 @@ fn strip_extension<'a>(name: &'a str, extension: &str) -> Option<&'a str> {
 pub(crate) struct DictionaryRequest {
     pub dictionary: u8,
     pub word: String,
+    /// whether the service put this lookup off once already, to show its
+    /// dictionary being indexed. It indexes now instead of putting it off again
+    pub deferred: bool,
 }
 
 /// What looking a word up came to.
@@ -204,11 +207,31 @@ impl WordLookup {
     /// Looks `word` up in `dictionary`.
     pub(crate) fn start(&mut self, dictionary: u8, word: String) {
         self.current = Some((word.clone(), LookupState::Pending));
-        self.request = Some(DictionaryRequest { dictionary, word });
+        self.request = Some(DictionaryRequest {
+            dictionary,
+            word,
+            deferred: false,
+        });
     }
 
     pub(crate) fn take_request(&mut self) -> Option<DictionaryRequest> {
         self.request.take()
+    }
+
+    /// The service put `request` off to index its dictionary first. It waits
+    /// to be taken again, unless another word is wanted by now. Returns
+    /// whether it's still the word wanted.
+    pub(crate) fn defer(&mut self, request: DictionaryRequest) -> bool {
+        if !self.finish(&request.word, LookupState::Indexing) {
+            return false;
+        }
+
+        self.request = Some(DictionaryRequest {
+            deferred: true,
+            ..request
+        });
+
+        true
     }
 
     /// Whether `word` is still waiting for the service.

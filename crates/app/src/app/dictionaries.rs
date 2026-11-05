@@ -97,13 +97,14 @@ impl InkPaperApp {
         cx.notify();
     }
 
-    pub(crate) fn take_dictionary_request(&mut self) -> Option<DictionaryRequest> {
-        self.lookup.take_request()
-    }
-
-    /// The service is indexing the dictionary before it looks `word` up.
-    pub(crate) fn apply_dictionary_indexing(&mut self, word: &str, cx: &mut Context<'_, Self>) {
-        if self.lookup.finish(word, LookupState::Indexing) {
+    /// The service indexes the dictionary before it looks `request` up, once
+    /// a frame shows the indexing. It takes the request again for that.
+    pub(crate) fn apply_dictionary_deferred(
+        &mut self,
+        request: DictionaryRequest,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.lookup.defer(request) {
             cx.notify();
         }
     }

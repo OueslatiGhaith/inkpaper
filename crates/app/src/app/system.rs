@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     BatteryStatus, ClockPreferences, ClockStatus, ClockSyncFailure, FrontlightPreferences,
-    FrontlightPreferencesRequest, FrontlightSetting, FrontlightState, UtcOffset, WifiJoinPlan,
+    FrontlightState, UtcOffset,
     screens::clock_settings::{StepTimezone, TimezoneView},
 };
 
@@ -83,10 +83,6 @@ impl InkPaperApp {
         self.clock.commit()
     }
 
-    pub(crate) fn take_clock_preferences_request(&mut self) -> Option<ClockPreferences> {
-        self.clock.take_save_request()
-    }
-
     pub(crate) fn activate_sync_clock(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         let changed = if self.wifi.saved().join_plan().is_some() {
             self.clock.request_sync()
@@ -97,15 +93,6 @@ impl InkPaperApp {
         if changed {
             cx.notify();
         }
-    }
-
-    /// The networks a requested sync may join.
-    pub(crate) fn take_clock_sync_request(&mut self) -> Option<WifiJoinPlan> {
-        if !self.clock.take_sync_request() {
-            return None;
-        }
-
-        self.wifi.saved().join_plan()
     }
 
     /// Reports how a sync started by the app ended, and which network it
@@ -166,20 +153,6 @@ impl InkPaperApp {
 
     pub fn request_frontlight_apply(&mut self, cx: &mut Context<'_, Self>) {
         self.frontlight_requests(cx, FrontlightState::request_apply);
-    }
-
-    pub(crate) fn take_frontlight_request(
-        &mut self,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<FrontlightSetting> {
-        self.frontlight_requests(cx, FrontlightState::take_request)
-    }
-
-    pub(crate) fn take_frontlight_preferences_request(
-        &mut self,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<FrontlightPreferencesRequest> {
-        self.frontlight_requests(cx, FrontlightState::take_preferences_request)
     }
 
     /// closes the control center, saving the frontlight it may have changed. Returns

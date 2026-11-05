@@ -2,7 +2,7 @@ use alloc::{string::String, vec::Vec};
 use inkpaper_ui::{ImageSource, prelude::*};
 
 use super::{InkPaperApp, Screen};
-use crate::{ReadingHistoryEntry, ReadingHistoryRequest};
+use crate::ReadingHistoryEntry;
 
 impl InkPaperApp {
     pub(crate) fn activate_current_book(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
@@ -33,10 +33,6 @@ impl InkPaperApp {
         self.open_screen(Screen::Reader, cx);
     }
 
-    pub(crate) fn take_reading_history_request(&mut self) -> Option<ReadingHistoryRequest> {
-        self.reading_history.take_request()
-    }
-
     pub(crate) fn apply_reading_history(
         &mut self,
         entries: Vec<ReadingHistoryEntry>,
@@ -56,10 +52,6 @@ impl InkPaperApp {
         if let Some(entry) = self.reading_history.current() {
             self.cover.request(entry.path());
         }
-    }
-
-    pub(crate) fn take_cover_request(&mut self) -> Option<String> {
-        self.cover.take_request()
     }
 
     pub(crate) fn apply_cover(

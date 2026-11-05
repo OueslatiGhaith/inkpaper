@@ -27,29 +27,28 @@ where
     P: AppPlatform,
 {
     /// Looks a word up, opening the dictionary first when it isn't open.
-    /// When its index has to be sampled and `may_defer`, the lookup is put
-    /// off instead, and the app shows the indexing until it goes on.
+    /// When its index has to be sampled the first time it's asked, the
+    /// lookup is put off instead: the app shows the indexing and asks again.
     pub(super) async fn service_dictionary_request<R>(
         &mut self,
         runtime: &mut R,
         app: Entity<InkPaperApp>,
         request: DictionaryRequest,
-        may_defer: bool,
     ) -> Result<(), AppServiceError>
     where
         R: RuntimeApi,
     {
-        let word = request.word.clone();
-
-        let Some(outcome) = self.look_up(&request, may_defer).await else {
-            self.deferred_lookup = Some(request);
+        let Some(outcome) = self.look_up(&request, !request.deferred).await else {
+            self.deferred = true;
 
             runtime.update(app, move |app, cx| {
-                app.apply_dictionary_indexing(&word, cx);
+                app.apply_dictionary_deferred(request, cx);
             })?;
 
             return Ok(());
         };
+
+        let word = request.word;
 
         runtime.update(app, move |app, cx| {
             app.apply_dictionary_lookup(&word, outcome, cx);

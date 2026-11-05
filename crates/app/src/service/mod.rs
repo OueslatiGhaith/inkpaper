@@ -12,7 +12,8 @@ use crate::{
     BookCover, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure,
     FileTransferRequest, FrontlightPreferences, InkPaperApp, ReaderPreferences, ReaderSession,
     ReadingHistory, ReadingHistoryRequest, WifiJoinFailure, WifiScanError,
-    dictionaries::{DictionaryFolder, DictionaryRequest, find_dictionaries},
+    app::AppRequest,
+    dictionaries::{DictionaryFolder, find_dictionaries},
     fonts::{CardFont, FontFamily, find_font_families},
 };
 
@@ -56,8 +57,9 @@ where
     dictionaries: Vec<DictionaryFolder>,
     /// the dictionary words were last looked up in, kept open for the next
     dictionary: Option<OpenDictionary<P::RandomAccessSource>>,
-    /// a lookup put off until a frame shows its dictionary being indexed
-    deferred_lookup: Option<DictionaryRequest>,
+    /// whether a lookup was put off until a frame shows its dictionary being
+    /// indexed
+    deferred: bool,
 
     history: ReadingHistory,
     preferences: ReaderPreferences,
@@ -89,7 +91,7 @@ where
 
             dictionaries: Vec::new(),
             dictionary: None,
-            deferred_lookup: None,
+            deferred: false,
 
             history: ReadingHistory::default(),
             preferences: ReaderPreferences::default(),
@@ -114,6 +116,7 @@ where
         R: RuntimeApi + ResourceRuntimeApi<'resource>,
     {
         self.ensure_initialized(runtime, app).await?;
+        self.deferred = false;
 
         loop {
             // before the reader's requests, which lay out with the font
@@ -123,152 +126,79 @@ where
                 continue;
             }
 
-            let frontlight_request =
-                runtime.update(app, |app, cx| app.take_frontlight_request(cx))?;
+            let Some(request) = runtime.update(app, |app, cx| app.take_request(cx))? else {
+                return Ok(());
+            };
 
-            if let Some(setting) = frontlight_request {
-                let _ = self.platform.set_frontlight(setting).await;
-                continue;
-            }
-
-            let frontlight_preferences_request =
-                runtime.update(app, |app, cx| app.take_frontlight_preferences_request(cx))?;
-
-            if let Some(request) = frontlight_preferences_request {
-                self.service_frontlight_preferences_request(request).await;
-                continue;
-            }
-
-            let clock_sync_request = runtime.update(app, |app, _| app.take_clock_sync_request())?;
-
-            if let Some(plan) = clock_sync_request {
-                if self.platform.start_clock_sync(&plan).await.is_err() {
-                    runtime.update(app, |app, cx| {
-                        app.apply_clock_sync_result(None, Err(ClockSyncFailure::Radio), cx);
-                    })?;
+            match request {
+                AppRequest::Frontlight(setting) => {
+                    let _ = self.platform.set_frontlight(setting).await;
                 }
-
-                continue;
-            }
-
-            let wifi_join_request = runtime.update(app, |app, _| app.take_wifi_join_request())?;
-
-            if let Some(network) = wifi_join_request {
-                if self.platform.start_wifi_join(&network).await.is_err() {
-                    runtime.update(app, |app, cx| {
-                        app.apply_wifi_join_result(Err(WifiJoinFailure::Radio), cx);
-                    })?;
+                AppRequest::FrontlightPreferences(request) => {
+                    self.service_frontlight_preferences_request(request).await;
                 }
-
-                continue;
-            }
-
-            if runtime.update(app, |app, _| app.take_wifi_scan_request())? {
-                if self.platform.start_wifi_scan().await.is_err() {
-                    runtime.update(app, |app, cx| {
-                        app.apply_wifi_scan_result(Err(WifiScanError), cx);
-                    })?;
+                AppRequest::ClockSync(plan) => {
+                    if self.platform.start_clock_sync(&plan).await.is_err() {
+                        runtime.update(app, |app, cx| {
+                            app.apply_clock_sync_result(None, Err(ClockSyncFailure::Radio), cx);
+                        })?;
+                    }
                 }
+                AppRequest::WifiJoin(network) => {
+                    if self.platform.start_wifi_join(&network).await.is_err() {
+                        runtime.update(app, |app, cx| {
+                            app.apply_wifi_join_result(Err(WifiJoinFailure::Radio), cx);
+                        })?;
+                    }
+                }
+                AppRequest::WifiScan => {
+                    if self.platform.start_wifi_scan().await.is_err() {
+                        runtime.update(app, |app, cx| {
+                            app.apply_wifi_scan_result(Err(WifiScanError), cx);
+                        })?;
+                    }
+                }
+                AppRequest::SaveWifiNetworks(networks) => {
+                    self.save_wifi_networks(&networks).await;
+                }
+                AppRequest::SaveClockPreferences(preferences) => {
+                    self.clock_preferences = preferences;
+                    self.clock_preferences_dirty = true;
+                    self.persist_clock_preferences().await;
+                }
+                AppRequest::ReaderPreferences(request) => {
+                    self.service_reader_preferences_request(runtime, app, request)
+                        .await?;
+                }
+                AppRequest::Dictionary(request) => {
+                    self.service_dictionary_request(runtime, app, request)
+                        .await?;
 
-                continue;
-            }
+                    // the frame showing the indexing goes first
+                    if self.deferred {
+                        return Ok(());
+                    }
+                }
+                AppRequest::Cover(path) => {
+                    self.service_cover_request(runtime, app, path).await?;
+                }
+                AppRequest::Browse(request) => {
+                    self.service_browse_request(runtime, app, request).await?;
+                }
+                AppRequest::Reader(request) => {
+                    self.service_reader_request(runtime, app, request).await?;
+                }
+                AppRequest::ReadingHistory(request) => {
+                    self.service_reading_history_request(runtime, app, request)?;
+                }
+                AppRequest::FileTransfer(request) => {
+                    self.service_file_transfer_request(runtime, app, request)
+                        .await?;
 
-            let wifi_networks_save =
-                runtime.update(app, |app, _| app.take_wifi_networks_save_request())?;
-
-            if let Some(networks) = wifi_networks_save {
-                self.save_wifi_networks(&networks).await;
-                continue;
-            }
-
-            let clock_preferences_request =
-                runtime.update(app, |app, _| app.take_clock_preferences_request())?;
-
-            if let Some(preferences) = clock_preferences_request {
-                self.clock_preferences = preferences;
-                self.clock_preferences_dirty = true;
-                self.persist_clock_preferences().await;
-                continue;
-            }
-
-            let preferences_request =
-                runtime.update(app, |app, _| app.take_reader_preferences_request())?;
-
-            if let Some(request) = preferences_request {
-                self.service_reader_preferences_request(runtime, app, request)
-                    .await?;
-
-                continue;
-            }
-
-            if let Some(request) = self.deferred_lookup.take() {
-                self.service_dictionary_request(runtime, app, request, false)
-                    .await?;
-
-                continue;
-            }
-
-            let dictionary_request = runtime.update(app, |app, _| app.take_dictionary_request())?;
-
-            if let Some(request) = dictionary_request {
-                self.service_dictionary_request(runtime, app, request, true)
-                    .await?;
-
-                // the frame showing the indexing goes first
-                if self.deferred_lookup.is_some() {
+                    // A successful USB Drive transition makes the filesystem unavailable.
+                    // Do not loop around and try to service another storage-backed request.
                     return Ok(());
                 }
-
-                continue;
-            }
-
-            let cover_request = runtime.update(app, |app, _| app.take_cover_request())?;
-
-            if let Some(path) = cover_request {
-                self.service_cover_request(runtime, app, path).await?;
-                continue;
-            }
-
-            let (browse_request, reader_request, history_request, file_transfer_request) = runtime
-                .update(app, |app, _| {
-                    (
-                        app.take_browse_request(),
-                        app.take_reader_request(),
-                        app.take_reading_history_request(),
-                        app.take_file_transfer_request(),
-                    )
-                })?;
-
-            if browse_request.is_none()
-                && reader_request.is_none()
-                && history_request.is_none()
-                && file_transfer_request.is_none()
-            {
-                return Ok(());
-            }
-
-            if let Some(request) = browse_request {
-                self.service_browse_request(runtime, app, request).await?;
-            }
-
-            // Reader requests intentionally precede history snapshots.
-            // A page turn may queue a progress update which should be reflected before
-            // Home/Recent Books receives its snapshot.
-            if let Some(request) = reader_request {
-                self.service_reader_request(runtime, app, request).await?;
-            }
-
-            if let Some(request) = history_request {
-                self.service_reading_history_request(runtime, app, request)?;
-            }
-
-            if let Some(request) = file_transfer_request {
-                self.service_file_transfer_request(runtime, app, request)
-                    .await?;
-
-                // A successful USB Drive transition makes the filesystem unavailable.
-                // Do not loop around and try to service another storage-backed request.
-                return Ok(());
             }
         }
     }
@@ -277,7 +207,7 @@ where
     /// it left is shown, like a dictionary's first indexing. Once that frame
     /// is on screen, service again without waiting for input.
     pub const fn has_deferred_work(&self) -> bool {
-        self.deferred_lookup.is_some()
+        self.deferred
     }
 
     pub async fn flush(&mut self) -> bool {
@@ -430,7 +360,7 @@ where
                 // OpenRandomAccessFile when it receives EnterUsbDrive.
                 self.reader_session = None;
                 self.dictionary = None;
-                self.deferred_lookup = None;
+                self.deferred = false;
 
                 let ready = self.platform.enter_usb_drive().await.is_ok();
 

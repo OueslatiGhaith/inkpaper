@@ -34,6 +34,7 @@ mod history;
 mod input;
 mod navigation;
 mod reader;
+mod request;
 mod settings;
 mod system;
 mod text_settings;
@@ -42,6 +43,7 @@ mod wifi;
 pub(crate) use input::{ScreenInput, SideButton};
 use navigation::NavigationStack;
 pub(crate) use navigation::{Back, Entry, Exit, ScreenLifecycle};
+pub(crate) use request::AppRequest;
 
 use crate::screens::{
     browse_files::BrowseFilesRoute, clock_settings::ClockSettingsRoute,
