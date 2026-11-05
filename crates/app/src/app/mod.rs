@@ -14,6 +14,7 @@ use crate::{
     reading_history::ReadingHistoryState,
     screens::{
         clock_settings::TimezoneView,
+        settings::SettingsView,
         wifi_password::{PasswordFieldView, PasswordKeyboardView},
     },
     screens::{
@@ -31,6 +32,7 @@ mod history;
 mod input;
 mod navigation;
 mod reader;
+mod settings;
 mod system;
 mod text_settings;
 mod wifi;
@@ -98,7 +100,7 @@ pub struct InkPaperApp {
     pub(crate) reader: ReaderState,
     /// the Text Settings screen
     pub(crate) text_settings: TextSettingsState,
-    /// the dictionary picker of Settings
+    /// the dictionaries Settings offers
     pub(crate) dictionaries: DictionarySettings,
     /// the word looked up in the dictionary, and its definition
     pub(crate) lookup: WordLookup,
@@ -123,6 +125,7 @@ pub struct InkPaperApp {
     pub(crate) password_keyboard: Entity<PasswordKeyboardView>,
     /// the local time and timezone slider of the clock settings
     pub(crate) timezone: Entity<TimezoneView>,
+    pub(crate) settings: Entity<SettingsView>,
     control_center: ControlCenterState,
     /// set once a long press took the current touch
     pointer_captured: bool,
@@ -145,6 +148,8 @@ impl InkPaperApp {
         let password_field = cx.new(|_| PasswordFieldView::new(app));
         let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app, password_field));
         let timezone = cx.new(|_| TimezoneView::new(app));
+        let settings = cx.new(|_| SettingsView::new(app));
+        cx.subscribe(settings, Self::on_settings_event);
 
         Self {
             navigation: NavigationStack::default(),
@@ -168,6 +173,7 @@ impl InkPaperApp {
             password_field,
             password_keyboard,
             timezone,
+            settings,
             control_center: ControlCenterState::default(),
             pointer_captured: false,
             pointer_held: false,

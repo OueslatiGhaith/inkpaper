@@ -266,7 +266,7 @@ const BACK_EDGE_WIDTH: i32 = 30;
 pub(crate) struct ReaderRoute;
 
 impl ScreenLifecycle for ReaderRoute {
-    fn exit(&self, app: &mut InkPaperApp, exit: Exit) {
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {
         if exit == Exit::Closed {
             app.reader.close_menu();
             app.lookup.close();

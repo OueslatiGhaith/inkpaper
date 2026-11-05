@@ -177,7 +177,7 @@ impl Render for TimezoneView {
 pub(crate) struct ClockSettingsRoute;
 
 impl ScreenLifecycle for ClockSettingsRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, _cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
             app.clock.clear_sync_result();
         }

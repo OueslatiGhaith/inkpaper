@@ -227,14 +227,14 @@ impl RenderOnce for Tab {
 pub(crate) struct TextSettingsRoute;
 
 impl ScreenLifecycle for TextSettingsRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, _cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
             app.text_settings.open(app.reader.menu_text_settings());
         }
     }
 
     /// An open book is laid out again with the new settings.
-    fn exit(&self, app: &mut InkPaperApp, exit: Exit) {
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {
         if exit == Exit::Closed {
             app.reader.request_text_settings(app.text_settings.draft());
         }

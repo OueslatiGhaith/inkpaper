@@ -226,13 +226,13 @@ impl RenderOnce for NetworkList<'_> {
 pub(crate) struct WifiNetworksRoute;
 
 impl ScreenLifecycle for WifiNetworksRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, _cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
             app.wifi.request_scan();
         }
     }
 
-    fn exit(&self, app: &mut InkPaperApp, _exit: Exit) {
+    fn exit(&self, app: &mut InkPaperApp, _exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {
         app.wifi.close_menu();
     }
 

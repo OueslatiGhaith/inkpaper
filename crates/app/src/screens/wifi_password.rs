@@ -208,7 +208,7 @@ impl Render for PasswordKeyboardView {
 pub(crate) struct WifiPasswordRoute;
 
 impl ScreenLifecycle for WifiPasswordRoute {
-    fn exit(&self, app: &mut InkPaperApp, exit: Exit) {
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {
         // a password typed but not joined is dropped
         if exit == Exit::Closed {
             app.wifi.end_password_entry();

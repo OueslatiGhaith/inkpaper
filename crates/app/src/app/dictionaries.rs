@@ -19,47 +19,24 @@ impl InkPaperApp {
         }
     }
 
-    pub(crate) fn activate_dictionary_setting(
+    /// Chooses the dictionary of option `index` of the Settings picker. The first
+    /// option turns lookups off; the others choose a dictionary. Returns whether
+    /// there was such an option.
+    pub(super) fn choose_dictionary_option(
         &mut self,
-        _: &ActivateEvent,
+        index: usize,
         cx: &mut Context<'_, Self>,
-    ) {
-        if self.dictionaries.open_picker() {
-            cx.notify();
-        }
-    }
-
-    /// The picker's first option turns lookups off; the others choose a
-    /// dictionary.
-    pub(crate) fn activate_dictionary_option(
-        &mut self,
-        event: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(index) = event.index() else {
-            return;
-        };
-
+    ) -> bool {
         let dictionary = match index.checked_sub(1) {
             None => None,
             Some(index) if index < self.dictionaries.names().len() => u8::try_from(index).ok(),
-            Some(_) => return,
+            Some(_) => return false,
         };
 
         self.reader.choose_dictionary(dictionary);
-        self.dictionaries.close_picker();
-
         cx.notify();
-    }
 
-    pub(crate) fn activate_dismiss_dictionary_picker(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.dictionaries.close_picker() {
-            cx.notify();
-        }
+        true
     }
 
     /// The name of the dictionary words are looked up in.

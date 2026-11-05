@@ -129,7 +129,7 @@ impl RenderOnce for FileList<'_> {
 pub(crate) struct BrowseFilesRoute;
 
 impl ScreenLifecycle for BrowseFilesRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, _cx: &mut Context<'_, InkPaperApp>) {
         // returning from the reader keeps the listing already shown
         if entry == Entry::Opened {
             app.browser.request_current_directory();

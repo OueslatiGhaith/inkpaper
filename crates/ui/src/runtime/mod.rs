@@ -244,9 +244,8 @@ where
     /// lets [`Self::rebuild`] render only the entities that were notified, keeping the
     /// rest of the frame. Off by default.
     ///
-    /// an entity renders again only when it notifies, or when a global changes. A render
-    /// that reads another entity doesn't render again when that entity changes, so the
-    /// reading entity must be notified too
+    /// an entity renders again when it notifies, or when an entity or global its last
+    /// render read changes
     pub fn set_partial_rebuilds(&mut self, enabled: bool) {
         self.partial_rebuilds = enabled;
     }

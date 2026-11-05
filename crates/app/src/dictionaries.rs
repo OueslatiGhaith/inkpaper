@@ -272,11 +272,10 @@ impl WordLookup {
     }
 }
 
-/// The dictionaries Settings offers, and whether its picker is open.
+/// The dictionaries Settings offers.
 #[derive(Debug, Default)]
 pub(crate) struct DictionarySettings {
     names: Vec<String>,
-    picker_open: bool,
 }
 
 impl DictionarySettings {
@@ -293,20 +292,6 @@ impl DictionarySettings {
 
     pub(crate) fn names(&self) -> &[String] {
         &self.names
-    }
-
-    pub(crate) const fn picker_open(&self) -> bool {
-        self.picker_open
-    }
-
-    /// Returns whether the picker opened.
-    pub(crate) fn open_picker(&mut self) -> bool {
-        !core::mem::replace(&mut self.picker_open, true)
-    }
-
-    /// Returns whether the picker closed.
-    pub(crate) fn close_picker(&mut self) -> bool {
-        core::mem::take(&mut self.picker_open)
     }
 
     /// The picker's options: none, then each dictionary.

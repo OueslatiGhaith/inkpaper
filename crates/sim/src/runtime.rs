@@ -24,7 +24,7 @@ impl RuntimeStorage for SimulatorStorage {
 
 #[cfg(not(feature = "alloc"))]
 pub(crate) type SimulatorStorage =
-    FixedStorage<16_384, 32, 8_192, 64, 2_048, 32_768, 256, 2_048, 8>;
+    FixedStorage<16_384, 32, 8_192, 64, 2_048, 32_768, 256, 2_048, 8, 8, 8>;
 
 pub(crate) type SimulatorRuntime<'resources> =
     Runtime<SimulatorStorage, AppResources<'resources, 128, { 16 * 1024 }>>;
