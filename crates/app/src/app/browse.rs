@@ -1,6 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-use super::{InkPaperApp, Screen};
+use super::InkPaperApp;
 use crate::BrowseListing;
 
 impl InkPaperApp {
@@ -38,8 +38,6 @@ impl InkPaperApp {
 
         let (path, title) = file.into_reader_parts();
 
-        self.reader.open(path, title);
-
-        self.open_screen(Screen::Reader, cx);
+        self.open_book(path, title, cx);
     }
 }

@@ -54,7 +54,7 @@ pub(crate) enum ReaderRequest {
 
 impl ReaderRequest {
     /// Whether the request takes long enough that the screen should first show
-    /// what asked for it, like the reader opening a book.
+    /// what asked for it, like the toast of a book opening.
     pub(crate) const fn takes_long(&self) -> bool {
         matches!(self, Self::OpenEpub { .. })
     }

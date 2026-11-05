@@ -14,4 +14,5 @@ pub(crate) mod recent_book_row;
 pub(crate) mod settings_row;
 pub(crate) mod slider;
 pub(crate) mod text_field;
+pub(crate) mod toast;
 pub(crate) mod transfer_mode_row;
