@@ -17,16 +17,10 @@ use crate::{
 impl InkPaperApp {
     /// Opens the book at `path`. Like crosspoint, the screen it was opened
     /// from stays under a toast until the book has opened, then the reader
-    /// shows it.
+    /// shows it. A book that can't be opened leaves the screen as it was.
     pub(crate) fn open_book(&mut self, path: String, title: String, cx: &mut Context<'_, Self>) {
         self.reader.open(path, title);
         self.show_toast(Toast::new(ToastId::OpeningBook, "Loading"), cx);
-    }
-
-    /// The book has opened, or couldn't be, so the reader shows it.
-    fn finish_opening_book(&mut self, cx: &mut Context<'_, Self>) {
-        self.dismiss_toast(ToastId::OpeningBook, cx);
-        self.open_screen(Screen::Reader, cx);
     }
 
     pub(crate) fn apply_reader_document(
@@ -37,7 +31,8 @@ impl InkPaperApp {
         let changed = self.reader.apply_document(document);
 
         if changed {
-            self.finish_opening_book(cx);
+            self.dismiss_toast(ToastId::OpeningBook, cx);
+            self.open_screen(Screen::Reader, cx);
             cx.notify();
         }
 
@@ -74,8 +69,9 @@ impl InkPaperApp {
         let changed = self.reader.apply_error(&path);
 
         if changed {
-            self.finish_opening_book(cx);
-            cx.notify();
+            let failed = Toast::new(ToastId::BookFailed, "Could not open EPUB").autohide();
+
+            self.show_toast(failed, cx);
         }
 
         changed

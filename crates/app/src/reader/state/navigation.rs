@@ -57,7 +57,6 @@ impl ReaderState {
         };
 
         self.pending_chapter = None;
-        self.failed = false;
 
         self.chrome.menu_open = false;
 
@@ -207,7 +206,6 @@ impl ReaderState {
         document.replace_chapter(chapter);
 
         self.page_index = page_index.min(document.page_count().saturating_sub(1));
-        self.failed = false;
 
         self.chrome.menu_open = false;
 

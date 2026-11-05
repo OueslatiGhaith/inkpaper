@@ -84,7 +84,6 @@ impl ReaderState {
         self.text = text;
         self.saved_text = text;
         self.pending_repagination = None;
-        self.failed = false;
 
         self.refresh_chrome();
         self.queue_preferences_update();

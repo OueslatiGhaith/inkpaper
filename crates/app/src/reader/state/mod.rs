@@ -124,7 +124,6 @@ pub(crate) struct ReaderState {
     /// the word held to look up, on the page it was held on
     selection: Option<WordSelection>,
 
-    failed: bool,
     chrome: ReaderChromeState,
     toc: TableOfContents,
     toc_pager: Pager,
@@ -147,7 +146,6 @@ impl Default for ReaderState {
             saved_text: TextSettings::default(),
             dictionary: None,
             selection: None,
-            failed: false,
             chrome: ReaderChromeState::default(),
             toc: TableOfContents::NotLoaded,
             toc_pager: Pager::default(),
@@ -172,7 +170,6 @@ impl ReaderState {
         self.fallback_title = fallback_title;
         self.document = None;
         self.page_index = 0;
-        self.failed = false;
         self.chrome = ReaderChromeState::default();
         self.toc = TableOfContents::NotLoaded;
     }
@@ -227,7 +224,6 @@ impl ReaderState {
         self.pending_repagination = None;
         self.pending_jump = None;
         self.page_index = page_index;
-        self.failed = false;
 
         self.chrome.menu_open = false;
 
@@ -247,7 +243,6 @@ impl ReaderState {
         self.pending_repagination = None;
         self.pending_jump = None;
         self.page_index = 0;
-        self.failed = true;
 
         self.chrome = ReaderChromeState::default();
 
@@ -290,16 +285,6 @@ impl ReaderState {
         self.document
             .as_ref()
             .and_then(|document| document.page(self.page_index))
-    }
-
-    pub(crate) fn status(&self) -> &'static str {
-        if self.failed {
-            "Could not open EPUB"
-        } else if self.document.is_some() {
-            "EPUB opened"
-        } else {
-            "Opening EPUB..."
-        }
     }
 
     pub(crate) fn detail(&self) -> &str {

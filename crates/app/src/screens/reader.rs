@@ -28,7 +28,6 @@ const DEFINITION_CARD_TOPS: (i32, i32) = (12, 800 - 12 - DEFINITION_CARD_HEIGHT)
 pub(crate) struct ReaderScreen<'a> {
     title: &'a str,
     creator: &'a str,
-    status: &'a str,
     detail: &'a str,
     path: &'a str,
 
@@ -144,10 +143,6 @@ impl RenderOnce for ReaderScreen<'_> {
 
                         <text class="text-xl text-center no-wrap max-lines-1 text-ellipsis">
                             {self.creator}
-                        </text>
-
-                        <text class="text-xl text-center">
-                            {self.status}
                         </text>
 
                         <div class="mt-2.5 w-[420px]">
@@ -516,7 +511,6 @@ impl ScreenView for ReaderRoute {
         ReaderScreen::from(ReaderScreenProps {
             title: app.reader.title(),
             creator: app.reader.creator(),
-            status: app.reader.status(),
             detail: app.reader.detail(),
             path: app.reader.path(),
             page_canvas,

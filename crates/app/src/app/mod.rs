@@ -212,6 +212,12 @@ impl InkPaperApp {
         self.toasts.update(cx, |toasts, cx| toasts.dismiss(id, cx));
     }
 
+    /// Hides the toast shown, if it hides at the next input.
+    pub(crate) fn hide_toast_on_input(&mut self, cx: &mut Context<'_, Self>) {
+        self.toasts
+            .update(cx, |toasts, cx| toasts.hide_on_input(cx));
+    }
+
     pub fn register_resources<'resource>(
         runtime: &mut impl ResourceRuntimeApi<'resource>,
     ) -> Result<(), FontRegistryError> {

@@ -4,18 +4,32 @@ use inkpaper_ui::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToastId {
     OpeningBook,
+    BookFailed,
 }
 
-/// A short message over the screen.
+/// A short message over the screen, shown until it's dismissed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Toast {
     id: ToastId,
     message: &'static str,
+    autohide: bool,
 }
 
 impl Toast {
     pub(crate) const fn new(id: ToastId, message: &'static str) -> Self {
-        Self { id, message }
+        Self {
+            id,
+            message,
+            autohide: false,
+        }
+    }
+
+    /// Hides it at the next input instead, like crosspoint's popup, which
+    /// the screen draws over next. A timer would spend a refresh of the
+    /// panel on hiding it.
+    pub(crate) const fn autohide(mut self) -> Self {
+        self.autohide = true;
+        self
     }
 }
 
@@ -38,6 +52,14 @@ impl ToastLayer {
     /// Dismisses toast `id`, if it's the one shown.
     pub(crate) fn dismiss(&mut self, id: ToastId, cx: &mut Context<'_, Self>) {
         if self.active.is_some_and(|active| active.id == id) {
+            self.active = None;
+            cx.notify();
+        }
+    }
+
+    /// Hides the toast shown, if it hides at the next input.
+    pub(crate) fn hide_on_input(&mut self, cx: &mut Context<'_, Self>) {
+        if self.active.is_some_and(|active| active.autohide) {
             self.active = None;
             cx.notify();
         }

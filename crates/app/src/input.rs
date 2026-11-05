@@ -80,6 +80,18 @@ pub fn dispatch_input(
     app: Entity<InkPaperApp>,
     event: AppInputEvent,
 ) -> Result<(), AppInputError> {
+    // a press or a touch hides the toast that waits for one, and still does
+    // what it does. The rest of a touch has nothing left to hide
+    if matches!(
+        event,
+        AppInputEvent::Previous
+            | AppInputEvent::Next
+            | AppInputEvent::Home
+            | AppInputEvent::PointerDown(_)
+    ) {
+        runtime.update(app, |app, cx| app.hide_toast_on_input(cx))?;
+    }
+
     match event {
         AppInputEvent::Previous => {
             runtime.update(app, |app, cx| app.handle_previous_input(cx))?;
