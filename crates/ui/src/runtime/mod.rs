@@ -7,8 +7,8 @@ use crate::{
     ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
     EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageRegistryError,
     ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintError,
-    PaintReport, PaintResources, Painter, Point, Render, RenderInvalidation, RuntimeStorage, Size,
-    TextMeasurer,
+    PaintReport, PaintResources, Painter, Point, Rect, Render, RenderInvalidation, RuntimeStorage,
+    Size, TextMeasurer,
     callback::ListenerInvokeError,
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     emitter::{self, EventTable},
@@ -52,6 +52,13 @@ impl From<IdentityError> for FrameBuildError {
     fn from(value: IdentityError) -> Self {
         Self::Identity(value)
     }
+}
+
+/// a step of [`Runtime::prepare_frame_with`]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FramePhase {
+    Rebuild,
+    Layout,
 }
 
 /// the UI runtime. `S` chooses the storage behind each runtime table (see
@@ -1184,6 +1191,57 @@ where
         self.finish_layout(root);
 
         Some(size)
+    }
+
+    /// gets the next frame ready to paint: takes what changed since the last one,
+    /// rebuilds and lays out as much as that needs, and returns the damage to paint,
+    /// clipped to the viewport. Nothing to paint is [`DamageRegion::none`]
+    pub fn prepare_frame(&mut self, viewport: Size) -> Result<DamageRegion, FrameBuildError> {
+        self.prepare_frame_with(viewport, |_| ())
+    }
+
+    /// [`Self::prepare_frame`], calling `phase` as each step starts and dropping what it
+    /// returns when the step ends, such as a trace span
+    pub fn prepare_frame_with<G>(
+        &mut self,
+        viewport: Size,
+        mut phase: impl FnMut(FramePhase) -> G,
+    ) -> Result<DamageRegion, FrameBuildError> {
+        let invalidation = self.take_render_invalidation();
+
+        let damage = match invalidation.kind() {
+            Invalidation::None => return Ok(DamageRegion::none()),
+            Invalidation::Paint => invalidation.damage(),
+            Invalidation::Layout => {
+                let _phase = phase(FramePhase::Layout);
+                self.layout(viewport).ok_or(FrameBuildError::RootNotSet)?;
+
+                invalidation.damage()
+            }
+            Invalidation::Rebuild => {
+                {
+                    let _phase = phase(FramePhase::Rebuild);
+                    self.rebuild()?;
+                }
+                {
+                    let _phase = phase(FramePhase::Layout);
+                    self.layout(viewport).ok_or(FrameBuildError::RootNotSet)?;
+                }
+
+                // a partial rebuild narrows the damage to what changed
+                self.rebuild_damage()
+            }
+        };
+
+        if self.root.is_none() {
+            return Err(FrameBuildError::RootNotSet);
+        }
+
+        Ok(if damage.is_none() || damage.is_full() {
+            damage
+        } else {
+            damage.clipped_to(Rect::new(Point::ZERO, viewport))
+        })
     }
 }
 

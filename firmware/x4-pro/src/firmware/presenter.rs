@@ -1,7 +1,7 @@
 use inkpaper_app::AppResources;
 use inkpaper_ui::{
-    HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapEvents, HeapFrame, HeapGlobalArena,
-    PaintError, prelude::*,
+    FramePhase, HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapEvents, HeapFrame,
+    HeapGlobalArena, PaintError, prelude::*,
 };
 use inkpaper_ui_eink::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode};
 
@@ -17,7 +17,6 @@ use crate::firmware::{
 };
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
-const DISPLAY_BOUNDS: Rect = Rect::new(Point::ZERO, DISPLAY_SIZE);
 
 // initial reservations. The runtime tables live on the heap and grow past these
 const UI_ENTITY_SLOTS: usize = 8;
@@ -167,11 +166,10 @@ impl Presenter {
             runtime.reset_text_paint_metrics();
         }
 
-        let invalidation = RenderInvalidation::full(Invalidation::Rebuild);
-
         let frame_id = self.allocate_frame_id();
 
-        let rendered = render_invalidation(frame_id, runtime, frame, invalidation)
+        // the first frame after mounting the root rebuilds and damages all of it
+        let rendered = render_frame(frame_id, runtime, frame)
             .expect("a full initial render must produce physical damage");
 
         // initial presentation is explicitly full regardless of policy.
@@ -202,14 +200,13 @@ impl Presenter {
             runtime.reset_text_paint_metrics();
         }
 
-        let invalidation = runtime.take_render_invalidation();
-        if invalidation.is_none() {
+        if runtime.render_invalidation().is_none() {
             return None;
         }
 
         let frame_id = self.allocate_frame_id();
 
-        let rendered = render_invalidation(frame_id, runtime, frame, invalidation)?;
+        let rendered = render_frame(frame_id, runtime, frame)?;
 
         let presentation = self.presentation_mode(rendered, capabilities);
 
@@ -280,79 +277,34 @@ impl Presenter {
     }
 }
 
-fn render_invalidation(
+fn render_frame(
     frame_id: u32,
     runtime: &mut UiRuntime,
     frame: &mut FramebufferStorage,
-    invalidation: RenderInvalidation,
 ) -> Option<RenderedFrame> {
-    if invalidation.is_none() {
-        return None;
-    }
-
-    if normalize_damage(invalidation.damage()).is_none() {
-        return None;
-    }
-
     let render_trace = inkpaper_trace::span!(
         target: "ui.render",
         "render",
         frame = frame_id,
     );
 
+    let damage = runtime
+        .prepare_frame_with(DISPLAY_SIZE, |phase| match phase {
+            FramePhase::Rebuild => inkpaper_trace::span!(target: "ui.render", "rebuild"),
+            FramePhase::Layout => inkpaper_trace::span!(target: "ui.render", "layout"),
+        })
+        .expect("UI rebuild capacity exceeded");
+    if damage.is_none() {
+        return None;
+    }
+
     let mut display = Framebuffer::new(frame, Orientation::Portrait);
 
-    let (damage, paint_report, eink_report) = {
+    let (paint_report, eink_report) = {
         let mut painter = EInkPainter::new(&mut display)
             .with_coverage_blitter(Framebuffer::draw_coverage_bitmap)
             .with_ui_mode(EInkUiMode::BinaryDither)
             .with_pixel_reader(Framebuffer::pixel);
-
-        let damage = match invalidation.kind() {
-            Invalidation::None => return None,
-            Invalidation::Paint => invalidation.damage(),
-            Invalidation::Layout => {
-                let _trace = inkpaper_trace::span!(
-                    target: "ui.render",
-                    "layout",
-                );
-
-                runtime
-                    .layout(DISPLAY_SIZE)
-                    .expect("layout requires a mounted root");
-
-                invalidation.damage()
-            }
-
-            Invalidation::Rebuild => {
-                {
-                    let _trace = inkpaper_trace::span!(
-                        target: "ui.render",
-                        "rebuild",
-                    );
-
-                    runtime.rebuild().expect("UI rebuild capacity exceeded");
-                }
-
-                {
-                    let _trace = inkpaper_trace::span!(
-                        target: "ui.render",
-                        "layout",
-                    );
-
-                    runtime
-                        .layout(DISPLAY_SIZE)
-                        .expect("rebuilt UI must have a root");
-                }
-
-                // a partial rebuild narrows the damage to what changed
-                runtime.rebuild_damage()
-            }
-        };
-        let damage = normalize_damage(damage);
-        if damage.is_none() {
-            return None;
-        }
 
         {
             let _trace = inkpaper_trace::span!(
@@ -385,9 +337,7 @@ fn render_invalidation(
             }
         };
 
-        let eink_report = painter.report();
-
-        (damage, paint_report, eink_report)
+        (paint_report, painter.report())
     };
 
     let physical_damage = {
@@ -451,17 +401,6 @@ fn render_invalidation(
         eink_report,
         paint_report,
     })
-}
-
-fn normalize_damage(damage: DamageRegion) -> DamageRegion {
-    if damage.is_none() {
-        return DamageRegion::none();
-    }
-    if damage.is_full() {
-        return DamageRegion::full();
-    }
-
-    damage.clipped_to(DISPLAY_BOUNDS)
 }
 
 fn physical_damage(framebuffer: &Framebuffer<'_>, damage: DamageRegion) -> Option<Region> {

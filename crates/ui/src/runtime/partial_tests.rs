@@ -662,6 +662,7 @@ fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
 
 const WIDTH: i32 = 80;
 const HEIGHT: i32 = 60;
+const VIEWPORT: Size = Size::new(px(WIDTH), px(HEIGHT));
 
 struct Measurer;
 
@@ -757,9 +758,21 @@ impl Painter for Raster {
     }
 }
 
-/// paints each text as a solid area in a color keyed by the text
+/// measures text as [`Measurer`] does, and paints each text as a solid area in a color
+/// keyed by the text
 #[derive(Default)]
 struct KeyedText;
+
+impl TextMeasurer for KeyedText {
+    fn measure_text(
+        &self,
+        text: &str,
+        style: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
+        Measurer.measure_text(text, style, available_width)
+    }
+}
 
 impl PaintResources for KeyedText {
     fn paint_text<P: Painter>(
@@ -793,9 +806,7 @@ impl PaintResources for KeyedText {
 
 impl Fixture {
     fn layout(&mut self) {
-        self.runtime
-            .layout_with_measurer(Size::new(px(WIDTH), px(HEIGHT)), &Measurer)
-            .unwrap();
+        self.runtime.layout(VIEWPORT).unwrap();
     }
 
     /// clears the damage and paints it, as the presenters do
@@ -809,12 +820,9 @@ impl Fixture {
         self.runtime.paint_with_damage(damage, raster).unwrap();
     }
 
-    /// takes the invalidation, rebuilds, lays out and paints the rebuild's damage
+    /// prepares the next frame and paints its damage
     fn present_damage(&mut self, raster: &mut Raster) -> DamageRegion {
-        self.present();
-        self.layout();
-
-        let damage = self.runtime.rebuild_damage();
+        let damage = self.runtime.prepare_frame(VIEWPORT).unwrap();
         self.paint(raster, damage);
 
         damage
@@ -938,4 +946,60 @@ fn full_rebuilds_damage_everything() {
     set_text(&fixture, fixture.second, "changed");
 
     assert!(fixture.present_damage(&mut raster).is_full());
+}
+
+#[test]
+fn preparing_an_unchanged_frame_has_nothing_to_paint() {
+    let (mut fixture, mut raster) = painted_fixture();
+    let mut phases = Vec::new();
+
+    let damage = fixture
+        .runtime
+        .prepare_frame_with(VIEWPORT, |phase| phases.push(phase))
+        .unwrap();
+
+    assert!(damage.is_none());
+    assert!(phases.is_empty());
+
+    set_text(&fixture, fixture.second, "latest");
+    assert!(!fixture.present_damage(&mut raster).is_none());
+    assert!(fixture.runtime.prepare_frame(VIEWPORT).unwrap().is_none());
+}
+
+#[test]
+fn preparing_a_frame_rebuilds_then_lays_out() {
+    let (mut fixture, _) = painted_fixture();
+    let mut phases = Vec::new();
+
+    set_text(&fixture, fixture.second, "latest");
+    let damage = fixture
+        .runtime
+        .prepare_frame_with(VIEWPORT, |phase| phases.push(phase))
+        .unwrap();
+
+    assert_eq!(phases, [FramePhase::Rebuild, FramePhase::Layout]);
+    assert_eq!(fixture.label(fixture.second).0, 2);
+    // the rebuild's damage, narrowed to the label that changed
+    assert_eq!(damage.partial_damage_bounds().y(), px(10));
+}
+
+#[test]
+fn the_first_frame_damages_everything() {
+    let mut runtime = TestRuntime::default();
+    runtime.create_root(|_| Label::new("first")).unwrap();
+    runtime.set_partial_rebuilds(true);
+
+    assert!(runtime.prepare_frame(VIEWPORT).unwrap().is_full());
+}
+
+#[test]
+fn preparing_a_frame_without_a_root_fails() {
+    let mut runtime = TestRuntime::default();
+    let label = runtime.create(|_| Label::new("first")).unwrap();
+    runtime.update(label, |_, cx| cx.notify()).unwrap();
+
+    assert_eq!(
+        runtime.prepare_frame(VIEWPORT),
+        Err(FrameBuildError::RootNotSet)
+    );
 }

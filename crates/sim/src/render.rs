@@ -26,10 +26,14 @@ fn read_simulator_pixel(display: &SimulatorDisplay<Rgb888>, point: EgPoint) -> O
     Some(display.get_pixel(point))
 }
 
-fn paint_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion)
+/// paints what changed since the last frame
+pub(super) fn render_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
 where
     R: RenderRuntimeApi,
 {
+    let damage = runtime
+        .prepare_frame(DISPLAY_SIZE)
+        .expect("UI rebuild failed");
     if damage.is_none() {
         return;
     }
@@ -41,62 +45,9 @@ where
 
     match runtime.paint_with_damage(damage, &mut painter) {
         Ok(Some(_)) => {}
-
-        Ok(None) => {
-            panic!("painting requires a mounted root",);
-        }
-
-        Err(_) => {
-            panic!("UI painting failed",);
-        }
+        Ok(None) => panic!("painting requires a mounted root"),
+        Err(_) => panic!("UI painting failed"),
     }
-}
-
-pub(super) fn rebuild_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
-where
-    R: RenderRuntimeApi,
-{
-    runtime.rebuild().unwrap();
-
-    runtime.layout(DISPLAY_SIZE).unwrap();
-
-    paint_ui(runtime, display, DamageRegion::full());
-}
-
-pub(super) fn render_pending_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
-where
-    R: RenderRuntimeApi,
-{
-    let invalidation = runtime.take_render_invalidation();
-
-    let damage = match invalidation.kind() {
-        Invalidation::None => {
-            return;
-        }
-
-        Invalidation::Paint => invalidation.damage(),
-
-        Invalidation::Layout => {
-            runtime
-                .layout(DISPLAY_SIZE)
-                .expect("layout requires a mounted root");
-
-            invalidation.damage()
-        }
-
-        Invalidation::Rebuild => {
-            runtime.rebuild().expect("UI rebuild failed");
-
-            runtime
-                .layout(DISPLAY_SIZE)
-                .expect("rebuilt UI must have a root");
-
-            // a partial rebuild narrows the damage to what changed
-            runtime.rebuild_damage()
-        }
-    };
-
-    paint_ui(runtime, display, damage);
 }
 
 pub(super) fn ui_point(point: EgPoint) -> Point {

@@ -18,7 +18,7 @@ use embedded_graphics_simulator::{
 };
 use heapless::String;
 use inkpaper_ui::{
-    DamageRegion, FontData, FontFace, Offset, RuntimeResources, TtfFont,
+    FontData, FontFace, Offset, RuntimeResources, TtfFont,
     backend::{EmbeddedGraphicsImage, EmbeddedGraphicsPainter, MonoFontFace},
     prelude::*,
 };
@@ -1276,26 +1276,7 @@ fn update_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
 where
     R: RenderRuntimeApi,
 {
-    let invalidation = runtime.take_render_invalidation();
-    match invalidation.kind() {
-        Invalidation::None => {}
-        Invalidation::Paint => paint_ui(runtime, display, invalidation.damage()),
-        Invalidation::Layout => {
-            layout_ui(runtime);
-            paint_ui(runtime, display, invalidation.damage());
-        }
-        Invalidation::Rebuild => rebuild_ui(runtime, display),
-    }
-}
-
-fn layout_ui(runtime: &mut impl RenderRuntimeApi) {
-    runtime.layout(DISPLAY_SIZE).unwrap();
-}
-
-fn paint_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>, damage: DamageRegion)
-where
-    R: RenderRuntimeApi,
-{
+    let damage = runtime.prepare_frame(DISPLAY_SIZE).unwrap();
     if damage.is_none() {
         return;
     }
@@ -1307,15 +1288,6 @@ where
         Ok(None) => panic!("painting requires a mounted root"),
         Err(_) => panic!("UI painting failed"),
     }
-}
-
-fn rebuild_ui<R>(runtime: &mut R, display: &mut SimulatorDisplay<Rgb888>)
-where
-    R: RenderRuntimeApi,
-{
-    runtime.rebuild().unwrap();
-    layout_ui(runtime);
-    paint_ui(runtime, display, DamageRegion::full());
 }
 
 fn handle_key_down(runtime: &mut impl RuntimeApi, keycode: Keycode) {
@@ -1431,7 +1403,7 @@ fn main() {
         .unwrap();
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, &mut display);
+    update_ui(&mut runtime, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(3).build();
     let mut window = Window::new(
