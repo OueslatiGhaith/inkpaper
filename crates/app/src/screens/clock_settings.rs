@@ -83,8 +83,8 @@ impl RenderOnce for ClockSettingsScreen<'_> {
 }
 
 /// the local time and the timezone slider, which shifts it. As their own entity,
-/// dragging the slider or a minute passing renders and paints only these. The app
-/// renders it again through [`InkPaperApp::refresh_timezone`].
+/// dragging the slider or a minute passing renders and paints only these. The
+/// timezone stays in the app, which renders this view again for slider drags.
 pub(crate) struct TimezoneView {
     app: Entity<InkPaperApp>,
 }
@@ -93,19 +93,36 @@ impl TimezoneView {
     pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
         Self { app }
     }
+
+    /// moves the timezone `quarters` quarter hours and saves it
+    fn step(&mut self, quarters: i8, cx: &mut Context<'_, Self>) {
+        let changed = self.app.update(cx, |app, _| {
+            let offset = app.clock.utc_offset().step(quarters);
+
+            app.clock.set_utc_offset(offset)
+        });
+
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn activate_decrease(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.step(-1, cx);
+    }
+
+    fn activate_increase(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.step(1, cx);
+    }
 }
 
 impl Render for TimezoneView {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-        // the listeners target the app, so its handlers can render this view again
-        let (clock, utc_offset, on_decrease, on_increase) = self.app.update(cx, |app, cx| {
-            (
-                app.local_clock(cx),
-                app.clock.utc_offset(),
-                cx.listener(InkPaperApp::activate_decrease_utc_offset),
-                cx.listener(InkPaperApp::activate_increase_utc_offset),
-            )
-        });
+        let (clock, utc_offset) = self
+            .app
+            .read(cx, |app| (app.local_clock(cx), app.clock.utc_offset()));
+        let on_decrease = cx.listener(Self::activate_decrease);
+        let on_increase = cx.listener(Self::activate_increase);
 
         let (time, date) = match clock {
             None => (String::from("--:--"), String::from("Time not set")),

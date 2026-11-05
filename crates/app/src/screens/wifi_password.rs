@@ -10,7 +10,7 @@ use crate::{
         keyboard::{Keyboard, KeyboardProps},
         text_field::{TextField, TextFieldProps},
     },
-    keyboard::Layer,
+    keyboard::{Key, Layer},
     wifi::{JoinStatus, PasswordEntry},
 };
 
@@ -52,7 +52,7 @@ impl RenderOnce for WifiPasswordScreen<'_> {
 }
 
 /// what the keyboard shows, to render it again only when that changes
-pub(crate) fn keyboard_look(entry: &PasswordEntry) -> (Layer, bool, bool) {
+fn keyboard_look(entry: &PasswordEntry) -> (Layer, bool, bool) {
     let keyboard = entry.keyboard();
 
     (
@@ -63,8 +63,8 @@ pub(crate) fn keyboard_look(entry: &PasswordEntry) -> (Layer, bool, bool) {
 }
 
 /// the password field and the hint under it. As its own entity, typing renders and
-/// paints only these. Its state stays in the app, which renders it again through
-/// [`InkPaperApp::refresh_password_field`].
+/// paints only these. The password entry stays in the app, so the keyboard renders
+/// this field again after each key.
 pub(crate) struct PasswordFieldView {
     app: Entity<InkPaperApp>,
     text: String,
@@ -77,6 +77,19 @@ impl PasswordFieldView {
             text: String::new(),
         }
     }
+
+    fn activate_toggle(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        let toggled = self.app.update(cx, |app, _| {
+            app.wifi
+                .password_entry_mut()
+                .map(PasswordEntry::toggle_shown)
+                .is_some()
+        });
+
+        if toggled {
+            cx.notify();
+        }
+    }
 }
 
 impl Render for PasswordFieldView {
@@ -84,8 +97,7 @@ impl Render for PasswordFieldView {
         let text = &mut self.text;
         text.clear();
 
-        // the listener targets the app, so its handler can render this field again
-        let field = self.app.update(cx, |app, cx| {
+        let field = self.app.read(cx, |app| {
             let entry = app.wifi.password_entry()?;
             let keyboard = entry.keyboard();
             text.push_str(keyboard.text());
@@ -98,16 +110,13 @@ impl Render for PasswordFieldView {
                 JoinStatus::Failed(failure) => failure.message(),
             };
 
-            Some((
-                entry.shown(),
-                hint,
-                cx.listener(InkPaperApp::activate_toggle_wifi_password),
-            ))
+            Some((entry.shown(), hint))
         });
 
-        let Some((shown, hint, on_toggle)) = field else {
+        let Some((shown, hint)) = field else {
             return div().into_any_element();
         };
+        let on_toggle = cx.listener(Self::activate_toggle);
 
         rsx! {
             // the field 134 px down, and its hint 72 px under it
@@ -130,34 +139,55 @@ impl Render for PasswordFieldView {
 }
 
 /// the on-screen keyboard. As its own entity, a key that leaves it unchanged renders
-/// and paints only the field. The app renders it again through
-/// [`InkPaperApp::refresh_password_keyboard`].
+/// and paints only the field.
 pub(crate) struct PasswordKeyboardView {
     app: Entity<InkPaperApp>,
+    field: Entity<PasswordFieldView>,
 }
 
 impl PasswordKeyboardView {
-    pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
-        Self { app }
+    pub(crate) const fn new(app: Entity<InkPaperApp>, field: Entity<PasswordFieldView>) -> Self {
+        Self { app, field }
+    }
+
+    fn activate_key(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        let Some(key) = event.index().and_then(Key::from_code) else {
+            return;
+        };
+
+        // whether the keyboard looks different after the key, when it changed anything
+        let pressed = self.app.update(cx, |app, _| {
+            let entry = app.wifi.password_entry_mut()?;
+            let look = keyboard_look(entry);
+
+            entry.press(key).then(|| keyboard_look(entry) != look)
+        });
+
+        let Some(keyboard_changed) = pressed else {
+            return;
+        };
+
+        // a key changes the field. The keyboard renders again only when it looks
+        // different, such as after Shift
+        self.field.notify(cx);
+        if keyboard_changed {
+            cx.notify();
+        }
     }
 }
 
 impl Render for PasswordKeyboardView {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-        // the listener targets the app, so its handler can render this keyboard again
-        let keyboard = self.app.update(cx, |app, cx| {
+        let keyboard = self.app.read(cx, |app| {
             let entry = app.wifi.password_entry()?;
 
-            Some((
-                entry.keyboard().rows(),
-                keyboard_look(entry),
-                cx.listener(InkPaperApp::activate_wifi_password_key),
-            ))
+            Some((entry.keyboard().rows(), keyboard_look(entry)))
         });
 
-        let Some((rows, (layer, shift, can_submit), on_key)) = keyboard else {
+        let Some((rows, (layer, shift, can_submit))) = keyboard else {
             return div().into_any_element();
         };
+        let on_key = cx.listener(Self::activate_key);
 
         rsx! {
             <div class="absolute left-0 top-[480px] w-[480px]">

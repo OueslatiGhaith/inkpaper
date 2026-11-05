@@ -50,46 +50,25 @@ impl InkPaperApp {
         }
     }
 
-    /// Shows a timezone while its slider is dragged; release saves it.
+    /// Shows a timezone while its slider is dragged; release saves it. Only the
+    /// clock settings' timezone view shows it while it changes, so only it renders
+    /// again; other screens render again on the way back.
     pub(crate) fn preview_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
         if self.clock.preview_utc_offset(offset) {
-            self.refresh_timezone(cx);
+            self.timezone.notify(cx);
         }
     }
 
+    /// Saves a timezone, rendering again what [`Self::preview_utc_offset`] does.
     pub(crate) fn set_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
         if self.clock.set_utc_offset(offset) {
-            self.refresh_timezone(cx);
+            self.timezone.notify(cx);
         }
-    }
-
-    /// renders the clock settings' time and timezone again. Only they show the
-    /// timezone while it changes; other screens render again on the way back
-    pub(crate) fn refresh_timezone(&self, cx: &mut Context<'_, Self>) {
-        self.timezone.notify(cx);
     }
 
     /// Saves a timezone left by a drag. Returns whether there was one.
     pub(crate) fn commit_utc_offset(&mut self) -> bool {
         self.clock.commit()
-    }
-
-    pub(crate) fn activate_decrease_utc_offset(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let offset = self.clock.utc_offset().step(-1);
-        self.set_utc_offset(offset, cx);
-    }
-
-    pub(crate) fn activate_increase_utc_offset(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let offset = self.clock.utc_offset().step(1);
-        self.set_utc_offset(offset, cx);
     }
 
     pub(crate) fn take_clock_preferences_request(&mut self) -> Option<ClockPreferences> {

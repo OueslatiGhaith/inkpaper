@@ -143,7 +143,7 @@ impl InkPaperApp {
         let app = cx.entity();
         let reader_menu = cx.new(|_| ReaderDrawer::new(app));
         let password_field = cx.new(|_| PasswordFieldView::new(app));
-        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app));
+        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app, password_field));
         let timezone = cx.new(|_| TimezoneView::new(app));
 
         Self {

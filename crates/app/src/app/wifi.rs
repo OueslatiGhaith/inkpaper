@@ -5,9 +5,7 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     SavedNetworks, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError,
-    input::LongPressEvent,
-    keyboard::Key,
-    screens::{wifi_networks::WifiMenuItem, wifi_password::keyboard_look},
+    input::LongPressEvent, screens::wifi_networks::WifiMenuItem,
 };
 
 impl InkPaperApp {
@@ -174,43 +172,6 @@ impl InkPaperApp {
         }
     }
 
-    pub(crate) fn activate_wifi_password_key(
-        &mut self,
-        event: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(key) = event.index().and_then(Key::from_code) else {
-            return;
-        };
-
-        let Some(entry) = self.wifi.password_entry_mut() else {
-            return;
-        };
-
-        let look = keyboard_look(entry);
-        if !entry.press(key) {
-            return;
-        }
-
-        // a key changes the field. The keyboard renders again only when it looks
-        // different, such as after Shift
-        let keyboard_changed = keyboard_look(entry) != look;
-        self.refresh_password_field(cx);
-        if keyboard_changed {
-            self.refresh_password_keyboard(cx);
-        }
-    }
-
-    /// renders the password field again, for changes nothing else shows
-    pub(crate) fn refresh_password_field(&self, cx: &mut Context<'_, Self>) {
-        self.password_field.notify(cx);
-    }
-
-    /// renders the password keyboard again, for changes nothing else shows
-    pub(crate) fn refresh_password_keyboard(&self, cx: &mut Context<'_, Self>) {
-        self.password_keyboard.notify(cx);
-    }
-
     pub(crate) fn take_wifi_join_request(&mut self) -> Option<WifiCredentials> {
         self.wifi.take_join_request()
     }
@@ -232,16 +193,5 @@ impl InkPaperApp {
 
         self.connect_wifi_network(credentials, cx);
         self.navigate_back(cx);
-    }
-
-    pub(crate) fn activate_toggle_wifi_password(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if let Some(entry) = self.wifi.password_entry_mut() {
-            entry.toggle_shown();
-            self.refresh_password_field(cx);
-        }
     }
 }
