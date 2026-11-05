@@ -471,7 +471,11 @@ fn persisted_reader_preferences_are_used_when_opening_a_book() {
 
     assert_eq!(
         state.take_request(),
-        Some(ReaderRequest::OpenEpub { path, text }),
+        Some(ReaderRequest::OpenEpub {
+            path,
+            text,
+            resume: false
+        }),
     );
 }
 

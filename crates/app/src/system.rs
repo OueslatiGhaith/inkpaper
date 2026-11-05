@@ -75,6 +75,23 @@ impl ClockStatus {
         self.minute
     }
 
+    /// Minutes since 1970 began, to tell how long passed between two readings.
+    pub(crate) fn minutes_since_epoch(self) -> u32 {
+        // Howard Hinnant's days_from_civil, with March first so the leap day
+        // ends the year
+        let (month, day) = (i64::from(self.month), i64::from(self.day));
+        let year = i64::from(self.year) - i64::from(self.month <= 2);
+        let era = year.div_euclid(400);
+        let year_of_era = year - era * 400;
+        let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+        let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+        let days = era * 146_097 + day_of_era - 719_468;
+
+        let minutes = days * 24 * 60 + i64::from(self.hour) * 60 + i64::from(self.minute);
+
+        u32::try_from(minutes).unwrap_or(0)
+    }
+
     /// The same instant `minutes` away, carrying into the day, month and year.
     /// Offsets stay within a day, so at most one day carries.
     pub(crate) fn offset_by(self, minutes: i32) -> Self {

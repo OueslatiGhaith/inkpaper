@@ -4,7 +4,7 @@ use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
 use crate::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
+    ClockStatus, ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     components::{
         reader_menu::{DrawerEvent, ReaderDrawer},
         toast::{Toast, ToastId},
@@ -12,6 +12,7 @@ use crate::{
     fonts::reader_family,
     reader::{JumpTarget, TableOfContents, TextSettings, TocEntry},
     reader_page::paint_reader_page,
+    resume::SleptBook,
 };
 
 impl InkPaperApp {
@@ -21,6 +22,42 @@ impl InkPaperApp {
     pub(crate) fn open_book(&mut self, path: String, title: String, cx: &mut Context<'_, Self>) {
         self.reader.open(path, title);
         self.show_toast(Toast::new(ToastId::OpeningBook, "Loading"), cx);
+    }
+
+    /// Reopens at boot the book read when the device went to sleep, if it
+    /// slept no longer than Settings allows. Nothing shows before it, so the
+    /// screen goes from the sleep screen straight to its page. A book that
+    /// can't be opened leaves Home under a toast.
+    pub(crate) fn resume_book(&mut self, book: SleptBook, cx: &mut Context<'_, Self>) {
+        let now = self.utc_clock(cx).map(ClockStatus::minutes_since_epoch);
+
+        if !self.reader.resume_limit().allows(book.slept_at, now) {
+            return;
+        }
+
+        let path = book.path;
+        let title = self
+            .reading_history
+            .entries()
+            .iter()
+            .find(|entry| entry.path() == path)
+            .map(|entry| String::from(entry.display_title()))
+            .unwrap_or_default();
+
+        self.reader.resume(path, title);
+    }
+
+    /// The book to reopen at boot: the one being read, in the reader or a
+    /// screen opened from it like its table of contents, and the time.
+    pub(crate) fn book_to_resume(&self, cx: &Context<'_, Self>) -> Option<SleptBook> {
+        if !self.is_open(Screen::Reader) || self.reader.document().is_none() {
+            return None;
+        }
+
+        Some(SleptBook {
+            path: String::from(self.reader.path()),
+            slept_at: self.utc_clock(cx).map(ClockStatus::minutes_since_epoch),
+        })
     }
 
     pub(crate) fn apply_reader_document(

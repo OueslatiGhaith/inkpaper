@@ -15,6 +15,7 @@ use crate::{
     app::AppRequest,
     dictionaries::{DictionaryFolder, find_dictionaries},
     fonts::{CardFont, FontFamily, find_font_families},
+    resume::SleptBook,
 };
 
 use dictionary::OpenDictionary;
@@ -61,11 +62,14 @@ where
     deferred: bool,
 
     history: ReadingHistory,
+    /// the book being read when the device went to sleep, to reopen at boot
+    resume: Option<SleptBook>,
     preferences: ReaderPreferences,
     frontlight_preferences: FrontlightPreferences,
     clock_preferences: ClockPreferences,
 
     history_dirty: bool,
+    resume_dirty: bool,
     preferences_dirty: bool,
     frontlight_preferences_dirty: bool,
     clock_preferences_dirty: bool,
@@ -93,11 +97,13 @@ where
             deferred: false,
 
             history: ReadingHistory::default(),
+            resume: None,
             preferences: ReaderPreferences::default(),
             frontlight_preferences: FrontlightPreferences::default(),
             clock_preferences: ClockPreferences::default(),
 
             history_dirty: false,
+            resume_dirty: false,
             preferences_dirty: false,
             frontlight_preferences_dirty: false,
             clock_preferences_dirty: false,
@@ -219,13 +225,32 @@ where
         self.deferred
     }
 
+    /// Shows the sleep screen, and remembers the book being read for the
+    /// next boot to reopen, like crosspoint. [`AppService::flush`] saves it
+    /// with the rest.
+    pub fn prepare_for_sleep(
+        &mut self,
+        runtime: &mut impl RuntimeApi,
+        app: Entity<InkPaperApp>,
+    ) -> Result<(), AppServiceError> {
+        self.resume = runtime.update(app, |app, cx| {
+            app.prepare_for_sleep(cx);
+            app.book_to_resume(cx)
+        })?;
+        self.resume_dirty = true;
+
+        Ok(())
+    }
+
     pub async fn flush(&mut self) -> bool {
         let history_saved = self.persist_history().await;
+        let resume_saved = self.persist_resume().await;
         let preferences_saved = self.persist_preferences().await;
         let frontlight_preferences_saved = self.persist_frontlight_preferences().await;
         let clock_preferences_saved = self.persist_clock_preferences().await;
 
         history_saved
+            && resume_saved
             && preferences_saved
             && frontlight_preferences_saved
             && clock_preferences_saved
@@ -252,6 +277,7 @@ where
         self.frontlight_preferences = self.load_frontlight_preferences().await;
         self.clock_preferences = self.load_clock_preferences().await;
         let wifi_networks = self.load_wifi_networks().await;
+        let resume = self.take_resume().await;
 
         let entries = self.history.entries().to_vec();
         let preferences = self.preferences;
@@ -276,6 +302,11 @@ where
             app.apply_reading_history(entries, cx);
             app.apply_font_families(font_names, cx);
             app.apply_dictionaries(dictionary_names, cx);
+
+            // after the preferences and history it opens with
+            if let Some(book) = resume {
+                app.resume_book(book, cx);
+            }
         })?;
 
         self.initialized = true;

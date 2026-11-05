@@ -36,9 +36,12 @@ impl InkPaperApp {
     pub(crate) fn local_clock<T: 'static>(&self, cx: &Context<'_, T>) -> Option<ClockStatus> {
         let minutes = self.clock.utc_offset().minutes();
 
-        self.rtc
-            .read(cx, |rtc| rtc.get())
-            .map(|clock| clock.offset_by(minutes))
+        self.utc_clock(cx).map(|clock| clock.offset_by(minutes))
+    }
+
+    /// The RTC's time, in UTC.
+    pub(crate) fn utc_clock<T: 'static>(&self, cx: &Context<'_, T>) -> Option<ClockStatus> {
+        self.rtc.read(cx, |rtc| rtc.get())
     }
 
     pub(crate) fn apply_clock_preferences(
@@ -181,7 +184,7 @@ impl InkPaperApp {
         !self.file_transfer.blocks_input()
     }
 
-    pub fn prepare_for_sleep(&mut self, cx: &mut Context<'_, Self>) {
+    pub(crate) fn prepare_for_sleep(&mut self, cx: &mut Context<'_, Self>) {
         self.close_control_center(cx);
         // so it isn't there to hide on waking
         self.hide_toast_on_input(cx);

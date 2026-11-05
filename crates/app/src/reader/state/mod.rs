@@ -13,6 +13,7 @@ use crate::{
     ReaderDocument, ReaderPreferences, ReaderPreferencesRequest, ReadingHistoryEntry,
     paging::Pager,
     reader::{TableOfContents, TextSettings, WordSelection},
+    resume::ResumeLimit,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,8 @@ pub(crate) enum ReaderRequest {
     OpenEpub {
         path: String,
         text: TextSettings,
+        /// reopened at boot, where nothing on screen asked for it
+        resume: bool,
     },
 
     LoadAdjacentChapter {
@@ -54,9 +57,10 @@ pub(crate) enum ReaderRequest {
 
 impl ReaderRequest {
     /// Whether the request takes long enough that the screen should first show
-    /// what asked for it, like the toast of a book opening.
+    /// what asked for it, like the toast of a book opening. A book reopened at
+    /// boot has nothing to show first, so the first frame is its page.
     pub(crate) const fn takes_long(&self) -> bool {
-        matches!(self, Self::OpenEpub { .. })
+        matches!(self, Self::OpenEpub { resume: false, .. })
     }
 }
 
@@ -121,6 +125,8 @@ pub(crate) struct ReaderState {
     saved_text: TextSettings,
     /// the dictionary words are looked up in
     dictionary: Option<u8>,
+    /// how long after sleep the book read then opens again at boot
+    resume_limit: ResumeLimit,
     /// the word held to look up, on the page it was held on
     selection: Option<WordSelection>,
 
@@ -145,6 +151,7 @@ impl Default for ReaderState {
             text: TextSettings::default(),
             saved_text: TextSettings::default(),
             dictionary: None,
+            resume_limit: ResumeLimit::Always,
             selection: None,
             chrome: ReaderChromeState::default(),
             toc: TableOfContents::NotLoaded,
@@ -155,10 +162,20 @@ impl Default for ReaderState {
 
 impl ReaderState {
     pub(crate) fn open(&mut self, path: String, fallback_title: String) {
+        self.start_opening(path, fallback_title, false);
+    }
+
+    /// Reopens the book read when the device went to sleep.
+    pub(crate) fn resume(&mut self, path: String, fallback_title: String) {
+        self.start_opening(path, fallback_title, true);
+    }
+
+    fn start_opening(&mut self, path: String, fallback_title: String, resume: bool) {
         self.text = self.saved_text;
         self.pending = Some(ReaderRequest::OpenEpub {
             path: path.clone(),
             text: self.text,
+            resume,
         });
 
         self.pending_chapter = None;
@@ -178,6 +195,22 @@ impl ReaderState {
         self.pending.take()
     }
 
+    pub(crate) const fn resume_limit(&self) -> ResumeLimit {
+        self.resume_limit
+    }
+
+    /// Returns whether the limit changed.
+    pub(crate) fn choose_resume_limit(&mut self, limit: ResumeLimit) -> bool {
+        if limit == self.resume_limit {
+            return false;
+        }
+
+        self.resume_limit = limit;
+        self.queue_preferences_update();
+
+        true
+    }
+
     /// Puts back a request the service took, unless a newer one is waiting.
     pub(crate) fn restore_request(&mut self, request: ReaderRequest) {
         if self.pending.is_none() {
@@ -193,15 +226,17 @@ impl ReaderState {
         let text = preferences.text();
         self.saved_text = text;
 
-        let dictionary_changed = preferences.dictionary() != self.dictionary;
+        let settings_changed = preferences.dictionary() != self.dictionary
+            || preferences.resume_limit() != self.resume_limit;
         self.dictionary = preferences.dictionary();
+        self.resume_limit = preferences.resume_limit();
 
         if text == self.text {
-            return dictionary_changed;
+            return settings_changed;
         }
 
         if self.document.is_some() {
-            return self.request_text_settings(text) || dictionary_changed;
+            return self.request_text_settings(text) || settings_changed;
         }
 
         self.text = text;

@@ -1,9 +1,11 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
+
+use minicbor::{Decode, Encode};
 
 use crate::{
     ClockPreferences, FrontlightPreferences, FrontlightPreferencesRequest, ReaderPreferences,
     ReadingHistory, SavedNetworks, dictionaries::DictionaryFolder, fonts::FontFamily,
-    reader::ReaderFont,
+    reader::ReaderFont, resume::SleptBook, storage,
 };
 
 use super::{AppPlatform, AppService};
@@ -20,6 +22,19 @@ const MAX_READING_HISTORY_BYTES: usize = 64 * 1024;
 /// room for a font family's and a dictionary's names, each up to FAT's 255
 /// bytes
 const MAX_READER_PREFERENCES_BYTES: usize = 1024;
+const RESUME_STATE: &str = "resume.dat";
+/// room for a path of FAT's 255 bytes
+const MAX_RESUME_BYTES: usize = 512;
+
+/// The book to reopen at boot, and when the device went to sleep.
+#[derive(Debug, Encode, Decode)]
+struct StoredResume {
+    #[n(0)]
+    book: Option<String>,
+    /// minutes since 1970, when the clock was set
+    #[n(1)]
+    slept_at: Option<u32>,
+}
 
 impl<P> AppService<P>
 where
@@ -78,6 +93,27 @@ where
             },
         )
         .unwrap_or_default()
+    }
+
+    /// The book to reopen at boot, read once: it's forgotten before it opens,
+    /// so a book that brings the device down leaves the next boot on Home.
+    /// `None` when it couldn't be forgotten either.
+    pub(super) async fn take_resume(&mut self) -> Option<SleptBook> {
+        let bytes = self.read_state(RESUME_STATE, MAX_RESUME_BYTES).await?;
+        let stored = storage::decode::<StoredResume>(&bytes).ok()?;
+        let book = SleptBook {
+            path: stored.book?,
+            slept_at: stored.slept_at,
+        };
+
+        let forgotten = storage::encode(&StoredResume {
+            book: None,
+            slept_at: None,
+        });
+
+        self.write_state(RESUME_STATE, forgotten)
+            .await
+            .then_some(book)
     }
 
     pub(super) async fn load_frontlight_preferences(&mut self) -> FrontlightPreferences {
@@ -159,6 +195,18 @@ where
         }
 
         !self.preferences_dirty
+    }
+
+    pub(super) async fn persist_resume(&mut self) -> bool {
+        if self.resume_dirty {
+            let encoded = storage::encode(&StoredResume {
+                book: self.resume.as_ref().map(|book| book.path.clone()),
+                slept_at: self.resume.as_ref().and_then(|book| book.slept_at),
+            });
+            self.resume_dirty = !self.write_state(RESUME_STATE, encoded).await;
+        }
+
+        !self.resume_dirty
     }
 
     pub(super) async fn persist_frontlight_preferences(&mut self) -> bool {

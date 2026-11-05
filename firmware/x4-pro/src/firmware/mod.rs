@@ -5,7 +5,7 @@ use core::{
 
 use defmt::{debug, error, info, warn};
 use embassy_executor::Spawner;
-use embassy_futures::select::select_array;
+use embassy_futures::select::{Either, select, select_array};
 use embassy_time::{Delay as AsyncDelay, Duration, Timer};
 use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
@@ -77,6 +77,10 @@ mod usb_mass_storage;
 mod wifi;
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+/// How long boot waits for the RTC's first reading. It takes a millisecond or
+/// two over I2C.
+const RTC_BOOT_WAIT_MS: u64 = 100;
 
 static FRAMEBUFFER: StaticCell<FramebufferStorage> = StaticCell::new();
 static UI_RUNTIME: StaticCell<UiRuntime> = StaticCell::new();
@@ -228,6 +232,30 @@ async fn main(spawner: Spawner) -> ! {
     let storage_ready = storage::wait_ready().await;
     info!("storage ready: {}", storage_ready);
 
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(400)),
+    )
+    .unwrap()
+    .with_sda(peripherals.GPIO39)
+    .with_scl(peripherals.GPIO38)
+    .into_async();
+    let shared_i2c = i2c_bus::init(i2c);
+
+    // the app reads the time before its first work, to tell how long the
+    // device slept before reopening the book read then. The RTC answers its
+    // first poll at once; a clock that doesn't answer leaves the time unknown
+    spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
+
+    if let Either::First(state) = select(
+        RTC_UPDATES.wait(),
+        Timer::after(Duration::from_millis(RTC_BOOT_WAIT_MS)),
+    )
+    .await
+    {
+        apply_rtc_state(runtime, app, state);
+    }
+
     let mut app_service = AppService::new(X4Platform::new());
     if app_service.service_pending(runtime, app).await.is_err() {
         warn!("failed to service initial app work");
@@ -274,16 +302,6 @@ async fn main(spawner: Spawner) -> ! {
         warn!("failed to apply initial frontlight state");
     }
 
-    let i2c = I2c::new(
-        peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(400)),
-    )
-    .unwrap()
-    .with_sda(peripherals.GPIO39)
-    .with_scl(peripherals.GPIO38)
-    .into_async();
-    let shared_i2c = i2c_bus::init(i2c);
-
     // touch power-up.
     // GPIO2 is active-low. Give the GT911 rail time to settle before
     // performing its address-select reset sequence.
@@ -318,7 +336,6 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     spawner.spawn(battery_task(i2c_bus::device(shared_i2c), peripherals.GPIO21).unwrap());
-    spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
     info!("shared I2C services started");
 
     // clock syncs write through the RTC task, so it starts after it

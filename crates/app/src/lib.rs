@@ -20,6 +20,7 @@ mod reader;
 mod reader_page;
 mod reading_history;
 mod resources;
+mod resume;
 mod screens;
 mod service;
 mod storage;
