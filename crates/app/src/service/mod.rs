@@ -57,8 +57,7 @@ where
     dictionaries: Vec<DictionaryFolder>,
     /// the dictionary words were last looked up in, kept open for the next
     dictionary: Option<OpenDictionary<P::RandomAccessSource>>,
-    /// whether a lookup was put off until a frame shows its dictionary being
-    /// indexed
+    /// whether long work was put off until the screen shows what asked for it
     deferred: bool,
 
     history: ReadingHistory,
@@ -174,7 +173,7 @@ where
                     self.service_dictionary_request(runtime, app, request)
                         .await?;
 
-                    // the frame showing the indexing goes first
+                    // it waits for the frame showing the indexing
                     if self.deferred {
                         return Ok(());
                     }
@@ -184,6 +183,15 @@ where
                 }
                 AppRequest::Browse(request) => {
                     self.service_browse_request(runtime, app, request).await?;
+                }
+                // the screen shows what asked for it first
+                AppRequest::Reader(request)
+                    if request.takes_long() && runtime.has_pending_frame() =>
+                {
+                    self.deferred = true;
+                    runtime.update(app, move |app, _| app.restore_reader_request(request))?;
+
+                    return Ok(());
                 }
                 AppRequest::Reader(request) => {
                     self.service_reader_request(runtime, app, request).await?;
@@ -203,9 +211,10 @@ where
         }
     }
 
-    /// Whether [`AppService::service_pending`] put work off until the frame
-    /// it left is shown, like a dictionary's first indexing. Once that frame
-    /// is on screen, service again without waiting for input.
+    /// Whether [`AppService::service_pending`] put long work off until the
+    /// frame it left is shown, like opening a book or a dictionary's first
+    /// indexing. Once that frame is on screen, service again without waiting
+    /// for input.
     pub const fn has_deferred_work(&self) -> bool {
         self.deferred
     }

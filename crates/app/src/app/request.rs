@@ -86,6 +86,18 @@ impl InkPaperApp {
             })
     }
 
+    /// puts back a reader request the service took, to take again once the
+    /// frame waiting to render is on screen. A newer request replaces it
+    pub(crate) fn restore_reader_request(&mut self, request: ReaderRequest) {
+        self.reader.restore_request(request);
+    }
+
+    /// puts back a lookup the service took, to take again once the frame
+    /// waiting to render is on screen, unless another word is wanted by now
+    pub(crate) fn restore_dictionary_request(&mut self, request: DictionaryRequest) {
+        self.lookup.restore_request(request);
+    }
+
     /// a sync the clock wants, when there's a saved network to sync over
     fn take_clock_sync_request(&mut self) -> Option<WifiJoinPlan> {
         if !self.clock.take_sync_request() {

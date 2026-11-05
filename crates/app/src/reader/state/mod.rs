@@ -52,6 +52,14 @@ pub(crate) enum ReaderRequest {
     UpdateProgress(ReadingHistoryEntry),
 }
 
+impl ReaderRequest {
+    /// Whether the request takes long enough that the screen should first show
+    /// what asked for it, like the toast of a book opening.
+    pub(crate) const fn takes_long(&self) -> bool {
+        matches!(self, Self::OpenEpub { .. })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PendingRepaginationRequest {
     spine: SpineIndex,
@@ -116,7 +124,6 @@ pub(crate) struct ReaderState {
     /// the word held to look up, on the page it was held on
     selection: Option<WordSelection>,
 
-    failed: bool,
     chrome: ReaderChromeState,
     toc: TableOfContents,
     toc_pager: Pager,
@@ -139,7 +146,6 @@ impl Default for ReaderState {
             saved_text: TextSettings::default(),
             dictionary: None,
             selection: None,
-            failed: false,
             chrome: ReaderChromeState::default(),
             toc: TableOfContents::NotLoaded,
             toc_pager: Pager::default(),
@@ -164,13 +170,19 @@ impl ReaderState {
         self.fallback_title = fallback_title;
         self.document = None;
         self.page_index = 0;
-        self.failed = false;
         self.chrome = ReaderChromeState::default();
         self.toc = TableOfContents::NotLoaded;
     }
 
     pub(crate) fn take_request(&mut self) -> Option<ReaderRequest> {
         self.pending.take()
+    }
+
+    /// Puts back a request the service took, unless a newer one is waiting.
+    pub(crate) fn restore_request(&mut self, request: ReaderRequest) {
+        if self.pending.is_none() {
+            self.pending = Some(request);
+        }
     }
 
     pub(crate) fn take_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
@@ -212,7 +224,6 @@ impl ReaderState {
         self.pending_repagination = None;
         self.pending_jump = None;
         self.page_index = page_index;
-        self.failed = false;
 
         self.chrome.menu_open = false;
 
@@ -232,7 +243,6 @@ impl ReaderState {
         self.pending_repagination = None;
         self.pending_jump = None;
         self.page_index = 0;
-        self.failed = true;
 
         self.chrome = ReaderChromeState::default();
 
@@ -275,16 +285,6 @@ impl ReaderState {
         self.document
             .as_ref()
             .and_then(|document| document.page(self.page_index))
-    }
-
-    pub(crate) fn status(&self) -> &'static str {
-        if self.failed {
-            "Could not open EPUB"
-        } else if self.document.is_some() {
-            "EPUB opened"
-        } else {
-            "Opening EPUB..."
-        }
     }
 
     pub(crate) fn detail(&self) -> &str {

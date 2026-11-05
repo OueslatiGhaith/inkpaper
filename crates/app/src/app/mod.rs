@@ -7,6 +7,7 @@ use crate::{
     components::{
         control_center::{ControlCenter, ControlCenterProps, FrontlightPanel},
         reader_menu::ReaderDrawer,
+        toast::{Toast, ToastId, ToastLayer},
     },
     control_center::ControlCenterState,
     dictionaries::{DictionarySettings, WordLookup},
@@ -133,6 +134,8 @@ pub struct InkPaperApp {
     pub(crate) text_settings_view: Entity<TextSettingsView>,
     pub(crate) wifi_networks_view: Entity<WifiNetworksView>,
     control_center: ControlCenterState,
+    /// the toast over every screen
+    toasts: Entity<ToastLayer>,
     /// set once a long press took the current touch
     pointer_captured: bool,
     /// set once the screen's own long press took the current touch, so its
@@ -164,6 +167,7 @@ impl InkPaperApp {
         cx.subscribe(text_settings_view, Self::on_text_settings_event);
         let wifi_networks_view = cx.new(|_| WifiNetworksView::new(app));
         cx.subscribe(wifi_networks_view, Self::on_wifi_networks_event);
+        let toasts = cx.new(|_| ToastLayer::default());
 
         Self {
             navigation: NavigationStack::default(),
@@ -191,10 +195,27 @@ impl InkPaperApp {
             text_settings_view,
             wifi_networks_view,
             control_center: ControlCenterState::default(),
+            toasts,
             pointer_captured: false,
             pointer_held: false,
             file_transfer: FileTransferState::default(),
         }
+    }
+
+    /// Shows `toast` over the screen, in place of any shown.
+    pub(crate) fn show_toast(&mut self, toast: Toast, cx: &mut Context<'_, Self>) {
+        self.toasts.update(cx, |toasts, cx| toasts.show(toast, cx));
+    }
+
+    /// Dismisses toast `id`, if it's still shown.
+    pub(crate) fn dismiss_toast(&mut self, id: ToastId, cx: &mut Context<'_, Self>) {
+        self.toasts.update(cx, |toasts, cx| toasts.dismiss(id, cx));
+    }
+
+    /// Hides the toast shown, if it hides at the next input.
+    pub(crate) fn hide_toast_on_input(&mut self, cx: &mut Context<'_, Self>) {
+        self.toasts
+            .update(cx, |toasts, cx| toasts.hide_on_input(cx));
     }
 
     pub fn register_resources<'resource>(
@@ -237,6 +258,10 @@ impl Render for InkPaperApp {
                         reader_title={reader_title}
                         panel={self.frontlight_panel}
                     />
+                {/if}
+
+                {#if !self.sleeping}
+                    {self.toasts}
                 {/if}
             </div>
         }

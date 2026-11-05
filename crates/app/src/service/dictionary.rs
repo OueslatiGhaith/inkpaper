@@ -26,9 +26,9 @@ impl<P> AppService<P>
 where
     P: AppPlatform,
 {
-    /// Looks a word up, opening the dictionary first when it isn't open.
-    /// When its index has to be sampled the first time it's asked, the
-    /// lookup is put off instead: the app shows the indexing and asks again.
+    /// Looks a word up, opening the dictionary first when it isn't open. The
+    /// first lookup in a dictionary indexes it, which takes a while, so when
+    /// the screen has yet to show that, the lookup waits for it.
     pub(super) async fn service_dictionary_request<R>(
         &mut self,
         runtime: &mut R,
@@ -38,14 +38,33 @@ where
     where
         R: RuntimeApi,
     {
-        let Some(outcome) = self.look_up(&request, !request.deferred).await else {
-            self.deferred = true;
+        let open = match self.dictionary.take() {
+            Some(open) if open.index == request.dictionary => Some(open),
+            _ => self.open_dictionary(request.dictionary).await,
+        };
 
-            runtime.update(app, move |app, cx| {
-                app.apply_dictionary_deferred(request, cx);
-            })?;
+        let outcome = match open {
+            Some(open) if !open.sampled => {
+                let word = request.word.clone();
+                let wanted =
+                    runtime.update(app, move |app, cx| app.apply_dictionary_indexing(&word, cx))?;
 
-            return Ok(());
+                if !wanted || runtime.has_pending_frame() {
+                    self.dictionary = Some(open);
+
+                    if wanted {
+                        self.deferred = true;
+                        runtime
+                            .update(app, move |app, _| app.restore_dictionary_request(request))?;
+                    }
+
+                    return Ok(());
+                }
+
+                self.look_up(open, &request.word).await
+            }
+            Some(open) => self.look_up(open, &request.word).await,
+            None => LookupOutcome::Failed,
         };
 
         let word = request.word;
@@ -57,31 +76,17 @@ where
         Ok(())
     }
 
-    /// What looking `request` up comes to, or `None` when its dictionary's
-    /// index has to be sampled first and `may_defer`. Samples are taken in a
-    /// pass over the index the first time, and saved for the next.
+    /// What looking `word` up in `open` comes to, keeping it open for the next
+    /// word. Samples are taken in a pass over the index the first time, and
+    /// saved for the next.
     async fn look_up(
         &mut self,
-        request: &DictionaryRequest,
-        may_defer: bool,
-    ) -> Option<LookupOutcome> {
-        let mut open = match self.dictionary.take() {
-            Some(open) if open.index == request.dictionary => open,
-            _ => match self.open_dictionary(request.dictionary).await {
-                Some(open) => open,
-                None => return Some(LookupOutcome::Failed),
-            },
-        };
-
+        mut open: OpenDictionary<P::RandomAccessSource>,
+        word: &str,
+    ) -> LookupOutcome {
         if !open.sampled {
-            if may_defer {
-                self.dictionary = Some(open);
-
-                return None;
-            }
-
             let Ok(samples) = open.dictionary.sample_index().await else {
-                return Some(LookupOutcome::Failed);
+                return LookupOutcome::Failed;
             };
 
             // without them saved, the next start samples again
@@ -93,17 +98,17 @@ where
             open.sampled = true;
         }
 
-        let outcome = match open.dictionary.lookup(&request.word).await {
+        let outcome = match open.dictionary.lookup(word).await {
             Ok(Some(definition)) => LookupOutcome::Found(definition),
             Ok(None) => LookupOutcome::NotFound,
             // opened again for the next word, in case another file closed
             // one of its own
-            Err(_) => return Some(LookupOutcome::Failed),
+            Err(_) => return LookupOutcome::Failed,
         };
 
         self.dictionary = Some(open);
 
-        Some(outcome)
+        outcome
     }
 
     /// The dictionary at `index` among those found, with its saved index

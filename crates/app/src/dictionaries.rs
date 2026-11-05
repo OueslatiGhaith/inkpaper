@@ -165,9 +165,6 @@ fn strip_extension<'a>(name: &'a str, extension: &str) -> Option<&'a str> {
 pub(crate) struct DictionaryRequest {
     pub dictionary: u8,
     pub word: String,
-    /// whether the service put this lookup off once already, to show its
-    /// dictionary being indexed. It indexes now instead of putting it off again
-    pub deferred: bool,
 }
 
 /// What looking a word up came to.
@@ -207,31 +204,34 @@ impl WordLookup {
     /// Looks `word` up in `dictionary`.
     pub(crate) fn start(&mut self, dictionary: u8, word: String) {
         self.current = Some((word.clone(), LookupState::Pending));
-        self.request = Some(DictionaryRequest {
-            dictionary,
-            word,
-            deferred: false,
-        });
+        self.request = Some(DictionaryRequest { dictionary, word });
     }
 
     pub(crate) fn take_request(&mut self) -> Option<DictionaryRequest> {
         self.request.take()
     }
 
-    /// The service put `request` off to index its dictionary first. It waits
-    /// to be taken again, unless another word is wanted by now. Returns
-    /// whether it's still the word wanted.
-    pub(crate) fn defer(&mut self, request: DictionaryRequest) -> bool {
-        if !self.finish(&request.word, LookupState::Indexing) {
-            return false;
+    /// Puts back a request the service took, unless another word is wanted
+    /// by now.
+    pub(crate) fn restore_request(&mut self, request: DictionaryRequest) {
+        if self.request.is_none() && self.waits_for(&request.word) {
+            self.request = Some(request);
+        }
+    }
+
+    /// Shows that the dictionary is indexed before `word` is looked up.
+    /// Returns whether the state changed, which it does once per lookup.
+    pub(crate) fn show_indexing(&mut self, word: &str) -> bool {
+        let pending = matches!(
+            &self.current,
+            Some((current, LookupState::Pending)) if current == word
+        );
+
+        if pending {
+            self.current = Some((String::from(word), LookupState::Indexing));
         }
 
-        self.request = Some(DictionaryRequest {
-            deferred: true,
-            ..request
-        });
-
-        true
+        pending
     }
 
     /// Whether `word` is still waiting for the service.

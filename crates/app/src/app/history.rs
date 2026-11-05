@@ -29,8 +29,7 @@ impl InkPaperApp {
         let path = String::from(entry.path());
         let title = String::from(entry.display_title());
 
-        self.reader.open(path, title);
-        self.open_screen(Screen::Reader, cx);
+        self.open_book(path, title, cx);
     }
 
     pub(crate) fn apply_reading_history(

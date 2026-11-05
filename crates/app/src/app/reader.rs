@@ -5,13 +5,24 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
-    components::reader_menu::{DrawerEvent, ReaderDrawer},
+    components::{
+        reader_menu::{DrawerEvent, ReaderDrawer},
+        toast::{Toast, ToastId},
+    },
     fonts::reader_family,
     reader::{JumpTarget, TableOfContents, TextSettings, TocEntry},
     reader_page::paint_reader_page,
 };
 
 impl InkPaperApp {
+    /// Opens the book at `path`. Like crosspoint, the screen it was opened
+    /// from stays under a toast until the book has opened, then the reader
+    /// shows it. A book that can't be opened leaves the screen as it was.
+    pub(crate) fn open_book(&mut self, path: String, title: String, cx: &mut Context<'_, Self>) {
+        self.reader.open(path, title);
+        self.show_toast(Toast::new(ToastId::OpeningBook, "Loading"), cx);
+    }
+
     pub(crate) fn apply_reader_document(
         &mut self,
         document: ReaderDocument,
@@ -20,6 +31,8 @@ impl InkPaperApp {
         let changed = self.reader.apply_document(document);
 
         if changed {
+            self.dismiss_toast(ToastId::OpeningBook, cx);
+            self.open_screen(Screen::Reader, cx);
             cx.notify();
         }
 
@@ -56,7 +69,9 @@ impl InkPaperApp {
         let changed = self.reader.apply_error(&path);
 
         if changed {
-            cx.notify();
+            let failed = Toast::new(ToastId::BookFailed, "Could not open EPUB").autohide();
+
+            self.show_toast(failed, cx);
         }
 
         changed
