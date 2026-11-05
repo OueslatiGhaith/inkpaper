@@ -533,6 +533,78 @@ fn reading_an_entity_renders_again_when_it_changes() {
     assert_eq!(fixture.shell_renders(), 3);
 }
 
+/// a parent that renders a child, which shows the parent's title
+struct Titled {
+    title: &'static str,
+    caption: Option<Entity<Caption>>,
+}
+
+impl Render for Titled {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        div().id("titled").children(self.caption)
+    }
+}
+
+struct Caption {
+    parent: Entity<Titled>,
+    renders: u32,
+}
+
+impl Render for Caption {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        self.renders += 1;
+
+        div().child(self.parent.read(cx, |parent| parent.title))
+    }
+}
+
+#[test]
+fn a_child_that_reads_its_parent_renders_again_when_the_parent_changes() {
+    let mut runtime = TestRuntime::default();
+    let parent = runtime
+        .create_root(|cx| {
+            let parent = cx.entity();
+            let caption = cx.new(|_| Caption { parent, renders: 0 });
+
+            Titled {
+                title: "before",
+                caption: Some(caption),
+            }
+        })
+        .unwrap();
+    let caption = runtime
+        .update(parent, |parent, _| parent.caption)
+        .unwrap()
+        .unwrap();
+
+    runtime.set_partial_rebuilds(true);
+    runtime.rebuild().unwrap();
+    runtime.take_invalidation();
+
+    runtime
+        .update(parent, |parent, cx| {
+            parent.title = "after";
+            cx.notify();
+        })
+        .unwrap();
+    assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
+    runtime.rebuild().unwrap();
+
+    assert_eq!(runtime.update(caption, |caption, _| caption.renders), Ok(2));
+
+    let frame = runtime.frame();
+    let texts: Vec<&str> = core::iter::successors(runtime.root_node(), |&node| {
+        frame.next_depth_first_node(node)
+    })
+    .filter_map(|node| match frame.node(node).kind {
+        NodeKind::Text { text } => Some(frame.text(text)),
+        _ => None,
+    })
+    .collect();
+
+    assert_eq!(texts, ["after"]);
+}
+
 #[test]
 fn a_render_forgets_what_it_no_longer_reads() {
     let mut fixture = fixture(true);

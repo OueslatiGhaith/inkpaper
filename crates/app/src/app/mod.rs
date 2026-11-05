@@ -6,7 +6,7 @@ use crate::{
     components::header::BatteryIndicator,
     components::{
         control_center::{ControlCenter, ControlCenterProps, FrontlightPanel},
-        reader_menu::ReaderMenuView,
+        reader_menu::ReaderDrawer,
     },
     control_center::ControlCenterState,
     dictionaries::{DictionarySettings, WordLookup},
@@ -117,7 +117,7 @@ pub struct InkPaperApp {
     /// the frontlight controls of the control center
     frontlight_panel: Entity<FrontlightPanel>,
     /// the reader's drawer
-    pub(crate) reader_menu: Entity<ReaderMenuView>,
+    pub(crate) reader_menu: Entity<ReaderDrawer>,
     /// the Wi-Fi password field and its keyboard
     pub(crate) password_field: Entity<PasswordFieldView>,
     pub(crate) password_keyboard: Entity<PasswordKeyboardView>,
@@ -141,7 +141,7 @@ impl InkPaperApp {
         let frontlight = cx.new(|_| FrontlightState::default());
         let frontlight_panel = cx.new(|_| FrontlightPanel::new(frontlight));
         let app = cx.entity();
-        let reader_menu = cx.new(|_| ReaderMenuView::new(app));
+        let reader_menu = cx.new(|_| ReaderDrawer::new(app));
         let password_field = cx.new(|_| PasswordFieldView::new(app));
         let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app));
         let timezone = cx.new(|_| TimezoneView::new(app));

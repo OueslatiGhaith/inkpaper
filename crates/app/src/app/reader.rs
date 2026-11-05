@@ -6,8 +6,9 @@ use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest,
+    components::reader_menu::ReaderDrawer,
     fonts::reader_family,
-    reader::{JumpTarget, ReaderMenuTab, TableOfContents, TextSetting, TextSettings, TocEntry},
+    reader::{JumpTarget, TableOfContents, TextSetting, TextSettings, TocEntry},
     reader_page::paint_reader_page,
 };
 
@@ -94,13 +95,10 @@ impl InkPaperApp {
         }
     }
 
-    /// renders the reader's drawer again, for changes nothing else shows
-    pub(crate) fn refresh_reader_menu(&self, cx: &mut Context<'_, Self>) {
-        self.reader_menu.notify(cx);
-    }
-
+    /// Opens the drawer on its Text tab.
     pub(crate) fn open_reader_menu(&mut self, cx: &mut Context<'_, Self>) {
         if self.reader.open_menu() {
+            self.reader_menu.update(cx, ReaderDrawer::reset);
             cx.notify();
         }
     }
@@ -111,28 +109,8 @@ impl InkPaperApp {
         }
     }
 
-    pub(crate) fn activate_reader_text_tab(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.reader.select_menu_tab(ReaderMenuTab::Text) {
-            self.refresh_reader_menu(cx);
-        }
-    }
-
-    pub(crate) fn activate_reader_more_tab(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.reader.select_menu_tab(ReaderMenuTab::More) {
-            self.refresh_reader_menu(cx);
-        }
-    }
-
     /// Opens the chapter list; like crosspoint, the drawer does not come back.
-    pub(crate) fn show_table_of_contents(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    pub(crate) fn show_table_of_contents(&mut self, cx: &mut Context<'_, Self>) {
         self.reader.close_menu();
         self.open_screen(Screen::TableOfContents, cx);
     }
@@ -198,18 +176,11 @@ impl InkPaperApp {
 
     /// Opens the picker of a Text panel row, or flips a toggle row. The Font
     /// row opens the Text Settings screen, like crosspoint's.
-    pub(crate) fn activate_reader_text_row(
+    pub(crate) fn open_reader_text_setting(
         &mut self,
-        event: &ActivateEvent,
+        setting: TextSetting,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(&setting) = event
-            .index()
-            .and_then(|index| TextSetting::PANEL.get(index))
-        else {
-            return;
-        };
-
         if setting == TextSetting::Font {
             self.reader.close_menu();
             self.open_screen(Screen::TextSettings, cx);
@@ -225,7 +196,6 @@ impl InkPaperApp {
 
         if changed {
             cx.notify();
-            self.refresh_reader_menu(cx);
         }
     }
 
@@ -240,7 +210,6 @@ impl InkPaperApp {
 
         if self.reader.choose_text_option(index) {
             cx.notify();
-            self.refresh_reader_menu(cx);
         }
     }
 
@@ -304,10 +273,9 @@ impl InkPaperApp {
     }
 
     /// Opens Links and footnotes from the drawer's More tab.
-    pub(crate) fn activate_reader_links(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    pub(crate) fn open_reader_links(&mut self, cx: &mut Context<'_, Self>) {
         if self.reader.open_links() {
             cx.notify();
-            self.refresh_reader_menu(cx);
         }
     }
 

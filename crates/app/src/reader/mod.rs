@@ -23,9 +23,7 @@ pub(crate) use loader::ReaderSession;
 pub(crate) use loader::load_reader_document;
 pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesRequest};
 pub(crate) use selection::WordSelection;
-pub(crate) use state::{
-    JumpTarget, ReaderChapterDirection, ReaderMenuTab, ReaderRequest, ReaderState,
-};
+pub(crate) use state::{JumpTarget, ReaderChapterDirection, ReaderRequest, ReaderState};
 pub(crate) use text_settings::{
     Darkness, LineSpacing, PageBounds, ParagraphAlignment, ReaderFont, ScreenMargin, TextSetting,
     TextSettings,

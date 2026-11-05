@@ -84,17 +84,9 @@ struct PendingChapterRequest {
     direction: ReaderChapterDirection,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum ReaderMenuTab {
-    #[default]
-    Text,
-    More,
-}
-
 #[derive(Debug, Default)]
 struct ReaderChromeState {
     menu_open: bool,
-    menu_tab: ReaderMenuTab,
     /// the Text panel row whose picker is open
     text_picker: Option<TextSetting>,
     /// whether the Links and footnotes picker is open

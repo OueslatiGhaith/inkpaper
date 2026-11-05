@@ -9,7 +9,7 @@ use crate::{
         header::battery_icon,
         icon::{Icon, IconKind, IconProps},
         option_picker::{OptionPicker, OptionPickerProps},
-        reader_menu::ReaderMenuView,
+        reader_menu::ReaderDrawer,
     },
     dictionaries::LookupState,
     reader::{DEFINITION_HEIGHT, DEFINITION_WIDTH, PageBounds, TextSetting, TextSettings},
@@ -50,7 +50,7 @@ pub(crate) struct ReaderScreen<'a> {
     link_picker: Option<Vec<String>>,
     on_link_option: Listener<ActivateEvent>,
     on_dismiss_link_picker: Listener<ActivateEvent>,
-    menu: Entity<ReaderMenuView>,
+    menu: Entity<ReaderDrawer>,
 
     /// the tap boxes of the page's links, on screen
     links: Vec<Rect>,

@@ -1,6 +1,6 @@
 use crate::reader::{TextSetting, TextSettings};
 
-use super::{ReaderMenuTab, ReaderState};
+use super::ReaderState;
 
 impl ReaderState {
     pub(crate) fn open_menu(&mut self) -> bool {
@@ -9,7 +9,6 @@ impl ReaderState {
         }
 
         self.chrome.menu_open = true;
-        self.chrome.menu_tab = ReaderMenuTab::Text;
         self.chrome.text_picker = None;
         self.chrome.link_picker = false;
 
@@ -30,22 +29,6 @@ impl ReaderState {
 
     pub(crate) fn menu_open(&self) -> bool {
         self.chrome.menu_open
-    }
-
-    pub(crate) const fn menu_tab(&self) -> ReaderMenuTab {
-        self.chrome.menu_tab
-    }
-
-    pub(crate) fn select_menu_tab(&mut self, tab: ReaderMenuTab) -> bool {
-        if !self.chrome.menu_open || self.chrome.menu_tab == tab {
-            return false;
-        }
-
-        self.chrome.menu_tab = tab;
-        self.chrome.text_picker = None;
-        self.chrome.link_picker = false;
-
-        true
     }
 
     pub(crate) const fn text_picker(&self) -> Option<TextSetting> {

@@ -8,8 +8,16 @@ use crate::{
         drawer_handle::{DrawerHandle, DrawerHandleProps},
         settings_row::{ListRow, ListRowProps},
     },
-    reader::{ReaderMenuTab, TextSetting, TextSettings},
+    reader::{TextSetting, TextSettings},
 };
+
+/// The drawer's tabs, by their icons in its tab bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ReaderMenuTab {
+    #[default]
+    Text,
+    More,
+}
 
 const CASE_SENSITIVE: SvgSource = include_svg!("assets/icons/lucide/case-sensitive.svg");
 const ELLIPSIS: SvgSource = include_svg!("assets/icons/lucide/ellipsis.svg");
@@ -129,37 +137,89 @@ impl RenderOnce for ReaderMenu {
     }
 }
 
-/// the reader's drawer. As its own entity, a font size preview or a tab switch renders
-/// and paints only the drawer, not the page under it. Its state stays in the app, which
-/// renders it again through [`InkPaperApp::refresh_reader_menu`].
-pub(crate) struct ReaderMenuView {
+/// the reader's drawer. As its own entity, a tab switch renders and paints only the
+/// drawer, not the page under it. It keeps its tab, and reads the book's settings and
+/// links from the app, so it renders again when they change.
+pub(crate) struct ReaderDrawer {
     app: Entity<InkPaperApp>,
+    tab: ReaderMenuTab,
 }
 
-impl ReaderMenuView {
+impl ReaderDrawer {
     pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
-        Self { app }
+        Self {
+            app,
+            tab: ReaderMenuTab::Text,
+        }
+    }
+
+    /// Shows the Text tab, as the drawer opens with.
+    pub(crate) fn reset(&mut self, cx: &mut Context<'_, Self>) {
+        self.select_tab(ReaderMenuTab::Text, cx);
+    }
+
+    fn select_tab(&mut self, tab: ReaderMenuTab, cx: &mut Context<'_, Self>) {
+        if self.tab != tab {
+            self.tab = tab;
+            cx.notify();
+        }
+    }
+
+    fn activate_text_tab(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.select_tab(ReaderMenuTab::Text, cx);
+    }
+
+    fn activate_more_tab(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.select_tab(ReaderMenuTab::More, cx);
+    }
+
+    fn activate_close(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.app.update(cx, InkPaperApp::close_reader_menu);
+    }
+
+    fn activate_text_row(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        let Some(&setting) = event
+            .index()
+            .and_then(|index| TextSetting::PANEL.get(index))
+        else {
+            return;
+        };
+
+        self.app
+            .update(cx, |app, cx| app.open_reader_text_setting(setting, cx));
+    }
+
+    fn activate_select_chapter(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.app.update(cx, InkPaperApp::show_table_of_contents);
+    }
+
+    fn activate_links(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.app.update(cx, InkPaperApp::open_reader_links);
     }
 }
 
-impl Render for ReaderMenuView {
+impl Render for ReaderDrawer {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-        // the listeners target the app, so its handlers can render this drawer again
-        // without borrowing it
-        let props = self.app.update(cx, |app, cx| ReaderMenuProps {
-            tab: app.reader.menu_tab(),
-            text: app.reader.menu_text_settings(),
-            font_name: app.reader_font_name(),
-            on_close: cx.listener(InkPaperApp::activate_close_reader_menu),
-            on_text_tab: cx.listener(InkPaperApp::activate_reader_text_tab),
-            on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),
-            on_text_row: cx.listener(InkPaperApp::activate_reader_text_row),
-            on_select_chapter: cx.listener(InkPaperApp::show_table_of_contents),
-            has_links: !app.reader.page_links().is_empty(),
-            on_links: cx.listener(InkPaperApp::activate_reader_links),
+        let (text, font_name, has_links) = self.app.read(cx, |app| {
+            (
+                app.reader.menu_text_settings(),
+                app.reader_font_name(),
+                !app.reader.page_links().is_empty(),
+            )
         });
 
-        ReaderMenu::from(props)
+        ReaderMenu::from(ReaderMenuProps {
+            tab: self.tab,
+            text,
+            font_name,
+            on_close: cx.listener(Self::activate_close),
+            on_text_tab: cx.listener(Self::activate_text_tab),
+            on_more_tab: cx.listener(Self::activate_more_tab),
+            on_text_row: cx.listener(Self::activate_text_row),
+            on_select_chapter: cx.listener(Self::activate_select_chapter),
+            has_links,
+            on_links: cx.listener(Self::activate_links),
+        })
     }
 }
 
