@@ -8,7 +8,7 @@ use crate::{
     ReaderPreferencesRequest, ReaderRequest,
     components::reader_menu::{DrawerEvent, ReaderDrawer},
     fonts::reader_family,
-    reader::{JumpTarget, TableOfContents, TextSetting, TextSettings, TocEntry},
+    reader::{JumpTarget, TableOfContents, TextSettings, TocEntry},
     reader_page::paint_reader_page,
 };
 
@@ -102,11 +102,24 @@ impl InkPaperApp {
         event: &DrawerEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        match *event {
-            DrawerEvent::Close => self.close_reader_menu(cx),
-            DrawerEvent::OpenTextSetting(setting) => self.open_reader_text_setting(setting, cx),
-            DrawerEvent::SelectChapter => self.show_table_of_contents(cx),
-            DrawerEvent::Links => self.open_reader_links(cx),
+        let changed = match *event {
+            DrawerEvent::Close => return self.close_reader_menu(cx),
+            DrawerEvent::OpenTextSettings => {
+                self.reader.close_menu();
+                self.open_screen(Screen::TextSettings, cx);
+                return;
+            }
+            DrawerEvent::SelectChapter => return self.show_table_of_contents(cx),
+            DrawerEvent::ToggleTextSetting(setting) => self.reader.toggle_text_setting(setting),
+            // the page under the drawer repaginates, so it previews the choice
+            DrawerEvent::ChooseTextOption(setting, index) => {
+                self.reader.choose_text_option(setting, index)
+            }
+            DrawerEvent::FollowLink(index) => self.reader.follow_page_link(index),
+        };
+
+        if changed {
+            cx.notify();
         }
     }
 
@@ -189,51 +202,6 @@ impl InkPaperApp {
         self.close_reader_menu(cx);
     }
 
-    /// Opens the picker of a Text panel row, or flips a toggle row. The Font
-    /// row opens the Text Settings screen, like crosspoint's.
-    fn open_reader_text_setting(&mut self, setting: TextSetting, cx: &mut Context<'_, Self>) {
-        if setting == TextSetting::Font {
-            self.reader.close_menu();
-            self.open_screen(Screen::TextSettings, cx);
-            return;
-        }
-
-        // like crosspoint's checkbox rows, toggles flip in place
-        let changed = if setting.is_toggle() {
-            self.reader.toggle_text_setting(setting)
-        } else {
-            self.reader.open_text_picker(setting)
-        };
-
-        if changed {
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn activate_reader_text_option(
-        &mut self,
-        event: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(index) = event.index() else {
-            return;
-        };
-
-        if self.reader.choose_text_option(index) {
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn activate_dismiss_reader_text_picker(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.reader.close_text_picker() {
-            cx.notify();
-        }
-    }
-
     pub(crate) fn apply_reader_repagination(
         &mut self,
         path: String,
@@ -281,37 +249,6 @@ impl InkPaperApp {
 
     pub(crate) fn finish_reader_jump_request(&mut self, path: String, target: JumpTarget) -> bool {
         self.reader.finish_jump_request(&path, target)
-    }
-
-    /// Opens Links and footnotes from the drawer's More tab.
-    fn open_reader_links(&mut self, cx: &mut Context<'_, Self>) {
-        if self.reader.open_links() {
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn activate_reader_link_option(
-        &mut self,
-        event: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(index) = event.index() else {
-            return;
-        };
-
-        if self.reader.choose_link(index) {
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn activate_dismiss_reader_link_picker(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.reader.close_link_picker() {
-            cx.notify();
-        }
     }
 
     /// Follows a link tapped on the page; the element's index says which.

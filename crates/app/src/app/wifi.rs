@@ -5,9 +5,8 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     SavedNetworks, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError,
-    input::LongPressEvent,
     screens::{
-        wifi_networks::WifiMenuItem,
+        wifi_networks::{WifiMenuItem, WifiNetworksEvent, WifiNetworksView},
         wifi_password::{
             PasswordFieldView, PasswordKeyboardView, PressKey, TogglePassword, keyboard_look,
         },
@@ -44,9 +43,22 @@ impl InkPaperApp {
         self.wifi.take_save_request()
     }
 
-    pub(crate) fn activate_wifi_scan(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        if self.wifi.request_scan() {
-            cx.notify();
+    /// What the WiFi screen's taps mean.
+    pub(super) fn on_wifi_networks_event(
+        &mut self,
+        view: Entity<WifiNetworksView>,
+        event: &WifiNetworksEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match *event {
+            WifiNetworksEvent::Back => self.navigate_back(cx),
+            WifiNetworksEvent::Scan => {
+                if self.wifi.request_scan() {
+                    cx.notify();
+                }
+            }
+            WifiNetworksEvent::Network(index) => self.activate_wifi_network(index, cx),
+            WifiNetworksEvent::MenuItem(item) => self.activate_wifi_menu_item(view, item, cx),
         }
     }
 
@@ -61,6 +73,8 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.wifi.finish_scan(result);
+        self.wifi_networks_view
+            .update(cx, WifiNetworksView::reset_page);
 
         if self.screen() == Screen::WifiNetworks {
             cx.notify();
@@ -70,15 +84,8 @@ impl InkPaperApp {
     /// Tapping a network disconnects it when it's connected, and otherwise
     /// connects it: a saved or open one at once, a secured one once its
     /// password is typed.
-    pub(crate) fn activate_wifi_network(
-        &mut self,
-        event: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(network) = event
-            .index()
-            .and_then(|index| self.wifi.networks().get(index))
-        else {
+    fn activate_wifi_network(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+        let Some(network) = self.wifi.networks().get(index) else {
             return;
         };
 
@@ -112,69 +119,40 @@ impl InkPaperApp {
         self.connect_wifi_network(credentials, cx);
     }
 
-    /// Holding a saved network opens its menu next to the finger.
-    pub(crate) fn long_press_wifi_network(
+    /// An item of the menu of the network `view` holds open.
+    fn activate_wifi_menu_item(
         &mut self,
-        event: &LongPressEvent,
+        view: Entity<WifiNetworksView>,
+        item: WifiMenuItem,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(network) = event
-            .index()
-            .and_then(|index| self.wifi.networks().get(index))
-        else {
+        let Some(ssid) = view.read(cx, |view| view.menu_ssid().map(String::from)) else {
             return;
         };
 
-        let ssid = String::from(network.ssid());
-
-        if self.wifi.open_menu(&ssid, event.position().y.get()) {
-            cx.notify();
+        // the menu stays open to show a new Auto-connect setting
+        if item != WifiMenuItem::AutoConnect {
+            view.update(cx, WifiNetworksView::close_menu);
         }
-    }
 
-    pub(crate) fn activate_wifi_menu_item(
-        &mut self,
-        event: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(menu) = self.wifi.menu() else {
-            return;
-        };
-
-        let ssid = String::from(menu.ssid());
-
-        match event.index().and_then(WifiMenuItem::from_index) {
-            Some(WifiMenuItem::Connection) => {
-                self.wifi.close_menu();
+        match item {
+            WifiMenuItem::Connection => {
                 self.toggle_wifi_connection(&ssid, true, cx);
                 cx.notify();
             }
 
-            // the menu stays open to show the new setting
-            Some(WifiMenuItem::AutoConnect) => {
+            WifiMenuItem::AutoConnect => {
                 if self.wifi.toggle_auto_connect(&ssid) {
                     cx.notify();
                 }
             }
 
-            Some(WifiMenuItem::ChangePassword) => {
-                self.wifi.close_menu();
-                self.enter_wifi_password(&ssid, cx);
-            }
+            WifiMenuItem::ChangePassword => self.enter_wifi_password(&ssid, cx),
 
-            Some(WifiMenuItem::Forget) => {
-                self.wifi.close_menu();
+            WifiMenuItem::Forget => {
                 self.wifi.forget(&ssid);
                 cx.notify();
             }
-
-            None => {}
-        }
-    }
-
-    pub(crate) fn dismiss_wifi_menu(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        if self.wifi.close_menu() {
-            cx.notify();
         }
     }
 

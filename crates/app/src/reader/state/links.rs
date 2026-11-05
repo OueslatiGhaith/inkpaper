@@ -1,5 +1,4 @@
 use alloc::{string::String, vec::Vec};
-use core::mem;
 use inkpaper_epub::LinkTarget;
 use inkpaper_reader::{Page, PageItem, Rect};
 
@@ -82,42 +81,17 @@ impl ReaderState {
             .collect()
     }
 
-    /// Opens Links and footnotes from the drawer: with one link it follows
-    /// it, like crosspoint, and with several it lists them.
-    pub(crate) fn open_links(&mut self) -> bool {
+    /// The page's links as Links and footnotes lists them.
+    pub(crate) fn page_link_labels(&self) -> Vec<String> {
+        self.page_link_entries()
+            .into_iter()
+            .map(|(_, label)| label)
+            .collect()
+    }
+
+    /// Follows entry `index` of Links and footnotes, closing the drawer.
+    pub(crate) fn follow_page_link(&mut self, index: usize) -> bool {
         if !self.chrome.menu_open {
-            return false;
-        }
-
-        match self.page_link_entries().as_slice() {
-            [] => false,
-
-            &[(index, _)] => {
-                self.close_menu();
-                self.follow_link(index);
-                true
-            }
-
-            _ => {
-                self.chrome.link_picker = true;
-                true
-            }
-        }
-    }
-
-    /// The open Links and footnotes picker's options.
-    pub(crate) fn link_picker(&self) -> Option<Vec<String>> {
-        self.chrome.link_picker.then(|| {
-            self.page_link_entries()
-                .into_iter()
-                .map(|(_, label)| label)
-                .collect()
-        })
-    }
-
-    /// Follows entry `index` of the picker, closing it and the drawer.
-    pub(crate) fn choose_link(&mut self, index: usize) -> bool {
-        if !self.chrome.link_picker {
             return false;
         }
 
@@ -130,10 +104,6 @@ impl ReaderState {
         }
 
         true
-    }
-
-    pub(crate) fn close_link_picker(&mut self) -> bool {
-        mem::take(&mut self.chrome.link_picker)
     }
 
     /// Follows link `index` of [`Self::page_links`], saving this page to come

@@ -30,7 +30,7 @@ pub(crate) use text_settings::{
 };
 pub(crate) use text_settings_screen::{
     PREVIEW_PADDING, PREVIEW_TEXT_HEIGHT, TextSettingsRow, TextSettingsState, TextSettingsTab,
-    preview_text_left,
+    layout_preview, preview_text_left,
 };
 pub(crate) use toc::{TableOfContents, TocEntry};
 

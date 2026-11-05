@@ -10,7 +10,6 @@ use super::{
 };
 use crate::{
     fonts::{CardFont, card_for},
-    paging::{PageTurn, Pager},
     typography::READER_FONT_NAME,
 };
 
@@ -69,16 +68,12 @@ pub(crate) enum TextSettingsRow {
     Setting(TextSetting),
 }
 
-/// The Text Settings screen: its tab, the settings being edited, the open
-/// picker and the preview laid out from them.
+/// What the Text Settings screen edits: the settings being edited, and the font
+/// families and card font it offers. The screen's tab, picker and preview are its
+/// own, in its view.
 #[derive(Debug, Default)]
 pub(crate) struct TextSettingsState {
-    tab: TextSettingsTab,
-    /// which page of the tab's rows is shown
-    pager: Pager,
     draft: TextSettings,
-    picker: Option<TextSetting>,
-    preview: Option<Page<'static>>,
     /// the font families on the card, by name
     families: Vec<String>,
     /// the card font read into memory, if any
@@ -86,25 +81,24 @@ pub(crate) struct TextSettingsState {
 }
 
 impl TextSettingsState {
-    /// Starts editing `text`, on the Font tab like crosspoint.
+    /// Starts editing `text`.
     pub(crate) fn open(&mut self, text: TextSettings) {
-        self.tab = TextSettingsTab::Font;
-        self.pager = Pager::default();
-        self.picker = None;
         self.draft = text;
-        self.preview = layout_preview(text, self.card.as_ref());
-    }
-
-    pub(crate) const fn tab(&self) -> TextSettingsTab {
-        self.tab
     }
 
     pub(crate) const fn draft(&self) -> TextSettings {
         self.draft
     }
 
-    pub(crate) const fn picker(&self) -> Option<TextSetting> {
-        self.picker
+    /// Returns whether the settings changed.
+    pub(crate) fn set_draft(&mut self, text: TextSettings) -> bool {
+        if text == self.draft {
+            return false;
+        }
+
+        self.draft = text;
+
+        true
     }
 
     /// Lists the card's font families after the built-in one. Returns
@@ -135,39 +129,14 @@ impl TextSettingsState {
         self.card.as_ref()
     }
 
-    /// Keeps the card font read into memory, and lays the preview out again
-    /// when it is the one being previewed.
-    pub(crate) fn set_card_font(&mut self, card: Option<CardFont>) -> bool {
-        let previewed = |card: Option<&CardFont>| card_for(self.draft.font(), card).is_some();
-        let changed = previewed(self.card.as_ref()) || previewed(card.as_ref());
-
+    /// Keeps the card font read into memory.
+    pub(crate) fn set_card_font(&mut self, card: Option<CardFont>) {
         self.card = card;
-
-        if changed {
-            self.preview = layout_preview(self.draft, self.card.as_ref());
-        }
-
-        changed
     }
 
-    pub(crate) fn preview(&self) -> Option<&Page<'static>> {
-        self.preview.as_ref()
-    }
-
-    pub(crate) fn select_tab(&mut self, tab: TextSettingsTab) -> bool {
-        if self.tab == tab {
-            return false;
-        }
-
-        self.tab = tab;
-        self.pager = Pager::default();
-        self.picker = None;
-
-        true
-    }
-
-    pub(crate) fn rows(&self) -> Vec<TextSettingsRow> {
-        match self.tab {
+    /// The rows of `tab`.
+    pub(crate) fn rows(&self, tab: TextSettingsTab) -> Vec<TextSettingsRow> {
+        match tab {
             TextSettingsTab::Font => core::iter::once(ReaderFont::BuiltIn)
                 .chain(
                     (0..self.families.len())
@@ -189,75 +158,6 @@ impl TextSettingsState {
                 .collect(),
         }
     }
-
-    /// The page of the tab's rows shown when `rows_per_page` fit on one.
-    pub(crate) fn page(&self, rows_per_page: usize) -> usize {
-        self.pager.page(self.rows().len(), rows_per_page)
-    }
-
-    pub(crate) fn page_count(&self, rows_per_page: usize) -> usize {
-        Pager::page_count(self.rows().len(), rows_per_page)
-    }
-
-    pub(crate) fn turn_page(&mut self, turn: PageTurn, rows_per_page: usize) -> bool {
-        self.pager.turn(turn, self.rows().len(), rows_per_page)
-    }
-
-    /// Picks a size, flips a toggle or opens a setting's picker. Returns
-    /// whether the screen changed.
-    pub(crate) fn activate_row(&mut self, index: usize) -> bool {
-        if self.picker.is_some() {
-            return false;
-        }
-
-        match self.rows().get(index) {
-            Some(&TextSettingsRow::Font { font, .. }) => self.set_draft(self.draft.with_font(font)),
-
-            Some(&TextSettingsRow::Size(size)) => self
-                .draft
-                .with_font_size(size)
-                .is_some_and(|text| self.set_draft(text)),
-
-            Some(&TextSettingsRow::Setting(setting)) if setting.is_toggle() => setting
-                .toggle(self.draft)
-                .is_some_and(|text| self.set_draft(text)),
-
-            Some(&TextSettingsRow::Setting(setting)) => {
-                self.picker = Some(setting);
-                true
-            }
-
-            None => false,
-        }
-    }
-
-    /// Applies option `index` of the open picker and closes it.
-    pub(crate) fn choose_option(&mut self, index: usize) -> bool {
-        let Some(setting) = self.picker.take() else {
-            return false;
-        };
-
-        if let Some(text) = setting.choose(self.draft, index) {
-            self.set_draft(text);
-        }
-
-        true
-    }
-
-    pub(crate) fn close_picker(&mut self) -> bool {
-        self.picker.take().is_some()
-    }
-
-    fn set_draft(&mut self, text: TextSettings) -> bool {
-        if text == self.draft {
-            return false;
-        }
-
-        self.draft = text;
-        self.preview = layout_preview(text, self.card.as_ref());
-
-        true
-    }
 }
 
 /// Where the preview text sits inside the preview: the screen margin within
@@ -277,7 +177,7 @@ fn preview_viewport(text: TextSettings) -> Option<Viewport> {
 
 /// The preview's first page, laid out by the reader like a book's, in the
 /// card font when it is the one chosen and has loaded.
-fn layout_preview(text: TextSettings, card: Option<&CardFont>) -> Option<Page<'static>> {
+pub(crate) fn layout_preview(text: TextSettings, card: Option<&CardFont>) -> Option<Page<'static>> {
     let path = ArchivePath::new("preview.xhtml").ok()?;
     let chapter = Chapter::parse(PREVIEW_XHTML, path).ok()?;
     let styles = ChapterStyles::defaults(&chapter);

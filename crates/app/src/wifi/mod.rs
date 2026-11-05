@@ -3,8 +3,6 @@ mod saved;
 
 use alloc::{string::String, vec::Vec};
 
-use crate::paging::{PageTurn, Pager};
-
 pub(crate) use password::{JoinStatus, PasswordEntry};
 use saved::SavedNetwork;
 pub(crate) use saved::SavedNetworks;
@@ -111,26 +109,7 @@ pub(crate) struct WifiState {
     scan: WifiScanStatus,
     scan_requested: bool,
     revision: u64,
-    pager: Pager,
     password_entry: Option<PasswordEntry>,
-    menu: Option<NetworkMenu>,
-}
-
-/// The long-press menu of a saved network.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NetworkMenu {
-    ssid: String,
-    top: i32,
-}
-
-impl NetworkMenu {
-    pub(crate) fn ssid(&self) -> &str {
-        &self.ssid
-    }
-
-    pub(crate) const fn top(&self) -> i32 {
-        self.top
-    }
 }
 
 impl WifiState {
@@ -149,19 +128,6 @@ impl WifiState {
     /// Changes whenever the scan list is replaced.
     pub(crate) const fn revision(&self) -> u64 {
         self.revision
-    }
-
-    /// The page of networks shown when `rows_per_page` fit on one.
-    pub(crate) fn page(&self, rows_per_page: usize) -> usize {
-        self.pager.page(self.networks.len(), rows_per_page)
-    }
-
-    pub(crate) fn page_count(&self, rows_per_page: usize) -> usize {
-        Pager::page_count(self.networks.len(), rows_per_page)
-    }
-
-    pub(crate) fn turn_page(&mut self, turn: PageTurn, rows_per_page: usize) -> bool {
-        self.pager.turn(turn, self.networks.len(), rows_per_page)
     }
 
     pub(crate) fn apply_saved(&mut self, saved: SavedNetworks) -> bool {
@@ -200,28 +166,6 @@ impl WifiState {
         };
 
         self.change_saved(|saved| saved.set_auto_connect(ssid, !auto_connect))
-    }
-
-    /// Opens the menu of a saved network, `top` px down the screen.
-    pub(crate) fn open_menu(&mut self, ssid: &str, top: i32) -> bool {
-        if self.saved.find(ssid).is_none() {
-            return false;
-        }
-
-        self.menu = Some(NetworkMenu {
-            ssid: String::from(ssid),
-            top,
-        });
-
-        true
-    }
-
-    pub(crate) fn menu(&self) -> Option<&NetworkMenu> {
-        self.menu.as_ref()
-    }
-
-    pub(crate) fn close_menu(&mut self) -> bool {
-        self.menu.take().is_some()
     }
 
     pub(crate) fn begin_password_entry(&mut self, ssid: String) {
@@ -276,7 +220,6 @@ impl WifiState {
     /// Replaces the list, back on its first page.
     pub(crate) fn finish_scan(&mut self, result: Result<Vec<WifiNetwork>, WifiScanError>) {
         self.revision += 1;
-        self.pager = Pager::default();
 
         let Ok(mut found) = result else {
             self.scan = WifiScanStatus::Failed;

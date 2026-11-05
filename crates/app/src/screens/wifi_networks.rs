@@ -1,9 +1,9 @@
-use alloc::vec;
+use alloc::{string::String, vec, vec::Vec};
 
 use inkpaper_ui::prelude::*;
 
 use crate::{
-    InkPaperApp, SavedNetworks, WifiNetwork, WifiScanStatus,
+    InkPaperApp, WifiScanStatus,
     app::{Back, Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView, SideButton},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
@@ -14,8 +14,7 @@ use crate::{
         },
     },
     input::LongPressEvent,
-    paging,
-    wifi::NetworkMenu,
+    paging::{self, PageTurn, Pager},
 };
 
 /// The list fills the space under Scan Again.
@@ -45,13 +44,42 @@ impl WifiMenuItem {
     }
 }
 
+/// A network row on the page shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NetworkRow {
+    /// its index among the networks found
+    index: usize,
+    ssid: String,
+    /// Connected, Saved, Password or Open
+    value: &'static str,
+    /// saved networks have a menu
+    known: bool,
+}
+
+/// The long-press menu of a saved network, `top` px down the screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NetworkMenu {
+    ssid: String,
+    top: i32,
+}
+
+/// What the menu shows of its network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MenuState {
+    top: i32,
+    connected: bool,
+    auto_connect: bool,
+}
+
 /// Networks around the device, like crosspoint's WiFi selection. Tapping a
 /// network connects or disconnects it; holding a saved one opens its menu.
 #[component]
-pub(crate) struct WifiNetworksScreen<'a> {
-    networks: &'a [WifiNetwork],
-    saved: &'a SavedNetworks,
-    menu: Option<&'a NetworkMenu>,
+pub(crate) struct WifiNetworksScreen {
+    /// the networks on the page shown
+    rows: Vec<NetworkRow>,
+    /// whether the scan found none
+    empty: bool,
+    menu: Option<MenuState>,
     on_network: Listener<ActivateEvent>,
     on_hold_network: Listener<LongPressEvent>,
     on_menu_item: Listener<ActivateEvent>,
@@ -65,35 +93,30 @@ pub(crate) struct WifiNetworksScreen<'a> {
     on_scan: Listener<ActivateEvent>,
 }
 
-impl RenderOnce for WifiNetworksScreen<'_> {
+impl RenderOnce for WifiNetworksScreen {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let status = match self.scan {
             WifiScanStatus::Idle | WifiScanStatus::Scanning => "Scanning...",
             WifiScanStatus::Failed => "Could not scan for networks",
-            WifiScanStatus::Done if self.networks.is_empty() => "No networks found",
+            WifiScanStatus::Done if self.empty => "No networks found",
             WifiScanStatus::Done => "Tap to connect, hold for options",
         };
 
         let menu = self.menu.map(|menu| {
-            let connected = self
-                .saved
-                .connected()
-                .is_some_and(|network| network.ssid() == menu.ssid());
-            let auto_connect = self
-                .saved
-                .find(menu.ssid())
-                .is_some_and(|network| network.auto_connect());
-
             PopupMenu::from(PopupMenuProps {
-                anchor_y: menu.top(),
+                anchor_y: menu.top,
                 items: vec![
                     MenuItem {
-                        label: if connected { "Disconnect" } else { "Connect" },
+                        label: if menu.connected {
+                            "Disconnect"
+                        } else {
+                            "Connect"
+                        },
                         value: "",
                     },
                     MenuItem {
                         label: "Auto-connect",
-                        value: if auto_connect { "On" } else { "Off" },
+                        value: if menu.auto_connect { "On" } else { "Off" },
                     },
                     MenuItem {
                         label: "Change Password",
@@ -151,12 +174,10 @@ impl RenderOnce for WifiNetworksScreen<'_> {
 
                 <div class="absolute left-0 top-[202px] w-[480px] h-{list_height}">
                     <NetworkList
-                        networks={self.networks}
-                        saved={self.saved}
+                        rows={self.rows}
                         on_network={self.on_network}
                         on_hold_network={self.on_hold_network}
                         revision={self.revision}
-                        page={self.page}
                     />
                 </div>
 
@@ -170,56 +191,238 @@ impl RenderOnce for WifiNetworksScreen<'_> {
 
 /// One page of the networks.
 #[component]
-struct NetworkList<'a> {
-    networks: &'a [WifiNetwork],
-    saved: &'a SavedNetworks,
+struct NetworkList {
+    rows: Vec<NetworkRow>,
     on_network: Listener<ActivateEvent>,
     on_hold_network: Listener<LongPressEvent>,
     revision: u64,
-    page: usize,
 }
 
-impl RenderOnce for NetworkList<'_> {
+impl RenderOnce for NetworkList {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let saved = self.saved;
-        let connected = saved.connected().map(|network| network.ssid());
         let (on_network, on_hold_network) = (self.on_network, self.on_hold_network);
 
         // every row shares one listener per event; the row's id says which
-        paging::page_column(
-            ("wifi-network-list", self.revision),
-            self.networks,
-            self.page,
-            ROWS_PER_PAGE,
-            move |(index, network)| {
-                let known = saved.find(network.ssid()).is_some();
+        let rows = self.rows.into_iter().map(move |row| {
+            let item = SettingsValueRow::from(SettingsValueRowProps {
+                id: ("wifi-network", row.index),
+                label: row.ssid.into(),
+                value: row.value.into(),
+                selected: false,
+                on_activate: Some(on_network),
+            });
 
-                let value = if connected == Some(network.ssid()) {
-                    "Connected"
-                } else if known {
-                    "Saved"
-                } else if network.secured() {
-                    "Password"
-                } else {
-                    "Open"
-                };
+            // only saved networks have a menu
+            div()
+                .id(("wifi-network-hold", row.index))
+                .when(row.known, |hold| hold.on::<LongPressEvent>(on_hold_network))
+                .w_full()
+                .child(item)
+        });
 
-                let row = SettingsValueRow::from(SettingsValueRowProps {
-                    id: ("wifi-network", index),
-                    label: network.ssid().into(),
-                    value: value.into(),
-                    selected: false,
-                    on_activate: Some(on_network),
-                });
+        div()
+            .id(("wifi-network-list", self.revision))
+            .w_full()
+            .h_full()
+            .flex()
+            .flex_col()
+            .children(rows)
+    }
+}
 
-                // only saved networks have a menu
-                div()
-                    .id(("wifi-network-hold", index))
-                    .when(known, |hold| hold.on::<LongPressEvent>(on_hold_network))
-                    .w_full()
-                    .child(row)
-            },
-        )
+/// What the WiFi screen asks of the app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WifiNetworksEvent {
+    Back,
+    Scan,
+    /// network `0` of the networks found was tapped
+    Network(usize),
+    /// an item of the open menu was tapped. The menu stays open until the app
+    /// closes it, so it can tell which network the menu is for
+    MenuItem(WifiMenuItem),
+}
+
+/// the WiFi screen. As its own entity it keeps its page and the menu held open. The
+/// networks found and saved are the app's, which handles taps as
+/// [`WifiNetworksEvent`]s.
+pub(crate) struct WifiNetworksView {
+    app: Entity<InkPaperApp>,
+    pager: Pager,
+    menu: Option<NetworkMenu>,
+    /// how many networks there were at the last render
+    network_count: usize,
+}
+
+impl EventEmitter<WifiNetworksEvent> for WifiNetworksView {}
+
+impl WifiNetworksView {
+    pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
+        Self {
+            app,
+            pager: Pager::showing(0),
+            menu: None,
+            network_count: 0,
+        }
+    }
+
+    /// Shows the first page, as after a scan.
+    pub(crate) fn reset_page(&mut self, cx: &mut Context<'_, Self>) {
+        if self.pager != Pager::default() {
+            self.pager = Pager::default();
+            cx.notify();
+        }
+    }
+
+    pub(crate) const fn menu_open(&self) -> bool {
+        self.menu.is_some()
+    }
+
+    /// The network the open menu is for.
+    pub(crate) fn menu_ssid(&self) -> Option<&str> {
+        self.menu.as_ref().map(|menu| menu.ssid.as_str())
+    }
+
+    /// Returns whether the menu was open.
+    pub(crate) fn close_menu(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        let closed = self.menu.take().is_some();
+
+        if closed {
+            cx.notify();
+        }
+
+        closed
+    }
+
+    /// While the menu is open, the list behind it doesn't turn pages.
+    pub(crate) fn turn_page(&mut self, turn: PageTurn, cx: &mut Context<'_, Self>) {
+        if self.menu.is_none() && self.pager.turn(turn, self.network_count, ROWS_PER_PAGE) {
+            cx.notify();
+        }
+    }
+
+    fn activate_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        cx.emit(WifiNetworksEvent::Back);
+    }
+
+    fn activate_scan(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        cx.emit(WifiNetworksEvent::Scan);
+    }
+
+    fn activate_network(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        if let Some(index) = event.index() {
+            cx.emit(WifiNetworksEvent::Network(index));
+        }
+    }
+
+    /// Holding a saved network opens its menu next to the finger.
+    fn long_press_network(&mut self, event: &LongPressEvent, cx: &mut Context<'_, Self>) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
+        let ssid = self.app.read(cx, |app| {
+            let network = app.wifi.networks().get(index)?;
+
+            app.wifi
+                .saved()
+                .find(network.ssid())
+                .map(|_| String::from(network.ssid()))
+        });
+
+        if let Some(ssid) = ssid {
+            self.menu = Some(NetworkMenu {
+                ssid,
+                top: event.position().y.get(),
+            });
+            cx.notify();
+        }
+    }
+
+    fn activate_menu_item(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        if let Some(item) = event.index().and_then(WifiMenuItem::from_index) {
+            cx.emit(WifiNetworksEvent::MenuItem(item));
+        }
+    }
+
+    fn activate_dismiss_menu(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.close_menu(cx);
+    }
+}
+
+impl Render for WifiNetworksView {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let pager = self.pager;
+        let menu = self.menu.as_ref();
+
+        let (rows, network_count, menu, scan, revision, battery) = self.app.read(cx, |app| {
+            let networks = app.wifi.networks();
+            let saved = app.wifi.saved();
+            let connected = saved.connected().map(|network| network.ssid());
+            let page = pager.page(networks.len(), ROWS_PER_PAGE);
+
+            let rows = networks
+                .iter()
+                .enumerate()
+                .skip(page * ROWS_PER_PAGE)
+                .take(ROWS_PER_PAGE)
+                .map(|(index, network)| {
+                    let known = saved.find(network.ssid()).is_some();
+
+                    let value = if connected == Some(network.ssid()) {
+                        "Connected"
+                    } else if known {
+                        "Saved"
+                    } else if network.secured() {
+                        "Password"
+                    } else {
+                        "Open"
+                    };
+
+                    NetworkRow {
+                        index,
+                        ssid: String::from(network.ssid()),
+                        value,
+                        known,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let menu = menu.map(|menu| MenuState {
+                top: menu.top,
+                connected: connected == Some(menu.ssid.as_str()),
+                auto_connect: saved
+                    .find(&menu.ssid)
+                    .is_some_and(|network| network.auto_connect()),
+            });
+
+            (
+                rows,
+                networks.len(),
+                menu,
+                app.wifi.scan_status(),
+                app.wifi.revision(),
+                app.battery_indicator,
+            )
+        });
+
+        self.network_count = network_count;
+
+        WifiNetworksScreen::from(WifiNetworksScreenProps {
+            rows,
+            empty: network_count == 0,
+            menu,
+            on_network: cx.listener(Self::activate_network),
+            on_hold_network: cx.listener(Self::long_press_network),
+            on_menu_item: cx.listener(Self::activate_menu_item),
+            on_dismiss_menu: cx.listener(Self::activate_dismiss_menu),
+            scan,
+            revision,
+            page: pager.page(network_count, ROWS_PER_PAGE),
+            page_count: Pager::page_count(network_count, ROWS_PER_PAGE),
+            battery,
+            on_back: cx.listener(Self::activate_back),
+            on_scan: cx.listener(Self::activate_scan),
+        })
     }
 }
 
@@ -232,19 +435,21 @@ impl ScreenLifecycle for WifiNetworksRoute {
         }
     }
 
-    fn exit(&self, app: &mut InkPaperApp, _exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {
-        app.wifi.close_menu();
+    fn exit(&self, app: &mut InkPaperApp, _exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
+        app.wifi_networks_view
+            .update(cx, WifiNetworksView::close_menu);
     }
 
     // Back closes an open menu first
     fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
-        if !app.wifi.close_menu() {
-            return Back::Leave;
+        if app
+            .wifi_networks_view
+            .update(cx, WifiNetworksView::close_menu)
+        {
+            return Back::Handled;
         }
 
-        cx.notify();
-
-        Back::Handled
+        Back::Leave
     }
 }
 
@@ -257,13 +462,8 @@ impl ScreenInput for WifiNetworksRoute {
         button: SideButton,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        if app.wifi.menu().is_some() {
-            return;
-        }
-
-        paging::turn_page_by_button(app, button, cx, |app, turn| {
-            app.wifi.turn_page(turn, ROWS_PER_PAGE)
-        });
+        app.wifi_networks_view
+            .update(cx, |view, cx| view.turn_page(button.into(), cx));
     }
 
     fn drag(
@@ -273,47 +473,31 @@ impl ScreenInput for WifiNetworksRoute {
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        if app.wifi.menu().is_some() {
+        let view = app.wifi_networks_view;
+
+        if view.read(cx, WifiNetworksView::menu_open) {
             return;
         }
 
-        paging::turn_page_by_swipe(app, origin, position, cx, |app, turn| {
-            app.wifi.turn_page(turn, ROWS_PER_PAGE)
-        });
+        // once a swipe turns a page, the rest of the touch turns nothing more
+        if let Some(turn) = paging::swipe_turn(origin, position) {
+            view.update(cx, |view, cx| view.turn_page(turn, cx));
+            app.capture_pointer();
+        }
     }
 
     fn long_press(
         &self,
         app: &mut InkPaperApp,
         _position: Point,
-        _cx: &mut Context<'_, InkPaperApp>,
+        cx: &mut Context<'_, InkPaperApp>,
     ) -> bool {
-        app.wifi.menu().is_some()
+        app.wifi_networks_view.read(cx, WifiNetworksView::menu_open)
     }
 }
 
 impl ScreenView for WifiNetworksRoute {
-    fn render<'a>(
-        &self,
-        app: &'a InkPaperApp,
-        cx: &mut Context<'_, InkPaperApp>,
-    ) -> AnyElement<'a> {
-        WifiNetworksScreen::from(WifiNetworksScreenProps {
-            networks: app.wifi.networks(),
-            saved: app.wifi.saved(),
-            menu: app.wifi.menu(),
-            on_network: cx.listener(InkPaperApp::activate_wifi_network),
-            on_hold_network: cx.listener(InkPaperApp::long_press_wifi_network),
-            on_menu_item: cx.listener(InkPaperApp::activate_wifi_menu_item),
-            on_dismiss_menu: cx.listener(InkPaperApp::dismiss_wifi_menu),
-            scan: app.wifi.scan_status(),
-            revision: app.wifi.revision(),
-            page: app.wifi.page(ROWS_PER_PAGE),
-            page_count: app.wifi.page_count(ROWS_PER_PAGE),
-            battery: app.battery_indicator,
-            on_back: cx.listener(InkPaperApp::activate_back),
-            on_scan: cx.listener(InkPaperApp::activate_wifi_scan),
-        })
-        .into_any_element()
+    fn render<'a>(&self, app: &'a InkPaperApp, _: &mut Context<'_, InkPaperApp>) -> AnyElement<'a> {
+        app.wifi_networks_view.into_any_element()
     }
 }

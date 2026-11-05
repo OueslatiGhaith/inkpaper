@@ -15,6 +15,8 @@ use crate::{
     screens::{
         clock_settings::TimezoneView,
         settings::SettingsView,
+        text_settings::TextSettingsView,
+        wifi_networks::WifiNetworksView,
         wifi_password::{PasswordFieldView, PasswordKeyboardView},
     },
     screens::{
@@ -126,6 +128,8 @@ pub struct InkPaperApp {
     /// the local time and timezone slider of the clock settings
     pub(crate) timezone: Entity<TimezoneView>,
     pub(crate) settings: Entity<SettingsView>,
+    pub(crate) text_settings_view: Entity<TextSettingsView>,
+    pub(crate) wifi_networks_view: Entity<WifiNetworksView>,
     control_center: ControlCenterState,
     /// set once a long press took the current touch
     pointer_captured: bool,
@@ -154,6 +158,10 @@ impl InkPaperApp {
         cx.subscribe(timezone, Self::on_step_timezone);
         let settings = cx.new(|_| SettingsView::new(app));
         cx.subscribe(settings, Self::on_settings_event);
+        let text_settings_view = cx.new(|_| TextSettingsView::new(app));
+        cx.subscribe(text_settings_view, Self::on_text_settings_event);
+        let wifi_networks_view = cx.new(|_| WifiNetworksView::new(app));
+        cx.subscribe(wifi_networks_view, Self::on_wifi_networks_event);
 
         Self {
             navigation: NavigationStack::default(),
@@ -178,6 +186,8 @@ impl InkPaperApp {
             password_keyboard,
             timezone,
             settings,
+            text_settings_view,
+            wifi_networks_view,
             control_center: ControlCenterState::default(),
             pointer_captured: false,
             pointer_held: false,

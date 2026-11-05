@@ -77,8 +77,25 @@ pub(crate) fn turn_page_by_button(
     }
 }
 
-/// Turns a page for a vertical swipe: up for the next, down for the previous.
-/// Once a swipe turns a page, the rest of the touch turns nothing more.
+/// The page a touch dragged from `origin` to `position` turns: up for the next,
+/// down for the previous, or none before it travels far enough vertically.
+pub(crate) fn swipe_turn(origin: Point, position: Point) -> Option<PageTurn> {
+    let dx = position.x.get() - origin.x.get();
+    let dy = position.y.get() - origin.y.get();
+
+    if dy.abs() < SWIPE_DISTANCE || dy.abs() <= dx.abs() {
+        return None;
+    }
+
+    Some(if dy < 0 {
+        PageTurn::Next
+    } else {
+        PageTurn::Previous
+    })
+}
+
+/// Turns a page for a vertical swipe, see [`swipe_turn`]. Once a swipe turns a
+/// page, the rest of the touch turns nothing more.
 pub(crate) fn turn_page_by_swipe(
     app: &mut InkPaperApp,
     origin: Point,
@@ -86,17 +103,8 @@ pub(crate) fn turn_page_by_swipe(
     cx: &mut Context<'_, InkPaperApp>,
     turn_page: impl FnOnce(&mut InkPaperApp, PageTurn) -> bool,
 ) {
-    let dx = position.x.get() - origin.x.get();
-    let dy = position.y.get() - origin.y.get();
-
-    if dy.abs() < SWIPE_DISTANCE || dy.abs() <= dx.abs() {
+    let Some(turn) = swipe_turn(origin, position) else {
         return;
-    }
-
-    let turn = if dy < 0 {
-        PageTurn::Next
-    } else {
-        PageTurn::Previous
     };
 
     if turn_page(app, turn) {

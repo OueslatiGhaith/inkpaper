@@ -9,8 +9,6 @@ impl ReaderState {
         }
 
         self.chrome.menu_open = true;
-        self.chrome.text_picker = None;
-        self.chrome.link_picker = false;
 
         true
     }
@@ -21,28 +19,12 @@ impl ReaderState {
         }
 
         self.chrome.menu_open = false;
-        self.chrome.text_picker = None;
-        self.chrome.link_picker = false;
 
         true
     }
 
     pub(crate) fn menu_open(&self) -> bool {
         self.chrome.menu_open
-    }
-
-    pub(crate) const fn text_picker(&self) -> Option<TextSetting> {
-        self.chrome.text_picker
-    }
-
-    pub(crate) fn open_text_picker(&mut self, setting: TextSetting) -> bool {
-        if !self.chrome.menu_open || self.chrome.text_picker.is_some() {
-            return false;
-        }
-
-        self.chrome.text_picker = Some(setting);
-
-        true
     }
 
     /// Flips a toggle row of the Text panel.
@@ -56,22 +38,17 @@ impl ReaderState {
             .is_some_and(|text| self.request_text_settings(text))
     }
 
-    pub(crate) fn close_text_picker(&mut self) -> bool {
-        self.chrome.text_picker.take().is_some()
-    }
-
-    /// Applies option `index` of the open picker and closes it. The page under
-    /// the drawer repaginates, so it previews the choice.
-    pub(crate) fn choose_text_option(&mut self, index: usize) -> bool {
-        let Some(setting) = self.chrome.text_picker.take() else {
+    /// Applies option `index` of `setting`'s picker in the drawer. The page under
+    /// the drawer repaginates, so it previews the choice. Returns whether the
+    /// settings changed.
+    pub(crate) fn choose_text_option(&mut self, setting: TextSetting, index: usize) -> bool {
+        if !self.chrome.menu_open {
             return false;
-        };
-
-        if let Some(text) = setting.choose(self.text, index) {
-            self.request_text_settings(text);
         }
 
-        true
+        setting
+            .choose(self.text, index)
+            .is_some_and(|text| self.request_text_settings(text))
     }
 
     /// The settings the Text panel shows: the ones being repaginated to, then

@@ -8,11 +8,10 @@ use crate::{
     components::{
         header::battery_icon,
         icon::{Icon, IconKind, IconProps},
-        option_picker::{OptionPicker, OptionPickerProps},
         reader_menu::ReaderDrawer,
     },
     dictionaries::LookupState,
-    reader::{DEFINITION_HEIGHT, DEFINITION_WIDTH, PageBounds, TextSetting, TextSettings},
+    reader::{DEFINITION_HEIGHT, DEFINITION_WIDTH, PageBounds},
 };
 
 /// crosspoint's link tap box: the link's text with 6 px of slack, and at
@@ -42,14 +41,6 @@ pub(crate) struct ReaderScreen<'a> {
     menu_open: bool,
     /// where the page sits, from the screen margin
     page: PageBounds,
-    /// the open Text panel picker, with the settings it starts from
-    text_picker: Option<(TextSetting, TextSettings)>,
-    on_text_option: Listener<ActivateEvent>,
-    on_dismiss_text_picker: Listener<ActivateEvent>,
-    /// the open Links and footnotes picker's options
-    link_picker: Option<Vec<String>>,
-    on_link_option: Listener<ActivateEvent>,
-    on_dismiss_link_picker: Listener<ActivateEvent>,
     menu: Entity<ReaderDrawer>,
 
     /// the tap boxes of the page's links, on screen
@@ -144,26 +135,6 @@ impl RenderOnce for ReaderScreen<'_> {
                         />
 
                         {self.menu}
-
-                        {#if let Some((setting, text)) = self.text_picker}
-                            <OptionPicker
-                                title={setting.label()}
-                                options={setting.options()}
-                                selected={setting.selected(text)}
-                                on_option={self.on_text_option}
-                                on_dismiss={self.on_dismiss_text_picker}
-                            />
-                        {/if}
-
-                        {#if let Some(options) = self.link_picker}
-                            <OptionPicker
-                                title="Links and footnotes"
-                                options={options}
-                                selected={None}
-                                on_option={self.on_link_option}
-                                on_dismiss={self.on_dismiss_link_picker}
-                            />
-                        {/if}
                     {/if}
                 {:else}
                     <div class="absolute left-5 top-[220px] w-[440px] flex flex-col items-center gap-2.5">
@@ -565,15 +536,6 @@ impl ScreenView for ReaderRoute {
             },
             on_link: cx.listener(InkPaperApp::activate_reader_link),
             definition: definition_card(app, cx),
-            text_picker: app
-                .reader
-                .text_picker()
-                .map(|setting| (setting, app.reader.menu_text_settings())),
-            on_text_option: cx.listener(InkPaperApp::activate_reader_text_option),
-            on_dismiss_text_picker: cx.listener(InkPaperApp::activate_dismiss_reader_text_picker),
-            link_picker: app.reader.link_picker(),
-            on_link_option: cx.listener(InkPaperApp::activate_reader_link_option),
-            on_dismiss_link_picker: cx.listener(InkPaperApp::activate_dismiss_reader_link_picker),
             menu: app.reader_menu,
             on_close_menu: cx.listener(InkPaperApp::activate_close_reader_menu),
             on_previous_page: cx.listener(InkPaperApp::activate_previous_reader_page),
