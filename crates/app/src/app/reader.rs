@@ -5,17 +5,13 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
-    ReaderPreferencesRequest, ReaderRequest,
+    components::reader_menu::{DrawerEvent, ReaderDrawer},
     fonts::reader_family,
-    reader::{JumpTarget, ReaderMenuTab, TableOfContents, TextSetting, TextSettings, TocEntry},
+    reader::{JumpTarget, TableOfContents, TextSettings, TocEntry},
     reader_page::paint_reader_page,
 };
 
 impl InkPaperApp {
-    pub(crate) fn take_reader_request(&mut self) -> Option<ReaderRequest> {
-        self.reader.take_request()
-    }
-
     pub(crate) fn apply_reader_document(
         &mut self,
         document: ReaderDocument,
@@ -94,13 +90,38 @@ impl InkPaperApp {
         }
     }
 
-    /// renders the reader's drawer again, for changes nothing else shows
-    pub(crate) fn refresh_reader_menu(&self, cx: &mut Context<'_, Self>) {
-        self.reader_menu.update(cx, |_, cx| cx.notify()).ok();
+    /// What the reader drawer's taps mean.
+    pub(super) fn on_reader_drawer_event(
+        &mut self,
+        _: Entity<ReaderDrawer>,
+        event: &DrawerEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let changed = match *event {
+            DrawerEvent::Close => return self.close_reader_menu(cx),
+            DrawerEvent::OpenTextSettings => {
+                self.reader.close_menu();
+                self.open_screen(Screen::TextSettings, cx);
+                return;
+            }
+            DrawerEvent::SelectChapter => return self.show_table_of_contents(cx),
+            DrawerEvent::ToggleTextSetting(setting) => self.reader.toggle_text_setting(setting),
+            // the page under the drawer repaginates, so it previews the choice
+            DrawerEvent::ChooseTextOption(setting, index) => {
+                self.reader.choose_text_option(setting, index)
+            }
+            DrawerEvent::FollowLink(index) => self.reader.follow_page_link(index),
+        };
+
+        if changed {
+            cx.notify();
+        }
     }
 
+    /// Opens the drawer on its Text tab.
     pub(crate) fn open_reader_menu(&mut self, cx: &mut Context<'_, Self>) {
         if self.reader.open_menu() {
+            self.reader_menu.update(cx, ReaderDrawer::reset);
             cx.notify();
         }
     }
@@ -111,28 +132,8 @@ impl InkPaperApp {
         }
     }
 
-    pub(crate) fn activate_reader_text_tab(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.reader.select_menu_tab(ReaderMenuTab::Text) {
-            self.refresh_reader_menu(cx);
-        }
-    }
-
-    pub(crate) fn activate_reader_more_tab(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.reader.select_menu_tab(ReaderMenuTab::More) {
-            self.refresh_reader_menu(cx);
-        }
-    }
-
     /// Opens the chapter list; like crosspoint, the drawer does not come back.
-    pub(crate) fn show_table_of_contents(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+    fn show_table_of_contents(&mut self, cx: &mut Context<'_, Self>) {
         self.reader.close_menu();
         self.open_screen(Screen::TableOfContents, cx);
     }
@@ -196,64 +197,6 @@ impl InkPaperApp {
         self.close_reader_menu(cx);
     }
 
-    /// Opens the picker of a Text panel row, or flips a toggle row. The Font
-    /// row opens the Text Settings screen, like crosspoint's.
-    pub(crate) fn activate_reader_text_row(
-        &mut self,
-        event: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(&setting) = event
-            .index()
-            .and_then(|index| TextSetting::PANEL.get(index))
-        else {
-            return;
-        };
-
-        if setting == TextSetting::Font {
-            self.reader.close_menu();
-            self.open_screen(Screen::TextSettings, cx);
-            return;
-        }
-
-        // like crosspoint's checkbox rows, toggles flip in place
-        let changed = if setting.is_toggle() {
-            self.reader.toggle_text_setting(setting)
-        } else {
-            self.reader.open_text_picker(setting)
-        };
-
-        if changed {
-            cx.notify();
-            self.refresh_reader_menu(cx);
-        }
-    }
-
-    pub(crate) fn activate_reader_text_option(
-        &mut self,
-        event: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(index) = event.index() else {
-            return;
-        };
-
-        if self.reader.choose_text_option(index) {
-            cx.notify();
-            self.refresh_reader_menu(cx);
-        }
-    }
-
-    pub(crate) fn activate_dismiss_reader_text_picker(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.reader.close_text_picker() {
-            cx.notify();
-        }
-    }
-
     pub(crate) fn apply_reader_repagination(
         &mut self,
         path: String,
@@ -303,38 +246,6 @@ impl InkPaperApp {
         self.reader.finish_jump_request(&path, target)
     }
 
-    /// Opens Links and footnotes from the drawer's More tab.
-    pub(crate) fn activate_reader_links(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        if self.reader.open_links() {
-            cx.notify();
-            self.refresh_reader_menu(cx);
-        }
-    }
-
-    pub(crate) fn activate_reader_link_option(
-        &mut self,
-        event: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(index) = event.index() else {
-            return;
-        };
-
-        if self.reader.choose_link(index) {
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn activate_dismiss_reader_link_picker(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.reader.close_link_picker() {
-            cx.notify();
-        }
-    }
-
     /// Follows a link tapped on the page; the element's index says which.
     pub(crate) fn activate_reader_link(
         &mut self,
@@ -348,10 +259,6 @@ impl InkPaperApp {
         if self.reader.follow_link(index) {
             cx.notify();
         }
-    }
-
-    pub(crate) fn take_reader_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
-        self.reader.take_preferences_request()
     }
 
     pub(crate) fn apply_reader_preferences(

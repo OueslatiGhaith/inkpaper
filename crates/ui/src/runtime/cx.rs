@@ -1,7 +1,13 @@
 use core::{any::TypeId, cell::Cell};
 
 use super::dependencies::{DependencyStore, NoDependencies, Source};
-use crate::{EntityId, callback::CallbackStore, entity::EntityStore, global::GlobalStore};
+use crate::{
+    EntityId,
+    callback::CallbackStore,
+    emitter::{EventStore, NoEvents},
+    entity::EntityStore,
+    global::GlobalStore,
+};
 
 /// the runtime tables that rendering, listeners and entity updates reach through a
 /// [`Context`](crate::Context)
@@ -14,6 +20,8 @@ pub struct RuntimeCx<'a> {
     pub(crate) all_dirty: &'a Cell<bool>,
     /// what each entity read while rendering
     pub(crate) dependencies: &'a dyn DependencyStore,
+    /// subscriptions, and the events waiting for delivery
+    pub(crate) events: &'a dyn EventStore,
     /// the entity being rendered, which owns the callbacks registered meanwhile
     pub(crate) rendering: Option<EntityId>,
 }
@@ -31,8 +39,13 @@ impl<'a> RuntimeCx<'a> {
             callbacks,
             all_dirty,
             dependencies: &NoDependencies,
+            events: &NoEvents,
             rendering: None,
         }
+    }
+
+    pub(crate) fn with_events(self, events: &'a dyn EventStore) -> Self {
+        Self { events, ..self }
     }
 
     pub(crate) fn with_dependencies(self, dependencies: &'a dyn DependencyStore) -> Self {

@@ -1,0 +1,25 @@
+use inkpaper_ui::prelude::*;
+
+use super::{InkPaperApp, Screen};
+use crate::screens::settings::{SettingsEvent, SettingsView};
+
+impl InkPaperApp {
+    /// What the Settings screen's taps mean.
+    pub(super) fn on_settings_event(
+        &mut self,
+        settings: Entity<SettingsView>,
+        event: &SettingsEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match *event {
+            SettingsEvent::Back => self.navigate_back(cx),
+            SettingsEvent::OpenClock => self.open_screen(Screen::ClockSettings, cx),
+            SettingsEvent::OpenText => self.open_screen(Screen::TextSettings, cx),
+            SettingsEvent::ChooseDictionary(index) => {
+                if self.choose_dictionary_option(index, cx) {
+                    settings.update(cx, SettingsView::close_dictionary_picker);
+                }
+            }
+        }
+    }
+}

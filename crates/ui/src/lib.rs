@@ -22,6 +22,7 @@ mod color;
 mod context;
 mod dither;
 mod element;
+mod emitter;
 mod entity;
 mod float;
 mod font;
@@ -50,6 +51,7 @@ pub use color::*;
 pub use context::*;
 pub use dither::*;
 pub use element::*;
+pub use emitter::{EventEmitter, EventError};
 #[cfg(feature = "alloc")]
 pub use entity::HeapEntityArena;
 #[cfg(test)]
@@ -73,9 +75,9 @@ pub use rendering::*;
 pub use resources::*;
 pub use runtime::*;
 pub(crate) use slot_table::BorrowKind;
-pub use storage::{FixedElementStates, FixedFrame, FixedStorage, RuntimeStorage};
+pub use storage::{FixedElementStates, FixedEvents, FixedFrame, FixedStorage, RuntimeStorage};
 #[cfg(feature = "alloc")]
-pub use storage::{HeapElementStates, HeapFrame, HeapStorage};
+pub use storage::{HeapElementStates, HeapEvents, HeapFrame, HeapStorage};
 #[cfg(test)]
 pub(crate) use storage::{TestElementStates, TestFrame, TestStorage};
 pub use style::*;
@@ -90,19 +92,19 @@ pub mod prelude {
     pub use crate::{
         ActivateEvent, AffineTransform, AppContext, Canvas, CanvasPainter, Children, Color,
         ComponentChildren, ComponentSlot, ConditionalElementExt, Context, DamageRegion, Div,
-        Either, Element, ElementId, EmptySlot, Entity, EventTarget, FillRule, FixedStorage,
-        FontFamilyId, FontId, FontResources, FontStyle, FontWeight, FrameBuildError, Global,
-        GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError, IdentifiableElementExt, Image,
-        ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint, ImagePosition, ImageRegistry,
-        ImageRegistryError, ImageResource, ImageSampling, ImageSource, IntoElement, Invalidation,
-        LineHeight, Listener, Luminance, MountCx, MountError, NoChildren, NodeId, Offset, OnEvent,
-        PaintCx, PaintReport, PaintResources, ParentElement, ParentElementChildrenExt, PathCommand,
-        PathFill, PathStroke, Pixels, Point, Rect, Render, RenderInvalidation, RenderOnce,
-        RenderRuntimeApi, ResourceRuntimeApi, Runtime, RuntimeApi, RuntimeStorage, Size,
-        StatefulInteractiveElementExt, StrokeCap, StrokeJoin, Style, Styled, Svg, SvgFill,
-        SvgPaint, SvgPath, SvgSource, SvgStroke, SvgViewBox, TextAlign, TextDarkness, TextMaxLines,
-        TextOverflow, TextStyled, TextWrap, VectorPath, VectorPoint, canvas, div, image, px, svg,
-        text,
+        Either, Element, ElementId, EmptySlot, Entity, EventEmitter, EventTarget, FillRule,
+        FixedStorage, FontFamilyId, FontId, FontResources, FontStyle, FontWeight, FrameBuildError,
+        FramePhase, Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError,
+        IdentifiableElementExt, Image, ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint,
+        ImagePosition, ImageRegistry, ImageRegistryError, ImageResource, ImageSampling,
+        ImageSource, IntoElement, Invalidation, LineHeight, Listener, Luminance, MountCx,
+        MountError, NoChildren, NodeId, Offset, OnEvent, PaintCx, PaintReport, PaintResources,
+        ParentElement, ParentElementChildrenExt, PathCommand, PathFill, PathStroke, Pixels, Point,
+        Rect, Render, RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourceRuntimeApi,
+        Runtime, RuntimeApi, RuntimeStorage, Size, StatefulInteractiveElementExt, StrokeCap,
+        StrokeJoin, Style, Styled, Svg, SvgFill, SvgPaint, SvgPath, SvgSource, SvgStroke,
+        SvgViewBox, TextAlign, TextDarkness, TextMaxLines, TextOverflow, TextStyled, TextWrap,
+        VectorPath, VectorPoint, canvas, div, image, px, svg, text,
     };
 
     #[cfg(feature = "alloc")]

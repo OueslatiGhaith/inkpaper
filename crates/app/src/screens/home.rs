@@ -68,7 +68,7 @@ impl RenderOnce for HomeScreen<'_> {
 pub(crate) struct HomeRoute;
 
 impl ScreenLifecycle for HomeRoute {
-    fn enter(&self, app: &mut InkPaperApp, _: Entry) {
+    fn enter(&self, app: &mut InkPaperApp, _: Entry, _cx: &mut Context<'_, InkPaperApp>) {
         app.reading_history.request_load();
         app.request_current_cover();
     }

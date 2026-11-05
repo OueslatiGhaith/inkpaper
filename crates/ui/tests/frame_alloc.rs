@@ -35,6 +35,7 @@ impl<
     type Globals = HeapGlobalArena<GLOBALS>;
     type Frame = HeapFrame<NODES, TEXT_BYTES>;
     type ElementStates = HeapElementStates<STATES>;
+    type Events = HeapEvents;
 }
 
 std::thread_local! {
@@ -435,21 +436,21 @@ fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
         .create(|cx| {
             let me = cx.entity();
 
-            assert_eq!(me.read(cx, |_| ()), Err(EntityAccessError::NotReady));
+            assert_eq!(me.try_read(cx, |_| ()), Err(EntityAccessError::NotReady));
 
-            cx.new(|_| 42u32).unwrap()
+            cx.new(|_| 42u32)
         })
         .unwrap();
 
     runtime
         .update(parent, |child, cx| {
-            assert_eq!(child.read(cx, |value| *value), Ok(42));
+            assert_eq!(child.read(cx, |value| *value), 42);
 
             for index in 0..32 {
-                cx.new(|_| index).unwrap();
+                cx.new(|_| index);
             }
 
-            assert_eq!(child.read(cx, |value| *value), Ok(42));
+            assert_eq!(child.read(cx, |value| *value), 42);
         })
         .unwrap();
 
@@ -458,7 +459,7 @@ fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
     let result = catch_unwind(AssertUnwindSafe(|| {
         let _ = runtime.create::<u32>(|cx| {
             escaped.set(Some(cx.entity()));
-            cx.new(|_| 99u32).unwrap();
+            cx.new(|_| 99u32);
             panic!("constructor failure");
         });
     }));
@@ -479,7 +480,7 @@ fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
 
     runtime
         .update(parent, |child, cx| {
-            assert_eq!(child.read(cx, |value| *value), Ok(42))
+            assert_eq!(child.read(cx, |value| *value), 42)
         })
         .unwrap();
 }

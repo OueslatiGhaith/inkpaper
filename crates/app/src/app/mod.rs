@@ -6,7 +6,7 @@ use crate::{
     components::header::BatteryIndicator,
     components::{
         control_center::{ControlCenter, ControlCenterProps, FrontlightPanel},
-        reader_menu::ReaderMenuView,
+        reader_menu::ReaderDrawer,
     },
     control_center::ControlCenterState,
     dictionaries::{DictionarySettings, WordLookup},
@@ -14,6 +14,9 @@ use crate::{
     reading_history::ReadingHistoryState,
     screens::{
         clock_settings::TimezoneView,
+        settings::SettingsView,
+        text_settings::TextSettingsView,
+        wifi_networks::WifiNetworksView,
         wifi_password::{PasswordFieldView, PasswordKeyboardView},
     },
     screens::{
@@ -31,6 +34,8 @@ mod history;
 mod input;
 mod navigation;
 mod reader;
+mod request;
+mod settings;
 mod system;
 mod text_settings;
 mod wifi;
@@ -38,6 +43,7 @@ mod wifi;
 pub(crate) use input::{ScreenInput, SideButton};
 use navigation::NavigationStack;
 pub(crate) use navigation::{Back, Entry, Exit, ScreenLifecycle};
+pub(crate) use request::AppRequest;
 
 use crate::screens::{
     browse_files::BrowseFilesRoute, clock_settings::ClockSettingsRoute,
@@ -98,7 +104,7 @@ pub struct InkPaperApp {
     pub(crate) reader: ReaderState,
     /// the Text Settings screen
     pub(crate) text_settings: TextSettingsState,
-    /// the dictionary picker of Settings
+    /// the dictionaries Settings offers
     pub(crate) dictionaries: DictionarySettings,
     /// the word looked up in the dictionary, and its definition
     pub(crate) lookup: WordLookup,
@@ -117,12 +123,15 @@ pub struct InkPaperApp {
     /// the frontlight controls of the control center
     frontlight_panel: Entity<FrontlightPanel>,
     /// the reader's drawer
-    pub(crate) reader_menu: Entity<ReaderMenuView>,
+    pub(crate) reader_menu: Entity<ReaderDrawer>,
     /// the Wi-Fi password field and its keyboard
     pub(crate) password_field: Entity<PasswordFieldView>,
     pub(crate) password_keyboard: Entity<PasswordKeyboardView>,
     /// the local time and timezone slider of the clock settings
     pub(crate) timezone: Entity<TimezoneView>,
+    pub(crate) settings: Entity<SettingsView>,
+    pub(crate) text_settings_view: Entity<TextSettingsView>,
+    pub(crate) wifi_networks_view: Entity<WifiNetworksView>,
     control_center: ControlCenterState,
     /// set once a long press took the current touch
     pointer_captured: bool,
@@ -134,17 +143,27 @@ pub struct InkPaperApp {
 
 impl InkPaperApp {
     pub fn new(cx: &mut Context<'_, Self>) -> Self {
-        let battery = cx.new(|_| BatteryState::default()).unwrap();
-        let rtc = cx.new(|_| RtcState::default()).unwrap();
-        let battery_indicator = cx.new(|_| BatteryIndicator::new(battery)).unwrap();
-        let reader_battery_icon = cx.new(|_| ReaderBatteryIcon::default()).unwrap();
-        let frontlight = cx.new(|_| FrontlightState::default()).unwrap();
-        let frontlight_panel = cx.new(|_| FrontlightPanel::new(frontlight)).unwrap();
+        let battery = cx.new(|_| BatteryState::default());
+        let rtc = cx.new(|_| RtcState::default());
+        let battery_indicator = cx.new(|_| BatteryIndicator::new(battery));
+        let reader_battery_icon = cx.new(|_| ReaderBatteryIcon::default());
+        let frontlight = cx.new(|_| FrontlightState::default());
+        let frontlight_panel = cx.new(|_| FrontlightPanel::new(frontlight));
         let app = cx.entity();
-        let reader_menu = cx.new(|_| ReaderMenuView::new(app)).unwrap();
-        let password_field = cx.new(|_| PasswordFieldView::new(app)).unwrap();
-        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app)).unwrap();
-        let timezone = cx.new(|_| TimezoneView::new(app)).unwrap();
+        let reader_menu = cx.new(|_| ReaderDrawer::new(app));
+        cx.subscribe(reader_menu, Self::on_reader_drawer_event);
+        let password_field = cx.new(|_| PasswordFieldView::new(app));
+        cx.subscribe(password_field, Self::on_toggle_password);
+        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app));
+        cx.subscribe(password_keyboard, Self::on_password_key);
+        let timezone = cx.new(|_| TimezoneView::new(app));
+        cx.subscribe(timezone, Self::on_step_timezone);
+        let settings = cx.new(|_| SettingsView::new(app));
+        cx.subscribe(settings, Self::on_settings_event);
+        let text_settings_view = cx.new(|_| TextSettingsView::new(app));
+        cx.subscribe(text_settings_view, Self::on_text_settings_event);
+        let wifi_networks_view = cx.new(|_| WifiNetworksView::new(app));
+        cx.subscribe(wifi_networks_view, Self::on_wifi_networks_event);
 
         Self {
             navigation: NavigationStack::default(),
@@ -168,6 +187,9 @@ impl InkPaperApp {
             password_field,
             password_keyboard,
             timezone,
+            settings,
+            text_settings_view,
+            wifi_networks_view,
             control_center: ControlCenterState::default(),
             pointer_captured: false,
             pointer_held: false,
@@ -187,11 +209,7 @@ impl Render for InkPaperApp {
         let control_center_open = self.control_center.is_open();
         // read only while shown, so the app renders again for them only then
         let (battery, clock) = if control_center_open {
-            let battery = self
-                .battery
-                .read(cx, |battery| battery.get())
-                .ok()
-                .flatten();
+            let battery = self.battery.read(cx, |battery| battery.get());
 
             (battery, self.local_clock(cx))
         } else {

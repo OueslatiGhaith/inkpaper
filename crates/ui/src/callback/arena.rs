@@ -538,7 +538,7 @@ mod tests {
             );
 
             cx.listener(move |_: &mut Counter, _: &ActivateEvent, cx| {
-                let result = counter.update(cx, |_, _| {});
+                let result = counter.try_update(cx, |_, _| {});
 
                 assert!(matches!(result, Err(EntityAccessError::BorrowConflict)));
             })
@@ -575,12 +575,10 @@ mod tests {
             cx.listener(move |counter: &mut Counter, _: &ActivateEvent, cx| {
                 counter.value += 1;
 
-                settings
-                    .update(cx, |settings, cx| {
-                        settings.dirty = true;
-                        cx.notify();
-                    })
-                    .unwrap();
+                settings.update(cx, |settings, cx| {
+                    settings.dirty = true;
+                    cx.notify();
+                });
             })
         };
 
@@ -774,11 +772,9 @@ mod tests {
             let cx = Context::new_in(parent, runtime);
 
             // the parent's render mounts a listener and a canvas that target the child
-            child
-                .update(&cx, |_, cx| {
-                    (cx.listener(Counter::increment), cx.canvas(|_, _| {}))
-                })
-                .unwrap()
+            child.update(&cx, |_, cx| {
+                (cx.listener(Counter::increment), cx.canvas(|_, _| {}))
+            })
         };
 
         // outside rendering, the target owns the callback

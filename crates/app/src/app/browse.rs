@@ -1,13 +1,9 @@
 use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
-use crate::{BrowseListing, BrowseRequest};
+use crate::BrowseListing;
 
 impl InkPaperApp {
-    pub(crate) fn take_browse_request(&mut self) -> Option<BrowseRequest> {
-        self.browser.take_request()
-    }
-
     pub(crate) fn apply_browse_listing(
         &mut self,
         listing: BrowseListing,

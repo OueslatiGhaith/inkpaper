@@ -32,9 +32,9 @@ pub(crate) enum Back {
 
 /// Side effects a screen runs as it enters and leaves the navigation stack.
 pub(crate) trait ScreenLifecycle {
-    fn enter(&self, _app: &mut InkPaperApp, _entry: Entry) {}
+    fn enter(&self, _app: &mut InkPaperApp, _entry: Entry, _cx: &mut Context<'_, InkPaperApp>) {}
 
-    fn exit(&self, _app: &mut InkPaperApp, _exit: Exit) {}
+    fn exit(&self, _app: &mut InkPaperApp, _exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {}
 
     fn back(&self, _app: &mut InkPaperApp, _cx: &mut Context<'_, InkPaperApp>) -> Back {
         Back::Leave
@@ -98,8 +98,8 @@ impl InkPaperApp {
             return;
         }
 
-        covered.route().exit(self, Exit::Covered);
-        screen.route().enter(self, Entry::Opened);
+        covered.route().exit(self, Exit::Covered, cx);
+        screen.route().enter(self, Entry::Opened, cx);
 
         cx.notify();
     }
@@ -113,8 +113,8 @@ impl InkPaperApp {
             return;
         };
 
-        closed.route().exit(self, Exit::Closed);
-        self.screen().route().enter(self, Entry::Returned);
+        closed.route().exit(self, Exit::Closed, cx);
+        self.screen().route().enter(self, Entry::Returned, cx);
 
         cx.notify();
     }
@@ -123,7 +123,7 @@ impl InkPaperApp {
         let mut changed = false;
 
         while let Some(closed) = self.navigation.pop() {
-            closed.route().exit(self, Exit::Closed);
+            closed.route().exit(self, Exit::Closed, cx);
             changed = true;
         }
 
@@ -131,7 +131,7 @@ impl InkPaperApp {
             return;
         }
 
-        Screen::Home.route().enter(self, Entry::Returned);
+        Screen::Home.route().enter(self, Entry::Returned, cx);
 
         cx.notify();
     }
@@ -154,10 +154,6 @@ impl InkPaperApp {
 
     pub(crate) fn show_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         self.open_screen(Screen::Settings, cx);
-    }
-
-    pub(crate) fn show_clock_settings(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.open_screen(Screen::ClockSettings, cx);
     }
 
     pub(crate) fn show_wifi_networks(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {

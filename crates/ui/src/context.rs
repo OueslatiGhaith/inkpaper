@@ -1,8 +1,10 @@
 use core::any::TypeId;
 
 use crate::{
-    Canvas, Entity, EntityAllocError, EntityId, Listener, PaintCx, RuntimeCx,
+    Canvas, Entity, EntityAllocError, EntityId, EventEmitter, EventError, Listener, PaintCx,
+    RuntimeCx,
     callback::{CallbackAllocError, register_canvas_callback, register_listener},
+    emitter::{self, Handler},
     entity::create_entity,
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
     runtime::{DependencyStore, Source},
@@ -31,8 +33,25 @@ impl<'a, T> Context<'a, T> {
         self.runtime.notify(self.entity.entity_id());
     }
 
+    /// creates an entity from the state `build` returns. `build` gets the new entity's
+    /// own context, so it can create listeners and child entities.
+    ///
+    /// # Panics
+    ///
+    /// when the entity table is full. See [`Self::try_new`]
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<U>(
+    #[track_caller]
+    pub fn new<U>(&mut self, build: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U>
+    where
+        U: 'static,
+    {
+        match self.try_new(build) {
+            Ok(entity) => entity,
+            Err(error) => panic!("could not allocate entity: {error:?}"),
+        }
+    }
+
+    pub fn try_new<U>(
         &mut self,
         build: impl FnOnce(&mut Context<'_, U>) -> U,
     ) -> Result<Entity<U>, EntityAllocError>
@@ -117,6 +136,61 @@ impl<T: 'static> Context<'_, T> {
         self.try_canvas(callback)
             .unwrap_or_else(|error| panic!("could not allocate canvas callback: {error:?}"))
     }
+
+    /// tells this entity's subscribers that `event` happened. They get it once the
+    /// runtime call running now returns, such as the listener of a tap, so they can
+    /// update this entity.
+    ///
+    /// # Panics
+    ///
+    /// when the queue of events waiting for delivery is full. See [`Self::try_emit`]
+    #[track_caller]
+    pub fn emit<E>(&mut self, event: E)
+    where
+        T: EventEmitter<E>,
+        E: Copy + 'static,
+    {
+        if let Err(error) = self.try_emit(event) {
+            panic!("could not emit event: {error:?}");
+        }
+    }
+
+    pub fn try_emit<E>(&mut self, event: E) -> Result<(), EventError>
+    where
+        T: EventEmitter<E>,
+        E: Copy + 'static,
+    {
+        emitter::emit(self.runtime.events, self.entity_id(), event)
+    }
+
+    /// calls `handler` with this entity, each `E` event `emitter` emits, and its own
+    /// context. Entities live as long as the runtime, and so do subscriptions.
+    ///
+    /// # Panics
+    ///
+    /// when the subscription table is full. See [`Self::try_subscribe`]
+    #[track_caller]
+    pub fn subscribe<U, E>(&mut self, emitter: Entity<U>, handler: Handler<T, U, E>)
+    where
+        U: EventEmitter<E>,
+        E: 'static,
+    {
+        if let Err(error) = self.try_subscribe(emitter, handler) {
+            panic!("could not subscribe: {error:?}");
+        }
+    }
+
+    pub fn try_subscribe<U, E>(
+        &mut self,
+        emitter: Entity<U>,
+        handler: Handler<T, U, E>,
+    ) -> Result<(), EventError>
+    where
+        U: EventEmitter<E>,
+        E: 'static,
+    {
+        emitter::subscribe(self.runtime.events, self.entity, emitter, handler)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -194,18 +268,58 @@ mod tests {
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
 
-        let counter = cx.new(|_| Counter { value: 1 }).unwrap();
+        let counter = cx.new(|_| Counter { value: 1 });
 
-        counter
-            .update(&cx, |counter, cx| {
-                counter.value += 1;
-                cx.notify();
-            })
-            .unwrap();
+        counter.update(&cx, |counter, cx| {
+            counter.value += 1;
+            cx.notify();
+        });
 
-        assert_eq!(counter.read(&cx, |counter| counter.value,), Ok(2));
+        assert_eq!(counter.read(&cx, |counter| counter.value), 2);
         assert!(arena.is_dirty(counter.entity_id()));
         assert!(!arena.is_dirty(root.entity_id()));
+    }
+
+    #[test]
+    fn entity_notify_works_while_the_entity_is_borrowed() {
+        let arena = TestEntityArena::<1024, 16>::default();
+        let callbacks = TestCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
+        let root = arena.insert(Root).unwrap();
+        let all_dirty = Cell::new(false);
+
+        let mut cx = Context::new_in(
+            root,
+            RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
+        );
+
+        let counter = cx.new(|_| Counter { value: 0 });
+
+        counter.update(&cx, |_, cx| counter.notify(cx));
+
+        assert!(arena.is_dirty(counter.entity_id()));
+        assert!(!arena.is_dirty(root.entity_id()));
+    }
+
+    #[test]
+    #[should_panic(expected = "could not read entity: NotReady")]
+    fn reading_an_initializing_entity_panics() {
+        let arena = TestEntityArena::<1024, 16>::default();
+        let callbacks = TestCallbackArena::<1024, 16>::default();
+        let globals = TestGlobalArena::<0, 0>::default();
+        let root = arena.insert(Root).unwrap();
+        let all_dirty = Cell::new(false);
+
+        let mut cx = Context::new_in(
+            root,
+            RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
+        );
+
+        cx.new(|cx| {
+            cx.entity().read(cx, |_| ());
+
+            Counter { value: 0 }
+        });
     }
 
     #[test]
@@ -229,16 +343,14 @@ mod tests {
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
 
-        let parent = cx
-            .new(|cx| {
-                let child = cx.new(|_| Child { value: 123 }).unwrap();
-                Parent { child }
-            })
-            .unwrap();
+        let parent = cx.new(|cx| {
+            let child = cx.new(|_| Child { value: 123 });
+            Parent { child }
+        });
 
-        let child = parent.read(&cx, |parent| parent.child).unwrap();
+        let child = parent.read(&cx, |parent| parent.child);
 
-        assert_eq!(child.read(&cx, |child| child.value,), Ok(123));
+        assert_eq!(child.read(&cx, |child| child.value), 123);
     }
 
     #[test]
@@ -262,19 +374,17 @@ mod tests {
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
 
-        let parent = cx
-            .new(|cx| {
-                let me = cx.entity();
+        let parent = cx.new(|cx| {
+            let me = cx.entity();
 
-                let child = cx.new(|_| Child { parent: me }).unwrap();
+            let child = cx.new(|_| Child { parent: me });
 
-                Parent { child }
-            })
-            .unwrap();
+            Parent { child }
+        });
 
-        let child = parent.read(&cx, |p| p.child).unwrap();
+        let child = parent.read(&cx, |p| p.child);
 
-        let referenced_parent = child.read(&cx, |c| c.parent).unwrap();
+        let referenced_parent = child.read(&cx, |c| c.parent);
 
         assert_eq!(referenced_parent, parent);
     }
@@ -292,17 +402,15 @@ mod tests {
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
 
-        let _ = cx
-            .new(|cx| {
-                let me = cx.entity();
+        cx.new(|cx| {
+            let me = cx.entity();
 
-                assert!(matches!(
-                    me.read(cx, |_| ()),
-                    Err(EntityAccessError::NotReady),
-                ));
+            assert!(matches!(
+                me.try_read(cx, |_| ()),
+                Err(EntityAccessError::NotReady),
+            ));
 
-                Counter { value: 0 }
-            })
-            .unwrap();
+            Counter { value: 0 }
+        });
     }
 }

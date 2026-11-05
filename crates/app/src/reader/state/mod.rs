@@ -12,7 +12,7 @@ use inkpaper_reader::{Page, ReadingPosition};
 use crate::{
     ReaderDocument, ReaderPreferences, ReaderPreferencesRequest, ReadingHistoryEntry,
     paging::Pager,
-    reader::{TableOfContents, TextSetting, TextSettings, WordSelection},
+    reader::{TableOfContents, TextSettings, WordSelection},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,21 +84,9 @@ struct PendingChapterRequest {
     direction: ReaderChapterDirection,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum ReaderMenuTab {
-    #[default]
-    Text,
-    More,
-}
-
 #[derive(Debug, Default)]
 struct ReaderChromeState {
     menu_open: bool,
-    menu_tab: ReaderMenuTab,
-    /// the Text panel row whose picker is open
-    text_picker: Option<TextSetting>,
-    /// whether the Links and footnotes picker is open
-    link_picker: bool,
     page_label: String,
     progress_label: String,
 }

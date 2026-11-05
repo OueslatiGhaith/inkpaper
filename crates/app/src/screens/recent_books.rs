@@ -111,7 +111,7 @@ impl RenderOnce for RecentBookList<'_> {
 pub(crate) struct RecentBooksRoute;
 
 impl ScreenLifecycle for RecentBooksRoute {
-    fn enter(&self, app: &mut InkPaperApp, _: Entry) {
+    fn enter(&self, app: &mut InkPaperApp, _: Entry, _cx: &mut Context<'_, InkPaperApp>) {
         app.reading_history.request_load();
     }
 }

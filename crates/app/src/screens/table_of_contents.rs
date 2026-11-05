@@ -120,7 +120,7 @@ impl RenderOnce for TocList<'_> {
 pub(crate) struct TableOfContentsRoute;
 
 impl ScreenLifecycle for TableOfContentsRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, _cx: &mut Context<'_, InkPaperApp>) {
         // opens on the page holding the chapter being read
         if entry == Entry::Opened {
             app.reader.request_table_of_contents();

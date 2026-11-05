@@ -15,7 +15,7 @@ use crate::{
     gesture::wheel_input,
     platform::SimulatorPlatform,
     radio::SimulatedRadio,
-    render::{DISPLAY_SIZE_EG, rebuild_ui, render_pending_ui, ui_point},
+    render::{DISPLAY_SIZE_EG, render_ui, ui_point},
     runtime::new_runtime,
 };
 
@@ -45,7 +45,7 @@ fn main() {
 
     let mut display = SimulatorDisplay::<Rgb888>::new(DISPLAY_SIZE_EG);
 
-    rebuild_ui(&mut runtime, &mut display);
+    render_ui(&mut runtime, &mut display);
 
     let output_settings = OutputSettingsBuilder::new().scale(1).build();
 
@@ -64,11 +64,11 @@ fn main() {
         if app_service.has_deferred_work() {
             future::block_on(app_service.service_pending(&mut runtime, app))
                 .expect("application service must remain available");
-            render_pending_ui(&mut runtime, &mut display);
+            render_ui(&mut runtime, &mut display);
         }
 
         if radio.finish_due(&mut runtime, app) {
-            render_pending_ui(&mut runtime, &mut display);
+            render_ui(&mut runtime, &mut display);
         }
 
         // a mouse button held still long presses
@@ -76,7 +76,7 @@ fn main() {
             send_input(&mut runtime, app, input);
             future::block_on(app_service.service_pending(&mut runtime, app))
                 .expect("application service must remain available");
-            render_pending_ui(&mut runtime, &mut display);
+            render_ui(&mut runtime, &mut display);
         }
 
         for event in window.events() {
@@ -163,7 +163,7 @@ fn main() {
             // reading progress at suspend so page turns do not write the SD card continuously.
             let _ = future::block_on(app_service.flush());
 
-            render_pending_ui(&mut runtime, &mut display);
+            render_ui(&mut runtime, &mut display);
         }
     }
 }

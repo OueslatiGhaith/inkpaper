@@ -575,15 +575,12 @@ fn text_picker_choice_repaginates_and_shows_while_repaginating() {
     assert!(state.apply_document(document));
     let _ = state.take_request();
 
-    // pickers only open from the drawer
-    assert!(!state.open_text_picker(TextSetting::LineSpacing));
+    // pickers only choose from the drawer
+    assert!(!state.choose_text_option(TextSetting::LineSpacing, 3));
     assert!(state.open_menu());
-    assert!(state.open_text_picker(TextSetting::LineSpacing));
-    assert_eq!(state.text_picker(), Some(TextSetting::LineSpacing));
     assert!(state.take_request().is_none());
 
-    assert!(state.choose_text_option(3));
-    assert_eq!(state.text_picker(), None);
+    assert!(state.choose_text_option(TextSetting::LineSpacing, 3));
     assert!(matches!(
         state.take_request(),
         Some(ReaderRequest::RepaginateChapter { text, .. })
@@ -593,12 +590,8 @@ fn text_picker_choice_repaginates_and_shows_while_repaginating() {
         state.menu_text_settings().line_spacing(),
         LineSpacing::ExtraWide
     );
-    assert!(!state.choose_text_option(0));
-
-    // closing the drawer closes an open picker
-    assert!(state.open_text_picker(TextSetting::FontSize));
-    assert!(state.close_menu());
-    assert_eq!(state.text_picker(), None);
+    // no other choice applies while the chapter repaginates
+    assert!(!state.choose_text_option(TextSetting::LineSpacing, 3));
 }
 
 #[test]

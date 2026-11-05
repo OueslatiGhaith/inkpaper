@@ -4,7 +4,7 @@ use inkpaper_ui::FixedStorage;
 use inkpaper_ui::Runtime;
 #[cfg(feature = "alloc")]
 use inkpaper_ui::{
-    HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapFrame, HeapGlobalArena,
+    HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapEvents, HeapFrame, HeapGlobalArena,
     RuntimeStorage,
 };
 
@@ -19,11 +19,12 @@ impl RuntimeStorage for SimulatorStorage {
     type Globals = HeapGlobalArena<8>;
     type Frame = HeapFrame<64, 2_048>;
     type ElementStates = HeapElementStates<256>;
+    type Events = HeapEvents;
 }
 
 #[cfg(not(feature = "alloc"))]
 pub(crate) type SimulatorStorage =
-    FixedStorage<16_384, 32, 8_192, 64, 2_048, 32_768, 256, 2_048, 8>;
+    FixedStorage<16_384, 32, 8_192, 64, 2_048, 32_768, 256, 2_048, 8, 8, 8>;
 
 pub(crate) type SimulatorRuntime<'resources> =
     Runtime<SimulatorStorage, AppResources<'resources, 128, { 16 * 1024 }>>;

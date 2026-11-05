@@ -6,10 +6,19 @@ use crate::{
     InkPaperApp,
     components::{
         drawer_handle::{DrawerHandle, DrawerHandleProps},
+        option_picker::{OptionPicker, OptionPickerProps},
         settings_row::{ListRow, ListRowProps},
     },
-    reader::{ReaderMenuTab, TextSetting, TextSettings},
+    reader::{TextSetting, TextSettings},
 };
+
+/// The drawer's tabs, by their icons in its tab bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ReaderMenuTab {
+    #[default]
+    Text,
+    More,
+}
 
 const CASE_SENSITIVE: SvgSource = include_svg!("assets/icons/lucide/case-sensitive.svg");
 const ELLIPSIS: SvgSource = include_svg!("assets/icons/lucide/ellipsis.svg");
@@ -129,40 +138,196 @@ impl RenderOnce for ReaderMenu {
     }
 }
 
-/// the reader's drawer. As its own entity, a font size preview or a tab switch renders
-/// and paints only the drawer, not the page under it. Its state stays in the app, which
-/// renders it again through [`InkPaperApp::refresh_reader_menu`].
-pub(crate) struct ReaderMenuView {
-    app: Entity<InkPaperApp>,
+/// What the reader's drawer asks of the app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DrawerEvent {
+    Close,
+    /// the Font row opens the Text Settings screen, like crosspoint's
+    OpenTextSettings,
+    /// a toggle row of the Text panel flips in place, like crosspoint's checkboxes
+    ToggleTextSetting(TextSetting),
+    /// option `1` of the picker of setting `0` was chosen
+    ChooseTextOption(TextSetting, usize),
+    SelectChapter,
+    /// entry `0` of Links and footnotes was chosen
+    FollowLink(usize),
 }
 
-impl ReaderMenuView {
+/// The picker the drawer shows over the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DrawerPicker {
+    Text(TextSetting),
+    Links,
+}
+
+/// the reader's drawer. As its own entity, a tab switch or a picker renders and
+/// paints only the drawer, not the page under it. It keeps its tab and its open
+/// picker, and reads the book's settings and links from the app, so it renders again
+/// when they change. It tells the app what was chosen with [`DrawerEvent`]s.
+pub(crate) struct ReaderDrawer {
+    app: Entity<InkPaperApp>,
+    tab: ReaderMenuTab,
+    picker: Option<DrawerPicker>,
+}
+
+impl EventEmitter<DrawerEvent> for ReaderDrawer {}
+
+impl ReaderDrawer {
     pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
-        Self { app }
+        Self {
+            app,
+            tab: ReaderMenuTab::Text,
+            picker: None,
+        }
+    }
+
+    /// Shows the Text tab with no picker, as the drawer opens with.
+    pub(crate) fn reset(&mut self, cx: &mut Context<'_, Self>) {
+        if self.tab != ReaderMenuTab::Text || self.picker.is_some() {
+            self.tab = ReaderMenuTab::Text;
+            self.picker = None;
+            cx.notify();
+        }
+    }
+
+    fn select_tab(&mut self, tab: ReaderMenuTab, cx: &mut Context<'_, Self>) {
+        if self.tab != tab {
+            self.tab = tab;
+            cx.notify();
+        }
+    }
+
+    fn open_picker(&mut self, picker: DrawerPicker, cx: &mut Context<'_, Self>) {
+        if self.picker.is_none() {
+            self.picker = Some(picker);
+            cx.notify();
+        }
+    }
+
+    fn close_picker(&mut self, cx: &mut Context<'_, Self>) -> Option<DrawerPicker> {
+        let closed = self.picker.take();
+
+        if closed.is_some() {
+            cx.notify();
+        }
+
+        closed
+    }
+
+    fn activate_text_tab(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.select_tab(ReaderMenuTab::Text, cx);
+    }
+
+    fn activate_more_tab(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.select_tab(ReaderMenuTab::More, cx);
+    }
+
+    fn activate_close(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        cx.emit(DrawerEvent::Close);
+    }
+
+    fn activate_text_row(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        let Some(&setting) = event
+            .index()
+            .and_then(|index| TextSetting::PANEL.get(index))
+        else {
+            return;
+        };
+
+        if setting == TextSetting::Font {
+            cx.emit(DrawerEvent::OpenTextSettings);
+        } else if setting.is_toggle() {
+            cx.emit(DrawerEvent::ToggleTextSetting(setting));
+        } else {
+            self.open_picker(DrawerPicker::Text(setting), cx);
+        }
+    }
+
+    fn activate_select_chapter(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        cx.emit(DrawerEvent::SelectChapter);
+    }
+
+    /// With one link it follows it, like crosspoint, and with several it lists them.
+    fn activate_links(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        match self.app.read(cx, |app| app.reader.page_link_labels().len()) {
+            0 => {}
+            1 => cx.emit(DrawerEvent::FollowLink(0)),
+            _ => self.open_picker(DrawerPicker::Links, cx),
+        }
+    }
+
+    fn activate_option(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
+        match self.close_picker(cx) {
+            Some(DrawerPicker::Text(setting)) => {
+                cx.emit(DrawerEvent::ChooseTextOption(setting, index));
+            }
+            Some(DrawerPicker::Links) => cx.emit(DrawerEvent::FollowLink(index)),
+            None => {}
+        }
+    }
+
+    fn activate_dismiss_picker(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.close_picker(cx);
     }
 }
 
-impl Render for ReaderMenuView {
+impl Render for ReaderDrawer {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-        // the listeners target the app, so its handlers can render this drawer again
-        // without borrowing it
-        let props = self
-            .app
-            .update(cx, |app, cx| ReaderMenuProps {
-                tab: app.reader.menu_tab(),
-                text: app.reader.menu_text_settings(),
-                font_name: app.reader_font_name(),
-                on_close: cx.listener(InkPaperApp::activate_close_reader_menu),
-                on_text_tab: cx.listener(InkPaperApp::activate_reader_text_tab),
-                on_more_tab: cx.listener(InkPaperApp::activate_reader_more_tab),
-                on_text_row: cx.listener(InkPaperApp::activate_reader_text_row),
-                on_select_chapter: cx.listener(InkPaperApp::show_table_of_contents),
-                has_links: !app.reader.page_links().is_empty(),
-                on_links: cx.listener(InkPaperApp::activate_reader_links),
-            })
-            .expect("the app outlives its reader menu");
+        let picker = self.picker;
+        let (text, font_name, has_links, link_labels) = self.app.read(cx, |app| {
+            let links = app.reader.page_link_labels();
 
-        ReaderMenu::from(props)
+            (
+                app.reader.menu_text_settings(),
+                app.reader_font_name(),
+                !links.is_empty(),
+                (picker == Some(DrawerPicker::Links)).then_some(links),
+            )
+        });
+
+        let menu = ReaderMenu::from(ReaderMenuProps {
+            tab: self.tab,
+            text,
+            font_name,
+            on_close: cx.listener(Self::activate_close),
+            on_text_tab: cx.listener(Self::activate_text_tab),
+            on_more_tab: cx.listener(Self::activate_more_tab),
+            on_text_row: cx.listener(Self::activate_text_row),
+            on_select_chapter: cx.listener(Self::activate_select_chapter),
+            has_links,
+            on_links: cx.listener(Self::activate_links),
+        });
+
+        let picker = match picker {
+            Some(DrawerPicker::Text(setting)) => Some(OptionPicker::from(OptionPickerProps {
+                title: setting.label(),
+                options: setting.options(),
+                selected: setting.selected(text),
+                on_option: cx.listener(Self::activate_option),
+                on_dismiss: cx.listener(Self::activate_dismiss_picker),
+            })),
+            Some(DrawerPicker::Links) => Some(OptionPicker::from(OptionPickerProps {
+                title: "Links and footnotes",
+                options: link_labels.unwrap_or_default(),
+                selected: None,
+                on_option: cx.listener(Self::activate_option),
+                on_dismiss: cx.listener(Self::activate_dismiss_picker),
+            })),
+            None => None,
+        };
+
+        // a zero-size anchor at the screen's corner: the sheet and a picker place
+        // themselves on the screen, and only what they paint is damaged
+        div()
+            .absolute()
+            .left(px(0))
+            .top(px(0))
+            .child(menu)
+            .children(picker)
     }
 }
 

@@ -14,12 +14,15 @@ use crate::{
             SettingsValueRowProps,
         },
     },
-    paging,
+    fonts::{card_for, reader_family},
+    paging::{self, PageTurn, Pager},
     reader::{
         PREVIEW_PADDING, PREVIEW_TEXT_HEIGHT, TextSetting, TextSettings, TextSettingsRow,
-        TextSettingsTab, preview_text_left,
+        TextSettingsTab, layout_preview, preview_text_left,
     },
+    reader_page::paint_page,
 };
+use inkpaper_reader::Page;
 
 /// The preview sits between the header and the tabs, 30% of the screen below
 /// the header like crosspoint's.
@@ -224,17 +227,225 @@ impl RenderOnce for Tab {
     }
 }
 
+/// What the Text Settings screen asks of the app.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum TextSettingsEvent {
+    Back,
+    /// edit the settings to these, saved as the change is made like crosspoint
+    Change(TextSettings),
+}
+
+/// the Text Settings screen. As its own entity it keeps its tab, page, open picker and
+/// the preview laid out from the settings. The settings being edited are the app's,
+/// and changes go to it as [`TextSettingsEvent`]s.
+pub(crate) struct TextSettingsView {
+    app: Entity<InkPaperApp>,
+    tab: TextSettingsTab,
+    /// which page of the tab's rows is shown
+    pager: Pager,
+    picker: Option<TextSetting>,
+    /// how many rows the tab had at the last render
+    row_count: usize,
+    /// the preview's first page, and the settings it was laid out with
+    preview: Option<Page<'static>>,
+    /// the settings and whether the card font had loaded, as the preview was laid out
+    preview_for: Option<(TextSettings, bool)>,
+    preview_family: FontFamilyId,
+}
+
+impl EventEmitter<TextSettingsEvent> for TextSettingsView {}
+
+impl TextSettingsView {
+    pub(crate) fn new(app: Entity<InkPaperApp>) -> Self {
+        Self {
+            app,
+            tab: TextSettingsTab::Font,
+            pager: Pager::default(),
+            picker: None,
+            row_count: 0,
+            preview: None,
+            preview_for: None,
+            preview_family: FontFamilyId::new(0),
+        }
+    }
+
+    /// Shows the Font tab, like crosspoint's screen opens on.
+    pub(crate) fn reset(&mut self, cx: &mut Context<'_, Self>) {
+        self.tab = TextSettingsTab::Font;
+        self.pager = Pager::default();
+        self.picker = None;
+        cx.notify();
+    }
+
+    pub(crate) const fn picker_open(&self) -> bool {
+        self.picker.is_some()
+    }
+
+    /// Returns whether a picker was open.
+    pub(crate) fn close_picker(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        let closed = self.picker.take().is_some();
+
+        if closed {
+            cx.notify();
+        }
+
+        closed
+    }
+
+    /// While a picker is open, the rows behind it don't turn pages.
+    pub(crate) fn turn_page(&mut self, turn: PageTurn, cx: &mut Context<'_, Self>) {
+        if self.picker.is_none() && self.pager.turn(turn, self.row_count, ROWS_PER_PAGE) {
+            cx.notify();
+        }
+    }
+
+    fn change(&self, from: TextSettings, to: Option<TextSettings>, cx: &mut Context<'_, Self>) {
+        if let Some(to) = to.filter(|&to| to != from) {
+            cx.emit(TextSettingsEvent::Change(to));
+        }
+    }
+
+    fn activate_back(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        cx.emit(TextSettingsEvent::Back);
+    }
+
+    fn activate_tab(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        let Some(&tab) = event
+            .index()
+            .and_then(|index| TextSettingsTab::ALL.get(index))
+        else {
+            return;
+        };
+
+        if self.tab != tab {
+            self.tab = tab;
+            self.pager = Pager::default();
+            self.picker = None;
+            cx.notify();
+        }
+    }
+
+    /// Picks a font or size, flips a toggle or opens a setting's picker.
+    fn activate_row(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
+        if self.picker.is_some() {
+            return;
+        }
+
+        let tab = self.tab;
+        let (draft, row) = self.app.read(cx, |app| {
+            let state = &app.text_settings;
+
+            (state.draft(), state.rows(tab).into_iter().nth(index))
+        });
+
+        match row {
+            Some(TextSettingsRow::Font { font, .. }) => {
+                self.change(draft, Some(draft.with_font(font)), cx);
+            }
+            Some(TextSettingsRow::Size(size)) => self.change(draft, draft.with_font_size(size), cx),
+            Some(TextSettingsRow::Setting(setting)) if setting.is_toggle() => {
+                self.change(draft, setting.toggle(draft), cx);
+            }
+            Some(TextSettingsRow::Setting(setting)) => {
+                self.picker = Some(setting);
+                cx.notify();
+            }
+            None => {}
+        }
+    }
+
+    /// Applies option `index` of the open picker and closes it.
+    fn activate_option(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        let Some(index) = event.index() else {
+            return;
+        };
+
+        let Some(setting) = self.picker.take() else {
+            return;
+        };
+        cx.notify();
+
+        let draft = self.app.read(cx, |app| app.text_settings.draft());
+        self.change(draft, setting.choose(draft, index), cx);
+    }
+
+    fn activate_dismiss_picker(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.close_picker(cx);
+    }
+
+    fn paint_preview(&self, paint: &mut PaintCx<'_>) {
+        if let (Some(page), Some((text, _))) = (&self.preview, self.preview_for) {
+            paint_page(page, None, self.preview_family, text, paint);
+        }
+    }
+}
+
+impl Render for TextSettingsView {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let tab = self.tab;
+        let (preview, preview_for, preview_family) = (
+            &mut self.preview,
+            &mut self.preview_for,
+            &mut self.preview_family,
+        );
+
+        let (draft, font_name, rows, battery) = self.app.read(cx, |app| {
+            let state = &app.text_settings;
+            let draft = state.draft();
+
+            // lay the preview out again when the settings or the card font change
+            let key = (draft, card_for(draft.font(), state.card_font()).is_some());
+            if *preview_for != Some(key) {
+                *preview = layout_preview(draft, state.card_font());
+                *preview_for = Some(key);
+                *preview_family = reader_family(draft.font(), state.card_font());
+            }
+
+            (
+                draft,
+                state.font_name(draft.font()),
+                state.rows(tab),
+                app.battery_indicator,
+            )
+        });
+
+        self.row_count = rows.len();
+
+        TextSettingsScreen::from(TextSettingsScreenProps {
+            tab,
+            text: draft,
+            font_name,
+            page: self.pager.page(rows.len(), ROWS_PER_PAGE),
+            page_count: Pager::page_count(rows.len(), ROWS_PER_PAGE),
+            rows,
+            picker: self.picker,
+            preview: cx.canvas(|view: &Self, paint| view.paint_preview(paint)),
+            battery,
+            on_back: cx.listener(Self::activate_back),
+            on_tab: cx.listener(Self::activate_tab),
+            on_row: cx.listener(Self::activate_row),
+            on_option: cx.listener(Self::activate_option),
+            on_dismiss_picker: cx.listener(Self::activate_dismiss_picker),
+        })
+    }
+}
+
 pub(crate) struct TextSettingsRoute;
 
 impl ScreenLifecycle for TextSettingsRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
             app.text_settings.open(app.reader.menu_text_settings());
+            app.text_settings_view.update(cx, TextSettingsView::reset);
         }
     }
 
     /// An open book is laid out again with the new settings.
-    fn exit(&self, app: &mut InkPaperApp, exit: Exit) {
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {
         if exit == Exit::Closed {
             app.reader.request_text_settings(app.text_settings.draft());
         }
@@ -242,8 +453,10 @@ impl ScreenLifecycle for TextSettingsRoute {
 
     /// Back closes an open picker first.
     fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
-        if app.text_settings.close_picker() {
-            cx.notify();
+        if app
+            .text_settings_view
+            .update(cx, TextSettingsView::close_picker)
+        {
             return Back::Handled;
         }
 
@@ -251,7 +464,6 @@ impl ScreenLifecycle for TextSettingsRoute {
     }
 }
 
-// while a picker is open, the rows behind it don't turn pages
 impl ScreenInput for TextSettingsRoute {
     fn side_button(
         &self,
@@ -259,13 +471,8 @@ impl ScreenInput for TextSettingsRoute {
         button: SideButton,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        if app.text_settings.picker().is_some() {
-            return;
-        }
-
-        paging::turn_page_by_button(app, button, cx, |app, turn| {
-            app.text_settings.turn_page(turn, ROWS_PER_PAGE)
-        });
+        app.text_settings_view
+            .update(cx, |view, cx| view.turn_page(button.into(), cx));
     }
 
     fn drag(
@@ -275,40 +482,22 @@ impl ScreenInput for TextSettingsRoute {
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        if app.text_settings.picker().is_some() {
+        let view = app.text_settings_view;
+
+        if view.read(cx, TextSettingsView::picker_open) {
             return;
         }
 
-        paging::turn_page_by_swipe(app, origin, position, cx, |app, turn| {
-            app.text_settings.turn_page(turn, ROWS_PER_PAGE)
-        });
+        // once a swipe turns a page, the rest of the touch turns nothing more
+        if let Some(turn) = paging::swipe_turn(origin, position) {
+            view.update(cx, |view, cx| view.turn_page(turn, cx));
+            app.capture_pointer();
+        }
     }
 }
 
 impl ScreenView for TextSettingsRoute {
-    fn render<'a>(
-        &self,
-        app: &'a InkPaperApp,
-        cx: &mut Context<'_, InkPaperApp>,
-    ) -> AnyElement<'a> {
-        let state = &app.text_settings;
-
-        TextSettingsScreen::from(TextSettingsScreenProps {
-            tab: state.tab(),
-            text: state.draft(),
-            font_name: state.font_name(state.draft().font()),
-            rows: state.rows(),
-            page: state.page(ROWS_PER_PAGE),
-            page_count: state.page_count(ROWS_PER_PAGE),
-            picker: state.picker(),
-            preview: cx.canvas(|app: &InkPaperApp, paint| app.paint_text_settings_preview(paint)),
-            battery: app.battery_indicator,
-            on_back: cx.listener(InkPaperApp::activate_back),
-            on_tab: cx.listener(InkPaperApp::activate_text_settings_tab),
-            on_row: cx.listener(InkPaperApp::activate_text_settings_row),
-            on_option: cx.listener(InkPaperApp::activate_text_settings_option),
-            on_dismiss_picker: cx.listener(InkPaperApp::activate_dismiss_text_settings_picker),
-        })
-        .into_any_element()
+    fn render<'a>(&self, app: &'a InkPaperApp, _: &mut Context<'_, InkPaperApp>) -> AnyElement<'a> {
+        app.text_settings_view.into_any_element()
     }
 }

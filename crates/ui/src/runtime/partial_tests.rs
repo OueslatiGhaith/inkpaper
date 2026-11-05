@@ -91,15 +91,13 @@ impl Render for Shell {
         }
         let mirrored = self
             .mirror_first
-            .then(|| self.first.read(cx, |label| label.text).unwrap());
+            .then(|| self.first.read(cx, |label| label.text));
 
         if self.touch_first {
-            self.first
-                .update(cx, |label, cx| {
-                    label.text = "touched";
-                    cx.notify();
-                })
-                .unwrap();
+            self.first.update(cx, |label, cx| {
+                label.text = "touched";
+                cx.notify();
+            });
         }
 
         div()
@@ -535,6 +533,78 @@ fn reading_an_entity_renders_again_when_it_changes() {
     assert_eq!(fixture.shell_renders(), 3);
 }
 
+/// a parent that renders a child, which shows the parent's title
+struct Titled {
+    title: &'static str,
+    caption: Option<Entity<Caption>>,
+}
+
+impl Render for Titled {
+    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        div().id("titled").children(self.caption)
+    }
+}
+
+struct Caption {
+    parent: Entity<Titled>,
+    renders: u32,
+}
+
+impl Render for Caption {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        self.renders += 1;
+
+        div().child(self.parent.read(cx, |parent| parent.title))
+    }
+}
+
+#[test]
+fn a_child_that_reads_its_parent_renders_again_when_the_parent_changes() {
+    let mut runtime = TestRuntime::default();
+    let parent = runtime
+        .create_root(|cx| {
+            let parent = cx.entity();
+            let caption = cx.new(|_| Caption { parent, renders: 0 });
+
+            Titled {
+                title: "before",
+                caption: Some(caption),
+            }
+        })
+        .unwrap();
+    let caption = runtime
+        .update(parent, |parent, _| parent.caption)
+        .unwrap()
+        .unwrap();
+
+    runtime.set_partial_rebuilds(true);
+    runtime.rebuild().unwrap();
+    runtime.take_invalidation();
+
+    runtime
+        .update(parent, |parent, cx| {
+            parent.title = "after";
+            cx.notify();
+        })
+        .unwrap();
+    assert_eq!(runtime.take_invalidation(), Invalidation::Rebuild);
+    runtime.rebuild().unwrap();
+
+    assert_eq!(runtime.update(caption, |caption, _| caption.renders), Ok(2));
+
+    let frame = runtime.frame();
+    let texts: Vec<&str> = core::iter::successors(runtime.root_node(), |&node| {
+        frame.next_depth_first_node(node)
+    })
+    .filter_map(|node| match frame.node(node).kind {
+        NodeKind::Text { text } => Some(frame.text(text)),
+        _ => None,
+    })
+    .collect();
+
+    assert_eq!(texts, ["after"]);
+}
+
 #[test]
 fn a_render_forgets_what_it_no_longer_reads() {
     let mut fixture = fixture(true);
@@ -592,6 +662,7 @@ fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
 
 const WIDTH: i32 = 80;
 const HEIGHT: i32 = 60;
+const VIEWPORT: Size = Size::new(px(WIDTH), px(HEIGHT));
 
 struct Measurer;
 
@@ -687,9 +758,21 @@ impl Painter for Raster {
     }
 }
 
-/// paints each text as a solid area in a color keyed by the text
+/// measures text as [`Measurer`] does, and paints each text as a solid area in a color
+/// keyed by the text
 #[derive(Default)]
 struct KeyedText;
+
+impl TextMeasurer for KeyedText {
+    fn measure_text(
+        &self,
+        text: &str,
+        style: ResolvedTextStyle,
+        available_width: AvailableSpace,
+    ) -> Size {
+        Measurer.measure_text(text, style, available_width)
+    }
+}
 
 impl PaintResources for KeyedText {
     fn paint_text<P: Painter>(
@@ -723,9 +806,7 @@ impl PaintResources for KeyedText {
 
 impl Fixture {
     fn layout(&mut self) {
-        self.runtime
-            .layout_with_measurer(Size::new(px(WIDTH), px(HEIGHT)), &Measurer)
-            .unwrap();
+        self.runtime.layout(VIEWPORT).unwrap();
     }
 
     /// clears the damage and paints it, as the presenters do
@@ -739,12 +820,9 @@ impl Fixture {
         self.runtime.paint_with_damage(damage, raster).unwrap();
     }
 
-    /// takes the invalidation, rebuilds, lays out and paints the rebuild's damage
+    /// prepares the next frame and paints its damage
     fn present_damage(&mut self, raster: &mut Raster) -> DamageRegion {
-        self.present();
-        self.layout();
-
-        let damage = self.runtime.rebuild_damage();
+        let damage = self.runtime.prepare_frame(VIEWPORT).unwrap();
         self.paint(raster, damage);
 
         damage
@@ -868,4 +946,60 @@ fn full_rebuilds_damage_everything() {
     set_text(&fixture, fixture.second, "changed");
 
     assert!(fixture.present_damage(&mut raster).is_full());
+}
+
+#[test]
+fn preparing_an_unchanged_frame_has_nothing_to_paint() {
+    let (mut fixture, mut raster) = painted_fixture();
+    let mut phases = Vec::new();
+
+    let damage = fixture
+        .runtime
+        .prepare_frame_with(VIEWPORT, |phase| phases.push(phase))
+        .unwrap();
+
+    assert!(damage.is_none());
+    assert!(phases.is_empty());
+
+    set_text(&fixture, fixture.second, "latest");
+    assert!(!fixture.present_damage(&mut raster).is_none());
+    assert!(fixture.runtime.prepare_frame(VIEWPORT).unwrap().is_none());
+}
+
+#[test]
+fn preparing_a_frame_rebuilds_then_lays_out() {
+    let (mut fixture, _) = painted_fixture();
+    let mut phases = Vec::new();
+
+    set_text(&fixture, fixture.second, "latest");
+    let damage = fixture
+        .runtime
+        .prepare_frame_with(VIEWPORT, |phase| phases.push(phase))
+        .unwrap();
+
+    assert_eq!(phases, [FramePhase::Rebuild, FramePhase::Layout]);
+    assert_eq!(fixture.label(fixture.second).0, 2);
+    // the rebuild's damage, narrowed to the label that changed
+    assert_eq!(damage.partial_damage_bounds().y(), px(10));
+}
+
+#[test]
+fn the_first_frame_damages_everything() {
+    let mut runtime = TestRuntime::default();
+    runtime.create_root(|_| Label::new("first")).unwrap();
+    runtime.set_partial_rebuilds(true);
+
+    assert!(runtime.prepare_frame(VIEWPORT).unwrap().is_full());
+}
+
+#[test]
+fn preparing_a_frame_without_a_root_fails() {
+    let mut runtime = TestRuntime::default();
+    let label = runtime.create(|_| Label::new("first")).unwrap();
+    runtime.update(label, |_, cx| cx.notify()).unwrap();
+
+    assert_eq!(
+        runtime.prepare_frame(VIEWPORT),
+        Err(FrameBuildError::RootNotSet)
+    );
 }

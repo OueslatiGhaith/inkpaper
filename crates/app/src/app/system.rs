@@ -3,7 +3,8 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     BatteryStatus, ClockPreferences, ClockStatus, ClockSyncFailure, FrontlightPreferences,
-    FrontlightPreferencesRequest, FrontlightSetting, FrontlightState, UtcOffset, WifiJoinPlan,
+    FrontlightState, UtcOffset,
+    screens::clock_settings::{StepTimezone, TimezoneView},
 };
 
 impl InkPaperApp {
@@ -11,28 +12,23 @@ impl InkPaperApp {
     /// the reader's icon when it changes. Nothing else renders, so reading a book
     /// doesn't wake the display for a new percentage.
     pub fn apply_battery_status(&mut self, battery: BatteryStatus, cx: &mut Context<'_, Self>) {
-        self.battery
-            .update(cx, |state, cx| {
-                if state.set(battery) {
-                    cx.notify();
-                }
-            })
-            .ok();
+        self.battery.update(cx, |state, cx| {
+            if state.set(battery) {
+                cx.notify();
+            }
+        });
         self.reader_battery_icon
-            .update(cx, |icon, cx| icon.set_battery(battery, cx))
-            .ok();
+            .update(cx, |icon, cx| icon.set_battery(battery, cx));
     }
 
     /// Renders again only what read the time, so the RTC's minute ticks don't wake the
     /// display on screens without a clock.
     pub fn apply_clock_status(&mut self, clock: Option<ClockStatus>, cx: &mut Context<'_, Self>) {
-        self.rtc
-            .update(cx, |state, cx| {
-                if state.set(clock) {
-                    cx.notify();
-                }
-            })
-            .ok();
+        self.rtc.update(cx, |state, cx| {
+            if state.set(clock) {
+                cx.notify();
+            }
+        });
     }
 
     /// The RTC's UTC time shifted to the chosen timezone. A render that calls this renders
@@ -42,8 +38,6 @@ impl InkPaperApp {
 
         self.rtc
             .read(cx, |rtc| rtc.get())
-            .ok()
-            .flatten()
             .map(|clock| clock.offset_by(minutes))
     }
 
@@ -57,50 +51,36 @@ impl InkPaperApp {
         }
     }
 
-    /// Shows a timezone while its slider is dragged; release saves it.
+    /// Shows a timezone while its slider is dragged; release saves it. Only the
+    /// clock settings' timezone view shows it while it changes, so only it renders
+    /// again; other screens render again on the way back.
     pub(crate) fn preview_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
         if self.clock.preview_utc_offset(offset) {
-            self.refresh_timezone(cx);
+            self.timezone.notify(cx);
         }
     }
 
+    /// Moves the timezone by the clock settings' slider buttons, and saves it.
+    pub(super) fn on_step_timezone(
+        &mut self,
+        _: Entity<TimezoneView>,
+        &StepTimezone(quarters): &StepTimezone,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let offset = self.clock.utc_offset().step(quarters);
+        self.set_utc_offset(offset, cx);
+    }
+
+    /// Saves a timezone, rendering again what [`Self::preview_utc_offset`] does.
     pub(crate) fn set_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
         if self.clock.set_utc_offset(offset) {
-            self.refresh_timezone(cx);
+            self.timezone.notify(cx);
         }
-    }
-
-    /// renders the clock settings' time and timezone again. Only they show the
-    /// timezone while it changes; other screens render again on the way back
-    pub(crate) fn refresh_timezone(&self, cx: &mut Context<'_, Self>) {
-        self.timezone.update(cx, |_, cx| cx.notify()).ok();
     }
 
     /// Saves a timezone left by a drag. Returns whether there was one.
     pub(crate) fn commit_utc_offset(&mut self) -> bool {
         self.clock.commit()
-    }
-
-    pub(crate) fn activate_decrease_utc_offset(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let offset = self.clock.utc_offset().step(-1);
-        self.set_utc_offset(offset, cx);
-    }
-
-    pub(crate) fn activate_increase_utc_offset(
-        &mut self,
-        _: &ActivateEvent,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let offset = self.clock.utc_offset().step(1);
-        self.set_utc_offset(offset, cx);
-    }
-
-    pub(crate) fn take_clock_preferences_request(&mut self) -> Option<ClockPreferences> {
-        self.clock.take_save_request()
     }
 
     pub(crate) fn activate_sync_clock(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
@@ -113,15 +93,6 @@ impl InkPaperApp {
         if changed {
             cx.notify();
         }
-    }
-
-    /// The networks a requested sync may join.
-    pub(crate) fn take_clock_sync_request(&mut self) -> Option<WifiJoinPlan> {
-        if !self.clock.take_sync_request() {
-            return None;
-        }
-
-        self.wifi.saved().join_plan()
     }
 
     /// Reports how a sync started by the app ended, and which network it
@@ -161,16 +132,14 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
         change: impl FnOnce(&mut FrontlightState) -> bool,
     ) -> bool {
-        self.frontlight
-            .update(cx, |frontlight, cx| {
-                let changed = change(frontlight);
-                if changed {
-                    cx.notify();
-                }
+        self.frontlight.update(cx, |frontlight, cx| {
+            let changed = change(frontlight);
+            if changed {
+                cx.notify();
+            }
 
-                changed
-            })
-            .unwrap_or(false)
+            changed
+        })
     }
 
     /// reads or changes the frontlight's requests, which nothing shows
@@ -178,30 +147,12 @@ impl InkPaperApp {
         &mut self,
         cx: &mut Context<'_, Self>,
         f: impl FnOnce(&mut FrontlightState) -> R,
-    ) -> Option<R> {
-        self.frontlight
-            .update(cx, |frontlight, _| f(frontlight))
-            .ok()
+    ) -> R {
+        self.frontlight.update(cx, |frontlight, _| f(frontlight))
     }
 
     pub fn request_frontlight_apply(&mut self, cx: &mut Context<'_, Self>) {
         self.frontlight_requests(cx, FrontlightState::request_apply);
-    }
-
-    pub(crate) fn take_frontlight_request(
-        &mut self,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<FrontlightSetting> {
-        self.frontlight_requests(cx, FrontlightState::take_request)
-            .flatten()
-    }
-
-    pub(crate) fn take_frontlight_preferences_request(
-        &mut self,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<FrontlightPreferencesRequest> {
-        self.frontlight_requests(cx, FrontlightState::take_preferences_request)
-            .flatten()
     }
 
     /// closes the control center, saving the frontlight it may have changed. Returns

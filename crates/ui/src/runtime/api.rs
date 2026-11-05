@@ -3,9 +3,9 @@ use alloc::boxed::Box;
 
 use crate::{
     Context, DamageRegion, ElementId, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
-    FontRegistryError, FrameBuildError, ImageRegistryError, ImageResource, ImageSource, Offset,
-    PaintError, PaintReport, PaintResources, Painter, Point, RenderInvalidation, Runtime,
-    RuntimeResources, RuntimeStorage, Size, TextMeasurer, callback::ListenerInvokeError,
+    FontRegistryError, FrameBuildError, FramePhase, ImageRegistryError, ImageResource, ImageSource,
+    Offset, PaintError, PaintReport, PaintResources, Painter, Point, Runtime, RuntimeResources,
+    RuntimeStorage, Size, TextMeasurer, callback::ListenerInvokeError,
 };
 
 /// application-facing runtime operations.
@@ -88,15 +88,17 @@ pub trait ResourceRuntimeApi<'resource> {
 pub trait RenderRuntimeApi {
     type Resources: TextMeasurer + PaintResources;
 
-    fn rebuild(&mut self) -> Result<(), FrameBuildError>;
+    /// see [`Runtime::prepare_frame`]
+    fn prepare_frame(&mut self, viewport: Size) -> Result<DamageRegion, FrameBuildError> {
+        self.prepare_frame_with(viewport, |_| ())
+    }
 
-    fn layout(&mut self, viewport: Size) -> Option<Size>;
-
-    fn take_render_invalidation(&self) -> RenderInvalidation;
-
-    /// the damage to paint after a rebuild and the layout that follows it, in place of
-    /// the damage of the taken [`Invalidation::Rebuild`](crate::Invalidation::Rebuild)
-    fn rebuild_damage(&self) -> DamageRegion;
+    /// see [`Runtime::prepare_frame_with`]
+    fn prepare_frame_with<G>(
+        &mut self,
+        viewport: Size,
+        phase: impl FnMut(FramePhase) -> G,
+    ) -> Result<DamageRegion, FrameBuildError>;
 
     fn paint_with_damage<P>(
         &mut self,
@@ -233,20 +235,12 @@ where
 {
     type Resources = RESOURCES;
 
-    fn rebuild(&mut self) -> Result<(), FrameBuildError> {
-        self.rebuild()
-    }
-
-    fn layout(&mut self, viewport: Size) -> Option<Size> {
-        self.layout(viewport)
-    }
-
-    fn take_render_invalidation(&self) -> RenderInvalidation {
-        self.take_render_invalidation()
-    }
-
-    fn rebuild_damage(&self) -> DamageRegion {
-        self.rebuild_damage()
+    fn prepare_frame_with<G>(
+        &mut self,
+        viewport: Size,
+        phase: impl FnMut(FramePhase) -> G,
+    ) -> Result<DamageRegion, FrameBuildError> {
+        self.prepare_frame_with(viewport, phase)
     }
 
     fn paint_with_damage<P>(

@@ -111,7 +111,7 @@ impl RenderOnce for FileTransferScreen {
 pub(crate) struct FileTransferRoute;
 
 impl ScreenLifecycle for FileTransferRoute {
-    fn exit(&self, app: &mut InkPaperApp, exit: Exit) {
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {
         if exit == Exit::Closed {
             app.file_transfer.reset();
         }

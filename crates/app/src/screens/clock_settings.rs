@@ -82,33 +82,40 @@ impl RenderOnce for ClockSettingsScreen<'_> {
     }
 }
 
+/// A timezone slider button was tapped: move the timezone this many quarter hours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StepTimezone(pub i8);
+
 /// the local time and the timezone slider, which shifts it. As their own entity,
-/// dragging the slider or a minute passing renders and paints only these. The app
-/// renders it again through [`InkPaperApp::refresh_timezone`].
+/// dragging the slider or a minute passing renders and paints only these. The
+/// timezone stays in the app, which renders this view again when it changes.
 pub(crate) struct TimezoneView {
     app: Entity<InkPaperApp>,
 }
+
+impl EventEmitter<StepTimezone> for TimezoneView {}
 
 impl TimezoneView {
     pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
         Self { app }
     }
+
+    fn activate_decrease(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        cx.emit(StepTimezone(-1));
+    }
+
+    fn activate_increase(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        cx.emit(StepTimezone(1));
+    }
 }
 
 impl Render for TimezoneView {
     fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-        // the listeners target the app, so its handlers can render this view again
-        let (clock, utc_offset, on_decrease, on_increase) = self
+        let (clock, utc_offset) = self
             .app
-            .update(cx, |app, cx| {
-                (
-                    app.local_clock(cx),
-                    app.clock.utc_offset(),
-                    cx.listener(InkPaperApp::activate_decrease_utc_offset),
-                    cx.listener(InkPaperApp::activate_increase_utc_offset),
-                )
-            })
-            .expect("the app outlives its clock settings");
+            .read(cx, |app| (app.local_clock(cx), app.clock.utc_offset()));
+        let on_decrease = cx.listener(Self::activate_decrease);
+        let on_increase = cx.listener(Self::activate_increase);
 
         let (time, date) = match clock {
             None => (String::from("--:--"), String::from("Time not set")),
@@ -163,7 +170,7 @@ impl Render for TimezoneView {
 pub(crate) struct ClockSettingsRoute;
 
 impl ScreenLifecycle for ClockSettingsRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, _cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
             app.clock.clear_sync_result();
         }
