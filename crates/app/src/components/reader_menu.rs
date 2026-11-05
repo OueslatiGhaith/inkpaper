@@ -137,13 +137,26 @@ impl RenderOnce for ReaderMenu {
     }
 }
 
+/// What the reader's drawer asks of the app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DrawerEvent {
+    Close,
+    /// a Text panel row was tapped
+    OpenTextSetting(TextSetting),
+    SelectChapter,
+    Links,
+}
+
 /// the reader's drawer. As its own entity, a tab switch renders and paints only the
 /// drawer, not the page under it. It keeps its tab, and reads the book's settings and
-/// links from the app, so it renders again when they change.
+/// links from the app, so it renders again when they change. It tells the app what
+/// was tapped with [`DrawerEvent`]s.
 pub(crate) struct ReaderDrawer {
     app: Entity<InkPaperApp>,
     tab: ReaderMenuTab,
 }
+
+impl EventEmitter<DrawerEvent> for ReaderDrawer {}
 
 impl ReaderDrawer {
     pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
@@ -174,27 +187,24 @@ impl ReaderDrawer {
     }
 
     fn activate_close(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.app.update(cx, InkPaperApp::close_reader_menu);
+        cx.emit(DrawerEvent::Close);
     }
 
     fn activate_text_row(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        let Some(&setting) = event
+        if let Some(&setting) = event
             .index()
             .and_then(|index| TextSetting::PANEL.get(index))
-        else {
-            return;
-        };
-
-        self.app
-            .update(cx, |app, cx| app.open_reader_text_setting(setting, cx));
+        {
+            cx.emit(DrawerEvent::OpenTextSetting(setting));
+        }
     }
 
     fn activate_select_chapter(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.app.update(cx, InkPaperApp::show_table_of_contents);
+        cx.emit(DrawerEvent::SelectChapter);
     }
 
     fn activate_links(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.app.update(cx, InkPaperApp::open_reader_links);
+        cx.emit(DrawerEvent::Links);
     }
 }
 

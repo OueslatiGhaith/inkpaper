@@ -6,7 +6,7 @@ use super::{InkPaperApp, Screen};
 use crate::{
     ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
     ReaderPreferencesRequest, ReaderRequest,
-    components::reader_menu::ReaderDrawer,
+    components::reader_menu::{DrawerEvent, ReaderDrawer},
     fonts::reader_family,
     reader::{JumpTarget, TableOfContents, TextSetting, TextSettings, TocEntry},
     reader_page::paint_reader_page,
@@ -95,6 +95,21 @@ impl InkPaperApp {
         }
     }
 
+    /// What the reader drawer's taps mean.
+    pub(super) fn on_reader_drawer_event(
+        &mut self,
+        _: Entity<ReaderDrawer>,
+        event: &DrawerEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match *event {
+            DrawerEvent::Close => self.close_reader_menu(cx),
+            DrawerEvent::OpenTextSetting(setting) => self.open_reader_text_setting(setting, cx),
+            DrawerEvent::SelectChapter => self.show_table_of_contents(cx),
+            DrawerEvent::Links => self.open_reader_links(cx),
+        }
+    }
+
     /// Opens the drawer on its Text tab.
     pub(crate) fn open_reader_menu(&mut self, cx: &mut Context<'_, Self>) {
         if self.reader.open_menu() {
@@ -110,7 +125,7 @@ impl InkPaperApp {
     }
 
     /// Opens the chapter list; like crosspoint, the drawer does not come back.
-    pub(crate) fn show_table_of_contents(&mut self, cx: &mut Context<'_, Self>) {
+    fn show_table_of_contents(&mut self, cx: &mut Context<'_, Self>) {
         self.reader.close_menu();
         self.open_screen(Screen::TableOfContents, cx);
     }
@@ -176,11 +191,7 @@ impl InkPaperApp {
 
     /// Opens the picker of a Text panel row, or flips a toggle row. The Font
     /// row opens the Text Settings screen, like crosspoint's.
-    pub(crate) fn open_reader_text_setting(
-        &mut self,
-        setting: TextSetting,
-        cx: &mut Context<'_, Self>,
-    ) {
+    fn open_reader_text_setting(&mut self, setting: TextSetting, cx: &mut Context<'_, Self>) {
         if setting == TextSetting::Font {
             self.reader.close_menu();
             self.open_screen(Screen::TextSettings, cx);
@@ -273,7 +284,7 @@ impl InkPaperApp {
     }
 
     /// Opens Links and footnotes from the drawer's More tab.
-    pub(crate) fn open_reader_links(&mut self, cx: &mut Context<'_, Self>) {
+    fn open_reader_links(&mut self, cx: &mut Context<'_, Self>) {
         if self.reader.open_links() {
             cx.notify();
         }
