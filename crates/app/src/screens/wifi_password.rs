@@ -52,7 +52,7 @@ impl RenderOnce for WifiPasswordScreen<'_> {
 }
 
 /// what the keyboard shows, to render it again only when that changes
-fn keyboard_look(entry: &PasswordEntry) -> (Layer, bool, bool) {
+pub(crate) fn keyboard_look(entry: &PasswordEntry) -> (Layer, bool, bool) {
     let keyboard = entry.keyboard();
 
     (
@@ -62,13 +62,19 @@ fn keyboard_look(entry: &PasswordEntry) -> (Layer, bool, bool) {
     )
 }
 
+/// The password field's eye was tapped, to show or hide the password.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TogglePassword;
+
 /// the password field and the hint under it. As its own entity, typing renders and
-/// paints only these. The password entry stays in the app, so the keyboard renders
-/// this field again after each key.
+/// paints only these. The password entry stays in the app, which renders this field
+/// again after each key.
 pub(crate) struct PasswordFieldView {
     app: Entity<InkPaperApp>,
     text: String,
 }
+
+impl EventEmitter<TogglePassword> for PasswordFieldView {}
 
 impl PasswordFieldView {
     pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
@@ -79,16 +85,7 @@ impl PasswordFieldView {
     }
 
     fn activate_toggle(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        let toggled = self.app.update(cx, |app, _| {
-            app.wifi
-                .password_entry_mut()
-                .map(PasswordEntry::toggle_shown)
-                .is_some()
-        });
-
-        if toggled {
-            cx.notify();
-        }
+        cx.emit(TogglePassword);
     }
 }
 
@@ -138,40 +135,26 @@ impl Render for PasswordFieldView {
     }
 }
 
+/// A key of the on-screen keyboard was tapped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PressKey(pub Key);
+
 /// the on-screen keyboard. As its own entity, a key that leaves it unchanged renders
 /// and paints only the field.
 pub(crate) struct PasswordKeyboardView {
     app: Entity<InkPaperApp>,
-    field: Entity<PasswordFieldView>,
 }
 
+impl EventEmitter<PressKey> for PasswordKeyboardView {}
+
 impl PasswordKeyboardView {
-    pub(crate) const fn new(app: Entity<InkPaperApp>, field: Entity<PasswordFieldView>) -> Self {
-        Self { app, field }
+    pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
+        Self { app }
     }
 
     fn activate_key(&mut self, event: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        let Some(key) = event.index().and_then(Key::from_code) else {
-            return;
-        };
-
-        // whether the keyboard looks different after the key, when it changed anything
-        let pressed = self.app.update(cx, |app, _| {
-            let entry = app.wifi.password_entry_mut()?;
-            let look = keyboard_look(entry);
-
-            entry.press(key).then(|| keyboard_look(entry) != look)
-        });
-
-        let Some(keyboard_changed) = pressed else {
-            return;
-        };
-
-        // a key changes the field. The keyboard renders again only when it looks
-        // different, such as after Shift
-        self.field.notify(cx);
-        if keyboard_changed {
-            cx.notify();
+        if let Some(key) = event.index().and_then(Key::from_code) {
+            cx.emit(PressKey(key));
         }
     }
 }

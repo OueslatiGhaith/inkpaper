@@ -147,8 +147,11 @@ impl InkPaperApp {
         let reader_menu = cx.new(|_| ReaderDrawer::new(app));
         cx.subscribe(reader_menu, Self::on_reader_drawer_event);
         let password_field = cx.new(|_| PasswordFieldView::new(app));
-        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app, password_field));
+        cx.subscribe(password_field, Self::on_toggle_password);
+        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app));
+        cx.subscribe(password_keyboard, Self::on_password_key);
         let timezone = cx.new(|_| TimezoneView::new(app));
+        cx.subscribe(timezone, Self::on_step_timezone);
         let settings = cx.new(|_| SettingsView::new(app));
         cx.subscribe(settings, Self::on_settings_event);
 

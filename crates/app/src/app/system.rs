@@ -4,6 +4,7 @@ use super::{InkPaperApp, Screen};
 use crate::{
     BatteryStatus, ClockPreferences, ClockStatus, ClockSyncFailure, FrontlightPreferences,
     FrontlightPreferencesRequest, FrontlightSetting, FrontlightState, UtcOffset, WifiJoinPlan,
+    screens::clock_settings::{StepTimezone, TimezoneView},
 };
 
 impl InkPaperApp {
@@ -57,6 +58,17 @@ impl InkPaperApp {
         if self.clock.preview_utc_offset(offset) {
             self.timezone.notify(cx);
         }
+    }
+
+    /// Moves the timezone by the clock settings' slider buttons, and saves it.
+    pub(super) fn on_step_timezone(
+        &mut self,
+        _: Entity<TimezoneView>,
+        &StepTimezone(quarters): &StepTimezone,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let offset = self.clock.utc_offset().step(quarters);
+        self.set_utc_offset(offset, cx);
     }
 
     /// Saves a timezone, rendering again what [`Self::preview_utc_offset`] does.

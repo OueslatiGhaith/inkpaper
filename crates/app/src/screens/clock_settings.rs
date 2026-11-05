@@ -82,37 +82,30 @@ impl RenderOnce for ClockSettingsScreen<'_> {
     }
 }
 
+/// A timezone slider button was tapped: move the timezone this many quarter hours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StepTimezone(pub i8);
+
 /// the local time and the timezone slider, which shifts it. As their own entity,
 /// dragging the slider or a minute passing renders and paints only these. The
-/// timezone stays in the app, which renders this view again for slider drags.
+/// timezone stays in the app, which renders this view again when it changes.
 pub(crate) struct TimezoneView {
     app: Entity<InkPaperApp>,
 }
+
+impl EventEmitter<StepTimezone> for TimezoneView {}
 
 impl TimezoneView {
     pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
         Self { app }
     }
 
-    /// moves the timezone `quarters` quarter hours and saves it
-    fn step(&mut self, quarters: i8, cx: &mut Context<'_, Self>) {
-        let changed = self.app.update(cx, |app, _| {
-            let offset = app.clock.utc_offset().step(quarters);
-
-            app.clock.set_utc_offset(offset)
-        });
-
-        if changed {
-            cx.notify();
-        }
-    }
-
     fn activate_decrease(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.step(-1, cx);
+        cx.emit(StepTimezone(-1));
     }
 
     fn activate_increase(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        self.step(1, cx);
+        cx.emit(StepTimezone(1));
     }
 }
 

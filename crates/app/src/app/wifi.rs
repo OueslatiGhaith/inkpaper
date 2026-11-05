@@ -5,7 +5,13 @@ use inkpaper_ui::prelude::*;
 use super::{InkPaperApp, Screen};
 use crate::{
     SavedNetworks, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError,
-    input::LongPressEvent, screens::wifi_networks::WifiMenuItem,
+    input::LongPressEvent,
+    screens::{
+        wifi_networks::WifiMenuItem,
+        wifi_password::{
+            PasswordFieldView, PasswordKeyboardView, PressKey, TogglePassword, keyboard_look,
+        },
+    },
 };
 
 impl InkPaperApp {
@@ -169,6 +175,44 @@ impl InkPaperApp {
     pub(crate) fn dismiss_wifi_menu(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
         if self.wifi.close_menu() {
             cx.notify();
+        }
+    }
+
+    /// Shows or hides the password typed.
+    pub(super) fn on_toggle_password(
+        &mut self,
+        field: Entity<PasswordFieldView>,
+        _: &TogglePassword,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(entry) = self.wifi.password_entry_mut() {
+            entry.toggle_shown();
+            field.notify(cx);
+        }
+    }
+
+    /// Types a key of the password keyboard.
+    pub(super) fn on_password_key(
+        &mut self,
+        keyboard: Entity<PasswordKeyboardView>,
+        &PressKey(key): &PressKey,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(entry) = self.wifi.password_entry_mut() else {
+            return;
+        };
+
+        let look = keyboard_look(entry);
+        if !entry.press(key) {
+            return;
+        }
+
+        // a key changes the field. The keyboard renders again only when it looks
+        // different, such as after Shift
+        let keyboard_changed = keyboard_look(entry) != look;
+        self.password_field.notify(cx);
+        if keyboard_changed {
+            keyboard.notify(cx);
         }
     }
 
