@@ -3,13 +3,18 @@ use alloc::{string::String, vec::Vec};
 use minicbor::{Decode, Encode};
 
 use super::{Darkness, LineSpacing, ParagraphAlignment, ReaderFont, ScreenMargin, TextSettings};
-use crate::storage::{self, StorageError};
+use crate::{
+    resume::ResumeLimit,
+    storage::{self, StorageError},
+};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReaderPreferences {
     text: TextSettings,
     /// the chosen dictionary's index in the ones found at startup
     dictionary: Option<u8>,
+    /// how long after sleep the book read then opens again at boot
+    resume_limit: ResumeLimit,
 }
 
 impl ReaderPreferences {
@@ -17,11 +22,23 @@ impl ReaderPreferences {
         Self {
             text,
             dictionary: None,
+            resume_limit: ResumeLimit::Always,
         }
     }
 
     pub const fn with_dictionary(self, dictionary: Option<u8>) -> Self {
         Self { dictionary, ..self }
+    }
+
+    pub const fn with_resume_limit(self, resume_limit: ResumeLimit) -> Self {
+        Self {
+            resume_limit,
+            ..self
+        }
+    }
+
+    pub const fn resume_limit(self) -> ResumeLimit {
+        self.resume_limit
     }
 
     pub const fn text(self) -> TextSettings {
@@ -53,6 +70,7 @@ impl ReaderPreferences {
             antialiasing: Some(self.text.antialiasing()),
             font: font_name.map(String::from),
             dictionary: dictionary_name.map(String::from),
+            resume_limit: Some(self.resume_limit.index()),
         };
 
         Ok(storage::encode(&stored)?)
@@ -109,7 +127,14 @@ impl ReaderPreferences {
                     .unwrap_or_default(),
             );
 
-        Ok(Self::new(text).with_dictionary(stored.dictionary.as_deref().and_then(dictionary)))
+        let resume_limit = stored
+            .resume_limit
+            .and_then(ResumeLimit::from_index)
+            .unwrap_or_default();
+
+        Ok(Self::new(text)
+            .with_dictionary(stored.dictionary.as_deref().and_then(dictionary))
+            .with_resume_limit(resume_limit))
     }
 }
 
@@ -167,4 +192,7 @@ struct StoredReaderPreferences {
     /// off when missing, from before the setting existed
     #[n(11)]
     antialiasing: Option<bool>,
+    /// always when missing, from before the setting existed
+    #[n(12)]
+    resume_limit: Option<u8>,
 }

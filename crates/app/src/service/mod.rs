@@ -15,6 +15,7 @@ use crate::{
     app::AppRequest,
     dictionaries::{DictionaryFolder, find_dictionaries},
     fonts::{CardFont, FontFamily, find_font_families},
+    resume::SleptBook,
 };
 
 use dictionary::OpenDictionary;
@@ -62,7 +63,7 @@ where
 
     history: ReadingHistory,
     /// the book being read when the device went to sleep, to reopen at boot
-    resume: Option<String>,
+    resume: Option<SleptBook>,
     preferences: ReaderPreferences,
     frontlight_preferences: FrontlightPreferences,
     clock_preferences: ClockPreferences,
@@ -234,7 +235,7 @@ where
     ) -> Result<(), AppServiceError> {
         self.resume = runtime.update(app, |app, cx| {
             app.prepare_for_sleep(cx);
-            app.book_to_resume()
+            app.book_to_resume(cx)
         })?;
         self.resume_dirty = true;
 
@@ -303,8 +304,8 @@ where
             app.apply_dictionaries(dictionary_names, cx);
 
             // after the preferences and history it opens with
-            if let Some(path) = resume {
-                app.resume_book(path);
+            if let Some(book) = resume {
+                app.resume_book(book, cx);
             }
         })?;
 

@@ -36,9 +36,12 @@ impl InkPaperApp {
     pub(crate) fn local_clock<T: 'static>(&self, cx: &Context<'_, T>) -> Option<ClockStatus> {
         let minutes = self.clock.utc_offset().minutes();
 
-        self.rtc
-            .read(cx, |rtc| rtc.get())
-            .map(|clock| clock.offset_by(minutes))
+        self.utc_clock(cx).map(|clock| clock.offset_by(minutes))
+    }
+
+    /// The RTC's time, in UTC.
+    pub(crate) fn utc_clock<T: 'static>(&self, cx: &Context<'_, T>) -> Option<ClockStatus> {
+        self.rtc.read(cx, |rtc| rtc.get())
     }
 
     pub(crate) fn apply_clock_preferences(

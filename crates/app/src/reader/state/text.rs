@@ -132,7 +132,9 @@ impl ReaderState {
     }
 
     pub(super) fn queue_preferences_update(&mut self) {
-        let preferences = ReaderPreferences::new(self.saved_text).with_dictionary(self.dictionary);
+        let preferences = ReaderPreferences::new(self.saved_text)
+            .with_dictionary(self.dictionary)
+            .with_resume_limit(self.resume_limit);
 
         self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
     }

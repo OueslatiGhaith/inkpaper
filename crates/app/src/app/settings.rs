@@ -1,7 +1,10 @@
 use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
-use crate::screens::settings::{SettingsEvent, SettingsView};
+use crate::{
+    resume::ResumeLimit,
+    screens::settings::{SettingsEvent, SettingsView},
+};
 
 impl InkPaperApp {
     /// What the Settings screen's taps mean.
@@ -17,8 +20,17 @@ impl InkPaperApp {
             SettingsEvent::OpenText => self.open_screen(Screen::TextSettings, cx),
             SettingsEvent::ChooseDictionary(index) => {
                 if self.choose_dictionary_option(index, cx) {
-                    settings.update(cx, SettingsView::close_dictionary_picker);
+                    settings.update(cx, SettingsView::close_picker);
                 }
+            }
+            SettingsEvent::ChooseResumeLimit(index) => {
+                let Some(&limit) = ResumeLimit::ALL.get(index) else {
+                    return;
+                };
+
+                self.reader.choose_resume_limit(limit);
+                settings.update(cx, SettingsView::close_picker);
+                cx.notify();
             }
         }
     }

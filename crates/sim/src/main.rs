@@ -4,7 +4,10 @@ use embedded_graphics_simulator::{
     sdl2::{Keycode, MouseButton},
 };
 use futures_lite::future;
-use std::{rc::Rc, time::Instant};
+use std::{
+    rc::Rc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use inkpaper_app::{
     AppInputEvent, AppService, BatteryStatus, ClockStatus, InkPaperApp, TouchGesture,
@@ -83,7 +86,11 @@ fn main() {
             match event {
                 SimulatorEvent::Quit => {
                     // closing the window is the device going to sleep, so the
-                    // book being read opens again at the next start
+                    // book being read opens again at the next start. The clock
+                    // doesn't tick in the simulator, so it's read again
+                    let _ = runtime.update(app, |app, cx| {
+                        app.apply_clock_status(Some(host_clock()), cx);
+                    });
                     let _ = app_service.prepare_for_sleep(&mut runtime, app);
                     let _ = future::block_on(app_service.flush());
                     break 'running;
@@ -173,14 +180,44 @@ fn main() {
 
 fn seed_system_status(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>) {
     let battery = BatteryStatus::new(72, 3_880, false).expect("simulated battery must be valid");
-    let clock = ClockStatus::new(2026, 9, 23, 12, 34).expect("simulated clock must be valid");
 
     runtime
         .update(app, move |app, cx| {
             app.apply_battery_status(battery, cx);
-            app.apply_clock_status(Some(clock), cx);
+            app.apply_clock_status(Some(host_clock()), cx);
         })
         .expect("application root must remain available");
+}
+
+/// The host's time in UTC, like the X4's RTC.
+fn host_clock() -> ClockStatus {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("host clock must be after 1970")
+        .as_secs();
+    let (days, minute_of_day) = (seconds / 86_400, seconds % 86_400 / 60);
+
+    // Howard Hinnant's civil_from_days, with March first so the leap day ends
+    // the year
+    let days = days as i64 + 719_468;
+    let era = days.div_euclid(146_097);
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = (month_index + 2) % 12 + 1;
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+
+    ClockStatus::new(
+        year as u16,
+        month as u8,
+        day as u8,
+        (minute_of_day / 60) as u8,
+        (minute_of_day % 60) as u8,
+    )
+    .expect("host clock must be a valid date")
 }
 
 fn send_input(runtime: &mut impl RuntimeApi, app: Entity<InkPaperApp>, event: AppInputEvent) {

@@ -13,6 +13,7 @@ use crate::{
     ReaderDocument, ReaderPreferences, ReaderPreferencesRequest, ReadingHistoryEntry,
     paging::Pager,
     reader::{TableOfContents, TextSettings, WordSelection},
+    resume::ResumeLimit,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +125,8 @@ pub(crate) struct ReaderState {
     saved_text: TextSettings,
     /// the dictionary words are looked up in
     dictionary: Option<u8>,
+    /// how long after sleep the book read then opens again at boot
+    resume_limit: ResumeLimit,
     /// the word held to look up, on the page it was held on
     selection: Option<WordSelection>,
 
@@ -148,6 +151,7 @@ impl Default for ReaderState {
             text: TextSettings::default(),
             saved_text: TextSettings::default(),
             dictionary: None,
+            resume_limit: ResumeLimit::Always,
             selection: None,
             chrome: ReaderChromeState::default(),
             toc: TableOfContents::NotLoaded,
@@ -191,6 +195,22 @@ impl ReaderState {
         self.pending.take()
     }
 
+    pub(crate) const fn resume_limit(&self) -> ResumeLimit {
+        self.resume_limit
+    }
+
+    /// Returns whether the limit changed.
+    pub(crate) fn choose_resume_limit(&mut self, limit: ResumeLimit) -> bool {
+        if limit == self.resume_limit {
+            return false;
+        }
+
+        self.resume_limit = limit;
+        self.queue_preferences_update();
+
+        true
+    }
+
     /// Puts back a request the service took, unless a newer one is waiting.
     pub(crate) fn restore_request(&mut self, request: ReaderRequest) {
         if self.pending.is_none() {
@@ -206,15 +226,17 @@ impl ReaderState {
         let text = preferences.text();
         self.saved_text = text;
 
-        let dictionary_changed = preferences.dictionary() != self.dictionary;
+        let settings_changed = preferences.dictionary() != self.dictionary
+            || preferences.resume_limit() != self.resume_limit;
         self.dictionary = preferences.dictionary();
+        self.resume_limit = preferences.resume_limit();
 
         if text == self.text {
-            return dictionary_changed;
+            return settings_changed;
         }
 
         if self.document.is_some() {
-            return self.request_text_settings(text) || dictionary_changed;
+            return self.request_text_settings(text) || settings_changed;
         }
 
         self.text = text;
