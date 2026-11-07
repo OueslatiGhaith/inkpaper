@@ -35,10 +35,7 @@ static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 
 #[test]
 fn full_runtime_can_render_to_simulator_display() {
-    let mut runtime = Runtime::<
-        FixedStorage<4096, 16, 4096, 16, 64, 1024, 32>,
-        RuntimeResources<'_, 1, 64, 4096, 0>,
-    >::default();
+    let mut runtime = Runtime::<RuntimeResources<'_, 1, 64, 4096, 0>>::new(pool());
 
     assert_eq!(
         runtime.register_font(&TEST_FONT_FACE).unwrap(),
@@ -73,4 +70,9 @@ fn full_runtime_can_render_to_simulator_display() {
     assert!(report.content().has_graphics());
     assert!(runtime.frame_node_count() > 0);
     assert!(runtime.frame_text_bytes_used() > 0);
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

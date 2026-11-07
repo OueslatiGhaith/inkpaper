@@ -1,8 +1,9 @@
 use core::{alloc::Layout, any::TypeId, ptr::NonNull};
 
-#[cfg(feature = "alloc")]
-use crate::slot_table::HeapSlots;
-use crate::slot_table::{BorrowKind, FixedSlots, NotLive, ReserveError, SlotStorage, SlotTable};
+use crate::{
+    pool::{OutOfMemory, PoolRef, Table},
+    slot_table::{BorrowKind, NotLive, ReserveError, SlotTable},
+};
 
 #[cfg(test)]
 use super::{Entity, RawEntityBorrow, drop_value};
@@ -10,14 +11,9 @@ use super::{EntityId, EntityStore, RawEntityReservation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityAllocError {
+    /// every slot number is taken
     SlotsFull,
-    StorageFull,
-    UnsupportedAlignment {
-        requested: usize,
-        supported: usize,
-    },
-    /// heap-backed storage could not allocate
-    AllocationFailed,
+    OutOfMemory(OutOfMemory),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,27 +28,10 @@ impl From<ReserveError> for EntityAllocError {
     fn from(error: ReserveError) -> Self {
         match error {
             ReserveError::SlotsFull => Self::SlotsFull,
-            ReserveError::StorageFull => Self::StorageFull,
-            ReserveError::UnsupportedAlignment {
-                requested,
-                supported,
-            } => Self::UnsupportedAlignment {
-                requested,
-                supported,
-            },
-            ReserveError::AllocationFailed => Self::AllocationFailed,
+            ReserveError::OutOfMemory(error) => Self::OutOfMemory(error),
         }
     }
 }
-
-/// fixed-capacity entity storage: at most `SLOTS` entities in `BYTES` bytes. Never
-/// allocates.
-pub type FixedEntityArena<const BYTES: usize, const SLOTS: usize> =
-    EntityArena<FixedSlots<BYTES, SLOTS>>;
-
-/// heap entity storage. The first allocation reserves `INITIAL_SLOTS` entries.
-#[cfg(feature = "alloc")]
-pub type HeapEntityArena<const INITIAL_SLOTS: usize = 0> = EntityArena<HeapSlots<INITIAL_SLOTS>>;
 
 #[derive(Debug, Clone, Copy)]
 struct EntityMeta {
@@ -67,24 +46,25 @@ struct EntityMeta {
 ///
 /// entity ids always have generation 0: slots are never reused. A slot's [`TypeId`] is
 /// checked before its value is borrowed.
-pub struct EntityArena<S: SlotStorage> {
-    slots: SlotTable<S, EntityMeta>,
+pub(crate) struct EntityArena {
+    slots: SlotTable<EntityMeta>,
 }
 
-impl<S: SlotStorage> Default for EntityArena<S> {
-    fn default() -> Self {
+impl EntityArena {
+    pub(crate) fn new_in(pool: PoolRef) -> Self {
         Self {
-            slots: SlotTable::default(),
+            slots: SlotTable::new_in(pool, Table::Entities),
         }
     }
 }
 
 #[cfg(test)]
-impl<S: SlotStorage> EntityArena<S> {
+impl EntityArena {
     pub(crate) fn len(&self) -> usize {
         self.slots.len()
     }
 
+    /// the bytes the entities and their slots take from the pool
     pub(crate) fn used_bytes(&self) -> usize {
         self.slots.used_bytes()
     }
@@ -145,7 +125,7 @@ impl<S: SlotStorage> EntityArena<S> {
 
 // SAFETY: values never move, type and state checks precede access, and every returned
 // pointer has a tracked borrow. Reservations become accessible only through commit
-unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
+unsafe impl EntityStore for EntityArena {
     fn reserve(
         &self,
         layout: Layout,
@@ -218,6 +198,7 @@ unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
         }
     }
 
+    #[cfg(test)]
     fn is_dirty(&self, entity: EntityId) -> bool {
         entity.generation() == 0
             && self
@@ -272,9 +253,7 @@ unsafe impl<S: SlotStorage> EntityStore for EntityArena<S> {
     }
 }
 
-impl<S: SlotStorage> crate::storage::EntityStorage for EntityArena<S> {}
-
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(test)]
 #[path = "heap_tests.rs"]
 mod heap_tests;
 
@@ -283,6 +262,7 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::pool::testing::{pool_ref, pool_ref_of, pool_ref_with_room};
 
     struct Counter {
         value: i32,
@@ -294,7 +274,7 @@ mod tests {
 
     #[test]
     fn stores_heterogeneous_entities() {
-        let arena = FixedEntityArena::<1024, 16>::default();
+        let arena = EntityArena::new_in(pool_ref());
 
         let counter = arena.insert(Counter { value: 42 }).unwrap();
         let settings = arena.insert(Settings { volume: 80 }).unwrap();
@@ -305,7 +285,7 @@ mod tests {
 
     #[test]
     fn update_entities() {
-        let arena = FixedEntityArena::<1024, 4>::default();
+        let arena = EntityArena::new_in(pool_ref());
 
         let counter = arena.insert(Counter { value: 1 }).unwrap();
 
@@ -316,7 +296,7 @@ mod tests {
 
     #[test]
     fn allows_nested_shared_borrows() {
-        let arena = FixedEntityArena::<256, 4>::default();
+        let arena = EntityArena::new_in(pool_ref());
 
         let counter = arena.insert(Counter { value: 1 }).unwrap();
 
@@ -333,7 +313,7 @@ mod tests {
 
     #[test]
     fn rejects_update_during_read() {
-        let arena = FixedEntityArena::<256, 4>::default();
+        let arena = EntityArena::new_in(pool_ref());
 
         let counter = arena.insert(Counter { value: 1 }).unwrap();
 
@@ -349,7 +329,7 @@ mod tests {
 
     #[test]
     fn rejects_access_during_update() {
-        let arena = FixedEntityArena::<256, 4>::default();
+        let arena = EntityArena::new_in(pool_ref());
 
         let counter = arena.insert(Counter { value: 1 }).unwrap();
 
@@ -369,7 +349,7 @@ mod tests {
 
     #[test]
     fn allows_nested_updates_of_different_entities() {
-        let arena = FixedEntityArena::<256, 4>::default();
+        let arena = EntityArena::new_in(pool_ref());
 
         let counter = arena.insert(Counter { value: 1 }).unwrap();
         let settings = arena.insert(Settings { volume: 10 }).unwrap();
@@ -391,12 +371,17 @@ mod tests {
 
     #[test]
     fn reports_slot_exhaustion() {
-        let arena = FixedEntityArena::<256, 1>::default();
+        struct Marker;
 
-        arena.insert(Counter { value: 1 }).unwrap();
+        // room for every slot. Zero-sized values take no memory of their own
+        let arena = EntityArena::new_in(pool_ref_of(16 * 1024 * 1024));
+
+        for _ in 0..=u16::MAX {
+            arena.insert(Marker).unwrap();
+        }
 
         assert!(matches!(
-            arena.insert(Counter { value: 2 }),
+            arena.insert(Marker),
             Err(EntityAllocError::SlotsFull),
         ));
     }
@@ -404,51 +389,59 @@ mod tests {
     #[test]
     fn reports_storage_exhaustion() {
         struct Big {
-            _data: [u8; 64],
+            _data: [u8; 256],
         }
 
-        let arena = FixedEntityArena::<32, 4>::default();
+        let arena = EntityArena::new_in(pool_ref_with_room(128));
 
         assert!(matches!(
-            arena.insert(Big { _data: [0; 64] }),
-            Err(EntityAllocError::StorageFull),
+            arena.insert(Big { _data: [0; 256] }),
+            Err(EntityAllocError::OutOfMemory(OutOfMemory {
+                table: Table::Entities,
+                ..
+            })),
         ));
     }
 
     #[test]
-    fn rejects_unsupported_alignment() {
-        #[repr(align(32))]
+    fn supports_highly_aligned_entities() {
+        #[repr(align(64))]
         struct HighlyAligned {
-            _value: u8,
+            value: u8,
         }
 
-        let arena = FixedEntityArena::<256, 4>::default();
+        let arena = EntityArena::new_in(pool_ref());
+        let entity = arena.insert(HighlyAligned { value: 1 }).unwrap();
 
-        assert!(matches!(
-            arena.insert(HighlyAligned { _value: 1 }),
-            Err(EntityAllocError::UnsupportedAlignment { .. }),
-        ));
+        arena
+            .read(entity, |aligned| {
+                assert_eq!(core::ptr::from_ref(aligned).addr() % 64, 0);
+                assert_eq!(aligned.value, 1);
+            })
+            .unwrap();
     }
 
     #[test]
     fn supports_zero_sized_entities() {
         struct Marker;
 
-        let arena = FixedEntityArena::<8, 4>::default();
+        let arena = EntityArena::new_in(pool_ref());
 
         let a = arena.insert(Marker).unwrap();
+        let slots = arena.used_bytes();
         let b = arena.insert(Marker).unwrap();
 
         arena.read(a, |_| {}).unwrap();
         arena.read(b, |_| {}).unwrap();
 
         assert_eq!(arena.len(), 2);
-        assert_eq!(arena.used_bytes(), 2);
+        // only the slot list takes memory
+        assert_eq!(arena.used_bytes(), slots);
     }
 
     #[test]
     fn detects_type_mismatches() {
-        let arena = FixedEntityArena::<256, 4>::default();
+        let arena = EntityArena::new_in(pool_ref());
 
         let counter = arena.insert(Counter { value: 1 }).unwrap();
 
@@ -475,7 +468,7 @@ mod tests {
         DROPS.store(0, Ordering::SeqCst);
 
         {
-            let arena = FixedEntityArena::<256, 4>::default();
+            let arena = EntityArena::new_in(pool_ref());
 
             arena.insert(Droppable).unwrap();
             arena.insert(Droppable).unwrap();

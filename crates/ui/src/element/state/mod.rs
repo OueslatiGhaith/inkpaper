@@ -1,9 +1,9 @@
 use crate::{
     ElementId, EntityId, NodeId,
-    storage::{ElementStateStorage, VecStorage},
+    pool::{OutOfMemory, PoolRef, PoolVec, Table},
 };
 
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(test)]
 mod alloc_tests;
 #[cfg(test)]
 mod tests;
@@ -68,6 +68,7 @@ impl ElementStateSlot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityError {
+    /// every element state id is taken
     StatesFull,
     DuplicateElementId {
         id: ElementId,
@@ -77,23 +78,20 @@ pub enum IdentityError {
     },
     /// the parent element's identity was not resolved in this frame
     MissingParentState,
-    /// heap-backed storage could not allocate
-    AllocationFailed,
+    OutOfMemory(OutOfMemory),
 }
 
-pub(crate) struct ElementStateTable<E: ElementStateStorage> {
-    slots: E::Slots<ElementStateSlot>,
+pub(crate) struct ElementStateTable {
+    slots: PoolVec<ElementStateSlot>,
 }
 
-impl<E: ElementStateStorage> Default for ElementStateTable<E> {
-    fn default() -> Self {
+impl ElementStateTable {
+    pub(crate) fn new_in(pool: PoolRef) -> Self {
         Self {
-            slots: E::Slots::default(),
+            slots: PoolVec::new_in(pool, Table::ElementStates),
         }
     }
-}
 
-impl<E: ElementStateStorage> ElementStateTable<E> {
     pub(crate) fn resolve(
         &mut self,
         parent: IdentityParent,
@@ -139,9 +137,7 @@ impl<E: ElementStateStorage> ElementStateTable<E> {
 
                 self.slots
                     .try_push(ElementStateSlot::vacant())
-                    .map_err(|error| {
-                        error.or(IdentityError::StatesFull, IdentityError::AllocationFailed)
-                    })?;
+                    .map_err(IdentityError::OutOfMemory)?;
                 index
             }
         };

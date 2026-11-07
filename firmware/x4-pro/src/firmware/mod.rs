@@ -39,7 +39,7 @@ use crate::firmware::{
     platform::X4Platform,
     power::PowerRails,
     power_button::power_button_task,
-    presenter::{Presenter, UiRuntime},
+    presenter::{Presenter, UI_POOL_BYTES, UiRuntime},
     probe::ProbePins,
     rtc::{RTC_UPDATES, RtcState, rtc_task},
     sleep_pins::release_display_reset_hold,
@@ -220,7 +220,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let frame = FRAMEBUFFER.init_with(FramebufferStorage::white);
 
-    let runtime = UI_RUNTIME.init_with(UiRuntime::default);
+    let runtime = UI_RUNTIME.init_with(|| UiRuntime::new(Pool::growable(UI_POOL_BYTES)));
     // render only the entities that changed, and refresh only what they painted
     runtime.set_partial_rebuilds(true);
 

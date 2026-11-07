@@ -1,24 +1,18 @@
 use core::{alloc::Layout, any::TypeId, cell::Cell, ptr::NonNull};
 
-#[cfg(feature = "alloc")]
-use crate::slot_table::HeapSlots;
 use crate::{
     BorrowKind, Context, Entity, EntityAccessError, EntityId, Listener, PaintCx, RuntimeCx,
     callback::CallbackId,
     entity::{EntityStore, RawEntityBorrow},
-    slot_table::{FixedSlots, ReserveError, SlotStorage, SlotTable},
+    pool::{OutOfMemory, PoolRef, Table},
+    slot_table::{ReserveError, SlotTable},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallbackAllocError {
+    /// every slot number is taken
     SlotsFull,
-    StorageFull,
-    UnsupportedAlignment {
-        requested: usize,
-        supported: usize,
-    },
-    /// heap-backed storage could not allocate
-    AllocationFailed,
+    OutOfMemory(OutOfMemory),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,28 +115,10 @@ impl From<ReserveError> for CallbackAllocError {
     fn from(error: ReserveError) -> Self {
         match error {
             ReserveError::SlotsFull => Self::SlotsFull,
-            ReserveError::StorageFull => Self::StorageFull,
-            ReserveError::UnsupportedAlignment {
-                requested,
-                supported,
-            } => Self::UnsupportedAlignment {
-                requested,
-                supported,
-            },
-            ReserveError::AllocationFailed => Self::AllocationFailed,
+            ReserveError::OutOfMemory(error) => Self::OutOfMemory(error),
         }
     }
 }
-
-/// fixed-capacity callback storage: at most `SLOTS` callbacks in `BYTES` bytes per frame.
-/// Never allocates.
-pub type FixedCallbackArena<const BYTES: usize, const SLOTS: usize> =
-    CallbackArena<FixedSlots<BYTES, SLOTS>>;
-
-/// heap callback storage. The first allocation reserves `INITIAL_SLOTS` callbacks.
-#[cfg(feature = "alloc")]
-pub type HeapCallbackArena<const INITIAL_SLOTS: usize = 0> =
-    CallbackArena<HeapSlots<INITIAL_SLOTS>>;
 
 /// the callbacks registered while rendering one frame, stored by [`SlotTable`].
 ///
@@ -160,21 +136,19 @@ pub type HeapCallbackArena<const INITIAL_SLOTS: usize = 0> =
 /// 5. invocation copies metadata out before calling user code, so callbacks may register
 ///    more callbacks. Reset and release take `&mut self`, so they can't run during an
 ///    invocation.
-pub struct CallbackArena<S: SlotStorage> {
-    slots: SlotTable<S, CallbackMeta>,
+pub(crate) struct CallbackArena {
+    slots: SlotTable<CallbackMeta>,
     generation: Cell<u32>,
 }
 
-impl<S: SlotStorage> Default for CallbackArena<S> {
-    fn default() -> Self {
+impl CallbackArena {
+    pub(crate) fn new_in(pool: PoolRef) -> Self {
         Self {
-            slots: SlotTable::default(),
+            slots: SlotTable::new_in(pool, Table::Callbacks),
             generation: Cell::new(0),
         }
     }
-}
 
-impl<S: SlotStorage> CallbackArena<S> {
     fn lookup(&self, id: CallbackId) -> Option<(CallbackMeta, NonNull<u8>)> {
         self.slots
             .live(usize::from(id.slot()))
@@ -249,7 +223,7 @@ impl<S: SlotStorage> CallbackArena<S> {
 // SAFETY: reservations fit the registered closure. Only committed closures are
 // callable. Both invocation paths validate generation and kind and use the registered
 // trampoline, which enforces the target entity's borrow rules
-unsafe impl<S: SlotStorage> CallbackStore for CallbackArena<S> {
+unsafe impl CallbackStore for CallbackArena {
     fn reserve(
         &self,
         layout: Layout,
@@ -297,32 +271,6 @@ unsafe impl<S: SlotStorage> CallbackStore for CallbackArena<S> {
         // SAFETY: lookup validated a live closure of this frame. Its canvas trampoline
         // acquires a shared borrow of the target
         unsafe { invoke_fn(closure.as_ptr(), meta.target, paint, entities) }
-    }
-}
-
-impl<S: SlotStorage> crate::storage::CallbackStorage for CallbackArena<S> {
-    fn reset(&mut self) {
-        CallbackArena::reset(self);
-    }
-
-    fn mark(&self) -> CallbackMark {
-        CallbackArena::mark(self)
-    }
-
-    fn release_owner(&mut self, owner: EntityId, mark: CallbackMark) -> usize {
-        CallbackArena::release_owner(self, owner, mark)
-    }
-
-    fn invoke_listener<E>(
-        &self,
-        listener: Listener<E>,
-        event: &E,
-        runtime: RuntimeCx<'_>,
-    ) -> Result<(), ListenerInvokeError>
-    where
-        E: 'static,
-    {
-        CallbackArena::invoke_listener(self, listener, event, runtime)
     }
 }
 
@@ -435,7 +383,7 @@ where
     Ok(reservation.id)
 }
 
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(test)]
 #[path = "heap_tests.rs"]
 mod heap_tests;
 
@@ -447,7 +395,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::*;
+    use crate::{
+        pool::testing::{pool_ref, pool_ref_with_room},
+        *,
+    };
 
     struct Counter {
         value: i32,
@@ -462,9 +413,9 @@ mod tests {
 
     #[test]
     fn invokes_method_listener() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        let callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
 
         let root = entities.insert(Counter { value: 0 }).unwrap();
 
@@ -492,9 +443,9 @@ mod tests {
 
     #[test]
     fn invokes_capturing_listener() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        let callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let all_dirty = Cell::new(false);
         let amount = 5;
@@ -525,9 +476,9 @@ mod tests {
 
     #[test]
     fn listener_rejects_reentrant_update_of_target_entity() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        let callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let all_dirty = Cell::new(false);
 
@@ -559,9 +510,9 @@ mod tests {
 
     #[test]
     fn listener_can_update_another_entity() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        let callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let settings = entities.insert(Settings { dirty: false }).unwrap();
         let all_dirty = Cell::new(false);
@@ -599,9 +550,9 @@ mod tests {
 
     #[test]
     fn stale_listener_is_rejected_after_reset() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let mut callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let all_dirty = Cell::new(false);
 
@@ -639,9 +590,9 @@ mod tests {
     fn reset_drops_captured_listener_values() {
         DROPS.store(0, Ordering::SeqCst);
 
-        let entities = TestEntityArena::<1024, 16>::default();
-        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let mut callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let all_dirty = Cell::new(false);
 
@@ -679,9 +630,9 @@ mod tests {
     fn releasing_an_owner_keeps_other_callbacks_callable() {
         RELEASE_DROPS.store(0, Ordering::SeqCst);
 
-        let entities = TestEntityArena::<1024, 16>::default();
-        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let mut callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let kept = entities.insert(Counter { value: 0 }).unwrap();
         let released = entities.insert(Counter { value: 0 }).unwrap();
         let all_dirty = Cell::new(false);
@@ -733,9 +684,9 @@ mod tests {
 
     #[test]
     fn releasing_an_owner_keeps_its_callbacks_registered_after_the_mark() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let mut callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let all_dirty = Cell::new(false);
         let runtime = RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty);
@@ -759,9 +710,9 @@ mod tests {
 
     #[test]
     fn callbacks_registered_while_rendering_belong_to_the_rendering_entity() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        let mut callbacks = FixedCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let mut callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let parent = entities.insert(Counter { value: 0 }).unwrap();
         let child = entities.insert(Counter { value: 0 }).unwrap();
         let all_dirty = Cell::new(false);
@@ -808,10 +759,11 @@ mod tests {
 
     #[test]
     fn rendering_again_reuses_released_slots_and_memory() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        // room for a render's callback and the previous render's
-        let mut callbacks = FixedCallbackArena::<32, 2>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        // room for a render's callback and the previous render's, so the renders have to
+        // reuse what the previous ones released
+        let mut callbacks = CallbackArena::new_in(pool_ref_with_room(512));
+        let globals = GlobalArena::new_in(pool_ref());
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let all_dirty = Cell::new(false);
         let event = ActivateEvent::new(ElementId::Name("test"));
@@ -848,31 +800,10 @@ mod tests {
     }
 
     #[test]
-    fn listener_arena_reports_slot_exhaustion() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        let callbacks = FixedCallbackArena::<1024, 1>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
-        let counter = entities.insert(Counter { value: 0 }).unwrap();
-        let all_dirty = Cell::new(false);
-
-        let mut cx = Context::new_in(
-            counter,
-            RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
-        );
-
-        cx.try_listener::<ActivateEvent, _>(|_: &mut Counter, _, _| {})
-            .unwrap();
-
-        let result = cx.try_listener::<ActivateEvent, _>(|_: &mut Counter, _, _| {});
-
-        assert!(matches!(result, Err(CallbackAllocError::SlotsFull)));
-    }
-
-    #[test]
     fn listener_arena_reports_storage_exhaustion() {
-        let entities = TestEntityArena::<1024, 16>::default();
-        let callbacks = FixedCallbackArena::<4, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let entities = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref_with_room(16));
+        let globals = GlobalArena::new_in(pool_ref());
         let counter = entities.insert(Counter { value: 0 }).unwrap();
         let all_dirty = Cell::new(false);
         let capture = [0u8; 32];
@@ -886,6 +817,12 @@ mod tests {
             let _ = &capture;
         });
 
-        assert!(matches!(result, Err(CallbackAllocError::StorageFull)));
+        assert!(matches!(
+            result,
+            Err(CallbackAllocError::OutOfMemory(OutOfMemory {
+                table: Table::Callbacks,
+                ..
+            }))
+        ));
     }
 }

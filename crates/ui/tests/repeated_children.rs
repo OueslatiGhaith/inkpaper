@@ -2,17 +2,7 @@ use std::{cell::Cell, rc::Rc};
 
 use inkpaper_ui::prelude::*;
 
-type TestRuntime = Runtime<
-    FixedStorage<
-        4096, // entity bytes
-        1,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-        64,   // frame nodes
-        1024, // frame text bytes
-        32,   // element states
-    >,
->;
+type TestRuntime = Runtime;
 
 struct EmptyChildren;
 
@@ -32,7 +22,7 @@ impl Render for ArrayChildren {
 
 #[test]
 fn children_mounts_every_item_from_an_array() {
-    let mut empty_runtime = TestRuntime::default();
+    let mut empty_runtime = TestRuntime::new(pool());
 
     empty_runtime.create_root(|_| EmptyChildren).unwrap();
 
@@ -41,7 +31,7 @@ fn children_mounts_every_item_from_an_array() {
     let empty_nodes = empty_runtime.frame_node_count();
     let empty_text = empty_runtime.frame_text_bytes_used();
 
-    let mut list_runtime = TestRuntime::default();
+    let mut list_runtime = TestRuntime::new(pool());
 
     list_runtime.create_root(|_| ArrayChildren).unwrap();
 
@@ -80,7 +70,7 @@ impl Render for BorrowedIterator {
 
 #[test]
 fn children_accepts_borrowed_iterators_of_render_once_components() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root(|_| BorrowedIterator {
@@ -119,13 +109,13 @@ impl Render for WithoutEmptyIterator {
 
 #[test]
 fn empty_children_iterator_adds_no_placeholder_node() {
-    let mut with_empty = TestRuntime::default();
+    let mut with_empty = TestRuntime::new(pool());
 
     with_empty.create_root(|_| EmptyIterator).unwrap();
 
     with_empty.rebuild().unwrap();
 
-    let mut without_empty = TestRuntime::default();
+    let mut without_empty = TestRuntime::new(pool());
 
     without_empty.create_root(|_| WithoutEmptyIterator).unwrap();
 
@@ -170,7 +160,7 @@ impl Render for InteractiveList {
 fn children_composes_through_identity_and_event_wrappers() {
     let activations = Rc::new(Cell::new(0));
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -206,7 +196,7 @@ impl Render for ConditionalList {
 
 #[test]
 fn children_composes_through_conditional_branches() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root(|_| ConditionalList { highlighted: true })
@@ -218,4 +208,9 @@ fn children_composes_through_conditional_branches() {
         runtime.frame_text_bytes_used(),
         "First".len() + "Second".len() + "Third".len(),
     );
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

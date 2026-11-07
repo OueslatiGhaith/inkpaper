@@ -3,8 +3,9 @@ use crate::{
     ActivateEvent, Context, ElementId, EntityAccessError, PaintCx, Point, Rect, ResolvedTextStyle,
     Size,
     callback::{register_canvas_callback, register_listener},
-    entity::HeapEntityArena,
-    global::HeapGlobalArena,
+    entity::EntityArena,
+    global::GlobalArena,
+    pool::testing::{pool_ref, pool_ref_of},
     px, text,
 };
 use std::{cell::Cell, rc::Rc};
@@ -30,9 +31,9 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
     #[repr(align(128))]
     struct Capture(u32);
 
-    let entities = HeapEntityArena::<0>::default();
-    let callbacks = HeapCallbackArena::<1>::default();
-    let globals = HeapGlobalArena::<0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let target = entities.insert(0u32).unwrap();
     let all_dirty = Cell::new(false);
     let capture = Capture(42);
@@ -72,9 +73,9 @@ fn listener_storage_remains_stable_while_dispatch_grows_both_callback_kinds() {
 
 #[test]
 fn listener_and_canvas_validation_survive_slot_reuse() {
-    let entities = HeapEntityArena::<0>::default();
-    let mut callbacks = HeapCallbackArena::<0>::default();
-    let globals = HeapGlobalArena::<0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let mut callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let target = entities.insert(42u32).unwrap();
     let all_dirty = Cell::new(false);
 
@@ -171,10 +172,10 @@ fn reset_releases_captures_and_reuses_slot_capacity() {
         }
     }
 
-    let entities = HeapEntityArena::<0>::default();
+    let entities = EntityArena::new_in(pool_ref());
     let target = entities.insert(()).unwrap();
     let drops = Rc::new(Cell::new(0));
-    let mut callbacks = HeapCallbackArena::<1>::default();
+    let mut callbacks = CallbackArena::new_in(pool_ref());
 
     for _ in 0..16 {
         let capture = Capture(drops.clone());
@@ -227,9 +228,10 @@ fn reset_releases_captures_and_reuses_slot_capacity() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn callback_id_limit_is_enforced_and_reset_recovers_capacity() {
-    let entities = HeapEntityArena::<0>::default();
+    let entities = EntityArena::new_in(pool_ref());
     let target = entities.insert(()).unwrap();
-    let mut callbacks = HeapCallbackArena::<0>::default();
+    // room for every id
+    let mut callbacks = CallbackArena::new_in(pool_ref_of(16 * 1024 * 1024));
 
     for _ in 0..=u16::MAX {
         register_listener(
@@ -264,10 +266,10 @@ fn callback_id_limit_is_enforced_and_reset_recovers_capacity() {
 
 #[test]
 fn releasing_an_owner_frees_its_memory() {
-    let entities = HeapEntityArena::<0>::default();
+    let entities = EntityArena::new_in(pool_ref());
     let kept = entities.insert(()).unwrap();
     let released = entities.insert(()).unwrap();
-    let mut callbacks = HeapCallbackArena::<0>::default();
+    let mut callbacks = CallbackArena::new_in(pool_ref());
     let capture = [0u8; 64];
 
     register_listener(

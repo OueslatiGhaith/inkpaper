@@ -12,10 +12,9 @@ use super::{FrameArena, FrameStore, MountError, NodeId, NodeKind};
 use crate::{
     DamageRegion, EntityId, RuntimeCx, count_metric,
     element::state::{ElementStateTable, IdentityError},
-    storage::{ElementStateStorage, FrameStorage},
 };
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     /// how many nodes previous partial rebuilds left behind
     #[cfg(test)]
     pub(crate) fn detached_node_count(&self) -> usize {
@@ -30,9 +29,9 @@ impl<F: FrameStorage> FrameArena<F> {
 
     /// resolves the identities under the entity nodes the last partial rebuild rendered
     /// again. None is inside another, so their subtrees hold every node it mounted
-    pub(crate) fn resolve_rerendered_identities<E: ElementStateStorage>(
+    pub(crate) fn resolve_rerendered_identities(
         &mut self,
-        states: &mut ElementStateTable<E>,
+        states: &mut ElementStateTable,
         frame_generation: u32,
     ) -> Result<(), IdentityError> {
         for index in 0..self.rerendered_nodes.len() {
@@ -64,7 +63,7 @@ impl<F: FrameStorage> FrameArena<F> {
             if let NodeKind::Entity { entity, .. } = self.node(node).kind
                 && runtime.entities.needs_render(entity)
             {
-                self.rerendered_nodes.push(node, MountError::NodesFull)?;
+                self.rerendered_nodes.push(node)?;
                 current = self.next_node_after_subtree_within(node, root);
                 continue;
             }
@@ -90,7 +89,7 @@ impl<F: FrameStorage> FrameArena<F> {
         while let Some(&(entity, node)) = self.detached_entities.last() {
             self.detached_entities
                 .truncate(self.detached_entities.len() - 1);
-            self.stale_entities.push(entity, MountError::NodesFull)?;
+            self.stale_entities.push(entity)?;
             runtime.dependencies.forget(entity);
             self.detach_content(node)?;
         }
@@ -203,7 +202,7 @@ impl<F: FrameStorage> FrameArena<F> {
         runtime.entities.mark_rendered(entity);
         // the render records what it reads again
         runtime.dependencies.forget(entity);
-        self.stale_entities.push(entity, MountError::NodesFull)?;
+        self.stale_entities.push(entity)?;
 
         count_metric!(self, entity_render_calls);
         let content = render(entity, runtime, self)?;
@@ -231,8 +230,7 @@ impl<F: FrameStorage> FrameArena<F> {
             };
 
             self.unindex_entity(entity);
-            self.detached_entities
-                .push((entity, node), MountError::NodesFull)?;
+            self.detached_entities.push((entity, node))?;
 
             current = self.next_node_after_subtree_within(node, content);
         }

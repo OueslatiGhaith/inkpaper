@@ -19,7 +19,7 @@ use crate::{
     platform::SimulatorPlatform,
     radio::SimulatedRadio,
     render::{DISPLAY_SIZE_EG, render_ui, ui_point},
-    runtime::new_runtime,
+    runtime::{new_runtime, print_memory},
 };
 
 mod fake_fs;
@@ -93,6 +93,7 @@ fn main() {
                     });
                     let _ = app_service.prepare_for_sleep(&mut runtime, app);
                     let _ = future::block_on(app_service.flush());
+                    print_memory(&runtime);
                     break 'running;
                 }
 

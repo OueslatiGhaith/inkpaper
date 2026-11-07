@@ -7,18 +7,18 @@ use crate::{
     ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
     EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageRegistryError,
     ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintError,
-    PaintReport, PaintResources, Painter, Point, Rect, Render, RenderInvalidation, RuntimeStorage,
-    Size, TextMeasurer,
-    callback::ListenerInvokeError,
+    PaintReport, PaintResources, Painter, Point, Rect, Render, RenderInvalidation, Size,
+    TextMeasurer,
+    callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     emitter::{self, EventTable},
-    entity::{EntityStore, create_entity},
-    global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError},
+    entity::{EntityArena, EntityStore, create_entity},
+    global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
+    pool::{MemoryStats, Pool},
     px,
     resources::RuntimeResources,
     runtime::root::RuntimeRoot,
-    storage::{CallbackStorage, EventStorage, FrameStorage, GlobalStorage},
 };
 #[cfg(feature = "metrics")]
 use crate::{GlyphCacheMetrics, PerformanceMetrics, TextPaintMetrics};
@@ -30,9 +30,9 @@ mod root;
 
 pub use api::{RenderRuntimeApi, ResourceRuntimeApi, RuntimeApi};
 pub(crate) use cx::RuntimeCx;
+use dependencies::Dependencies;
 #[cfg(test)]
 pub(crate) use dependencies::NoDependencies;
-use dependencies::{Dependencies, Dependency};
 pub(crate) use dependencies::{DependencyStore, Source};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,18 +61,15 @@ pub enum FramePhase {
     Layout,
 }
 
-/// the UI runtime. `S` chooses the storage behind each runtime table (see
-/// [`RuntimeStorage`]), and `RESOURCES` holds render resources such as fonts and images.
-pub struct Runtime<S, RESOURCES = ()>
-where
-    S: RuntimeStorage,
-{
-    entities: S::Entities,
-    globals: S::Globals,
-    callbacks: S::Callbacks,
-    frame: FrameArena<S::Frame>,
-    element_states: ElementStateTable<S::ElementStates>,
-    scroll_states: ScrollStateTable<S::ElementStates>,
+/// the UI runtime. It keeps its tables in the [`Pool`] it is created with, and
+/// `RESOURCES` holds render resources such as fonts and images.
+pub struct Runtime<RESOURCES = ()> {
+    entities: EntityArena,
+    globals: GlobalArena,
+    callbacks: CallbackArena,
+    frame: FrameArena,
+    element_states: ElementStateTable,
+    scroll_states: ScrollStateTable,
     resources: RESOURCES,
 
     /// every entity needs to render again. Entities changed one at a time are marked
@@ -82,8 +79,8 @@ where
     full_rebuild_pending: Cell<bool>,
     /// whether a rebuild renders only the entities that need it
     partial_rebuilds: bool,
-    /// what each entity read during its last render. Shares the frame's node capacity
-    dependencies: Dependencies<<S::Frame as FrameStorage>::Nodes<Dependency>>,
+    /// what each entity read during its last render
+    dependencies: Dependencies,
     /// the damage of the last rebuild, once the layout after it ran
     rebuild_damage: Option<DamageRegion>,
     /// the visual damage taken along with a rebuild, which its damage includes
@@ -96,16 +93,13 @@ where
     focused: Option<ElementStateId>,
     pending_scroll_into_view: Option<ElementStateId>,
     /// subscriptions, and the events emitted during the runtime call running now
-    events: RuntimeEvents<S>,
+    events: EventTable,
     /// how many runtime calls that run user code are running, nested. Events are
     /// delivered when the outermost returns
     call_depth: Cell<u32>,
+    /// the memory of the tables above. Declared last, so it is dropped after them
+    pool: Pool,
 }
-
-type RuntimeEvents<S> = EventTable<
-    <<S as RuntimeStorage>::Events as EventStorage>::Subscriptions<emitter::Subscription>,
-    <<S as RuntimeStorage>::Events as EventStorage>::Pending<emitter::PendingEvent>,
->;
 
 /// counts a runtime call while it runs, even when it unwinds
 struct CallDepth<'a>(&'a Cell<u32>);
@@ -124,24 +118,26 @@ impl Drop for CallDepth<'_> {
     }
 }
 
-impl<S, RESOURCES> Default for Runtime<S, RESOURCES>
+impl<RESOURCES> Runtime<RESOURCES>
 where
-    S: RuntimeStorage,
     RESOURCES: Default,
 {
-    fn default() -> Self {
+    /// a runtime that keeps its tables in `pool`
+    pub fn new(pool: Pool) -> Self {
+        let memory = pool.handle();
+
         Self {
-            entities: S::Entities::default(),
-            globals: S::Globals::default(),
-            callbacks: S::Callbacks::default(),
-            frame: FrameArena::default(),
-            element_states: ElementStateTable::default(),
-            scroll_states: ScrollStateTable::default(),
+            entities: EntityArena::new_in(memory),
+            globals: GlobalArena::new_in(memory),
+            callbacks: CallbackArena::new_in(memory),
+            frame: FrameArena::new_in(memory),
+            element_states: ElementStateTable::new_in(memory),
+            scroll_states: ScrollStateTable::new_in(memory),
             resources: RESOURCES::default(),
             all_dirty: Cell::new(false),
             full_rebuild_pending: Cell::new(false),
             partial_rebuilds: false,
-            dependencies: Dependencies::default(),
+            dependencies: Dependencies::new_in(memory),
             rebuild_damage: None,
             taken_visual_damage: Cell::new(DamageRegion::none()),
             visual_invalidation: Cell::new(RenderInvalidation::none()),
@@ -151,16 +147,14 @@ where
             activation: ActivationState::default(),
             focused: None,
             pending_scroll_into_view: None,
-            events: EventTable::default(),
+            events: EventTable::new_in(memory),
             call_depth: Cell::new(0),
+            pool,
         }
     }
 }
 
-impl<S, RESOURCES> Runtime<S, RESOURCES>
-where
-    S: RuntimeStorage,
-{
+impl<RESOURCES> Runtime<RESOURCES> {
     pub fn create<T>(
         &self,
         build: impl FnOnce(&mut Context<'_, T>) -> T,
@@ -415,7 +409,7 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) fn frame(&self) -> &FrameArena<S::Frame> {
+    pub(crate) fn frame(&self) -> &FrameArena {
         &self.frame
     }
 
@@ -427,10 +421,10 @@ where
         self.frame.text_bytes_used()
     }
 
-    /// releases spare frame capacity while preserving the current frame.
+    /// returns spare frame capacity to the pool while preserving the current frame.
     ///
-    /// call after rebuilding a smaller screen, rather than after every frame. The allocator
-    /// may retain some capacity. Does nothing for fixed storage
+    /// call after rebuilding a smaller screen, rather than after every frame. A table
+    /// that can't move keeps its capacity
     pub fn shrink_frame_storage(&mut self) {
         self.frame.shrink_to_fit();
     }
@@ -1105,6 +1099,11 @@ where
         self.dispatch_to_node(node, event)
     }
 
+    /// how much of the runtime's pool its tables use
+    pub fn memory(&self) -> MemoryStats {
+        self.pool.stats()
+    }
+
     #[cfg(feature = "metrics")]
     pub fn reset_performance_metrics(&self) {
         self.frame.reset_performance_metrics();
@@ -1165,23 +1164,10 @@ where
     pub fn global_count(&self) -> usize {
         self.globals.len()
     }
-
-    pub fn global_bytes_used(&self) -> usize {
-        self.globals.used_bytes()
-    }
-
-    pub fn global_capacity(&self) -> usize {
-        self.globals.capacity()
-    }
-
-    pub fn global_byte_capacity(&self) -> usize {
-        self.globals.byte_capacity()
-    }
 }
 
-impl<S, RESOURCES> Runtime<S, RESOURCES>
+impl<RESOURCES> Runtime<RESOURCES>
 where
-    S: RuntimeStorage,
     RESOURCES: TextMeasurer,
 {
     pub fn layout(&mut self, viewport: Size) -> Option<Size> {
@@ -1247,14 +1233,11 @@ where
 
 impl<
     'resource,
-    S,
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
     const IMAGES: usize,
-> Runtime<S, RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
-where
-    S: RuntimeStorage,
+> Runtime<RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
 {
     pub fn register_font(
         &mut self,
@@ -1362,9 +1345,9 @@ mod partial_tests;
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity::EntityStore, *};
+    use crate::{entity::EntityStore, pool::testing::pool, *};
 
-    type TestRuntime = Runtime<TestStorage<1024, 8, 1024, 8, 16, 64, 8, 64, 2>>;
+    type TestRuntime = Runtime;
 
     struct Counter {
         value: i32,
@@ -1396,7 +1379,7 @@ mod tests {
 
     #[test]
     fn notify_marks_only_the_notifying_entity() {
-        let runtime = TestRuntime::default();
+        let runtime = TestRuntime::new(pool());
         let first = runtime.create(|_| Counter { value: 0 }).unwrap();
         let second = runtime.create(|_| Counter { value: 0 }).unwrap();
 
@@ -1412,7 +1395,7 @@ mod tests {
 
     #[test]
     fn taking_the_invalidation_clears_dirty_entities() {
-        let runtime = TestRuntime::default();
+        let runtime = TestRuntime::new(pool());
         let counter = runtime.create(|_| Counter { value: 0 }).unwrap();
 
         notify(&runtime, counter);
@@ -1424,7 +1407,7 @@ mod tests {
 
     #[test]
     fn global_changes_without_readers_mark_nothing() {
-        let mut runtime = TestRuntime::default();
+        let mut runtime = TestRuntime::new(pool());
         let counter = runtime.create(|_| Counter { value: 0 }).unwrap();
 
         runtime.set_global(Theme).unwrap();
@@ -1437,7 +1420,7 @@ mod tests {
 
     #[test]
     fn rebuild_clears_dirty_entities_except_those_notified_while_rendering() {
-        let mut runtime = TestRuntime::default();
+        let mut runtime = TestRuntime::new(pool());
         let root = runtime.create_root(|_| Counter { value: 0 }).unwrap();
 
         notify(&runtime, root);

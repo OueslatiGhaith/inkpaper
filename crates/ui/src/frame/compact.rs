@@ -4,9 +4,9 @@
 
 use super::{FrameArena, NodeCache, NodeId, NodeKind};
 
-use crate::{EventBinding, storage::FrameStorage};
+use crate::EventBinding;
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     /// removes the detached nodes, with the text, event bindings and interaction styles
     /// only they used. The other nodes keep their order, so the ones a partial rebuild
     /// mounted still come after the rest, but they get new ids. Returns `root`'s.

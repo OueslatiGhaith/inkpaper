@@ -6,7 +6,7 @@ use inkpaper_ui::{
     AvailableSpace, BoxPaint, GlyphBitmap, Painter, ResolvedTextStyle, TextMeasurer, prelude::*,
 };
 
-type TestRuntime = Runtime<FixedStorage<4096, 4, 4096, 16, 64, 512, 32>>;
+type TestRuntime = Runtime;
 
 struct TestPainter;
 
@@ -71,7 +71,7 @@ impl Render for App {
 
 #[test]
 fn performance_metrics_track_rebuild_layout_and_paint_work() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| App).unwrap();
 
@@ -147,7 +147,7 @@ impl Render for FlexListApp {
 fn flex_layout_work_is_linear_in_children() {
     const ITEMS: u64 = 16;
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| FlexListApp).unwrap();
 
@@ -164,4 +164,9 @@ fn flex_layout_work_is_linear_in_children() {
     assert_eq!(metrics.flex_sibling_visits, ITEMS,);
     assert_eq!(metrics.flex_item_main_size_calls, ITEMS * 2,);
     assert_eq!(metrics.flex_base_main_size_calls, ITEMS * 4,);
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

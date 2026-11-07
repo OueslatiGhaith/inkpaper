@@ -1,9 +1,10 @@
 use super::*;
+use crate::pool::testing::{pool_ref, pool_ref_of};
 use std::{cell::Cell, rc::Rc, string::String};
 
 #[test]
 fn growth_preserves_addresses_during_shared_and_exclusive_borrows() {
-    let arena = HeapEntityArena::<1>::default();
+    let arena = EntityArena::new_in(pool_ref());
     let entity = arena.insert(7u32).unwrap();
     let original = arena.read(entity, |value| value as *const u32).unwrap();
 
@@ -42,14 +43,14 @@ fn growth_preserves_addresses_during_shared_and_exclusive_borrows() {
 }
 
 #[test]
-fn aligned_values_and_zsts_have_distinct_aligned_storage() {
+fn aligned_values_and_zsts_are_aligned() {
     #[repr(align(128))]
     struct Aligned(u32);
 
     #[repr(align(64))]
     struct Marker;
 
-    let arena = HeapEntityArena::<0>::default();
+    let arena = EntityArena::new_in(pool_ref());
     let value = arena.insert(Aligned(42)).unwrap();
 
     arena
@@ -65,14 +66,17 @@ fn aligned_values_and_zsts_have_distinct_aligned_storage() {
     let first = arena.read(first, |value| value as *const Marker).unwrap();
     let second = arena.read(second, |value| value as *const Marker).unwrap();
 
-    assert_ne!(first, second);
+    // zero-sized values share a dangling, aligned address
     assert_eq!(first as usize % 64, 0);
     assert_eq!(second as usize % 64, 0);
 }
 
 #[test]
 fn abandoned_storage_is_released_without_dropping_an_uninitialized_value() {
-    let arena = HeapEntityArena::<0>::default();
+    let arena = EntityArena::new_in(pool_ref());
+    arena.insert(0u8).unwrap();
+    let before = arena.used_bytes();
+
     let reservation = arena
         .reserve(
             Layout::new::<String>(),
@@ -81,11 +85,11 @@ fn abandoned_storage_is_released_without_dropping_an_uninitialized_value() {
         )
         .unwrap();
 
-    assert!(arena.used_bytes() > 0);
+    assert!(arena.used_bytes() > before);
 
     arena.abandon(reservation.id);
 
-    assert_eq!(arena.used_bytes(), 0);
+    assert_eq!(arena.used_bytes(), before);
 
     let abandoned = Entity::<String>::from_id(reservation.id);
 
@@ -116,7 +120,7 @@ fn values_drop_once_in_reverse_reservation_order_even_after_growth() {
     let next = Rc::new(Cell::new(32));
 
     {
-        let arena = HeapEntityArena::<1>::default();
+        let arena = EntityArena::new_in(pool_ref());
 
         for id in 0..32 {
             arena
@@ -136,7 +140,8 @@ fn values_drop_once_in_reverse_reservation_order_even_after_growth() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn entity_id_exhaustion_does_not_wrap() {
-    let arena = HeapEntityArena::<0>::default();
+    // room for every id
+    let arena = EntityArena::new_in(pool_ref_of(16 * 1024 * 1024));
 
     for _ in 0..=u16::MAX {
         arena.insert(()).unwrap();

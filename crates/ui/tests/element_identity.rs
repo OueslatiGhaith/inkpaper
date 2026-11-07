@@ -2,17 +2,7 @@ use std::{cell::Cell, rc::Rc};
 
 use inkpaper_ui::prelude::*;
 
-type TestRuntime = Runtime<
-    FixedStorage<
-        4096, // entity bytes
-        1,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-        64,   // frame nodes
-        1024, // frame text bytes
-        32,   // element states
-    >,
->;
+type TestRuntime = Runtime;
 
 fn draw_nothing(_: &mut PaintCx<'_>) {}
 
@@ -50,7 +40,7 @@ impl Render for IdentityKinds {
 
 #[test]
 fn every_element_kind_can_receive_identity() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root(|_| IdentityKinds {
@@ -105,7 +95,7 @@ impl Render for ReidentifiedApp {
 fn reidentifying_wrapped_element_preserves_interactivity() {
     let activations = Rc::new(Cell::new(0));
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -132,4 +122,9 @@ fn reidentifying_stateful_element_replaces_id_without_losing_state() {
     let element = div().id("first").focusable().id("second");
 
     assert_eq!(element.element_id(), inkpaper_ui::ElementId::Name("second"),);
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

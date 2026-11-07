@@ -6,20 +6,12 @@ use core::{
     ptr::NonNull,
 };
 
-#[cfg(feature = "alloc")]
-use crate::slot_table::HeapSlots;
 use crate::{
     BorrowKind, RuntimeCx,
+    pool::{OutOfMemory, PoolRef, Table},
     runtime::Source,
-    slot_table::{FixedSlots, ReserveError, SlotStorage, SlotTable},
+    slot_table::{ReserveError, SlotTable},
 };
-
-// unit tests run against the storage the `alloc` feature implies
-#[cfg(all(test, not(feature = "alloc")))]
-pub(crate) type TestGlobalArena<const BYTES: usize, const SLOTS: usize> =
-    FixedGlobalArena<BYTES, SLOTS>;
-#[cfg(all(test, feature = "alloc"))]
-pub(crate) type TestGlobalArena<const BYTES: usize, const SLOTS: usize> = HeapGlobalArena<SLOTS>;
 
 /// marker trait for application-wide immutable values
 ///
@@ -39,15 +31,10 @@ pub enum GlobalAccessError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GlobalSetError {
+    /// every slot number is taken
     SlotsFull,
-    StorageFull,
-    UnsupportedAlignment {
-        requested: usize,
-        supported: usize,
-    },
+    OutOfMemory(OutOfMemory),
     BorrowConflict,
-    /// heap-backed storage could not allocate
-    AllocationFailed,
 }
 
 pub trait GlobalStore {
@@ -63,57 +50,25 @@ impl From<ReserveError> for GlobalSetError {
     fn from(error: ReserveError) -> Self {
         match error {
             ReserveError::SlotsFull => Self::SlotsFull,
-            ReserveError::StorageFull => Self::StorageFull,
-            ReserveError::UnsupportedAlignment {
-                requested,
-                supported,
-            } => Self::UnsupportedAlignment {
-                requested,
-                supported,
-            },
-            ReserveError::AllocationFailed => Self::AllocationFailed,
+            ReserveError::OutOfMemory(error) => Self::OutOfMemory(error),
         }
     }
 }
-
-/// fixed-capacity storage for application globals: at most `SLOTS` globals in `BYTES`
-/// bytes. Never allocates.
-pub type FixedGlobalArena<const BYTES: usize, const SLOTS: usize> =
-    GlobalArena<FixedSlots<BYTES, SLOTS>>;
-
-/// heap storage for application globals. The first allocation reserves `INITIAL_SLOTS`
-/// entries.
-#[cfg(feature = "alloc")]
-pub type HeapGlobalArena<const INITIAL_SLOTS: usize = 0> = GlobalArena<HeapSlots<INITIAL_SLOTS>>;
 
 /// application globals, at most one per type, stored by [`SlotTable`]
-pub struct GlobalArena<S: SlotStorage> {
-    slots: SlotTable<S, TypeId>,
+pub(crate) struct GlobalArena {
+    slots: SlotTable<TypeId>,
 }
 
-impl<S: SlotStorage> Default for GlobalArena<S> {
-    fn default() -> Self {
+impl GlobalArena {
+    pub(crate) fn new_in(pool: PoolRef) -> Self {
         Self {
-            slots: SlotTable::default(),
+            slots: SlotTable::new_in(pool, Table::Globals),
         }
     }
-}
 
-impl<S: SlotStorage> GlobalArena<S> {
     pub(crate) fn len(&self) -> usize {
         self.slots.len()
-    }
-
-    pub(crate) fn used_bytes(&self) -> usize {
-        self.slots.used_bytes()
-    }
-
-    pub(crate) fn capacity(&self) -> usize {
-        self.slots.capacity()
-    }
-
-    pub(crate) fn byte_capacity(&self) -> usize {
-        self.slots.byte_capacity()
     }
 
     pub(crate) fn contains<G>(&self) -> bool
@@ -161,7 +116,7 @@ impl<S: SlotStorage> GlobalArena<S> {
     }
 }
 
-impl<S: SlotStorage> GlobalStore for GlobalArena<S> {
+impl GlobalStore for GlobalArena {
     fn acquire(
         &self,
         type_id: TypeId,
@@ -180,38 +135,6 @@ impl<S: SlotStorage> GlobalStore for GlobalArena<S> {
 
     fn release(&self, slot: usize, kind: BorrowKind) {
         self.slots.release(slot, kind);
-    }
-}
-
-impl<S: SlotStorage> crate::storage::GlobalStorage for GlobalArena<S> {
-    fn set<G>(&mut self, value: G) -> Result<(), GlobalSetError>
-    where
-        G: Global,
-    {
-        GlobalArena::set(self, value)
-    }
-
-    fn contains<G>(&self) -> bool
-    where
-        G: Global,
-    {
-        GlobalArena::contains::<G>(self)
-    }
-
-    fn len(&self) -> usize {
-        GlobalArena::len(self)
-    }
-
-    fn used_bytes(&self) -> usize {
-        GlobalArena::used_bytes(self)
-    }
-
-    fn capacity(&self) -> usize {
-        GlobalArena::capacity(self)
-    }
-
-    fn byte_capacity(&self) -> usize {
-        GlobalArena::byte_capacity(self)
     }
 }
 

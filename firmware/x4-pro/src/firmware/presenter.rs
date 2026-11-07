@@ -1,8 +1,5 @@
 use inkpaper_app::AppResources;
-use inkpaper_ui::{
-    FramePhase, HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapEvents, HeapFrame,
-    HeapGlobalArena, PaintError, prelude::*,
-};
+use inkpaper_ui::{FramePhase, PaintError, prelude::*};
 use inkpaper_ui_eink::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode};
 
 use crate::firmware::{
@@ -18,30 +15,16 @@ use crate::firmware::{
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
 
-// initial reservations. The runtime tables live on the heap and grow past these
-const UI_ENTITY_SLOTS: usize = 8;
-const UI_CALLBACK_SLOTS: usize = 16;
-const UI_FRAME_NODES: usize = 96;
-const UI_FRAME_TEXT_BYTES: usize = 2_048;
-const UI_ELEMENT_STATES: usize = 32;
-const UI_GLOBAL_SLOTS: usize = 4;
+/// the bytes the UI keeps its tables in at first. The simulator peaks near 120 KiB,
+/// after a list of about 90 nodes rebuilds and its nodes table doubles to 256 slots. This
+/// leaves room for the next doubling, to 512 slots. The pool takes more from the heap if
+/// it runs out. Allocated from the heap, which puts it in PSRAM
+pub const UI_POOL_BYTES: usize = 256 * 1024;
 
 const UI_GLYPH_CACHE_SLOTS: usize = 128;
 const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
 
-pub struct UiStorage;
-
-impl RuntimeStorage for UiStorage {
-    type Entities = HeapEntityArena<UI_ENTITY_SLOTS>;
-    type Callbacks = HeapCallbackArena<UI_CALLBACK_SLOTS>;
-    type Globals = HeapGlobalArena<UI_GLOBAL_SLOTS>;
-    type Frame = HeapFrame<UI_FRAME_NODES, UI_FRAME_TEXT_BYTES>;
-    type ElementStates = HeapElementStates<UI_ELEMENT_STATES>;
-    type Events = HeapEvents;
-}
-
-pub type UiRuntime =
-    Runtime<UiStorage, AppResources<'static, UI_GLYPH_CACHE_SLOTS, UI_GLYPH_CACHE_BYTES>>;
+pub type UiRuntime = Runtime<AppResources<'static, UI_GLYPH_CACHE_SLOTS, UI_GLYPH_CACHE_BYTES>>;
 
 #[derive(Debug, Clone, Copy)]
 struct RenderedFrame {
@@ -288,12 +271,23 @@ fn render_frame(
         frame = frame_id,
     );
 
+    let chunks = runtime.memory().chunks_added;
     let damage = runtime
         .prepare_frame_with(DISPLAY_SIZE, |phase| match phase {
             FramePhase::Rebuild => inkpaper_trace::span!(target: "ui.render", "rebuild"),
             FramePhase::Layout => inkpaper_trace::span!(target: "ui.render", "layout"),
         })
         .expect("UI rebuild capacity exceeded");
+
+    let memory = runtime.memory();
+    if memory.chunks_added > chunks {
+        // the screen needed more than UI_POOL_BYTES
+        defmt::warn!(
+            "ui pool grew to {} bytes, peak {}",
+            memory.capacity,
+            memory.peak
+        );
+    }
     if damage.is_none() {
         return None;
     }

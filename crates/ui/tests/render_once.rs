@@ -16,18 +16,7 @@ const DISPLAY_WIDTH: u32 = 128;
 const DISPLAY_HEIGHT: u32 = 64;
 
 type TestResources = RuntimeResources<'static, 1, 64, 4096, 0>;
-type TestRuntime = Runtime<
-    FixedStorage<
-        4096, // entity bytes
-        1,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-        64,   // frame nodes
-        1024, // frame text bytes
-        32,   // element states
-    >,
-    TestResources,
->;
+type TestRuntime = Runtime<TestResources>;
 
 struct Badge<'a> {
     label: &'a str,
@@ -91,7 +80,7 @@ impl Render for App {
 
 #[test]
 fn render_once_component_can_be_used_as_a_child() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| App::new()).unwrap();
 
@@ -105,7 +94,7 @@ static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 
 #[test]
 fn render_once_component_can_borrow_from_persistent_component() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     assert_eq!(
         runtime.register_font(&TEST_FONT_FACE).unwrap(),
@@ -137,4 +126,9 @@ fn render_once_component_can_borrow_from_persistent_component() {
 
     // the persistent component and the nested render-once components
     assert!(runtime.frame_node_count() >= 4);
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

@@ -7,17 +7,7 @@ use inkpaper_ui::{
 
 const VIEWPORT: Size = Size::new(px(320), px(240));
 
-type BenchRuntime = Runtime<
-    FixedStorage<
-        4096,  // entity bytes
-        4,     // entity slots
-        4096,  // callback bytes
-        16,    // callback slots
-        2048,  // frame nodes
-        32768, // frame text bytes
-        1024,  // element states
-    >,
->;
+type BenchRuntime = Runtime;
 
 #[derive(Default)]
 struct NullPainter;
@@ -108,7 +98,7 @@ impl Render for ListApp {
 }
 
 fn setup(rows: usize) -> (BenchRuntime, NullPainter) {
-    let mut runtime = BenchRuntime::default();
+    let mut runtime = BenchRuntime::new(pool());
 
     runtime.create_root(move |_| ListApp { rows }).unwrap();
     runtime.rebuild().unwrap();
@@ -212,3 +202,8 @@ criterion_group!(
 );
 
 criterion_main!(rendering);
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(16 * 1024 * 1024)))
+}

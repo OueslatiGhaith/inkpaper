@@ -2,17 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use inkpaper_ui::{AvailableSpace, ResolvedTextStyle, TextMeasurer, prelude::*};
 
-type TestRuntime = Runtime<
-    FixedStorage<
-        4096, // entity bytes
-        1,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-        64,   // frame nodes
-        1024, // frame text bytes
-        32,   // element states
-    >,
->;
+type TestRuntime = Runtime;
 
 // the rows have no text
 struct NoText;
@@ -70,7 +60,7 @@ fn laid_out_list() -> (TestRuntime, Events) {
     let activated = Rc::new(RefCell::new(Vec::new()));
     let custom = Rc::new(RefCell::new(Vec::new()));
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -118,4 +108,9 @@ fn an_application_event_carries_the_id_of_the_element_listening_for_it() {
 
     assert_eq!(*custom.borrow(), [ElementId::NamedValue("row", 2)]);
     assert!(activated.borrow().is_empty());
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

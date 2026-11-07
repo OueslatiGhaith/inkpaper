@@ -1,38 +1,30 @@
 use inkpaper_app::AppResources;
-#[cfg(not(feature = "alloc"))]
-use inkpaper_ui::FixedStorage;
-use inkpaper_ui::Runtime;
-#[cfg(feature = "alloc")]
-use inkpaper_ui::{
-    HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapEvents, HeapFrame, HeapGlobalArena,
-    RuntimeStorage,
-};
-
-/// heap tables, with these initial reservations
-#[cfg(feature = "alloc")]
-pub(crate) struct SimulatorStorage;
-
-#[cfg(feature = "alloc")]
-impl RuntimeStorage for SimulatorStorage {
-    type Entities = HeapEntityArena<32>;
-    type Callbacks = HeapCallbackArena<64>;
-    type Globals = HeapGlobalArena<8>;
-    type Frame = HeapFrame<64, 2_048>;
-    type ElementStates = HeapElementStates<256>;
-    type Events = HeapEvents;
-}
-
-#[cfg(not(feature = "alloc"))]
-pub(crate) type SimulatorStorage =
-    FixedStorage<16_384, 32, 8_192, 64, 2_048, 32_768, 256, 2_048, 8, 8, 8>;
+use inkpaper_ui::{Pool, Runtime, Table};
 
 pub(crate) type SimulatorRuntime<'resources> =
-    Runtime<SimulatorStorage, AppResources<'resources, 128, { 16 * 1024 }>>;
+    Runtime<AppResources<'resources, 128, { 16 * 1024 }>>;
+
+/// the bytes the runtime's tables take from its pool at first, like the device's. The
+/// pool takes more from the heap if it runs out
+const POOL_BYTES: usize = 256 * 1024;
 
 pub(crate) fn new_runtime<'resources>() -> SimulatorRuntime<'resources> {
-    let mut runtime = SimulatorRuntime::default();
+    let mut runtime = SimulatorRuntime::new(Pool::growable(POOL_BYTES));
     // render only the entities that changed, like the device
     runtime.set_partial_rebuilds(true);
 
     runtime
+}
+
+/// prints how much of the pool the runtime used, to size the device's pool from
+pub(crate) fn print_memory(runtime: &SimulatorRuntime<'_>) {
+    let memory = runtime.memory();
+
+    println!(
+        "ui pool: peak {} of {} bytes, {} in use, {} chunks added",
+        memory.peak, memory.capacity, memory.used, memory.chunks_added
+    );
+    for table in Table::ALL {
+        println!("  {table:?}: {} bytes", memory.table(table));
+    }
 }

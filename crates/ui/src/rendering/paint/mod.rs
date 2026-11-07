@@ -2,7 +2,7 @@ use crate::{
     Axis, CanvasPainter, Color, DamageRegion, FrameArena, GlyphBitmap, GlyphCacheError,
     ImageColorMode, ImagePaint, ImageSource, NodeId, NodeKind, Offset, Pixels, Point, Position,
     Rect, ResolvedTextStyle, ShapeError, callback::CallbackStore, count_metric,
-    entity::EntityStore, flow_axis, storage::FrameStorage, visual::VisualNode,
+    entity::EntityStore, flow_axis, visual::VisualNode,
 };
 
 mod canvas;
@@ -212,7 +212,7 @@ struct PaintRuntime<'a> {
     callbacks: &'a dyn CallbackStore,
 }
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     #[allow(clippy::too_many_arguments)]
     fn paint_node<R, P>(
         &self,

@@ -1,11 +1,12 @@
 use core::any::TypeId;
 
 use super::*;
+use crate::pool::testing::{pool_ref, pool_ref_of, pool_ref_with_room};
 use crate::{callback::CallbackId, *};
 
 #[test]
 fn growing_frame_preserves_text_links_bindings_and_caches() {
-    let mut frame = FrameArena::<HeapFrame<1, 1>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let root = frame.push_div(Style::default()).unwrap();
     let event = TypeId::of::<ActivateEvent>();
     let mut previous = None;
@@ -55,7 +56,7 @@ fn growing_frame_preserves_text_links_bindings_and_caches() {
 
 #[test]
 fn clear_reuses_capacity_and_explicit_shrink_preserves_live_text() {
-    let mut frame = FrameArena::<HeapFrame<0, 0>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     for _ in 0..128 {
         frame.push_text("reusable", TextStyle::default()).unwrap();
     }
@@ -113,22 +114,31 @@ fn clear_reuses_capacity_and_explicit_shrink_preserves_live_text() {
 
 #[test]
 fn reservation_failure_keeps_nodes_caches_and_text_consistent() {
-    let mut nodes = FrameArena::<HeapFrame<{ usize::MAX }, 0>>::default();
+    // room for the text, but not for the first nodes
+    let mut nodes = FrameArena::new_in(pool_ref_with_room(256));
 
-    assert_eq!(
+    assert!(matches!(
         nodes.push_text("rollback", TextStyle::default()),
-        Err(MountError::AllocationFailed)
-    );
+        Err(MountError::OutOfMemory(OutOfMemory {
+            table: Table::Nodes,
+            ..
+        }))
+    ));
     assert_eq!(nodes.node_count(), 0);
     assert_eq!(nodes.text_bytes_used(), 0);
     assert_eq!(nodes.node_cache.len(), 0);
 
-    let mut text = FrameArena::<HeapFrame<0, { usize::MAX }>>::default();
+    // room for the nodes, but not for the text
+    let mut text = FrameArena::new_in(pool_ref_of(4 * 1024));
     let root = text.push_div(Style::default()).unwrap();
+    let long = "x".repeat(4 * 1024);
 
     assert_eq!(
-        text.push_text("failure", TextStyle::default()),
-        Err(MountError::AllocationFailed)
+        text.push_text(&long, TextStyle::default()),
+        Err(MountError::OutOfMemory(OutOfMemory {
+            table: Table::Text,
+            requested: 4 * 1024,
+        }))
     );
     assert_eq!(text.node_count(), 1);
     assert_eq!(text.node_cache.len(), 1);
@@ -138,7 +148,8 @@ fn reservation_failure_keeps_nodes_caches_and_text_consistent() {
 
 #[test]
 fn growing_storage_respects_node_and_binding_id_limits() {
-    let mut frame = FrameArena::<HeapFrame<0, 0>>::default();
+    // room for every node id
+    let mut frame = FrameArena::new_in(pool_ref_of(128 * 1024 * 1024));
     let root = frame.push_div(Style::default()).unwrap();
 
     for _ in 1..=u16::MAX {

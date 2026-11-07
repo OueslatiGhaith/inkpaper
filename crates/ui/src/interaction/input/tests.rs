@@ -1,9 +1,10 @@
 use core::cell::Cell;
 use std::rc::Rc;
 
+use crate::pool::testing::pool;
 use crate::*;
 
-type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 64, 512, 32>>;
+type TestRuntime = Runtime;
 
 struct TestTextMeasurer;
 
@@ -49,7 +50,7 @@ impl Render for Counter {
 #[test]
 fn press_and_release_on_same_element_dispatches_click() {
     let clicks = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -77,7 +78,7 @@ fn press_and_release_on_same_element_dispatches_click() {
 #[test]
 fn release_outside_pressed_element_does_not_dispatch_click() {
     let clicks = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -107,7 +108,7 @@ fn release_outside_pressed_element_does_not_dispatch_click() {
 #[test]
 fn pointer_down_on_noninteractive_space_does_not_capture() {
     let clicks = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -177,7 +178,7 @@ impl Render for NestedButtons {
 fn deepest_topmost_clickable_element_wins() {
     let parent_clicks = Rc::new(Cell::new(0));
     let child_clicks = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -209,7 +210,7 @@ fn deepest_topmost_clickable_element_wins() {
 #[test]
 fn press_survives_rebuild_when_element_identity_is_stable() {
     let clicks = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -311,7 +312,7 @@ fn focus_next_moves_through_clickable_elements() {
     let first = Rc::new(Cell::new(0));
     let second = Rc::new(Cell::new(0));
     let third = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -352,7 +353,7 @@ fn focus_next_wraps_to_first_element() {
     let first = Rc::new(Cell::new(0));
     let second = Rc::new(Cell::new(0));
     let third = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -388,7 +389,7 @@ fn focus_previous_wraps_to_last_element() {
     let first = Rc::new(Cell::new(0));
     let second = Rc::new(Cell::new(0));
     let third = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -421,7 +422,7 @@ fn focus_survives_rebuild_when_element_still_exists() {
     let first = Rc::new(Cell::new(0));
     let second = Rc::new(Cell::new(0));
     let third = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -461,7 +462,7 @@ fn focused_activation_uses_current_frame_listener() {
     let first = Rc::new(Cell::new(0));
     let second = Rc::new(Cell::new(0));
     let third = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -498,7 +499,7 @@ fn successful_pointer_click_establishes_focus() {
     let first = Rc::new(Cell::new(0));
     let second = Rc::new(Cell::new(0));
     let third = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -546,7 +547,7 @@ fn focus_is_cleared_when_element_disappears() {
     let first = Rc::new(Cell::new(0));
     let second = Rc::new(Cell::new(0));
     let third = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     let app = runtime
         .create({
@@ -622,7 +623,7 @@ impl Render for FocusScrollApp {
 
 #[test]
 fn focus_navigation_scrolls_target_into_view() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| FocusScrollApp).unwrap();
 
@@ -702,7 +703,7 @@ fn initial_scroll_offset(runtime: &TestRuntime) -> Offset {
 
 #[test]
 fn initial_scroll_puts_target_child_at_top() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     runtime
         .create_root(|_| InitialScrollApp { target: 1 })
         .unwrap();
@@ -716,7 +717,7 @@ fn initial_scroll_puts_target_child_at_top() {
 
 #[test]
 fn initial_scroll_clamps_to_end_of_content() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     runtime
         .create_root(|_| InitialScrollApp { target: 3 })
         .unwrap();
@@ -731,7 +732,7 @@ fn initial_scroll_clamps_to_end_of_content() {
 
 #[test]
 fn initial_scroll_does_not_override_user_scrolling() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     runtime
         .create_root(|_| InitialScrollApp { target: 1 })
         .unwrap();
@@ -791,7 +792,7 @@ impl Render for NestedFocusScrollApp {
 
 #[test]
 fn focus_scrolls_nested_containers_inside_out() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| NestedFocusScrollApp).unwrap();
 
@@ -854,7 +855,7 @@ impl Render for LayoutFocusScrollApp {
 
 #[test]
 fn focus_scroll_waits_for_layout_when_focus_changes_size() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| LayoutFocusScrollApp).unwrap();
 
@@ -913,7 +914,7 @@ impl Render for ExplicitFocusApp {
 
 #[test]
 fn element_can_be_focusable_without_click_listener() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| ExplicitFocusApp).unwrap();
 
@@ -947,7 +948,7 @@ impl Render for ClickRemainsFocusableApp {
 
 #[test]
 fn click_listener_still_makes_element_focusable() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| ClickRemainsFocusableApp).unwrap();
 
@@ -986,7 +987,7 @@ impl Render for GenericEventApp {
 
 #[test]
 fn arbitrary_event_can_be_bound_to_element() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| GenericEventApp).unwrap();
 
@@ -1035,7 +1036,7 @@ impl Render for MultipleEventsApp {
 
 #[test]
 fn element_can_bind_multiple_event_types() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| MultipleEventsApp).unwrap();
 
@@ -1078,7 +1079,7 @@ impl Render for DuplicateEventApp {
 
 #[test]
 fn element_can_bind_multiple_handlers_for_same_event() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| DuplicateEventApp).unwrap();
 
@@ -1126,7 +1127,7 @@ impl Render for FocusedDispatchApp {
 #[test]
 fn dispatch_to_focused_invokes_matching_custom_event() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1158,7 +1159,7 @@ fn dispatch_to_focused_invokes_matching_custom_event() {
 #[test]
 fn dispatch_to_focused_ignores_unbound_event_type() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1185,7 +1186,7 @@ fn dispatch_to_focused_ignores_unbound_event_type() {
 #[test]
 fn dispatch_to_focused_without_focus_is_not_handled() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1231,7 +1232,7 @@ impl Render for MultipleDispatchApp {
 #[test]
 fn dispatch_to_focused_invokes_all_matching_handlers_in_order() {
     let sequence = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1290,7 +1291,7 @@ fn dispatch_to_focused_only_invokes_focused_element() {
     let first = Rc::new(Cell::new(0));
     let second = Rc::new(Cell::new(0));
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1352,7 +1353,7 @@ impl Render for SpatialDispatchApp {
 #[test]
 fn dispatch_at_invokes_matching_event_under_position() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1379,7 +1380,7 @@ fn dispatch_at_invokes_matching_event_under_position() {
 #[test]
 fn dispatch_at_outside_target_is_not_handled() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1405,7 +1406,7 @@ fn dispatch_at_outside_target_is_not_handled() {
 #[test]
 fn dispatch_at_ignores_unbound_event_type() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1464,7 +1465,7 @@ fn dispatch_at_prefers_topmost_matching_element() {
     let parent = Rc::new(Cell::new(0));
     let child = Rc::new(Cell::new(0));
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1516,7 +1517,7 @@ impl Render for EventTypeSpatialApp {
 #[test]
 fn dispatch_at_can_target_ancestor_when_child_has_no_matching_event() {
     let hits = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1564,7 +1565,7 @@ impl Render for ClippedSpatialApp {
 #[test]
 fn dispatch_at_respects_ancestor_clipping() {
     let hits = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1596,7 +1597,7 @@ fn dispatch_at_respects_ancestor_clipping() {
 #[test]
 fn explicit_target_dispatches_custom_event() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1627,7 +1628,7 @@ fn explicit_target_dispatches_custom_event() {
 #[test]
 fn event_target_survives_rebuild_when_identity_survives() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1666,7 +1667,7 @@ impl Render for TargetEmptyApp {
 #[test]
 fn event_target_becomes_stale_when_element_disappears() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     let app = runtime
         .create({
@@ -1701,7 +1702,7 @@ fn event_target_becomes_stale_when_element_disappears() {
 #[test]
 fn stale_event_target_does_not_alias_reappearing_element() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     let app = runtime
         .create_root({
@@ -1752,7 +1753,7 @@ fn stale_event_target_does_not_alias_reappearing_element() {
 #[test]
 fn target_at_returns_dispatchable_spatial_target() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1782,7 +1783,7 @@ fn target_at_returns_dispatchable_spatial_target() {
 #[test]
 fn target_at_is_event_type_specific() {
     let value = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1805,7 +1806,7 @@ fn target_at_is_event_type_specific() {
 
 #[test]
 fn direct_scroll_damages_only_scroll_viewport() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| FocusScrollApp).unwrap();
 
@@ -1831,7 +1832,7 @@ fn direct_scroll_damages_only_scroll_viewport() {
 
 #[test]
 fn nested_direct_scroll_damage_is_clipped_by_outer_viewport() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| NestedFocusScrollApp).unwrap();
 
@@ -1857,7 +1858,7 @@ fn nested_direct_scroll_damage_is_clipped_by_outer_viewport() {
 
 #[test]
 fn nested_focus_scroll_damage_collapses_to_outer_viewport() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| NestedFocusScrollApp).unwrap();
 
@@ -1917,7 +1918,7 @@ impl Render for PositionedHitTestApp {
 #[test]
 fn absolute_child_is_hittable_outside_unclipped_parent_bounds() {
     let clicks = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -1971,7 +1972,7 @@ impl Render for ClippedPositionedHitTestApp {
 #[test]
 fn absolute_child_outside_clipping_parent_is_not_hittable() {
     let clicks = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -2017,7 +2018,7 @@ impl Render for AbsoluteFocusScrollApp {
 
 #[test]
 fn focus_scrolls_nested_absolute_target_into_view() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| AbsoluteFocusScrollApp).unwrap();
 
@@ -2063,7 +2064,7 @@ impl Render for PositionedFocusDamageApp {
 
 #[test]
 fn positioned_element_damage_uses_final_visual_bounds() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| PositionedFocusDamageApp).unwrap();
 

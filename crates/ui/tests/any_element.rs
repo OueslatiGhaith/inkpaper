@@ -2,17 +2,7 @@
 
 use inkpaper_ui::prelude::*;
 
-type TestRuntime = Runtime<
-    FixedStorage<
-        4096, // entity bytes
-        1,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-        64,   // frame nodes
-        1024, // frame text bytes
-        32,   // element states
-    >,
->;
+type TestRuntime = Runtime;
 
 struct Static {
     detail: bool,
@@ -47,7 +37,7 @@ impl Render for Erased {
 }
 
 fn frame_shape<T: Render + 'static>(root: T) -> (usize, usize) {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| root).unwrap();
     runtime.rebuild().unwrap();
@@ -65,4 +55,9 @@ fn any_element_mounts_like_the_element_it_wraps() {
         frame_shape(Erased { detail: true }),
         frame_shape(Static { detail: true }),
     );
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

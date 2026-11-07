@@ -4,18 +4,8 @@ mod arena;
 
 #[cfg(test)]
 pub(crate) use arena::CanvasInvokeError;
-#[cfg(feature = "alloc")]
-pub use arena::HeapCallbackArena;
-pub use arena::{CallbackAllocError, FixedCallbackArena, ListenerInvokeError};
-pub(crate) use arena::{CallbackMark, CallbackStore, register_canvas_callback, register_listener};
-
-// unit tests run against the storage the `alloc` feature implies
-#[cfg(all(test, not(feature = "alloc")))]
-pub(crate) type TestCallbackArena<const BYTES: usize, const SLOTS: usize> =
-    FixedCallbackArena<BYTES, SLOTS>;
-#[cfg(all(test, feature = "alloc"))]
-pub(crate) type TestCallbackArena<const BYTES: usize, const SLOTS: usize> =
-    HeapCallbackArena<SLOTS>;
+pub use arena::{CallbackAllocError, ListenerInvokeError};
+pub(crate) use arena::{CallbackArena, CallbackStore, register_canvas_callback, register_listener};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CallbackId {

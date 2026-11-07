@@ -33,53 +33,43 @@ mod image;
 mod interaction;
 mod layout;
 mod metrics;
+mod pool;
 mod rendering;
 mod resources;
 mod runtime;
 mod slot_table;
-mod storage;
 mod style;
 mod svg_source;
 mod text_layout;
 mod text_shaping;
 mod vector;
 
-#[cfg(feature = "alloc")]
-pub use callback::HeapCallbackArena;
-pub use callback::{CallbackAllocError, FixedCallbackArena, Listener, ListenerInvokeError};
+#[cfg(test)]
+pub(crate) use callback::CallbackArena;
+pub use callback::{CallbackAllocError, Listener, ListenerInvokeError};
 pub use color::*;
 pub use context::*;
 pub use dither::*;
 pub use element::*;
-pub use emitter::{EventEmitter, EventError};
-#[cfg(feature = "alloc")]
-pub use entity::HeapEntityArena;
+pub use emitter::EventEmitter;
 #[cfg(test)]
-pub(crate) use entity::TestEntityArena;
-pub use entity::{Entity, EntityAccessError, EntityAllocError, EntityId, FixedEntityArena};
+pub(crate) use entity::EntityArena;
+pub use entity::{Entity, EntityAccessError, EntityAllocError, EntityId};
 pub use font::*;
 pub use frame::*;
 pub use geometry::*;
-#[cfg(feature = "alloc")]
-pub use global::HeapGlobalArena;
 #[cfg(test)]
-pub(crate) use global::TestGlobalArena;
-pub use global::{
-    FixedGlobalArena, Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError,
-};
+pub(crate) use global::GlobalArena;
+pub use global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError};
 pub use image::*;
 pub use interaction::*;
 pub use layout::*;
 pub use metrics::*;
+pub use pool::{MemoryStats, OutOfMemory, Pool, Table};
 pub use rendering::*;
 pub use resources::*;
 pub use runtime::*;
 pub(crate) use slot_table::BorrowKind;
-pub use storage::{FixedElementStates, FixedEvents, FixedFrame, FixedStorage, RuntimeStorage};
-#[cfg(feature = "alloc")]
-pub use storage::{HeapElementStates, HeapEvents, HeapFrame, HeapStorage};
-#[cfg(test)]
-pub(crate) use storage::{TestElementStates, TestFrame, TestStorage};
 pub use style::*;
 pub use svg_source::*;
 pub use text_shaping::*;
@@ -93,22 +83,22 @@ pub mod prelude {
         ActivateEvent, AffineTransform, AppContext, Canvas, CanvasPainter, Children, Color,
         ComponentChildren, ComponentSlot, ConditionalElementExt, Context, DamageRegion, Div,
         Either, Element, ElementId, EmptySlot, Entity, EventEmitter, EventTarget, FillRule,
-        FixedStorage, FontFamilyId, FontId, FontResources, FontStyle, FontWeight, FrameBuildError,
-        FramePhase, Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError,
-        IdentifiableElementExt, Image, ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint,
-        ImagePosition, ImageRegistry, ImageRegistryError, ImageResource, ImageSampling,
-        ImageSource, IntoElement, Invalidation, LineHeight, Listener, Luminance, MountCx,
-        MountError, NoChildren, NodeId, Offset, OnEvent, PaintCx, PaintReport, PaintResources,
-        ParentElement, ParentElementChildrenExt, PathCommand, PathFill, PathStroke, Pixels, Point,
-        Rect, Render, RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourceRuntimeApi,
-        Runtime, RuntimeApi, RuntimeStorage, Size, StatefulInteractiveElementExt, StrokeCap,
-        StrokeJoin, Style, Styled, Svg, SvgFill, SvgPaint, SvgPath, SvgSource, SvgStroke,
-        SvgViewBox, TextAlign, TextDarkness, TextMaxLines, TextOverflow, TextStyled, TextWrap,
-        VectorPath, VectorPoint, canvas, div, image, px, svg, text,
+        FontFamilyId, FontId, FontResources, FontStyle, FontWeight, FrameBuildError, FramePhase,
+        Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError, IdentifiableElementExt,
+        Image, ImageColorMode, ImageDither, ImageFit, ImageId, ImagePaint, ImagePosition,
+        ImageRegistry, ImageRegistryError, ImageResource, ImageSampling, ImageSource, IntoElement,
+        Invalidation, LineHeight, Listener, Luminance, MountCx, MountError, NoChildren, NodeId,
+        Offset, OnEvent, PaintCx, PaintReport, PaintResources, ParentElement,
+        ParentElementChildrenExt, PathCommand, PathFill, PathStroke, Pixels, Point, Pool, Rect,
+        Render, RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourceRuntimeApi, Runtime,
+        RuntimeApi, Size, StatefulInteractiveElementExt, StrokeCap, StrokeJoin, Style, Styled, Svg,
+        SvgFill, SvgPaint, SvgPath, SvgSource, SvgStroke, SvgViewBox, TextAlign, TextDarkness,
+        TextMaxLines, TextOverflow, TextStyled, TextWrap, VectorPath, VectorPoint, canvas, div,
+        image, px, svg, text,
     };
 
     #[cfg(feature = "alloc")]
-    pub use crate::{AnyElement, HeapStorage};
+    pub use crate::AnyElement;
 
     #[cfg(feature = "macros")]
     pub use inkpaper_ui_macros::{component, include_svg, rsx};

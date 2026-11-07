@@ -1,10 +1,8 @@
 use super::*;
 
-use crate::{
-    FlexBasis, FrameArena, NodeId, NodeKind, Position, count_metric, storage::FrameStorage,
-};
+use crate::{FlexBasis, FrameArena, NodeId, NodeKind, Position, count_metric};
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     pub(super) fn flow_child_count(&self, parent: NodeId) -> usize {
         let mut count = 0;
         let mut current = self.node(parent).first_child;

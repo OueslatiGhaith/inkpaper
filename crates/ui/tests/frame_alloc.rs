@@ -11,36 +11,8 @@ use std::{
     rc::Rc,
 };
 
-/// heap storage with the initial reservation of each table
-struct Heap<
-    const ENTITIES: usize,
-    const CALLBACKS: usize,
-    const NODES: usize,
-    const TEXT_BYTES: usize,
-    const STATES: usize,
-    const GLOBALS: usize = 0,
->;
-
-impl<
-    const ENTITIES: usize,
-    const CALLBACKS: usize,
-    const NODES: usize,
-    const TEXT_BYTES: usize,
-    const STATES: usize,
-    const GLOBALS: usize,
-> RuntimeStorage for Heap<ENTITIES, CALLBACKS, NODES, TEXT_BYTES, STATES, GLOBALS>
-{
-    type Entities = HeapEntityArena<ENTITIES>;
-    type Callbacks = HeapCallbackArena<CALLBACKS>;
-    type Globals = HeapGlobalArena<GLOBALS>;
-    type Frame = HeapFrame<NODES, TEXT_BYTES>;
-    type ElementStates = HeapElementStates<STATES>;
-    type Events = HeapEvents;
-}
-
 std::thread_local! {
     static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
-    static FAIL_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
 struct CountingAllocator;
@@ -56,25 +28,16 @@ fn record_allocation() {
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         record_allocation();
-        if reject_allocation() {
-            return core::ptr::null_mut();
-        }
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         record_allocation();
-        if reject_allocation() {
-            return core::ptr::null_mut();
-        }
         unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         record_allocation();
-        if reject_allocation() {
-            return core::ptr::null_mut();
-        }
         unsafe { System.realloc(ptr, layout, size) }
     }
 
@@ -83,24 +46,19 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 }
 
-fn reject_allocation() -> bool {
-    FAIL_AFTER
-        .try_with(|remaining| match remaining.get() {
-            Some(0) => {
-                remaining.set(None);
-                true
-            }
-            Some(count) => {
-                remaining.set(Some(count - 1));
-                false
-            }
-            None => false,
-        })
-        .unwrap_or(false)
-}
-
 #[global_allocator]
 static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+/// allocations from the heap and from `runtime`'s pool while `operation` runs
+fn runtime_allocations<R>(
+    runtime: &mut Runtime<R>,
+    operation: impl FnOnce(&mut Runtime<R>),
+) -> usize {
+    let pooled = runtime.memory().allocations;
+    let heap = allocations_during(|| operation(runtime));
+
+    heap + runtime.memory().allocations - pooled
+}
 
 fn allocations_during(operation: impl FnOnce()) -> usize {
     struct Reset;
@@ -204,17 +162,17 @@ impl PaintResources for BlockText {
 
 #[test]
 fn dynamic_runtime_allocates_on_growth_and_reuses_storage_for_rebuild_layout_and_paint() {
-    let mut runtime = Runtime::<Heap<4, 4, 1, 1, 8>, BlockText>::default();
+    let mut runtime = Runtime::<BlockText>::new(pool());
 
     let screen = runtime.create_root(|_| Screen).unwrap();
 
-    assert!(allocations_during(|| runtime.rebuild().unwrap()) > 0);
+    assert!(runtime_allocations(&mut runtime, |runtime| runtime.rebuild().unwrap()) > 0);
     assert!(runtime.frame_node_count() > 1);
     assert_eq!(runtime.frame_text_bytes_used(), 10);
 
     let mut painter = TextCounter::default();
 
-    let allocations = allocations_during(|| {
+    let allocations = runtime_allocations(&mut runtime, |runtime| {
         runtime
             .layout_with_measurer(Size::new(px(80), px(40)), &painter)
             .unwrap();
@@ -238,21 +196,6 @@ fn dynamic_runtime_allocates_on_growth_and_reuses_storage_for_rebuild_layout_and
     assert_eq!(painter.0, 6);
 }
 
-fn failing_allocation<T>(after: usize, operation: impl FnOnce() -> T) -> T {
-    struct Reset;
-
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            FAIL_AFTER.with(|remaining| remaining.set(None));
-        }
-    }
-
-    FAIL_AFTER.with(|remaining| remaining.set(Some(after)));
-    let _reset = Reset;
-
-    operation()
-}
-
 struct StatefulScreen {
     rows: usize,
 }
@@ -268,13 +211,19 @@ impl Render for StatefulScreen {
     }
 }
 
-type StateRuntime = Runtime<Heap<4, 4, 128, 128, 1>>;
+type StateRuntime = Runtime;
 
 fn state_runtime() -> (StateRuntime, Entity<StatefulScreen>) {
-    let mut runtime = StateRuntime::default();
-    let screen = runtime.create_root(|_| StatefulScreen { rows: 4 }).unwrap();
+    state_runtime_in(pool()).unwrap()
+}
 
-    runtime.rebuild().unwrap();
+/// a runtime showing four rows, with the first focused and scrolled, or `None` when
+/// they don't fit in `pool`
+fn state_runtime_in(pool: Pool) -> Option<(StateRuntime, Entity<StatefulScreen>)> {
+    let mut runtime = StateRuntime::new(pool);
+    let screen = runtime.create_root(|_| StatefulScreen { rows: 4 }).ok()?;
+
+    runtime.rebuild().ok()?;
     runtime
         .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
         .unwrap();
@@ -282,7 +231,7 @@ fn state_runtime() -> (StateRuntime, Entity<StatefulScreen>) {
     assert!(runtime.focus_next());
     assert!(runtime.scroll_at(Point::new(px(10), px(10)), Offset::new(px(0), px(10))));
 
-    (runtime, screen)
+    Some((runtime, screen))
 }
 
 #[test]
@@ -297,10 +246,10 @@ fn dynamic_identity_growth_preserves_focus_and_scrolling_without_input_allocatio
         })
         .unwrap();
 
-    assert!(allocations_during(|| runtime.rebuild().unwrap()) > 0);
+    assert!(runtime_allocations(&mut runtime, |runtime| runtime.rebuild().unwrap()) > 0);
     assert_eq!(runtime.focused_target(), Some(original));
 
-    let allocations = allocations_during(|| {
+    let allocations = runtime_allocations(&mut runtime, |runtime| {
         runtime
             .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
             .unwrap();
@@ -343,8 +292,10 @@ fn dynamic_identity_growth_preserves_focus_and_scrolling_without_input_allocatio
 }
 
 #[test]
-fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
+fn rebuilds_that_run_out_of_pool_can_be_retried() {
     let (mut probe, screen) = state_runtime();
+    let header = 256 * 1024 - probe.memory().capacity;
+    let four_rows = probe.memory().peak;
 
     probe
         .update(screen, |screen, cx| {
@@ -352,12 +303,18 @@ fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
             cx.notify();
         })
         .unwrap();
+    probe.rebuild().unwrap();
+    let thirty_two_rows = probe.memory().peak;
 
-    let allocations = allocations_during(|| probe.rebuild().unwrap());
-    assert!(allocations > 0);
-
-    for after in 0..allocations {
-        let (mut runtime, screen) = state_runtime();
+    // pools from too small for four rows to large enough for 32, so the rebuild runs out
+    // in each table it grows
+    let mut failures = 0;
+    let mut recoveries = 0;
+    for room in (four_rows..thirty_two_rows).step_by(64) {
+        let pool = Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(header + room)));
+        let Some((mut runtime, screen)) = state_runtime_in(pool) else {
+            continue;
+        };
         let original = runtime.focused_target().unwrap();
 
         runtime
@@ -367,19 +324,35 @@ fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
             })
             .unwrap();
 
-        assert_eq!(
-            failing_allocation(after, || runtime.rebuild()),
-            Err(FrameBuildError::Identity(IdentityError::AllocationFailed))
+        let Err(error) = runtime.rebuild() else {
+            continue;
+        };
+        failures += 1;
+
+        assert!(
+            matches!(
+                error,
+                FrameBuildError::Mount(MountError::OutOfMemory(_))
+                    | FrameBuildError::Identity(IdentityError::OutOfMemory(_))
+            ),
+            "{error:?}"
         );
         assert_eq!(runtime.frame_node_count(), 0);
 
+        // the tables keep what they grew before running out, so four rows may no longer
+        // fit in the smallest pools. Either way the runtime stays consistent
         runtime
             .update(screen, |screen, cx| {
                 screen.rows = 4;
                 cx.notify();
             })
             .unwrap();
-        runtime.rebuild().unwrap();
+        if runtime.rebuild().is_err() {
+            assert_eq!(runtime.frame_node_count(), 0);
+            continue;
+        }
+        recoveries += 1;
+
         runtime
             .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
             .unwrap();
@@ -387,50 +360,65 @@ fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
         assert!(runtime.scroll_at(Point::new(px(10), px(10)), Offset::new(px(0), px(-10))));
         assert!(runtime.focus_next());
         assert_eq!(runtime.focused_target(), Some(original));
-
-        runtime
-            .update(screen, |screen, cx| {
-                screen.rows = 32;
-                cx.notify();
-            })
-            .unwrap();
-        runtime.rebuild().unwrap();
     }
+
+    assert!(failures > 0);
+    assert!(recoveries > 0);
 }
 
 #[test]
-fn entity_allocation_failures_do_not_run_constructors_and_allow_retry() {
-    type SmallRuntime = Runtime<HeapStorage>;
+fn growable_pools_rebuild_screens_their_first_chunk_does_not_fit() {
+    let (mut runtime, screen) = state_runtime_in(Pool::growable(8 * 1024)).unwrap();
+    let first = runtime.memory();
 
-    let expected = SmallRuntime::default()
-        .create(|_| 7u32)
-        .unwrap()
-        .entity_id();
+    runtime
+        .update(screen, |screen, cx| {
+            screen.rows = 32;
+            cx.notify();
+        })
+        .unwrap();
+    runtime.rebuild().unwrap();
 
-    for after in 0..2 {
-        let runtime = SmallRuntime::default();
+    let grown = runtime.memory();
+    assert!(grown.chunks_added > first.chunks_added);
+    assert!(grown.capacity > first.capacity);
+    assert!(runtime.frame_node_count() > 32);
+}
+
+#[test]
+fn entity_allocation_failures_do_not_run_constructors() {
+    let mut failures = 0;
+
+    for runtime in growing_runtimes() {
         let called = Cell::new(false);
-
-        let result = failing_allocation(after, || {
-            runtime.create(|_| {
-                called.set(true);
-                7u32
-            })
+        let result = runtime.create(|_| {
+            called.set(true);
+            7u32
         });
 
-        assert_eq!(result, Err(EntityAllocError::AllocationFailed));
-        assert!(!called.get());
+        let Ok(entity) = result else {
+            assert!(matches!(
+                result,
+                Err(EntityAllocError::OutOfMemory(OutOfMemory {
+                    table: Table::Entities,
+                    ..
+                }))
+            ));
+            assert!(!called.get());
+            failures += 1;
+            continue;
+        };
 
-        let entity = runtime.create(|_| 9u32).unwrap();
-
-        assert_eq!(entity.entity_id(), expected);
-        assert_eq!(runtime.update(entity, |value, _| *value), Ok(9));
+        assert_eq!(runtime.update(entity, |value, _| *value), Ok(7));
+        break;
     }
+
+    assert!(failures > 0);
 }
 
 #[test]
 fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
-    let runtime = Runtime::<Heap<1, 0, 0, 0, 0>>::default();
+    let runtime: Runtime = Runtime::new(pool());
 
     let parent = runtime
         .create(|cx| {
@@ -486,7 +474,7 @@ fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
 }
 
 #[test]
-fn callback_allocation_failures_drop_captures_and_allow_listener_and_canvas_retry() {
+fn callback_allocation_failures_drop_captures() {
     struct Capture(Rc<Cell<usize>>);
 
     impl Drop for Capture {
@@ -496,56 +484,51 @@ fn callback_allocation_failures_drop_captures_and_allow_listener_and_canvas_retr
     }
 
     for canvas in [false, true] {
-        for after in 0..2 {
-            let runtime = Runtime::<HeapStorage>::default();
-            let entity = runtime.create(|_| ()).unwrap();
+        let mut failures = 0;
+
+        for runtime in growing_runtimes() {
+            let Ok(entity) = runtime.create(|_| ()) else {
+                continue;
+            };
             let drops = Rc::new(Cell::new(0));
             let capture = Capture(drops.clone());
 
-            let result = failing_allocation(after, || {
-                runtime.update(entity, |_, cx| {
-                    if canvas {
-                        cx.try_canvas(move |_, _| {
-                            let _ = &capture;
-                        })
-                        .map(|_| ())
-                    } else {
-                        cx.try_listener::<ActivateEvent, _>(move |_, _, _| {
-                            let _ = &capture;
-                        })
-                        .map(|_| ())
-                    }
-                })
-            })
-            .unwrap();
-
-            assert_eq!(result, Err(CallbackAllocError::AllocationFailed));
-            assert_eq!(drops.get(), 1);
-
-            let capture = Capture(drops.clone());
-
-            runtime
+            let result = runtime
                 .update(entity, |_, cx| {
                     if canvas {
                         cx.try_canvas(move |_, _| {
                             let _ = &capture;
                         })
-                        .unwrap();
+                        .map(|_| ())
                     } else {
                         cx.try_listener::<ActivateEvent, _>(move |_, _, _| {
                             let _ = &capture;
                         })
-                        .unwrap();
+                        .map(|_| ())
                     }
                 })
                 .unwrap();
 
-            assert_eq!(drops.get(), 1);
+            if result.is_err() {
+                assert!(matches!(
+                    result,
+                    Err(CallbackAllocError::OutOfMemory(OutOfMemory {
+                        table: Table::Callbacks,
+                        ..
+                    }))
+                ));
+                assert_eq!(drops.get(), 1);
+                failures += 1;
+                continue;
+            }
 
+            assert_eq!(drops.get(), 0);
             drop(runtime);
-
-            assert_eq!(drops.get(), 2);
+            assert_eq!(drops.get(), 1);
+            break;
         }
+
+        assert!(failures > 0);
     }
 }
 
@@ -559,10 +542,7 @@ fn globals_grow_without_moving_values_and_support_aligned_zsts() {
     struct Empty;
     impl Global for Empty {}
 
-    let mut runtime = Runtime::<Heap<0, 0, 0, 0, 0, 1>>::default();
-
-    assert_eq!(runtime.global_capacity(), 0);
-    assert_eq!(runtime.global_byte_capacity(), 0);
+    let mut runtime: Runtime = Runtime::new(pool());
 
     runtime.set_global(Value::<0>(42)).unwrap();
     let address = {
@@ -577,9 +557,6 @@ fn globals_grow_without_moving_values_and_support_aligned_zsts() {
     runtime.set_global(Empty).unwrap();
 
     assert_eq!(runtime.global_count(), 6);
-    assert!(runtime.global_capacity() >= 6);
-    assert_eq!(runtime.global_bytes_used(), 5 * size_of::<Value<0>>() + 1);
-    assert_eq!(runtime.global_byte_capacity(), runtime.global_bytes_used());
     assert_eq!(
         (&*runtime.global::<Value<0>>()) as *const Value<0> as usize,
         address
@@ -594,7 +571,7 @@ fn globals_grow_without_moving_values_and_support_aligned_zsts() {
 }
 
 #[test]
-fn global_allocation_failures_drop_inputs_and_allow_retry() {
+fn global_allocation_failures_drop_inputs_and_keep_existing_globals() {
     struct Value(Rc<Cell<usize>>);
     impl Global for Value {}
 
@@ -604,38 +581,47 @@ fn global_allocation_failures_drop_inputs_and_allow_retry() {
         }
     }
 
-    struct Other;
+    struct Other(#[allow(dead_code, reason = "it takes room")] [u8; 64]);
     impl Global for Other {}
 
-    // Fail the slot allocation, then the payload allocation.
-    for after in 0..2 {
-        let mut runtime = Runtime::<HeapStorage>::default();
+    let mut first_failures = 0;
+    let mut second_failures = 0;
+
+    for mut runtime in growing_runtimes() {
         let drops = Rc::new(Cell::new(0));
-        let value = Value(drops.clone());
 
-        assert_eq!(
-            failing_allocation(after, || runtime.set_global(value)),
-            Err(GlobalSetError::AllocationFailed),
-        );
-        assert_eq!(drops.get(), 1);
-        assert_eq!(runtime.global_count(), 0);
-        assert_eq!(runtime.global_bytes_used(), 0);
-        assert!(!runtime.has_global::<Value>());
+        if runtime.set_global(Value(drops.clone())).is_err() {
+            assert_eq!(drops.get(), 1);
+            assert_eq!(runtime.global_count(), 0);
+            assert!(!runtime.has_global::<Value>());
+            first_failures += 1;
+            continue;
+        }
 
-        runtime.set_global(Value(drops.clone())).unwrap();
-        let bytes = runtime.global_bytes_used();
+        let bytes = runtime.memory().table(Table::Globals);
+        let result = runtime.set_global(Other([0; 64]));
+        if result.is_ok() {
+            break;
+        }
 
-        assert_eq!(
-            failing_allocation(0, || runtime.set_global(Other)),
-            Err(GlobalSetError::AllocationFailed),
-        );
+        assert!(matches!(
+            result,
+            Err(GlobalSetError::OutOfMemory(OutOfMemory {
+                table: Table::Globals,
+                ..
+            }))
+        ));
         assert_eq!(runtime.global_count(), 1);
-        assert_eq!(runtime.global_bytes_used(), bytes);
-        assert_eq!(runtime.global::<Value>().0.get(), 1);
+        assert_eq!(runtime.memory().table(Table::Globals), bytes);
+        assert_eq!(runtime.global::<Value>().0.get(), 0);
+        second_failures += 1;
 
         drop(runtime);
-        assert_eq!(drops.get(), 2);
+        assert_eq!(drops.get(), 1);
     }
+
+    assert!(first_failures > 0);
+    assert!(second_failures > 0);
 }
 
 #[test]
@@ -643,13 +629,13 @@ fn global_access_and_replacement_do_not_allocate() {
     struct Value(u32);
     impl Global for Value {}
 
-    let mut runtime = Runtime::<HeapStorage>::default();
+    let mut runtime: Runtime = Runtime::new(pool());
     runtime.set_global(Value(1)).unwrap();
-    let bytes = runtime.global_bytes_used();
+    let memory = runtime.memory();
 
     assert_eq!(
         allocations_during(|| {
-            failing_allocation(0, || runtime.set_global(Value(2))).unwrap();
+            runtime.set_global(Value(2)).unwrap();
             assert_eq!(runtime.global::<Value>().0, 2);
             runtime.global_mut::<Value>().0 = 3;
             assert_eq!(runtime.global::<Value>().0, 3);
@@ -657,7 +643,7 @@ fn global_access_and_replacement_do_not_allocate() {
         0
     );
     assert_eq!(runtime.global_count(), 1);
-    assert_eq!(runtime.global_bytes_used(), bytes);
+    assert_eq!(runtime.memory(), memory);
 }
 
 #[test]
@@ -676,7 +662,7 @@ fn global_replacement_survives_a_panicking_destructor() {
     }
 
     let drops = Rc::new(Cell::new(0));
-    let mut runtime = Runtime::<HeapStorage>::default();
+    let mut runtime: Runtime = Runtime::new(pool());
 
     runtime
         .set_global(Value {
@@ -701,4 +687,23 @@ fn global_replacement_survives_a_panicking_destructor() {
 
     drop(runtime);
     assert_eq!(drops.get(), 2);
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    pool_of(256 * 1024)
+}
+
+fn pool_of(bytes: usize) -> Pool {
+    Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(bytes)))
+}
+
+/// runtimes whose pools have room for 128 bytes, then 16 more each time, up to 4 KiB
+fn growing_runtimes() -> impl Iterator<Item = Runtime> {
+    let probe = 64 * 1024;
+    let allocator = probe - pool_of(probe).stats().capacity;
+
+    (128..4 * 1024)
+        .step_by(16)
+        .map(move |room| Runtime::new(pool_of(allocator + room)))
 }

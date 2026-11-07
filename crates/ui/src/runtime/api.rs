@@ -5,7 +5,7 @@ use crate::{
     Context, DamageRegion, ElementId, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
     FontRegistryError, FrameBuildError, FramePhase, ImageRegistryError, ImageResource, ImageSource,
     Offset, PaintError, PaintReport, PaintResources, Painter, Point, Runtime, RuntimeResources,
-    RuntimeStorage, Size, TextMeasurer, callback::ListenerInvokeError,
+    Size, TextMeasurer, callback::ListenerInvokeError,
 };
 
 /// application-facing runtime operations.
@@ -113,10 +113,7 @@ pub trait RenderRuntimeApi {
         P: Painter;
 }
 
-impl<S, RESOURCES> RuntimeApi for Runtime<S, RESOURCES>
-where
-    S: RuntimeStorage,
-{
+impl<RESOURCES> RuntimeApi for Runtime<RESOURCES> {
     fn update<T, R, F>(&self, entity: Entity<T>, update: F) -> Result<R, EntityAccessError>
     where
         T: 'static,
@@ -179,15 +176,12 @@ where
 
 impl<
     'resource,
-    S,
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
     const IMAGES: usize,
 > ResourceRuntimeApi<'resource>
-    for Runtime<S, RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
-where
-    S: RuntimeStorage,
+    for Runtime<RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
 {
     fn register_font_family(&mut self) -> Result<FontFamilyId, FontRegistryError> {
         self.register_font_family()
@@ -236,9 +230,8 @@ where
     }
 }
 
-impl<S, RESOURCES> RenderRuntimeApi for Runtime<S, RESOURCES>
+impl<RESOURCES> RenderRuntimeApi for Runtime<RESOURCES>
 where
-    S: RuntimeStorage,
     RESOURCES: TextMeasurer + PaintResources,
 {
     type Resources = RESOURCES;

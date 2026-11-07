@@ -1,7 +1,7 @@
 use crate::{
     Offset,
     element::state::{ElementStateId, IdentityError},
-    storage::{ElementStateStorage, VecStorage},
+    pool::{PoolRef, PoolVec, Table},
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -42,28 +42,24 @@ impl ScrollSlot {
     };
 }
 
-pub(crate) struct ScrollStateTable<E: ElementStateStorage> {
-    slots: E::Slots<ScrollSlot>,
+pub(crate) struct ScrollStateTable {
+    slots: PoolVec<ScrollSlot>,
 }
 
-impl<E: ElementStateStorage> Default for ScrollStateTable<E> {
-    fn default() -> Self {
+impl ScrollStateTable {
+    pub(crate) fn new_in(pool: PoolRef) -> Self {
         Self {
-            slots: E::Slots::default(),
+            slots: PoolVec::new_in(pool, Table::ElementStates),
         }
     }
-}
 
-impl<E: ElementStateStorage> ScrollStateTable<E> {
     /// prepare every identity slot before publishing the frame. Input and layout
     /// can then update offsets without allocating.
     pub(crate) fn prepare(&mut self, slots: usize) -> Result<(), IdentityError> {
         if slots > self.slots.len() {
             self.slots
                 .try_resize(slots, ScrollSlot::EMPTY)
-                .map_err(|error| {
-                    error.or(IdentityError::StatesFull, IdentityError::AllocationFailed)
-                })?;
+                .map_err(IdentityError::OutOfMemory)?;
         }
 
         Ok(())

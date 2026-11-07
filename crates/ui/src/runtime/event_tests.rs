@@ -1,8 +1,9 @@
 use std::vec::Vec;
 
+use crate::pool::testing::{pool, pool_with_room};
 use crate::*;
 
-type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 64, 256, 16>>;
+type TestRuntime = Runtime;
 
 /// what a [`Child`] says happened
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +99,7 @@ impl Render for Parent {
 }
 
 fn fixture() -> (TestRuntime, Entity<Parent>) {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     let parent = runtime.create_root(Parent::new).unwrap();
 
     (runtime, parent)
@@ -232,7 +233,7 @@ impl Collector {
 
 #[test]
 fn events_handlers_emit_are_delivered_too() {
-    let runtime = TestRuntime::default();
+    let runtime = TestRuntime::new(pool());
     let child = runtime.create(|_| Child::new()).unwrap();
     let relay = runtime
         .create(|cx| {
@@ -268,22 +269,29 @@ fn events_handlers_emit_are_delivered_too() {
     assert_eq!(runtime.update(relay, |relay, _| relay.child), Ok(child));
 }
 
-#[cfg(not(feature = "alloc"))]
 #[test]
 fn a_full_queue_reports_it() {
-    let (runtime, parent) = fixture();
+    let mut runtime = TestRuntime::new(pool_with_room(2 * 1024));
+    let parent = runtime.create_root(Parent::new).unwrap();
     let (first, _) = children(&runtime, parent);
 
     let results = runtime
         .update(first, |_, cx| {
-            (0..17)
+            (0..256)
                 .map(|value| cx.try_emit(Ping::Value(value)))
                 .collect::<Vec<_>>()
         })
         .unwrap();
+    let sent = results.iter().take_while(|result| result.is_ok()).count();
 
-    assert!(results[..16].iter().all(Result::is_ok));
-    assert_eq!(results[16], Err(EventError::QueueFull));
+    assert!(sent > 0);
+    assert!(results[sent..].iter().all(|result| matches!(
+        result,
+        Err(OutOfMemory {
+            table: Table::Events,
+            ..
+        })
+    )));
     // the ones that fit are delivered
-    assert_eq!(log(&runtime, parent).len(), 16);
+    assert_eq!(log(&runtime, parent).len(), sent);
 }

@@ -1359,10 +1359,7 @@ fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
 fn main() {
     let runtime_font = runtime_font_from_args();
 
-    let mut runtime = Runtime::<
-        FixedStorage<16_384, 32, 8_192, 64, 512, 8_192, 256, 2_048, 8>,
-        RuntimeResources<'_, 3, 128, { 16 * 1024 }, 1>,
-    >::default();
+    let mut runtime = Runtime::<RuntimeResources<'_, 3, 128, { 16 * 1024 }, 1>>::new(pool());
 
     let body_font_family = runtime
         .register_font_family()
@@ -1456,4 +1453,9 @@ fn main() {
 
         update_ui(&mut runtime, &mut display);
     }
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(1024 * 1024)))
 }

@@ -1,11 +1,8 @@
 use super::{boxes::ChildrenExtent, *};
 
-use crate::{
-    AlignItems, FrameArena, JustifyContent, NodeId, NodeKind, Position, count_metric,
-    storage::FrameStorage,
-};
+use crate::{AlignItems, FrameArena, JustifyContent, NodeId, NodeKind, Position, count_metric};
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     fn layout_node(
         &mut self,
         node: NodeId,
