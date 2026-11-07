@@ -38,31 +38,45 @@ impl NodeId {
     }
 }
 
+/// where a text node's bytes sit in the frame's text. 32-bit, to keep nodes small
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TextRange {
-    start: usize,
-    len: usize,
+    start: u32,
+    len: u32,
+}
+
+impl TextRange {
+    fn bytes(self) -> core::ops::Range<usize> {
+        let start = self.start as usize;
+
+        start..start + self.len as usize
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum NodeKind {
     Div {
-        style: Style,
+        /// where the div's style sits in the frame's div styles
+        style: u16,
     },
     Text {
         text: TextRange,
+        /// where the text's style sits in the frame's text styles
+        style: u16,
     },
     Image {
-        source: ImageSource,
-        style: ImageStyle,
+        /// where the image sits in the frame's images
+        image: u16,
     },
     Svg {
-        source: SvgSource,
-        style: SvgStyle,
+        /// where the svg sits in the frame's svgs
+        svg: u16,
+        /// where the svg's text style sits in the frame's text styles
+        text_style: u16,
     },
     Canvas {
-        draw: CanvasDraw,
-        style: CanvasStyle,
+        /// where the canvas sits in the frame's canvases
+        canvas: u16,
     },
     Entity {
         entity: EntityId,
@@ -83,17 +97,21 @@ pub(crate) struct Node {
     pub(crate) first_child: Option<NodeId>,
     pub(crate) last_child: Option<NodeId>,
     pub(crate) next_sibling: Option<NodeId>,
-    pub(crate) element_id: Option<ElementId>,
-    pub(crate) element_state_id: Option<ElementStateId>,
-    pub(crate) interaction: NodeInteraction,
+    /// where the node's identity and interaction sit in the frame's node extras, for
+    /// the few nodes that have them
+    pub(crate) extras: Option<u16>,
     pub(crate) layout: NodeLayout,
-    pub(crate) text_style: TextStyle,
-    pub(crate) effective_text_style: ResolvedTextStyle,
+    /// where the node's resolved text style sits in the frame's resolved text styles
+    pub(crate) resolved_text_style: u16,
     pub(crate) event_bindings: BindingRun,
     /// left behind by a partial rebuild. Detached nodes keep their links, but are no
     /// longer in the tree, so passes over the whole arena skip them
     pub(crate) detached: bool,
 }
+
+// nodes are the frame's largest table, and a partial rebuild can double it, so each
+// stays small. Whatever only some nodes need lives in a side table
+const _: () = assert!(core::mem::size_of::<Node>() <= 64);
 
 impl Node {
     fn new(kind: NodeKind) -> Self {
@@ -103,12 +121,9 @@ impl Node {
             first_child: None,
             last_child: None,
             next_sibling: None,
-            element_id: None,
-            element_state_id: None,
-            interaction: NodeInteraction::default(),
+            extras: None,
             layout: NodeLayout::default(),
-            text_style: TextStyle::default(),
-            effective_text_style: ResolvedTextStyle::default(),
+            resolved_text_style: 0,
             event_bindings: BindingRun::EMPTY,
             detached: false,
         }
@@ -130,6 +145,17 @@ impl BindingRun {
 
         start..start + usize::from(self.len)
     }
+}
+
+/// the identity and interaction of a node that has an element id or is interactive.
+/// Few nodes do, so the frame keeps them in their own table instead of in every [`Node`]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NodeExtras {
+    /// the node these belong to
+    owner: NodeId,
+    pub(crate) element_id: Option<ElementId>,
+    pub(crate) element_state_id: Option<ElementStateId>,
+    pub(crate) interaction: NodeInteraction,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -224,9 +250,26 @@ pub(crate) struct FrameArena {
     layout_changed_outside: bool,
     pub(crate) event_bindings: FrameBuffer<EventBinding>,
     text: FrameBuffer<u8>,
+    /// the style of each div, in mount order, kept apart from the nodes since they're
+    /// most of a node's size
+    styles: FrameBuffer<Style>,
+    /// the text style of each text and svg node, in mount order
+    text_styles: FrameBuffer<TextStyle>,
+    /// the source and style of each image, svg and canvas, in mount order
+    images: FrameBuffer<(ImageSource, ImageStyle)>,
+    svgs: FrameBuffer<(SvgSource, SvgStyle)>,
+    canvases: FrameBuffer<(CanvasDraw, CanvasStyle)>,
+    /// each text style the last resolve pass found, once. Nodes point into it
+    resolved_text_styles: FrameBuffer<ResolvedTextStyle>,
+    /// the nodes that can change the text style they inherit. A resolve pass finds at
+    /// most one new style at each, and the default, so mounting keeps room for that many
+    /// and resolving never allocates
+    text_style_changes: usize,
     node_cache: FrameBuffer<NodeCache>,
     /// each with the node it belongs to
     interaction_styles: FrameBuffer<(NodeId, InteractionStyles)>,
+    /// the identity and interaction of the nodes that have them, each with its node
+    extras: FrameBuffer<NodeExtras>,
     /// the elements whose interaction styles apply
     focused: Option<ElementStateId>,
     pressed: Option<ElementStateId>,
@@ -250,8 +293,16 @@ impl FrameArena {
             layout_changed_outside: false,
             event_bindings: FrameBuffer::new_in(pool, Table::Nodes),
             text: FrameBuffer::new_in(pool, Table::Text),
+            styles: FrameBuffer::new_in(pool, Table::Nodes),
+            text_styles: FrameBuffer::new_in(pool, Table::Nodes),
+            images: FrameBuffer::new_in(pool, Table::Nodes),
+            svgs: FrameBuffer::new_in(pool, Table::Nodes),
+            canvases: FrameBuffer::new_in(pool, Table::Nodes),
+            resolved_text_styles: FrameBuffer::new_in(pool, Table::Nodes),
+            text_style_changes: 0,
             node_cache: FrameBuffer::new_in(pool, Table::Nodes),
             interaction_styles: FrameBuffer::new_in(pool, Table::Nodes),
+            extras: FrameBuffer::new_in(pool, Table::Nodes),
             focused: None,
             pressed: None,
             subtree_paint_bounds_valid: false,
@@ -276,6 +327,32 @@ impl FrameArena {
     }
 
     #[cfg(test)]
+    pub(crate) fn div_style_count(&self) -> usize {
+        self.styles.len()
+    }
+
+    /// how many images, svgs and canvases the frame holds
+    #[cfg(test)]
+    pub(crate) fn media_counts(&self) -> (usize, usize, usize) {
+        (self.images.len(), self.svgs.len(), self.canvases.len())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn extras_count(&self) -> usize {
+        self.extras.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn text_style_count(&self) -> usize {
+        self.text_styles.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolved_text_style_count(&self) -> usize {
+        self.resolved_text_styles.len()
+    }
+
+    #[cfg(test)]
     pub fn text_capacity(&self) -> usize {
         self.text.capacity()
     }
@@ -291,9 +368,17 @@ impl FrameArena {
         self.tracked_layout_start = None;
         self.layout_changed_outside = false;
         self.text.clear();
+        self.styles.clear();
+        self.text_styles.clear();
+        self.images.clear();
+        self.svgs.clear();
+        self.canvases.clear();
+        self.resolved_text_styles.clear();
+        self.text_style_changes = 0;
         self.event_bindings.clear();
         self.node_cache.clear();
         self.interaction_styles.clear();
+        self.extras.clear();
         self.focused = None;
         self.pressed = None;
         self.subtree_paint_bounds_valid = false;
@@ -308,7 +393,15 @@ impl FrameArena {
         self.node_cache.shrink_to_fit();
         self.event_bindings.shrink_to_fit();
         self.text.shrink_to_fit();
+        self.styles.shrink_to_fit();
+        self.text_styles.shrink_to_fit();
+        self.images.shrink_to_fit();
+        self.svgs.shrink_to_fit();
+        self.canvases.shrink_to_fit();
+        // the resolved styles keep the room mounting reserved, so resolving never
+        // allocates
         self.interaction_styles.shrink_to_fit();
+        self.extras.shrink_to_fit();
     }
 
     /// every node in the frame, detached ones included. Doesn't borrow the frame
@@ -345,7 +438,9 @@ impl FrameArena {
         let NodeKind::Div { style } = node.kind else {
             return None;
         };
-        let (Some(index), Some(element)) = (node.interaction.styles, node.element_state_id) else {
+        let style = self.styles[usize::from(style)];
+        let (Some(index), Some(element)) = (self.interaction(id).styles, self.element_state_id(id))
+        else {
             return Some(style);
         };
 
@@ -361,22 +456,133 @@ impl FrameArena {
         Some(style)
     }
 
+    /// the text style the last resolve pass found for `id`
+    pub(crate) fn resolved_text_style(&self, id: NodeId) -> ResolvedTextStyle {
+        let index = usize::from(self.node(id).resolved_text_style);
+
+        // before the first pass, nodes have the default
+        self.resolved_text_styles
+            .get(index)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// the text style a text or svg node was mounted with
+    #[cfg(test)]
+    pub(crate) fn text_style_patch(&self, id: NodeId) -> Option<TextStyle> {
+        match self.node(id).kind {
+            NodeKind::Text { style, .. }
+            | NodeKind::Svg {
+                text_style: style, ..
+            } => Some(self.text_styles[usize::from(style)]),
+            _ => None,
+        }
+    }
+
+    /// keeps room for one more resolved text style, for a node that changes the style it
+    /// inherits
+    fn reserve_text_style_change(&mut self) -> Result<(), MountError> {
+        self.reserve_resolved_text_styles(self.text_style_changes + 1)?;
+        self.text_style_changes += 1;
+
+        Ok(())
+    }
+
+    /// keeps room for the styles of `changes` nodes that change their text style, and
+    /// the default
+    fn reserve_resolved_text_styles(&mut self, changes: usize) -> Result<(), MountError> {
+        let needed = changes + 1;
+
+        self.resolved_text_styles
+            .reserve(needed.saturating_sub(self.resolved_text_styles.len()))
+    }
+
     pub(crate) fn interaction_styles_for_element(
         &self,
         element: ElementStateId,
     ) -> Option<&InteractionStyles> {
-        let node = self
-            .nodes
-            .iter()
-            .find(|node| !node.detached && node.element_state_id == Some(element))?;
+        let extras = self.extras.iter().find(|extras| {
+            !self.node(extras.owner).detached && extras.element_state_id == Some(element)
+        })?;
 
-        node.interaction
+        extras
+            .interaction
             .styles
             .map(|index| &self.interaction_styles[usize::from(index)].1)
     }
 
+    fn extras(&self, id: NodeId) -> Option<&NodeExtras> {
+        self.node(id)
+            .extras
+            .map(|index| &self.extras[usize::from(index)])
+    }
+
+    pub(crate) fn extras_mut(&mut self, id: NodeId) -> Option<&mut NodeExtras> {
+        self.node(id)
+            .extras
+            .map(|index| &mut self.extras[usize::from(index)])
+    }
+
+    /// the node's extras, adding empty ones if it has none
+    fn extras_or_insert(&mut self, id: NodeId) -> Result<&mut NodeExtras, MountError> {
+        let index = match self.node(id).extras {
+            Some(index) => index,
+            None => {
+                // each belongs to a node, so they never outnumber the nodes
+                let index = u16::try_from(self.extras.len()).map_err(|_| MountError::NodesFull)?;
+                self.extras.push(NodeExtras {
+                    owner: id,
+                    element_id: None,
+                    element_state_id: None,
+                    interaction: NodeInteraction::default(),
+                })?;
+                self.node_mut(id).extras = Some(index);
+
+                index
+            }
+        };
+
+        Ok(&mut self.extras[usize::from(index)])
+    }
+
+    /// scrolls any node, giving it extras if it has none
+    #[cfg(test)]
+    pub(crate) fn scroll_node(&mut self, id: NodeId, offset: Offset) {
+        self.extras_or_insert(id)
+            .expect("test pools have room")
+            .interaction
+            .scroll_offset = offset;
+    }
+
+    pub(crate) fn element_id(&self, id: NodeId) -> Option<ElementId> {
+        self.extras(id).and_then(|extras| extras.element_id)
+    }
+
+    pub(crate) fn element_state_id(&self, id: NodeId) -> Option<ElementStateId> {
+        self.extras(id).and_then(|extras| extras.element_state_id)
+    }
+
+    /// how the node takes input. Nodes without extras take none
+    pub(crate) fn interaction(&self, id: NodeId) -> NodeInteraction {
+        self.extras(id)
+            .map(|extras| extras.interaction)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn image(&self, image: u16) -> (ImageSource, ImageStyle) {
+        self.images[usize::from(image)]
+    }
+
+    pub(crate) fn svg(&self, svg: u16) -> (SvgSource, SvgStyle) {
+        self.svgs[usize::from(svg)]
+    }
+
+    pub(crate) fn canvas(&self, canvas: u16) -> (CanvasDraw, CanvasStyle) {
+        self.canvases[usize::from(canvas)]
+    }
+
     pub(crate) fn text(&self, range: TextRange) -> &str {
-        let bytes = &self.text[range.start..range.start + range.len];
+        let bytes = &self.text[range.bytes()];
 
         // bytes were copied from a valid str
         unsafe { core::str::from_utf8_unchecked(bytes) }

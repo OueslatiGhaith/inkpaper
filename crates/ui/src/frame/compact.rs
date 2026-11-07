@@ -1,14 +1,14 @@
 //! reclaims what partial rebuilds leave behind. A re-rendered entity's old subtree
-//! stays in the arena as detached nodes, along with its text, event bindings and
-//! interaction styles, until the frame compacts.
+//! stays in the arena as detached nodes, along with its text, side table entries,
+//! event bindings, interaction styles and extras, until the frame compacts.
 
-use super::{FrameArena, NodeCache, NodeId, NodeKind};
+use super::{FrameArena, Node, NodeCache, NodeExtras, NodeId, NodeKind, storage::FrameBuffer};
 
-use crate::EventBinding;
+use crate::{EventBinding, TextStyle};
 
 impl FrameArena {
-    /// removes the detached nodes, with the text, event bindings and interaction styles
-    /// only they used. The other nodes keep their order, so the ones a partial rebuild
+    /// removes the detached nodes, with the text, side table entries, event bindings,
+    /// interaction styles and extras only they used. The other nodes keep their order, so the ones a partial rebuild
     /// mounted still come after the rest, but they get new ids. Returns `root`'s.
     ///
     /// drops the layout caches, which the layout after a rebuild fills again
@@ -23,8 +23,11 @@ impl FrameArena {
 
         self.plan_moves();
         self.compact_text();
+        self.compact_side_tables();
         self.compact_event_bindings();
         self.compact_interaction_styles();
+        self.compact_extras();
+        self.count_text_style_changes();
         self.relink();
         let root = self.moved(root);
         self.move_nodes();
@@ -70,17 +73,63 @@ impl FrameArena {
         let mut used = 0;
 
         for node in self.nodes.iter_mut().filter(|node| !node.detached) {
-            if let NodeKind::Text { text } = &mut node.kind {
-                debug_assert!(used <= text.start, "text is in node order");
+            if let NodeKind::Text { text, .. } = &mut node.kind {
+                let bytes = text.bytes();
+                debug_assert!(used <= bytes.start, "text is in node order");
 
-                self.text
-                    .copy_within(text.start..text.start + text.len, used);
-                text.start = used;
-                used += text.len;
+                self.text.copy_within(bytes, used);
+                text.start = u32::try_from(used).expect("compacted text starts earlier");
+                used += text.len as usize;
             }
         }
 
         self.text.truncate(used);
+    }
+
+    /// moves the side tables' live entries down. Their entries are appended as their
+    /// nodes mount, so live entries keep node order
+    fn compact_side_tables(&mut self) {
+        compact_in_node_order(&mut self.nodes, &mut self.styles, |kind| match kind {
+            NodeKind::Div { style } => Some(style),
+            _ => None,
+        });
+        compact_in_node_order(&mut self.nodes, &mut self.text_styles, |kind| match kind {
+            NodeKind::Text { style, .. }
+            | NodeKind::Svg {
+                text_style: style, ..
+            } => Some(style),
+            _ => None,
+        });
+        compact_in_node_order(&mut self.nodes, &mut self.images, |kind| match kind {
+            NodeKind::Image { image } => Some(image),
+            _ => None,
+        });
+        compact_in_node_order(&mut self.nodes, &mut self.svgs, |kind| match kind {
+            NodeKind::Svg { svg, .. } => Some(svg),
+            _ => None,
+        });
+        compact_in_node_order(&mut self.nodes, &mut self.canvases, |kind| match kind {
+            NodeKind::Canvas { canvas } => Some(canvas),
+            _ => None,
+        });
+    }
+
+    /// counts the live nodes that can change their text style, once the tables hold
+    /// only theirs
+    fn count_text_style_changes(&mut self) {
+        let changes = |style: &TextStyle| *style != TextStyle::DEFAULT;
+
+        self.text_style_changes = self
+            .styles
+            .iter()
+            .filter(|style| changes(&style.text))
+            .count()
+            + self
+                .text_styles
+                .iter()
+                .filter(|style| changes(style))
+                .count()
+            + self.interaction_styles.len();
     }
 
     fn compact_event_bindings(&mut self) {
@@ -120,13 +169,37 @@ impl FrameArena {
                 continue;
             }
 
-            self.node_mut(owner).interaction.styles =
-                Some(u16::try_from(kept).expect("interaction style indices fit in u16"));
+            self.extras_mut(owner)
+                .expect("nodes with interaction styles have extras")
+                .interaction
+                .styles = Some(u16::try_from(kept).expect("interaction style indices fit in u16"));
             self.interaction_styles[kept] = (self.moved(owner), styles);
             kept += 1;
         }
 
         self.interaction_styles.truncate(kept);
+    }
+
+    /// after the interaction styles, which find their nodes' extras by the old indices
+    fn compact_extras(&mut self) {
+        let mut kept = 0;
+
+        for index in 0..self.extras.len() {
+            let extras = self.extras[index];
+            if self.node(extras.owner).detached {
+                continue;
+            }
+
+            self.node_mut(extras.owner).extras =
+                Some(u16::try_from(kept).expect("extras indices fit in u16"));
+            self.extras[kept] = NodeExtras {
+                owner: self.moved(extras.owner),
+                ..extras
+            };
+            kept += 1;
+        }
+
+        self.extras.truncate(kept);
     }
 
     /// points the links of live nodes, and the frame's own node lists, at the nodes'
@@ -178,4 +251,27 @@ impl FrameArena {
         self.subtree_paint_bounds_valid = false;
         self.detached_nodes = 0;
     }
+}
+
+/// moves the live entries of `table` down, keeping their order, and points each live
+/// node at its entry's new index. `index` gives a node's index into `table`, if it has
+/// one
+fn compact_in_node_order<T: Copy>(
+    nodes: &mut [Node],
+    table: &mut FrameBuffer<T>,
+    index: impl Fn(&mut NodeKind) -> Option<&mut u16>,
+) {
+    let mut used = 0;
+
+    for node in nodes.iter_mut().filter(|node| !node.detached) {
+        if let Some(index) = index(&mut node.kind) {
+            debug_assert!(used <= usize::from(*index), "entries are in node order");
+
+            table[used] = table[usize::from(*index)];
+            *index = u16::try_from(used).expect("side table indices fit in u16");
+            used += 1;
+        }
+    }
+
+    table.truncate(used);
 }

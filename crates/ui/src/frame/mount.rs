@@ -1,6 +1,7 @@
 use core::any::TypeId;
 
 use super::{BindingRun, FrameArena, InteractionStyles, MountError, NodeId, NodeKind, TextRange};
+use crate::{OutOfMemory, Table};
 
 use crate::{
     AppContext, CanvasDraw, CanvasStyle, Element, ElementId, EntityId, EntityRenderFn,
@@ -12,6 +13,10 @@ use crate::{
 impl FrameArena {
     fn push_node(&mut self, kind: NodeKind) -> Result<NodeId, MountError> {
         let index = u16::try_from(self.nodes.len()).map_err(|_| MountError::NodesFull)?;
+        if index == 0 {
+            // the first node resolves to the default text style at least
+            self.reserve_resolved_text_styles(self.text_style_changes)?;
+        }
         self.nodes.reserve(1)?;
         self.node_cache.reserve(1)?;
 
@@ -115,7 +120,7 @@ pub(crate) trait FrameStore {
 
     fn append_child(&mut self, parent: NodeId, child: NodeId);
 
-    fn identify(&mut self, node: NodeId, id: ElementId);
+    fn identify(&mut self, node: NodeId, id: ElementId) -> Result<(), MountError>;
 
     fn apply_interactivity(
         &mut self,
@@ -131,36 +136,72 @@ pub(crate) trait FrameStore {
     ) -> Result<(), MountError>;
 }
 
+/// the index of the next entry of a table that holds one entry per node of a kind, so
+/// it never outnumbers the nodes
+fn table_index(len: usize) -> Result<u16, MountError> {
+    u16::try_from(len).map_err(|_| MountError::NodesFull)
+}
+
+impl FrameArena {
+    /// adds the text style of a text or svg node about to mount, returning its index
+    fn push_text_style(&mut self, style: TextStyle) -> Result<u16, MountError> {
+        let index = table_index(self.text_styles.len())?;
+        if style != TextStyle::DEFAULT {
+            self.reserve_text_style_change()?;
+        }
+        self.text_styles.push(style)?;
+
+        Ok(index)
+    }
+}
+
 impl FrameStore for FrameArena {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError> {
-        self.push_node(NodeKind::Div { style })
+        let index = self.styles.len();
+        let style_id = table_index(index)?;
+        if style.text != TextStyle::DEFAULT {
+            self.reserve_text_style_change()?;
+        }
+        self.styles.push(style)?;
+
+        self.push_node(NodeKind::Div { style: style_id })
+            .inspect_err(|_| self.styles.truncate(index))
     }
 
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
         let start = self.text.len();
+        // past 4 GiB of text, the text table can't grow either
+        let too_long = || {
+            MountError::OutOfMemory(OutOfMemory {
+                table: Table::Text,
+                requested: text.len(),
+            })
+        };
+        let range = TextRange {
+            start: u32::try_from(start).map_err(|_| too_long())?,
+            len: u32::try_from(text.len()).map_err(|_| too_long())?,
+        };
 
         self.text.extend_from_slice(text.as_bytes())?;
 
-        let range = TextRange {
-            start,
-            len: text.len(),
-        };
+        let styles = self.text_styles.len();
+        let pushed = self
+            .push_text_style(style)
+            .and_then(|style| self.push_node(NodeKind::Text { text: range, style }));
 
-        let node = match self.push_node(NodeKind::Text { text: range }) {
-            Ok(node) => node,
-            Err(error) => {
-                self.text.truncate(start);
-                return Err(error);
-            }
-        };
-
-        self.node_mut(node).text_style = style;
-
-        Ok(node)
+        pushed.inspect_err(|_| {
+            self.text.truncate(start);
+            self.text_styles.truncate(styles);
+        })
     }
 
     fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError> {
-        self.push_node(NodeKind::Image { source, style })
+        let index = self.images.len();
+        let image = table_index(index)?;
+        self.images.push((source, style))?;
+
+        self.push_node(NodeKind::Image { image })
+            .inspect_err(|_| self.images.truncate(index))
     }
 
     fn push_svg(
@@ -169,15 +210,28 @@ impl FrameStore for FrameArena {
         style: SvgStyle,
         text_style: TextStyle,
     ) -> Result<NodeId, MountError> {
-        let node = self.push_node(NodeKind::Svg { source, style })?;
+        let index = self.svgs.len();
+        let svg = table_index(index)?;
+        self.svgs.push((source, style))?;
 
-        self.node_mut(node).text_style = text_style;
+        let styles = self.text_styles.len();
+        let pushed = self
+            .push_text_style(text_style)
+            .and_then(|text_style| self.push_node(NodeKind::Svg { svg, text_style }));
 
-        Ok(node)
+        pushed.inspect_err(|_| {
+            self.svgs.truncate(index);
+            self.text_styles.truncate(styles);
+        })
     }
 
     fn push_canvas(&mut self, draw: CanvasDraw, style: CanvasStyle) -> Result<NodeId, MountError> {
-        self.push_node(NodeKind::Canvas { draw, style })
+        let index = self.canvases.len();
+        let canvas = table_index(index)?;
+        self.canvases.push((draw, style))?;
+
+        self.push_node(NodeKind::Canvas { canvas })
+            .inspect_err(|_| self.canvases.truncate(index))
     }
 
     fn push_entity(
@@ -230,8 +284,10 @@ impl FrameStore for FrameArena {
         self.nodes[parent_idx].last_child = Some(child);
     }
 
-    fn identify(&mut self, node: NodeId, id: ElementId) {
-        self.nodes[node.index()].element_id = Some(id);
+    fn identify(&mut self, node: NodeId, id: ElementId) -> Result<(), MountError> {
+        self.extras_or_insert(node)?.element_id = Some(id);
+
+        Ok(())
     }
 
     fn apply_interactivity(
@@ -244,8 +300,17 @@ impl FrameStore for FrameArena {
             pressed: interactivity.pressed_style,
         };
 
+        let interactive = !styles.is_empty()
+            || interactivity.focusable
+            || interactivity.scroll_axes.any()
+            || interactivity.initial_scroll_child.is_some();
+        if !interactive {
+            return Ok(());
+        }
+        self.extras_or_insert(node)?;
+
         if !styles.is_empty() {
-            match self.nodes[node.index()].interaction.styles {
+            match self.interaction(node).styles {
                 Some(index) => {
                     let (_, existing) = &mut self.interaction_styles[usize::from(index)];
                     *existing = existing.merge(styles);
@@ -253,13 +318,15 @@ impl FrameStore for FrameArena {
                 None => {
                     let index = u16::try_from(self.interaction_styles.len())
                         .map_err(|_| MountError::InteractionStylesFull)?;
+                    // focused or pressed, the node may change its text style
+                    self.reserve_text_style_change()?;
                     self.interaction_styles.push((node, styles))?;
-                    self.nodes[node.index()].interaction.styles = Some(index);
+                    self.extras_or_insert(node)?.interaction.styles = Some(index);
                 }
             }
         }
 
-        let interaction = &mut self.nodes[node.index()].interaction;
+        let interaction = &mut self.extras_or_insert(node)?.interaction;
         interaction.focusable |= interactivity.focusable;
         if interactivity.scroll_axes.any() {
             interaction.scroll_axes = interactivity.scroll_axes;
@@ -342,8 +409,8 @@ impl MountCx<'_> {
         self.frame.append_child(parent, child);
     }
 
-    pub(crate) fn identify(&mut self, node: NodeId, id: ElementId) {
-        self.frame.identify(node, id);
+    pub(crate) fn identify(&mut self, node: NodeId, id: ElementId) -> Result<(), MountError> {
+        self.frame.identify(node, id)
     }
 
     pub(crate) fn apply_interactivity(

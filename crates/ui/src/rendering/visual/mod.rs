@@ -413,7 +413,7 @@ impl FrameArena {
             clip = clip.intersect(parent_clip);
         }
 
-        let scroll = self.node(parent).interaction.scroll_offset;
+        let scroll = self.interaction(parent).scroll_offset;
 
         parent_context.translated_by_scroll(scroll).with_clip(clip)
     }
@@ -424,7 +424,7 @@ impl FrameArena {
             .map(|style| style.clip_children)
             .unwrap_or(false);
 
-        style_clips || self.node(node).interaction.scroll_axes.any()
+        style_clips || self.interaction(node).scroll_axes.any()
     }
 
     fn children_clip_bounds(&self, node: NodeId, context: VisualContext) -> Rect {
@@ -438,7 +438,7 @@ impl FrameArena {
 
         while let Some(parent) = current {
             count_metric!(self, visual_bounds_ancestor_visits);
-            translation -= self.node(parent).interaction.scroll_offset;
+            translation -= self.interaction(parent).scroll_offset;
             current = self.node(parent).parent;
         }
 

@@ -41,8 +41,8 @@ fn visual_traversal_accumulates_nested_scroll_offsets() {
 
     let outer = frame.node(root).first_child.unwrap();
 
-    frame.node_mut(root).interaction.scroll_offset = Offset::new(px(0), px(10));
-    frame.node_mut(outer).interaction.scroll_offset = Offset::new(px(0), px(7));
+    frame.scroll_node(root, Offset::new(px(0), px(10)));
+    frame.scroll_node(outer, Offset::new(px(0), px(7)));
 
     let mut traversal = frame.visual_nodes(root);
     let root_visual = traversal.next().unwrap();
@@ -122,7 +122,7 @@ fn scroll_translation_does_not_move_scroll_viewport_clip() {
         .unwrap();
 
     frame.layout(root, Size::new(px(100), px(40)), &TestTextMeasurer);
-    frame.node_mut(root).interaction.scroll_offset = Offset::new(px(0), px(20));
+    frame.scroll_node(root, Offset::new(px(0), px(20)));
 
     let mut traversal = frame.visual_nodes(root);
     let root_visual = traversal.next().unwrap();
@@ -304,7 +304,7 @@ fn painting_uses_carried_scroll_and_clip_context() {
     let mut painter = RecordingPainter::default();
 
     frame.layout(root, Size::new(px(50), px(30)), &painter);
-    frame.node_mut(root).interaction.scroll_offset = Offset::new(px(0), px(10));
+    frame.scroll_node(root, Offset::new(px(0), px(10)));
     frame
         .paint(root, &mut painter.resources(), &mut painter)
         .unwrap();
@@ -438,7 +438,7 @@ fn visual_traversal_handles_branch_depth_beyond_inline_stack() {
     let mut current = Some(root);
 
     while let Some(node) = current {
-        frame.node_mut(node).interaction.scroll_offset = Offset::new(px(0), px(1));
+        frame.scroll_node(node, Offset::new(px(0), px(1)));
 
         current = frame.node(node).first_child;
     }

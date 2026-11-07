@@ -31,7 +31,7 @@ where
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
         let node = self.element.mount(cx)?;
 
-        cx.identify(node, self.id);
+        cx.identify(node, self.id)?;
         cx.apply_interactivity(node, self.stateful_interactivity)?;
 
         Ok(node)

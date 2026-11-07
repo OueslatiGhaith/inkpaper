@@ -1,7 +1,7 @@
 use core::{any::TypeId, cell::Cell};
 use std::string::String;
 
-use crate::pool::testing::{pool_ref, pool_ref_of, pool_ref_with_room};
+use crate::pool::testing::{fill_leaving, pool_ref, pool_ref_of, pool_ref_with_room};
 use crate::{
     callback::CallbackArena,
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
@@ -18,26 +18,20 @@ fn node_text(frame: &FrameArena, id: NodeId) -> &str {
 
 fn find_element(frame: &FrameArena, id: ElementId) -> Option<NodeId> {
     frame
-        .nodes
-        .iter()
-        .enumerate()
-        .find_map(|(index, node)| (node.element_id == Some(id)).then(|| NodeId::new(index as u16)))
+        .node_ids()
+        .find(|&node| frame.element_id(node) == Some(id))
 }
 
 fn find_all_elements(frame: &FrameArena, id: ElementId) -> std::vec::Vec<NodeId> {
     frame
-        .nodes
-        .iter()
-        .enumerate()
-        .filter(|&(_, node)| node.element_id == Some(id))
-        .map(|(index, _)| NodeId::new(index as u16))
+        .node_ids()
+        .filter(|&node| frame.element_id(node) == Some(id))
         .collect()
 }
 
 fn state_id(frame: &FrameArena, node: NodeId) -> ElementStateId {
     frame
-        .node(node)
-        .element_state_id
+        .element_state_id(node)
         .expect("element should have resolved state identity")
 }
 
@@ -129,8 +123,8 @@ fn preserves_styles_when_mounting() {
         .mount(div().flex().flex_col().w_full().p(px(8)), app)
         .unwrap();
 
-    match frame.node(root).kind {
-        NodeKind::Div { style } => {
+    match frame.style(root) {
+        Some(style) => {
             assert_eq!(style.display, Display::Flex);
             assert_eq!(style.flex_direction, FlexDirection::Column);
             assert_eq!(style.width, Length::Fill);
@@ -169,10 +163,7 @@ fn mounts_stateful_element_identity() {
 
     let button = frame.mount(div().id("button").child("Press"), app).unwrap();
 
-    assert_eq!(
-        frame.node(button).element_id,
-        Some(ElementId::Name("button"))
-    );
+    assert_eq!(frame.element_id(button), Some(ElementId::Name("button")));
 
     let text = frame.node(button).first_child.unwrap();
 
@@ -219,7 +210,8 @@ fn reports_out_of_memory_when_the_pool_has_no_room_for_text() {
 
 #[test]
 fn node_growth_failure_drops_the_text_it_added() {
-    let mut frame = FrameArena::new_in(pool_ref_of(SMALL_POOL));
+    let pool = pool_ref();
+    let mut frame = FrameArena::new_in(pool);
     let mut nodes = 0;
 
     // fill the nodes' first allocation, so the next node has to grow them
@@ -227,6 +219,8 @@ fn node_growth_failure_drops_the_text_it_added() {
         frame.push_div(Style::default()).unwrap();
         nodes += 1;
     }
+    // room for the text and its style, but not for more nodes
+    fill_leaving(pool, 512);
 
     assert!(matches!(
         frame.push_text("rollback", TextStyle::default()),
@@ -237,6 +231,31 @@ fn node_growth_failure_drops_the_text_it_added() {
     ));
     assert_eq!(frame.text_bytes_used(), 0);
     assert_eq!(frame.node_count(), nodes);
+}
+
+#[test]
+fn only_identified_or_interactive_nodes_take_extras() {
+    let mut frame = FrameArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
+    let app = AppContext::from_globals(&globals);
+
+    let root = frame
+        .mount(
+            div()
+                .child("plain text")
+                .child(div())
+                .child(div().id("named"))
+                .child(div().id("button").focusable()),
+            app,
+        )
+        .unwrap();
+
+    assert_eq!(frame.extras_count(), 2);
+    assert_eq!(frame.element_id(root), None);
+    assert!(!frame.interaction(root).focusable);
+
+    let button = find_element(&frame, ElementId::Name("button")).unwrap();
+    assert!(frame.interaction(button).focusable);
 }
 
 #[test]
@@ -268,7 +287,7 @@ fn only_nodes_with_interaction_styles_take_table_entries() {
     assert_eq!(frame.interaction_styles.len(), 2);
 
     let plain = find_element(&frame, ElementId::Name("plain")).unwrap();
-    assert_eq!(frame.node(plain).interaction.styles, None);
+    assert_eq!(frame.interaction(plain).styles, None);
 }
 
 #[test]
@@ -537,9 +556,9 @@ fn identities_resolve_in_tree_order_when_children_precede_parents() {
         .push_entity(owner.entity_id(), render_entity::<Child>)
         .unwrap();
     let child = frame.push_div(Style::default()).unwrap();
-    frame.identify(child, ElementId::Name("child"));
+    frame.identify(child, ElementId::Name("child")).unwrap();
     let parent = frame.push_div(Style::default()).unwrap();
-    frame.identify(parent, ElementId::Name("parent"));
+    frame.identify(parent, ElementId::Name("parent")).unwrap();
     frame.append_child(parent, child);
     frame.append_child(root, parent);
 
@@ -568,18 +587,18 @@ fn resolving_one_entity_subtree_leaves_other_entities_untouched() {
         .push_entity(rerendered.entity_id(), render_entity::<Child>)
         .unwrap();
     let kept = frame.push_div(Style::default()).unwrap();
-    frame.identify(kept, ElementId::Name("kept"));
+    frame.identify(kept, ElementId::Name("kept")).unwrap();
     let removed = frame.push_div(Style::default()).unwrap();
-    frame.identify(removed, ElementId::Name("removed"));
+    frame.identify(removed, ElementId::Name("removed")).unwrap();
     frame.append_child(rerendered_node, kept);
     frame.append_child(rerendered_node, removed);
     let clean_node = frame
         .push_entity(clean.entity_id(), render_entity::<Child>)
         .unwrap();
     let panel = frame.push_div(Style::default()).unwrap();
-    frame.identify(panel, ElementId::Name("panel"));
+    frame.identify(panel, ElementId::Name("panel")).unwrap();
     let item = frame.push_div(Style::default()).unwrap();
-    frame.identify(item, ElementId::Name("item"));
+    frame.identify(item, ElementId::Name("item")).unwrap();
     frame.append_child(panel, item);
     frame.append_child(clean_node, panel);
     frame.append_child(root, rerendered_node);
@@ -597,7 +616,7 @@ fn resolving_one_entity_subtree_leaves_other_entities_untouched() {
     assert_eq!(states.entry(item_state).unwrap().scope, clean.entity_id());
 
     // the re-rendered entity no longer shows "removed"
-    frame.node_mut(removed).element_id = None;
+    frame.extras_mut(removed).unwrap().element_id = None;
     frame
         .resolve_identities(rerendered_node, &mut states, 2)
         .unwrap();
@@ -682,7 +701,7 @@ fn entity_render_mounts_click_listener() {
     let button =
         find_element(&frame, ElementId::Name("increment")).expect("increment element missing");
 
-    assert!(frame.node(button).interaction.focusable);
+    assert!(frame.interaction(button).focusable);
 }
 
 #[test]
@@ -1391,7 +1410,7 @@ fn plain_string_mounts_without_text_style_overrides() {
 
     let node = frame.mount("Hello", cx).unwrap();
 
-    assert_eq!(frame.node(node).text_style, TextStyle::default());
+    assert_eq!(frame.text_style_patch(node).unwrap(), TextStyle::default());
     assert_eq!(node_text(&frame, node), "Hello");
 }
 
@@ -1413,12 +1432,15 @@ fn explicit_text_element_preserves_text_style_overrides() {
 
     assert_eq!(node_text(&frame, node), "Hello");
     assert_eq!(
-        frame.node(node).text_style.font_weight,
+        frame.text_style_patch(node).unwrap().font_weight,
         Some(FontWeight::BOLD)
     );
-    assert_eq!(frame.node(node).text_style.color, Some(Color::RED));
     assert_eq!(
-        frame.node(node).text_style.line_height,
+        frame.text_style_patch(node).unwrap().color,
+        Some(Color::RED)
+    );
+    assert_eq!(
+        frame.text_style_patch(node).unwrap().line_height,
         Some(LineHeight::Pixels(px(18)))
     );
 }
@@ -1450,7 +1472,7 @@ fn text_style_resolves_through_nested_elements() {
     let text_node = frame.node(inner).first_child.unwrap();
 
     assert_eq!(
-        frame.node(text_node).effective_text_style,
+        frame.resolved_text_style(text_node),
         ResolvedTextStyle {
             font_weight: FontWeight::BOLD,
             color: Color::RED,
@@ -1462,7 +1484,7 @@ fn text_style_resolves_through_nested_elements() {
 
 fn node_image_source(frame: &FrameArena, node: NodeId) -> ImageSource {
     match frame.node(node).kind {
-        NodeKind::Image { source, .. } => source,
+        NodeKind::Image { image } => frame.image(image).0,
         _ => panic!("expected image node"),
     }
 }

@@ -542,20 +542,24 @@ pub(crate) mod testing {
     /// a pool with about `room` bytes left, the rest taken by allocations that stay
     pub(crate) fn pool_with_room(room: usize) -> Pool {
         let pool = pool_of(4 * 1024 + room);
-        let handle = pool.handle();
+        fill_leaving(pool.handle(), room);
+
+        pool
+    }
+
+    /// takes all but about `room` bytes of `pool` with allocations that stay
+    pub(crate) fn fill_leaving(pool: PoolRef, room: usize) {
         let bytes = |size| Layout::from_size_align(size, 1).unwrap();
 
-        let reserved = handle.allocate(Table::Text, bytes(room)).unwrap();
+        let reserved = pool.allocate(Table::Text, bytes(room)).unwrap();
         let mut size = pool.stats().capacity;
         while size > 0 {
-            if handle.allocate(Table::Text, bytes(size)).is_none() {
+            if pool.allocate(Table::Text, bytes(size)).is_none() {
                 size /= 2;
             }
         }
         // SAFETY: allocated above with the same layout and table
-        unsafe { handle.deallocate(Table::Text, reserved, bytes(room)) };
-
-        pool
+        unsafe { pool.deallocate(Table::Text, reserved, bytes(room)) };
     }
 
     /// a handle to a pool with about `room` bytes left

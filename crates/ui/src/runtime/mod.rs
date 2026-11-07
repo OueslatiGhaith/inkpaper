@@ -1079,7 +1079,7 @@ impl<RESOURCES> Runtime<RESOURCES> {
         let node = self
             .frame
             .hit_test_event(root, position, TypeId::of::<E>())?;
-        let element = self.frame.node(node).element_state_id?;
+        let element = self.frame.element_state_id(node)?;
 
         Some(EventTarget::new(element))
     }

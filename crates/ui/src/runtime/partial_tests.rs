@@ -191,7 +191,7 @@ impl Fixture {
             .count();
             let kind = match frame.node(node).kind {
                 NodeKind::Div { .. } => String::from("div"),
-                NodeKind::Text { text } => format!("{:?}", frame.text(text)),
+                NodeKind::Text { text, .. } => format!("{:?}", frame.text(text)),
                 NodeKind::Entity { entity, .. } => format!("entity {}", entity.slot()),
                 _ => String::from("other"),
             };
@@ -285,6 +285,15 @@ fn partial_rebuild_matches_a_full_rebuild() {
         partial_frame.text_bytes_used(),
         full_frame.text_bytes_used()
     );
+    assert_eq!(
+        partial_frame.div_style_count(),
+        full_frame.div_style_count()
+    );
+    assert_eq!(
+        partial_frame.text_style_count(),
+        full_frame.text_style_count()
+    );
+    assert_eq!(partial_frame.extras_count(), full_frame.extras_count());
 
     for fixture in [&mut partial, &mut full] {
         fixture.runtime.clear_focus();
@@ -597,7 +606,7 @@ fn a_child_that_reads_its_parent_renders_again_when_the_parent_changes() {
         frame.next_depth_first_node(node)
     })
     .filter_map(|node| match frame.node(node).kind {
-        NodeKind::Text { text } => Some(frame.text(text)),
+        NodeKind::Text { text, .. } => Some(frame.text(text)),
         _ => None,
     })
     .collect();
@@ -637,7 +646,15 @@ fn a_render_forgets_what_it_no_longer_reads() {
 fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
     let mut fixture = fixture(true);
     let frame = fixture.runtime.frame();
-    let (nodes, text) = (frame.node_count(), frame.text_bytes_used());
+    let (nodes, text, styles) = (
+        frame.node_count(),
+        frame.text_bytes_used(),
+        (
+            frame.div_style_count(),
+            frame.text_style_count(),
+            frame.extras_count(),
+        ),
+    );
 
     for _ in 0..50 {
         fixture.notify(fixture.first);
@@ -651,7 +668,18 @@ fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
     assert_eq!(fixture.label(fixture.second).0, 1);
 
     let frame = fixture.runtime.frame();
-    assert_eq!((frame.node_count(), frame.text_bytes_used()), (nodes, text));
+    assert_eq!(
+        (
+            frame.node_count(),
+            frame.text_bytes_used(),
+            (
+                frame.div_style_count(),
+                frame.text_style_count(),
+                frame.extras_count()
+            )
+        ),
+        (nodes, text, styles)
+    );
 
     // the moved event bindings still reach both labels
     assert!(fixture.activate(0));
@@ -1002,4 +1030,55 @@ fn preparing_a_frame_without_a_root_fails() {
         runtime.prepare_frame(VIEWPORT),
         Err(FrameBuildError::RootNotSet)
     );
+}
+
+#[test]
+fn partial_rebuilds_reclaim_svgs_and_canvases() {
+    const ICON: SvgSource = SvgSource::new(
+        Size::new(px(8), px(8)),
+        SvgViewBox::new(0.0, 0.0, 8.0, 8.0),
+        &[],
+    );
+
+    fn draw(_: &mut PaintCx<'_>) {}
+
+    struct Media;
+
+    impl Render for Media {
+        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .child(svg(ICON))
+                .child(canvas(draw).size(Size::new(px(4), px(4))))
+                .child("media")
+        }
+    }
+
+    struct Screen {
+        media: Entity<Media>,
+    }
+
+    impl Render for Screen {
+        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child(svg(ICON)).child(self.media)
+        }
+    }
+
+    let mut runtime = TestRuntime::new(pool());
+    let media = runtime.create(|_| Media).unwrap();
+    runtime.create_root(|_| Screen { media }).unwrap();
+    runtime.set_partial_rebuilds(true);
+    runtime.rebuild().unwrap();
+
+    let frame = runtime.frame();
+    let (nodes, counts) = (frame.node_count(), frame.media_counts());
+    assert_eq!(counts, (0, 2, 1));
+
+    for _ in 0..20 {
+        runtime.update(media, |_, cx| cx.notify()).unwrap();
+        runtime.rebuild().unwrap();
+    }
+
+    let frame = runtime.frame();
+    assert_eq!(frame.detached_node_count(), 0);
+    assert_eq!((frame.node_count(), frame.media_counts()), (nodes, counts));
 }

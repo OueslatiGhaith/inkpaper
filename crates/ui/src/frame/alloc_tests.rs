@@ -34,7 +34,7 @@ fn growing_frame_preserves_text_links_bindings_and_caches() {
         let node = current.unwrap();
         assert_eq!(frame.node(node).parent, Some(root));
 
-        let NodeKind::Text { text } = frame.node(node).kind else {
+        let NodeKind::Text { text, .. } = frame.node(node).kind else {
             panic!("expected text")
         };
 
@@ -96,7 +96,7 @@ fn clear_reuses_capacity_and_explicit_shrink_preserves_live_text() {
     assert!(frame.node_capacity() < capacities.0);
     assert!(frame.text_capacity() < capacities.1);
 
-    let NodeKind::Text { text } = frame.node(node).kind else {
+    let NodeKind::Text { text, .. } = frame.node(node).kind else {
         panic!("expected text")
     };
     assert_eq!(frame.text(text), "small");

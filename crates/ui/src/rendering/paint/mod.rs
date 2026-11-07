@@ -258,10 +258,16 @@ impl FrameArena {
                 Ok(())
             }
 
-            NodeKind::Text { text } => {
+            NodeKind::Text { text, .. } => {
                 let text = self.text(text);
 
-                resources.paint_text(painter, text, bounds, node.effective_text_style, clip)?;
+                resources.paint_text(
+                    painter,
+                    text,
+                    bounds,
+                    self.resolved_text_style(node_id),
+                    clip,
+                )?;
 
                 if !text.is_empty() {
                     report.mark_text();
@@ -270,18 +276,19 @@ impl FrameArena {
                 Ok(())
             }
 
-            NodeKind::Canvas { draw, .. } => canvas::paint_canvas(
-                draw,
+            NodeKind::Canvas { canvas } => canvas::paint_canvas(
+                self.canvas(canvas).0,
                 bounds,
                 clip,
-                node.effective_text_style,
+                self.resolved_text_style(node_id),
                 runtime,
                 resources,
                 report,
                 painter,
             ),
 
-            NodeKind::Image { source, style } => {
+            NodeKind::Image { image } => {
+                let (source, style) = self.image(image);
                 resources.paint_image(painter, source, bounds, style.paint, clip)?;
 
                 report.mark_image(style.paint.color_mode);
@@ -289,11 +296,11 @@ impl FrameArena {
                 Ok(())
             }
 
-            NodeKind::Svg { source, .. } => svg::paint_svg(
-                source,
+            NodeKind::Svg { svg, .. } => svg::paint_svg(
+                self.svg(svg).0,
                 bounds,
                 clip,
-                node.effective_text_style,
+                self.resolved_text_style(node_id),
                 report,
                 painter,
             )
@@ -461,7 +468,7 @@ impl FrameArena {
         let parent_layout_bounds = self.node(parent).layout.bounds;
         let parent_translation = visual.bounds().origin - parent_layout_bounds.origin;
         // children additionally receive this parent's own scroll translation
-        let child_translation = parent_translation - self.node(parent).interaction.scroll_offset;
+        let child_translation = parent_translation - self.interaction(parent).scroll_offset;
 
         // search the physical mount interval before the last sibling root.
         // every point in this interval belongs to one of the non-last direct-child

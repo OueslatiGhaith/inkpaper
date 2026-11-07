@@ -96,12 +96,11 @@ impl FrameArena {
     }
 
     fn focus_target_from_node(&self, node_id: NodeId) -> Option<FocusTarget> {
-        let node = self.node(node_id);
-        if !node.interaction.focusable {
+        if !self.interaction(node_id).focusable {
             return None;
         }
 
-        let element = node.element_state_id?;
+        let element = self.element_state_id(node_id)?;
 
         Some(FocusTarget { element })
     }
@@ -234,12 +233,11 @@ impl FrameArena {
             }
 
             let node_id = visual.node();
-            let node = self.node(node_id);
-            let axes = node.interaction.scroll_axes;
+            let axes = self.interaction(node_id).scroll_axes;
             if !axes.any() {
                 continue;
             }
-            let Some(element) = node.element_state_id else {
+            let Some(element) = self.element_state_id(node_id) else {
                 continue;
             };
 
@@ -262,8 +260,8 @@ impl FrameArena {
     }
 
     pub(crate) fn set_scroll_offset(&mut self, node: NodeId, offset: Offset) {
-        let previous =
-            core::mem::replace(&mut self.node_mut(node).interaction.scroll_offset, offset);
+        let extras = self.extras_mut(node).expect("scrolling nodes have extras");
+        let previous = core::mem::replace(&mut extras.interaction.scroll_offset, offset);
         if previous != offset {
             self.note_layout_change(node);
         }
@@ -278,10 +276,12 @@ impl FrameArena {
             if node.detached {
                 continue;
             }
-            let axes = node.interaction.scroll_axes;
-            let (Some(child_index), Some(element)) =
-                (node.interaction.initial_scroll_child, node.element_state_id)
-            else {
+            let interaction = self.interaction(node_id);
+            let axes = interaction.scroll_axes;
+            let (Some(child_index), Some(element)) = (
+                interaction.initial_scroll_child,
+                self.element_state_id(node_id),
+            ) else {
                 continue;
             };
             if !axes.any() || states.is_initialized(element) {
@@ -318,15 +318,14 @@ impl FrameArena {
 
     pub(crate) fn clamp_scroll_offset(&mut self, states: &mut ScrollStateTable) {
         for node_id in self.node_ids() {
-            let node = self.node(node_id);
-            if node.detached {
+            if self.node(node_id).detached {
                 continue;
             }
-            let axes = node.interaction.scroll_axes;
+            let axes = self.interaction(node_id).scroll_axes;
             if !axes.any() {
                 continue;
             }
-            let Some(element) = node.element_state_id else {
+            let Some(element) = self.element_state_id(node_id) else {
                 continue;
             };
 
@@ -347,8 +346,10 @@ impl FrameArena {
 
             states.set_offset(element, next);
 
-            let previous =
-                core::mem::replace(&mut self.node_mut(node_id).interaction.scroll_offset, next);
+            let extras = self
+                .extras_mut(node_id)
+                .expect("scrolling nodes have extras");
+            let previous = core::mem::replace(&mut extras.interaction.scroll_offset, next);
             if previous != next {
                 self.note_layout_change(node_id);
             }
@@ -359,7 +360,7 @@ impl FrameArena {
         let mut current = Some(root);
 
         while let Some(node_id) = current {
-            if self.node(node_id).element_state_id == Some(element) {
+            if self.element_state_id(node_id) == Some(element) {
                 return Some(node_id);
             }
 
@@ -481,11 +482,11 @@ impl FrameArena {
             count_metric!(self, scroll_into_view_ancestor_visits);
             let next_parent = self.node(ancestor).parent;
             let (axes, scroll_element, applied_scroll) = {
-                let node = self.node(ancestor);
+                let interaction = self.interaction(ancestor);
                 (
-                    node.interaction.scroll_axes,
-                    node.element_state_id,
-                    node.interaction.scroll_offset,
+                    interaction.scroll_axes,
+                    self.element_state_id(ancestor),
+                    interaction.scroll_offset,
                 )
             };
 
