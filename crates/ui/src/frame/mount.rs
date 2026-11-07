@@ -12,6 +12,10 @@ use crate::{
 impl FrameArena {
     fn push_node(&mut self, kind: NodeKind) -> Result<NodeId, MountError> {
         let index = u16::try_from(self.nodes.len()).map_err(|_| MountError::NodesFull)?;
+        if index == 0 {
+            // the first node resolves to the default text style at least
+            self.reserve_resolved_text_styles(self.text_style_changes)?;
+        }
         self.nodes.reserve(1)?;
         self.node_cache.reserve(1)?;
 
@@ -131,11 +135,28 @@ pub(crate) trait FrameStore {
     ) -> Result<(), MountError>;
 }
 
+impl FrameArena {
+    /// adds the text style of a text or svg node about to mount, returning its index
+    fn push_text_style(&mut self, style: TextStyle) -> Result<u16, MountError> {
+        // a node comes with each, so the text styles never outnumber the nodes
+        let index = u16::try_from(self.text_styles.len()).map_err(|_| MountError::NodesFull)?;
+        if style != TextStyle::DEFAULT {
+            self.reserve_text_style_change()?;
+        }
+        self.text_styles.push(style)?;
+
+        Ok(index)
+    }
+}
+
 impl FrameStore for FrameArena {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError> {
         let index = self.styles.len();
         // a div's node comes with its style, so the styles never outnumber the nodes
         let style_id = u16::try_from(index).map_err(|_| MountError::NodesFull)?;
+        if style.text != TextStyle::DEFAULT {
+            self.reserve_text_style_change()?;
+        }
         self.styles.push(style)?;
 
         self.push_node(NodeKind::Div { style: style_id })
@@ -152,17 +173,15 @@ impl FrameStore for FrameArena {
             len: text.len(),
         };
 
-        let node = match self.push_node(NodeKind::Text { text: range }) {
-            Ok(node) => node,
-            Err(error) => {
-                self.text.truncate(start);
-                return Err(error);
-            }
-        };
+        let styles = self.text_styles.len();
+        let pushed = self
+            .push_text_style(style)
+            .and_then(|style| self.push_node(NodeKind::Text { text: range, style }));
 
-        self.node_mut(node).text_style = style;
-
-        Ok(node)
+        pushed.inspect_err(|_| {
+            self.text.truncate(start);
+            self.text_styles.truncate(styles);
+        })
     }
 
     fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError> {
@@ -175,11 +194,15 @@ impl FrameStore for FrameArena {
         style: SvgStyle,
         text_style: TextStyle,
     ) -> Result<NodeId, MountError> {
-        let node = self.push_node(NodeKind::Svg { source, style })?;
+        let styles = self.text_styles.len();
+        let text_style = self.push_text_style(text_style)?;
 
-        self.node_mut(node).text_style = text_style;
-
-        Ok(node)
+        self.push_node(NodeKind::Svg {
+            source,
+            style,
+            text_style,
+        })
+        .inspect_err(|_| self.text_styles.truncate(styles))
     }
 
     fn push_canvas(&mut self, draw: CanvasDraw, style: CanvasStyle) -> Result<NodeId, MountError> {
@@ -259,6 +282,8 @@ impl FrameStore for FrameArena {
                 None => {
                     let index = u16::try_from(self.interaction_styles.len())
                         .map_err(|_| MountError::InteractionStylesFull)?;
+                    // focused or pressed, the node may change its text style
+                    self.reserve_text_style_change()?;
                     self.interaction_styles.push((node, styles))?;
                     self.nodes[node.index()].interaction.styles = Some(index);
                 }

@@ -14,7 +14,7 @@ impl FrameArena {
     ) -> Size {
         count_metric!(self, measure_node_calls);
 
-        if let NodeKind::Text { text } = self.node(node).kind {
+        if let NodeKind::Text { text, .. } = self.node(node).kind {
             return self.measure_text_node(node, text, available, text_measurer);
         }
 
@@ -28,7 +28,7 @@ impl FrameArena {
         let measured = match self.node(node).kind {
             NodeKind::Text { .. } => unreachable!("text nodes are measured above"),
             NodeKind::Image { source, style } => measure_image(source, style, available),
-            NodeKind::Svg { source, style } => measure_svg(source, style, available),
+            NodeKind::Svg { source, style, .. } => measure_svg(source, style, available),
             NodeKind::Canvas { style, .. } => measure_canvas(style, available),
             NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.measure_node(child, available, text_measurer),
@@ -68,7 +68,7 @@ impl FrameArena {
 
                 let measured = text_measurer.measure_text(
                     self.text(text),
-                    self.node(node).effective_text_style,
+                    self.resolved_text_style(node),
                     available.width,
                 );
                 let measured = unbounded.limit(Size::new(

@@ -2032,3 +2032,70 @@ fn flex_children_share_the_row_within_their_limits() {
         }
     }
 }
+
+#[test]
+fn resolving_keeps_each_text_style_once_and_never_allocates() {
+    struct App;
+
+    impl Render for App {
+        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .child("plain")
+                .child("also plain")
+                .child(div().text_color(Color::WHITE).child("white"))
+                .child(
+                    div()
+                        .id("button")
+                        .focusable()
+                        .when_focused(|style| style.text_color(Color::RED))
+                        .child("button"),
+                )
+        }
+    }
+
+    fn text_node(runtime: &TestRuntime, content: &str) -> NodeId {
+        let frame = runtime.frame();
+
+        frame
+            .node_ids()
+            .find(|&node| {
+                matches!(frame.node(node).kind, NodeKind::Text { text, .. } if frame.text(text) == content)
+            })
+            .unwrap()
+    }
+
+    let mut runtime = TestRuntime::new(pool());
+    runtime.create_root(|_| App).unwrap();
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer::new(8, 16))
+        .unwrap();
+
+    let frame = runtime.frame();
+    let style = |content| frame.node(text_node(&runtime, content)).resolved_text_style;
+    // the default and white
+    assert_eq!(frame.resolved_text_style_count(), 2);
+    assert_eq!(style("plain"), style("also plain"));
+    assert_eq!(style("plain"), style("button"));
+    assert_ne!(style("plain"), style("white"));
+
+    let allocations = runtime.memory().allocations;
+    assert!(runtime.focus_next());
+    runtime
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer::new(8, 16))
+        .unwrap();
+
+    let frame = runtime.frame();
+    let button = text_node(&runtime, "button");
+    assert_eq!(frame.resolved_text_style(button).color, Color::RED);
+    assert_eq!(frame.resolved_text_style_count(), 3);
+    // the focused style found room that mounting kept
+    assert_eq!(runtime.memory().allocations, allocations);
+
+    runtime.clear_focus();
+    runtime
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer::new(8, 16))
+        .unwrap();
+
+    assert_eq!(runtime.frame().resolved_text_style_count(), 2);
+}

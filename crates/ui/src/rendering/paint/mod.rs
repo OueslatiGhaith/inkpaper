@@ -258,10 +258,16 @@ impl FrameArena {
                 Ok(())
             }
 
-            NodeKind::Text { text } => {
+            NodeKind::Text { text, .. } => {
                 let text = self.text(text);
 
-                resources.paint_text(painter, text, bounds, node.effective_text_style, clip)?;
+                resources.paint_text(
+                    painter,
+                    text,
+                    bounds,
+                    self.resolved_text_style(node_id),
+                    clip,
+                )?;
 
                 if !text.is_empty() {
                     report.mark_text();
@@ -274,7 +280,7 @@ impl FrameArena {
                 draw,
                 bounds,
                 clip,
-                node.effective_text_style,
+                self.resolved_text_style(node_id),
                 runtime,
                 resources,
                 report,
@@ -293,7 +299,7 @@ impl FrameArena {
                 source,
                 bounds,
                 clip,
-                node.effective_text_style,
+                self.resolved_text_style(node_id),
                 report,
                 painter,
             )

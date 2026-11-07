@@ -1,7 +1,7 @@
 use super::{FrameArena, NodeId, NodeKind};
 
 use crate::{
-    Offset,
+    Offset, ResolvedTextStyle,
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     interaction::scroll::ScrollStateTable,
 };
@@ -74,13 +74,17 @@ impl FrameArena {
                 .unwrap_or(Offset::ZERO);
         }
     }
+    /// finds each node's text style from the styles it inherits, keeping each distinct
+    /// style once. Parents come before their children, so each inherits from this pass
     pub(crate) fn resolve_text_styles(&mut self, root: NodeId) {
+        self.resolved_text_styles.clear();
+
         let mut current = Some(root);
         while let Some(node_id) = current {
             let inherited = self
                 .node(node_id)
                 .parent
-                .map(|parent| self.node(parent).effective_text_style)
+                .map(|parent| self.resolved_text_style(parent))
                 .unwrap_or_default();
 
             let resolved = match self.node(node_id).kind {
@@ -89,16 +93,36 @@ impl FrameArena {
                     .expect("div node must have style")
                     .text
                     .resolve(inherited),
-                NodeKind::Text { .. } | NodeKind::Svg { .. } => {
-                    self.node(node_id).text_style.resolve(inherited)
-                }
+                NodeKind::Text { style, .. }
+                | NodeKind::Svg {
+                    text_style: style, ..
+                } => self.text_styles[usize::from(style)].resolve(inherited),
                 NodeKind::Image { .. } | NodeKind::Entity { .. } | NodeKind::Canvas { .. } => {
                     inherited
                 }
             };
 
-            self.node_mut(node_id).effective_text_style = resolved;
+            self.node_mut(node_id).resolved_text_style = self.intern_text_style(resolved);
             current = self.next_depth_first_node(node_id);
         }
+    }
+
+    /// the index of `style` in the resolved text styles, adding it if it's new
+    fn intern_text_style(&mut self, style: ResolvedTextStyle) -> u16 {
+        let index = match self
+            .resolved_text_styles
+            .iter()
+            .position(|resolved| *resolved == style)
+        {
+            Some(index) => index,
+            None => {
+                self.resolved_text_styles
+                    .push(style)
+                    .expect("mounting keeps room for every style a pass can find");
+                self.resolved_text_styles.len() - 1
+            }
+        };
+
+        u16::try_from(index).expect("there are fewer resolved text styles than nodes")
     }
 }

@@ -1,14 +1,14 @@
 //! reclaims what partial rebuilds leave behind. A re-rendered entity's old subtree
-//! stays in the arena as detached nodes, along with its text, div styles, event
-//! bindings and interaction styles, until the frame compacts.
+//! stays in the arena as detached nodes, along with its text, div and text styles,
+//! event bindings and interaction styles, until the frame compacts.
 
 use super::{FrameArena, NodeCache, NodeId, NodeKind};
 
-use crate::EventBinding;
+use crate::{EventBinding, TextStyle};
 
 impl FrameArena {
-    /// removes the detached nodes, with the text, div styles, event bindings and
-    /// interaction styles only they used. The other nodes keep their order, so the ones a partial rebuild
+    /// removes the detached nodes, with the text, div and text styles, event bindings
+    /// and interaction styles only they used. The other nodes keep their order, so the ones a partial rebuild
     /// mounted still come after the rest, but they get new ids. Returns `root`'s.
     ///
     /// drops the layout caches, which the layout after a rebuild fills again
@@ -24,8 +24,10 @@ impl FrameArena {
         self.plan_moves();
         self.compact_text();
         self.compact_styles();
+        self.compact_text_styles();
         self.compact_event_bindings();
         self.compact_interaction_styles();
+        self.count_text_style_changes();
         self.relink();
         let root = self.moved(root);
         self.move_nodes();
@@ -71,7 +73,7 @@ impl FrameArena {
         let mut used = 0;
 
         for node in self.nodes.iter_mut().filter(|node| !node.detached) {
-            if let NodeKind::Text { text } = &mut node.kind {
+            if let NodeKind::Text { text, .. } = &mut node.kind {
                 debug_assert!(used <= text.start, "text is in node order");
 
                 self.text
@@ -99,6 +101,45 @@ impl FrameArena {
         }
 
         self.styles.truncate(used);
+    }
+
+    /// text styles are appended as their node mounts, so live ones keep node order
+    fn compact_text_styles(&mut self) {
+        let mut used = 0;
+
+        for node in self.nodes.iter_mut().filter(|node| !node.detached) {
+            if let NodeKind::Text { style, .. }
+            | NodeKind::Svg {
+                text_style: style, ..
+            } = &mut node.kind
+            {
+                debug_assert!(used <= usize::from(*style), "text styles are in node order");
+
+                self.text_styles[used] = self.text_styles[usize::from(*style)];
+                *style = u16::try_from(used).expect("text style indices fit in u16");
+                used += 1;
+            }
+        }
+
+        self.text_styles.truncate(used);
+    }
+
+    /// counts the live nodes that can change their text style, once the tables hold
+    /// only theirs
+    fn count_text_style_changes(&mut self) {
+        let changes = |style: &TextStyle| *style != TextStyle::DEFAULT;
+
+        self.text_style_changes = self
+            .styles
+            .iter()
+            .filter(|style| changes(&style.text))
+            .count()
+            + self
+                .text_styles
+                .iter()
+                .filter(|style| changes(style))
+                .count()
+            + self.interaction_styles.len();
     }
 
     fn compact_event_bindings(&mut self) {

@@ -1391,7 +1391,7 @@ fn plain_string_mounts_without_text_style_overrides() {
 
     let node = frame.mount("Hello", cx).unwrap();
 
-    assert_eq!(frame.node(node).text_style, TextStyle::default());
+    assert_eq!(frame.text_style_patch(node).unwrap(), TextStyle::default());
     assert_eq!(node_text(&frame, node), "Hello");
 }
 
@@ -1413,12 +1413,15 @@ fn explicit_text_element_preserves_text_style_overrides() {
 
     assert_eq!(node_text(&frame, node), "Hello");
     assert_eq!(
-        frame.node(node).text_style.font_weight,
+        frame.text_style_patch(node).unwrap().font_weight,
         Some(FontWeight::BOLD)
     );
-    assert_eq!(frame.node(node).text_style.color, Some(Color::RED));
     assert_eq!(
-        frame.node(node).text_style.line_height,
+        frame.text_style_patch(node).unwrap().color,
+        Some(Color::RED)
+    );
+    assert_eq!(
+        frame.text_style_patch(node).unwrap().line_height,
         Some(LineHeight::Pixels(px(18)))
     );
 }
@@ -1450,7 +1453,7 @@ fn text_style_resolves_through_nested_elements() {
     let text_node = frame.node(inner).first_child.unwrap();
 
     assert_eq!(
-        frame.node(text_node).effective_text_style,
+        frame.resolved_text_style(text_node),
         ResolvedTextStyle {
             font_weight: FontWeight::BOLD,
             color: Color::RED,

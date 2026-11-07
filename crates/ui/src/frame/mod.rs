@@ -52,6 +52,8 @@ pub(crate) enum NodeKind {
     },
     Text {
         text: TextRange,
+        /// where the text's style sits in the frame's text styles
+        style: u16,
     },
     Image {
         source: ImageSource,
@@ -60,6 +62,8 @@ pub(crate) enum NodeKind {
     Svg {
         source: SvgSource,
         style: SvgStyle,
+        /// where the svg's text style sits in the frame's text styles
+        text_style: u16,
     },
     Canvas {
         draw: CanvasDraw,
@@ -88,8 +92,8 @@ pub(crate) struct Node {
     pub(crate) element_state_id: Option<ElementStateId>,
     pub(crate) interaction: NodeInteraction,
     pub(crate) layout: NodeLayout,
-    pub(crate) text_style: TextStyle,
-    pub(crate) effective_text_style: ResolvedTextStyle,
+    /// where the node's resolved text style sits in the frame's resolved text styles
+    pub(crate) resolved_text_style: u16,
     pub(crate) event_bindings: BindingRun,
     /// left behind by a partial rebuild. Detached nodes keep their links, but are no
     /// longer in the tree, so passes over the whole arena skip them
@@ -108,8 +112,7 @@ impl Node {
             element_state_id: None,
             interaction: NodeInteraction::default(),
             layout: NodeLayout::default(),
-            text_style: TextStyle::default(),
-            effective_text_style: ResolvedTextStyle::default(),
+            resolved_text_style: 0,
             event_bindings: BindingRun::EMPTY,
             detached: false,
         }
@@ -228,6 +231,14 @@ pub(crate) struct FrameArena {
     /// the style of each div, in mount order, kept apart from the nodes since they're
     /// most of a node's size
     styles: FrameBuffer<Style>,
+    /// the text style of each text and svg node, in mount order
+    text_styles: FrameBuffer<TextStyle>,
+    /// each text style the last resolve pass found, once. Nodes point into it
+    resolved_text_styles: FrameBuffer<ResolvedTextStyle>,
+    /// the nodes that can change the text style they inherit. A resolve pass finds at
+    /// most one new style at each, and the default, so mounting keeps room for that many
+    /// and resolving never allocates
+    text_style_changes: usize,
     node_cache: FrameBuffer<NodeCache>,
     /// each with the node it belongs to
     interaction_styles: FrameBuffer<(NodeId, InteractionStyles)>,
@@ -255,6 +266,9 @@ impl FrameArena {
             event_bindings: FrameBuffer::new_in(pool, Table::Nodes),
             text: FrameBuffer::new_in(pool, Table::Text),
             styles: FrameBuffer::new_in(pool, Table::Nodes),
+            text_styles: FrameBuffer::new_in(pool, Table::Nodes),
+            resolved_text_styles: FrameBuffer::new_in(pool, Table::Nodes),
+            text_style_changes: 0,
             node_cache: FrameBuffer::new_in(pool, Table::Nodes),
             interaction_styles: FrameBuffer::new_in(pool, Table::Nodes),
             focused: None,
@@ -286,6 +300,16 @@ impl FrameArena {
     }
 
     #[cfg(test)]
+    pub(crate) fn text_style_count(&self) -> usize {
+        self.text_styles.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolved_text_style_count(&self) -> usize {
+        self.resolved_text_styles.len()
+    }
+
+    #[cfg(test)]
     pub fn text_capacity(&self) -> usize {
         self.text.capacity()
     }
@@ -302,6 +326,9 @@ impl FrameArena {
         self.layout_changed_outside = false;
         self.text.clear();
         self.styles.clear();
+        self.text_styles.clear();
+        self.resolved_text_styles.clear();
+        self.text_style_changes = 0;
         self.event_bindings.clear();
         self.node_cache.clear();
         self.interaction_styles.clear();
@@ -320,6 +347,9 @@ impl FrameArena {
         self.event_bindings.shrink_to_fit();
         self.text.shrink_to_fit();
         self.styles.shrink_to_fit();
+        self.text_styles.shrink_to_fit();
+        // the resolved styles keep the room mounting reserved, so resolving never
+        // allocates
         self.interaction_styles.shrink_to_fit();
     }
 
@@ -372,6 +402,47 @@ impl FrameArena {
         }
 
         Some(style)
+    }
+
+    /// the text style the last resolve pass found for `id`
+    pub(crate) fn resolved_text_style(&self, id: NodeId) -> ResolvedTextStyle {
+        let index = usize::from(self.node(id).resolved_text_style);
+
+        // before the first pass, nodes have the default
+        self.resolved_text_styles
+            .get(index)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// the text style a text or svg node was mounted with
+    #[cfg(test)]
+    pub(crate) fn text_style_patch(&self, id: NodeId) -> Option<TextStyle> {
+        match self.node(id).kind {
+            NodeKind::Text { style, .. }
+            | NodeKind::Svg {
+                text_style: style, ..
+            } => Some(self.text_styles[usize::from(style)]),
+            _ => None,
+        }
+    }
+
+    /// keeps room for one more resolved text style, for a node that changes the style it
+    /// inherits
+    fn reserve_text_style_change(&mut self) -> Result<(), MountError> {
+        self.reserve_resolved_text_styles(self.text_style_changes + 1)?;
+        self.text_style_changes += 1;
+
+        Ok(())
+    }
+
+    /// keeps room for the styles of `changes` nodes that change their text style, and
+    /// the default
+    fn reserve_resolved_text_styles(&mut self, changes: usize) -> Result<(), MountError> {
+        let needed = changes + 1;
+
+        self.resolved_text_styles
+            .reserve(needed.saturating_sub(self.resolved_text_styles.len()))
     }
 
     pub(crate) fn interaction_styles_for_element(

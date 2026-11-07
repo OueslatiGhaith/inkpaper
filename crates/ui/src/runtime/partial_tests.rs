@@ -191,7 +191,7 @@ impl Fixture {
             .count();
             let kind = match frame.node(node).kind {
                 NodeKind::Div { .. } => String::from("div"),
-                NodeKind::Text { text } => format!("{:?}", frame.text(text)),
+                NodeKind::Text { text, .. } => format!("{:?}", frame.text(text)),
                 NodeKind::Entity { entity, .. } => format!("entity {}", entity.slot()),
                 _ => String::from("other"),
             };
@@ -288,6 +288,10 @@ fn partial_rebuild_matches_a_full_rebuild() {
     assert_eq!(
         partial_frame.div_style_count(),
         full_frame.div_style_count()
+    );
+    assert_eq!(
+        partial_frame.text_style_count(),
+        full_frame.text_style_count()
     );
 
     for fixture in [&mut partial, &mut full] {
@@ -601,7 +605,7 @@ fn a_child_that_reads_its_parent_renders_again_when_the_parent_changes() {
         frame.next_depth_first_node(node)
     })
     .filter_map(|node| match frame.node(node).kind {
-        NodeKind::Text { text } => Some(frame.text(text)),
+        NodeKind::Text { text, .. } => Some(frame.text(text)),
         _ => None,
     })
     .collect();
@@ -644,7 +648,7 @@ fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
     let (nodes, text, styles) = (
         frame.node_count(),
         frame.text_bytes_used(),
-        frame.div_style_count(),
+        (frame.div_style_count(), frame.text_style_count()),
     );
 
     for _ in 0..50 {
@@ -663,7 +667,7 @@ fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
         (
             frame.node_count(),
             frame.text_bytes_used(),
-            frame.div_style_count()
+            (frame.div_style_count(), frame.text_style_count())
         ),
         (nodes, text, styles)
     );
