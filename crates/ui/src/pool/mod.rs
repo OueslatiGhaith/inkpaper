@@ -11,6 +11,8 @@
 //!    drops every table before its pool.
 //! 2. the allocator is only borrowed inside the methods of [`PoolRef`], which never run
 //!    other code meanwhile, so its borrows never overlap.
+//! 3. the chunks a growable pool adds are freed only when the pool is dropped, after
+//!    every table, and before the buffer that holds the allocator.
 
 use core::{
     alloc::Layout,
@@ -104,6 +106,9 @@ pub struct MemoryStats {
     pub peak: usize,
     /// allocations made so far, growing a table included
     pub allocations: usize,
+    /// chunks of memory a growable pool added because it ran out. Always 0 for a
+    /// fixed pool
+    pub chunks_added: usize,
     by_table: [usize; Table::COUNT],
 }
 
@@ -114,6 +119,7 @@ impl MemoryStats {
             used: 0,
             peak: 0,
             allocations: 0,
+            chunks_added: 0,
             by_table: [0; Table::COUNT],
         }
     }
@@ -138,9 +144,32 @@ impl MemoryStats {
 struct PoolHeader {
     allocator: UnsafeCell<Allocator>,
     stats: Cell<MemoryStats>,
+    /// how the pool grows, if it does
+    #[cfg(feature = "alloc")]
+    growth: Cell<Option<Growth>>,
+}
+
+#[cfg(feature = "alloc")]
+#[derive(Clone, Copy)]
+struct Growth {
+    /// the fewest bytes a chunk takes from the heap
+    min_chunk: usize,
+    /// the chunks added so far, newest first
+    chunks: Option<NonNull<Chunk>>,
+}
+
+/// the start of a chunk a growable pool added. The rest of the chunk is free memory
+#[cfg(feature = "alloc")]
+struct Chunk {
+    next: Option<NonNull<Chunk>>,
+    layout: Layout,
 }
 
 /// the bytes the runtime keeps its tables in.
+///
+/// a pool made with [`Pool::new`] or [`Pool::boxed`] has a fixed size: tables that
+/// need more than it holds fail with [`OutOfMemory`]. One made with [`Pool::growable`]
+/// takes another chunk from the heap instead.
 ///
 /// ```
 /// # use core::mem::MaybeUninit;
@@ -187,6 +216,25 @@ impl Pool {
         pool
     }
 
+    /// a pool over a new heap buffer of `bytes` bytes that takes another chunk from the
+    /// heap whenever it runs out. Each chunk holds at least `bytes` bytes and at least
+    /// twice the allocation that needed it. Chunks are released when the pool is
+    /// dropped, not when the memory in them is freed
+    ///
+    /// # Panics
+    ///
+    /// when `bytes` is too few to hold the allocator's state and an allocation
+    #[cfg(feature = "alloc")]
+    pub fn growable(bytes: usize) -> Self {
+        let pool = Self::boxed(bytes);
+        pool.handle().header().growth.set(Some(Growth {
+            min_chunk: bytes,
+            chunks: None,
+        }));
+
+        pool
+    }
+
     /// # Safety
     ///
     /// `memory` is valid for the life of the pool, and nothing else uses it meanwhile
@@ -207,6 +255,8 @@ impl Pool {
             header.write(PoolHeader {
                 allocator: UnsafeCell::new(Allocator::new()),
                 stats: Cell::new(MemoryStats::new(0)),
+                #[cfg(feature = "alloc")]
+                growth: Cell::new(None),
             });
 
             let blocks = NonNull::slice_from_raw_parts(start.add(blocks_start), len - blocks_start);
@@ -245,6 +295,23 @@ impl Pool {
 
 impl Drop for Pool {
     fn drop(&mut self) {
+        // the chunks' list lives in the buffer below, so the chunks go first
+        #[cfg(feature = "alloc")]
+        if let Some(growth) = self.handle().header().growth.get() {
+            let mut next = growth.chunks;
+            while let Some(chunk) = next {
+                // SAFETY: `grow` wrote this header at the start of the chunk, which no
+                // table uses any more
+                let Chunk {
+                    next: after,
+                    layout,
+                } = unsafe { chunk.read() };
+                // SAFETY: `grow` allocated the chunk with this layout
+                unsafe { alloc::alloc::dealloc(chunk.as_ptr().cast(), layout) };
+                next = after;
+            }
+        }
+
         #[cfg(feature = "alloc")]
         if let Some(memory) = self.owned {
             // SAFETY: `boxed` leaked this box for the pool, and no table outlives the
@@ -289,6 +356,73 @@ impl PoolRef {
         self.header().stats.get()
     }
 
+    /// adds a chunk from the heap with room for `layout`, if the pool grows. Returns
+    /// whether it did
+    #[cfg(feature = "alloc")]
+    fn grow(&self, layout: Layout) -> bool {
+        let header = self.header();
+        let Some(growth) = header.growth.get() else {
+            return false;
+        };
+
+        // the allocation, its header and alignment, the chunk's header, and the
+        // allocator's rounding and sentinel
+        let Some(needed) = layout
+            .size()
+            .checked_add(layout.align())
+            .and_then(|bytes| bytes.checked_add(mem::size_of::<Chunk>() + 4 * GRANULARITY))
+        else {
+            return false;
+        };
+        let bytes = needed.saturating_mul(2).max(growth.min_chunk);
+        let Ok(chunk_layout) =
+            Layout::from_size_align(bytes, mem::align_of::<Chunk>().max(GRANULARITY))
+        else {
+            return false;
+        };
+
+        // SAFETY: the layout has a nonzero size
+        let Some(chunk) = NonNull::new(unsafe { alloc::alloc::alloc(chunk_layout) }) else {
+            return false;
+        };
+        let chunk = chunk.cast::<Chunk>();
+
+        // SAFETY: the chunk is new, aligned for its header and larger than it. The free
+        // block after the header lives until the pool drops it, after the allocator's
+        // last use, and nothing borrows the allocator meanwhile
+        let added = unsafe {
+            chunk.write(Chunk {
+                next: growth.chunks,
+                layout: chunk_layout,
+            });
+            let start = chunk.cast::<u8>().add(mem::size_of::<Chunk>());
+            let block = NonNull::slice_from_raw_parts(start, bytes - mem::size_of::<Chunk>());
+
+            self.allocator().insert_free_block_ptr(block)
+        };
+        let Some(added) = added else {
+            // SAFETY: allocated above with this layout, and the allocator didn't take it
+            unsafe { alloc::alloc::dealloc(chunk.as_ptr().cast(), chunk_layout) };
+            return false;
+        };
+
+        header.growth.set(Some(Growth {
+            chunks: Some(chunk),
+            ..growth
+        }));
+        self.update_stats(|stats| {
+            stats.capacity += added.get();
+            stats.chunks_added += 1;
+        });
+
+        true
+    }
+
+    #[cfg(not(feature = "alloc"))]
+    fn grow(&self, _: Layout) -> bool {
+        false
+    }
+
     /// memory for `layout`, or `None` when the pool has no room. Zero-sized layouts get a
     /// dangling, aligned pointer and use no memory
     pub(crate) fn allocate(&self, table: Table, layout: Layout) -> Option<NonNull<u8>> {
@@ -296,8 +430,12 @@ impl PoolRef {
             return Some(dangling(layout));
         }
 
-        // SAFETY: the borrow ends with the call
-        let ptr = unsafe { self.allocator() }.allocate(layout)?;
+        // SAFETY: the borrows end with the calls
+        let ptr = match unsafe { self.allocator() }.allocate(layout) {
+            Some(ptr) => ptr,
+            None if self.grow(layout) => unsafe { self.allocator() }.allocate(layout)?,
+            None => return None,
+        };
         self.update_stats(|stats| {
             stats.allocations += 1;
             stats.add(table, footprint(layout));
@@ -330,9 +468,13 @@ impl PoolRef {
             return Some(dangling(new));
         }
 
-        // SAFETY: `ptr` came from this allocator with this alignment, and the borrow
-        // ends with the call
-        let moved = unsafe { self.allocator().reallocate(ptr, new) }?;
+        // SAFETY: `ptr` came from this allocator with this alignment, and the borrows
+        // end with the calls. A failed reallocation leaves `ptr` as it was
+        let moved = match unsafe { self.allocator().reallocate(ptr, new) } {
+            Some(moved) => moved,
+            None if self.grow(new) => unsafe { self.allocator().reallocate(ptr, new) }?,
+            None => return None,
+        };
         self.update_stats(|stats| {
             stats.allocations += 1;
             stats.remove(table, footprint(old));

@@ -367,6 +367,25 @@ fn rebuilds_that_run_out_of_pool_can_be_retried() {
 }
 
 #[test]
+fn growable_pools_rebuild_screens_their_first_chunk_does_not_fit() {
+    let (mut runtime, screen) = state_runtime_in(Pool::growable(8 * 1024)).unwrap();
+    let first = runtime.memory();
+
+    runtime
+        .update(screen, |screen, cx| {
+            screen.rows = 32;
+            cx.notify();
+        })
+        .unwrap();
+    runtime.rebuild().unwrap();
+
+    let grown = runtime.memory();
+    assert!(grown.chunks_added > first.chunks_added);
+    assert!(grown.capacity > first.capacity);
+    assert!(runtime.frame_node_count() > 32);
+}
+
+#[test]
 fn entity_allocation_failures_do_not_run_constructors() {
     let mut failures = 0;
 

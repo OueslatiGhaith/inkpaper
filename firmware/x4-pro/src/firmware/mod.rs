@@ -220,7 +220,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let frame = FRAMEBUFFER.init_with(FramebufferStorage::white);
 
-    let runtime = UI_RUNTIME.init_with(|| UiRuntime::new(Pool::boxed(UI_POOL_BYTES)));
+    let runtime = UI_RUNTIME.init_with(|| UiRuntime::new(Pool::growable(UI_POOL_BYTES)));
     // render only the entities that changed, and refresh only what they painted
     runtime.set_partial_rebuilds(true);
 
