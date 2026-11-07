@@ -3,7 +3,7 @@ use std::vec::Vec;
 use crate::pool::testing::{pool, pool_with_room};
 use crate::*;
 
-type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32>>;
+type TestRuntime = Runtime;
 
 /// what a [`Child`] says happened
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,13 +271,13 @@ fn events_handlers_emit_are_delivered_too() {
 
 #[test]
 fn a_full_queue_reports_it() {
-    let mut runtime = TestRuntime::new(pool_with_room(512));
+    let mut runtime = TestRuntime::new(pool_with_room(2 * 1024));
     let parent = runtime.create_root(Parent::new).unwrap();
     let (first, _) = children(&runtime, parent);
 
     let results = runtime
         .update(first, |_, cx| {
-            (0..64)
+            (0..256)
                 .map(|value| cx.try_emit(Ping::Value(value)))
                 .collect::<Vec<_>>()
         })

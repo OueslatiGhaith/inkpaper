@@ -2,7 +2,7 @@ use std::{cell::Cell, rc::Rc};
 
 use inkpaper_ui::prelude::*;
 
-type TestRuntime = Runtime<FixedStorage<4096, 8, 4096, 16, 256, 4>>;
+type TestRuntime = Runtime;
 
 #[derive(Debug)]
 struct Theme {
@@ -221,72 +221,6 @@ fn mutating_global_requests_rebuild_of_its_readers() {
     runtime.rebuild().unwrap();
 
     assert_eq!(observed.get(), 99);
-}
-
-#[test]
-fn global_capacity_is_independent_from_entity_capacity() {
-    type RuntimeWithOneEntity = Runtime<FixedStorage<1024, 1, 1024, 8, 128, 2>>;
-
-    struct App;
-
-    impl Render for App {
-        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-            div()
-        }
-    }
-
-    let mut runtime = RuntimeWithOneEntity::new(pool());
-
-    runtime.set_global(Theme { value: 1 }).unwrap();
-
-    runtime.set_global(Locale { value: 2 }).unwrap();
-
-    /*
-     * If globals consumed entity slots, these two globals would have exhausted
-     * a runtime configured with only one entity slot.
-     */
-    runtime.create_root(|_| App).unwrap();
-
-    runtime.rebuild().unwrap();
-
-    assert_eq!(runtime.global_count(), 2,);
-
-    assert_eq!(runtime.global::<Locale>().value, 2,);
-}
-
-#[test]
-#[cfg(not(feature = "alloc"))]
-fn global_slot_capacity_is_enforced() {
-    type OneGlobalRuntime = Runtime<FixedStorage<1024, 4, 1024, 8, 128, 1>>;
-
-    let mut runtime = OneGlobalRuntime::new(pool());
-
-    runtime.set_global(Theme { value: 1 }).unwrap();
-
-    assert_eq!(
-        runtime.set_global(Locale { value: 2 },),
-        Err(GlobalSetError::SlotsFull),
-    );
-}
-
-#[test]
-#[cfg(not(feature = "alloc"))]
-fn global_byte_capacity_is_enforced() {
-    #[derive(Debug)]
-    struct LargeGlobal {
-        _bytes: [u8; 64],
-    }
-
-    impl Global for LargeGlobal {}
-
-    type TinyGlobalRuntime = Runtime<FixedStorage<1024, 4, 1024, 8, 16, 4>>;
-
-    let mut runtime = TinyGlobalRuntime::new(pool());
-
-    assert_eq!(
-        runtime.set_global(LargeGlobal { _bytes: [0; 64] },),
-        Err(GlobalSetError::StorageFull),
-    );
 }
 
 struct DroppableGlobal {

@@ -44,6 +44,7 @@ pub unsafe trait EntityStore {
     fn mark_dirty(&self, entity: EntityId);
 
     /// whether the entity was notified since the invalidation was last taken
+    #[cfg(test)]
     fn is_dirty(&self, entity: EntityId) -> bool;
 
     /// whether any entity is dirty

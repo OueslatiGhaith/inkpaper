@@ -1,140 +1,16 @@
-//! runtime storage selection.
-//!
-//! the traits in this module are public so they can bound [`RuntimeStorage`], but they
-//! are not exported. Applications choose among the storage types this crate provides
-//! and cannot implement the traits for their own types.
+//! growable storage for runtime tables.
 
 use core::ops::{Deref, DerefMut};
 
-use crate::{
-    EntityId, FixedCallbackArena, FixedEntityArena, FixedGlobalArena, Global, GlobalSetError,
-    Listener, ListenerInvokeError, RuntimeCx,
-    callback::{CallbackMark, CallbackStore},
-    entity::EntityStore,
-    global::GlobalStore,
-};
-#[cfg(feature = "alloc")]
-use crate::{HeapCallbackArena, HeapEntityArena, HeapGlobalArena};
-
-/// chooses the storage behind each runtime table.
-///
-/// implement it on a marker type and pick each table's storage from the fixed types
-/// (`Fixed*`), or with `alloc` the heap types (`Heap*`). Kinds can be mixed:
-///
-/// ```
-/// # use inkpaper_ui::*;
-/// struct DeviceStorage;
-///
-/// impl RuntimeStorage for DeviceStorage {
-///     type Entities = FixedEntityArena<4_096, 8>;
-///     type Callbacks = FixedCallbackArena<2_048, 16>;
-///     type Globals = FixedGlobalArena<256, 4>;
-/// }
-///
-/// type DeviceRuntime = Runtime<DeviceStorage>;
-/// ```
-///
-/// [`FixedStorage`] and [`HeapStorage`] cover the common all-fixed and all-heap cases.
-pub trait RuntimeStorage {
-    type Entities: EntityStorage;
-    type Callbacks: CallbackStorage;
-    type Globals: GlobalStorage;
-}
-
-/// fixed-capacity storage for every runtime table, with the capacities in the order the
-/// tables appear in [`RuntimeStorage`], globals last. Never allocates.
-pub struct FixedStorage<
-    const ENTITY_BYTES: usize,
-    const ENTITY_SLOTS: usize,
-    const CALLBACK_BYTES: usize,
-    const CALLBACK_SLOTS: usize,
-    const GLOBAL_BYTES: usize = 0,
-    const GLOBAL_SLOTS: usize = 0,
->;
-
-impl<
-    const ENTITY_BYTES: usize,
-    const ENTITY_SLOTS: usize,
-    const CALLBACK_BYTES: usize,
-    const CALLBACK_SLOTS: usize,
-    const GLOBAL_BYTES: usize,
-    const GLOBAL_SLOTS: usize,
-> RuntimeStorage
-    for FixedStorage<
-        ENTITY_BYTES,
-        ENTITY_SLOTS,
-        CALLBACK_BYTES,
-        CALLBACK_SLOTS,
-        GLOBAL_BYTES,
-        GLOBAL_SLOTS,
-    >
-{
-    type Entities = FixedEntityArena<ENTITY_BYTES, ENTITY_SLOTS>;
-    type Callbacks = FixedCallbackArena<CALLBACK_BYTES, CALLBACK_SLOTS>;
-    type Globals = FixedGlobalArena<GLOBAL_BYTES, GLOBAL_SLOTS>;
-}
-
-/// heap storage for every runtime table. Tables grow as needed and are limited only by
-/// the allocator.
-#[cfg(feature = "alloc")]
-pub struct HeapStorage;
-
-#[cfg(feature = "alloc")]
-impl RuntimeStorage for HeapStorage {
-    type Entities = HeapEntityArena;
-    type Callbacks = HeapCallbackArena;
-    type Globals = HeapGlobalArena;
-}
-
-/// storage for entity state
-pub trait EntityStorage: EntityStore + Default {}
-
-/// storage for the callbacks registered while rendering a frame
-pub trait CallbackStorage: CallbackStore + Default {
-    fn reset(&mut self);
-
-    /// marks the callbacks registered so far
-    fn mark(&self) -> CallbackMark;
-
-    /// drops the callbacks `owner` registered before `mark`, keeping every other
-    /// callback callable. Returns how many callbacks were released.
-    fn release_owner(&mut self, owner: EntityId, mark: CallbackMark) -> usize;
-
-    fn invoke_listener<E>(
-        &self,
-        listener: Listener<E>,
-        event: &E,
-        runtime: RuntimeCx<'_>,
-    ) -> Result<(), ListenerInvokeError>
-    where
-        E: 'static;
-}
-
-/// storage for application globals
-pub trait GlobalStorage: GlobalStore + Default {
-    fn set<G>(&mut self, value: G) -> Result<(), GlobalSetError>
-    where
-        G: Global;
-
-    fn contains<G>(&self) -> bool
-    where
-        G: Global;
-
-    fn len(&self) -> usize;
-
-    fn used_bytes(&self) -> usize;
-
-    fn capacity(&self) -> usize;
-
-    fn byte_capacity(&self) -> usize;
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageError {
-    /// fixed storage reached its capacity
+    /// the storage has no room
     Full,
     /// heap-backed storage could not allocate
-    #[cfg_attr(not(feature = "alloc"), allow(dead_code))]
+    #[expect(
+        dead_code,
+        reason = "nothing heap-backed is left, and the errors merge next"
+    )]
     AllocationFailed,
 }
 
@@ -149,9 +25,10 @@ impl StorageError {
 
 /// growable storage for runtime tables.
 ///
-/// implemented by fixed-capacity [`heapless::Vec`], by the runtime pool's vectors and,
-/// with `alloc`, by [`HeapVec`]. Failed operations leave the contents unchanged.
+/// implemented by the runtime pool's vectors and by fixed-capacity [`heapless::Vec`].
+/// Failed operations leave the contents unchanged.
 pub trait VecStorage<T>: Deref<Target = [T]> + DerefMut {
+    #[cfg(test)]
     fn capacity(&self) -> usize;
 
     fn clear(&mut self);
@@ -176,6 +53,7 @@ pub trait VecStorage<T>: Deref<Target = [T]> + DerefMut {
 }
 
 impl<T, const N: usize> VecStorage<T> for heapless::Vec<T, N> {
+    #[cfg(test)]
     fn capacity(&self) -> usize {
         N
     }
@@ -215,136 +93,6 @@ impl<T, const N: usize> VecStorage<T> for heapless::Vec<T, N> {
     }
 }
 
-/// heap-backed [`VecStorage`] without a capacity limit.
-///
-/// the first allocation reserves at least `INITIAL` values, so small tables don't grow
-/// one value at a time.
-#[cfg(feature = "alloc")]
-pub struct HeapVec<T, const INITIAL: usize> {
-    values: alloc::vec::Vec<T>,
-}
-
-#[cfg(feature = "alloc")]
-impl<T, const INITIAL: usize> Default for HeapVec<T, INITIAL> {
-    fn default() -> Self {
-        Self {
-            values: alloc::vec::Vec::new(),
-        }
-    }
-}
-
-#[cfg(feature = "alloc")]
-impl<T, const INITIAL: usize> Deref for HeapVec<T, INITIAL> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        &self.values
-    }
-}
-
-#[cfg(feature = "alloc")]
-impl<T, const INITIAL: usize> DerefMut for HeapVec<T, INITIAL> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.values
-    }
-}
-
-#[cfg(feature = "alloc")]
-impl<T, const INITIAL: usize> VecStorage<T> for HeapVec<T, INITIAL> {
-    fn capacity(&self) -> usize {
-        self.values.capacity()
-    }
-
-    fn clear(&mut self) {
-        self.values.clear();
-    }
-
-    fn truncate(&mut self, len: usize) {
-        self.values.truncate(len);
-    }
-
-    fn try_reserve(&mut self, additional: usize) -> Result<(), StorageError> {
-        let required = self
-            .values
-            .len()
-            .checked_add(additional)
-            .ok_or(StorageError::Full)?;
-
-        if required <= self.values.capacity() {
-            return Ok(());
-        }
-
-        let target = if self.values.capacity() == 0 {
-            required.max(INITIAL)
-        } else {
-            required
-        };
-
-        self.values
-            .try_reserve(target - self.values.len())
-            .map_err(|_| StorageError::AllocationFailed)
-    }
-
-    fn try_push(&mut self, value: T) -> Result<(), StorageError> {
-        self.try_reserve(1)?;
-        self.values.push(value);
-
-        Ok(())
-    }
-
-    fn try_extend_from_slice(&mut self, values: &[T]) -> Result<(), StorageError>
-    where
-        T: Copy,
-    {
-        self.try_reserve(values.len())?;
-        self.values.extend_from_slice(values);
-
-        Ok(())
-    }
-
-    fn try_resize(&mut self, len: usize, value: T) -> Result<(), StorageError>
-    where
-        T: Clone,
-    {
-        self.try_reserve(len.saturating_sub(self.values.len()))?;
-        self.values.resize(len, value);
-
-        Ok(())
-    }
-
-    fn shrink_to_fit(&mut self) {
-        self.values.shrink_to_fit();
-    }
-}
-
-// unit tests run against the storage the `alloc` feature implies, so both builds keep
-// covering their own storage kind
-#[cfg(all(test, not(feature = "alloc")))]
-pub(crate) type TestStorage<
-    const ENTITY_BYTES: usize,
-    const ENTITY_SLOTS: usize,
-    const CALLBACK_BYTES: usize,
-    const CALLBACK_SLOTS: usize,
-    const GLOBAL_BYTES: usize = 0,
-    const GLOBAL_SLOTS: usize = 0,
-> = FixedStorage<
-    ENTITY_BYTES,
-    ENTITY_SLOTS,
-    CALLBACK_BYTES,
-    CALLBACK_SLOTS,
-    GLOBAL_BYTES,
-    GLOBAL_SLOTS,
->;
-#[cfg(all(test, feature = "alloc"))]
-pub(crate) type TestStorage<
-    const ENTITY_BYTES: usize,
-    const ENTITY_SLOTS: usize,
-    const CALLBACK_BYTES: usize,
-    const CALLBACK_SLOTS: usize,
-    const GLOBAL_BYTES: usize = 0,
-    const GLOBAL_SLOTS: usize = 0,
-> = HeapStorage;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,36 +108,5 @@ mod tests {
         assert_eq!(values.try_extend_from_slice(&[3]), Err(StorageError::Full));
         assert_eq!(values.try_resize(3, 0), Err(StorageError::Full));
         assert_eq!(&*values, &[1, 2]);
-    }
-
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn heap_storage_reserves_initial_capacity_once() {
-        let mut values = HeapVec::<u8, 8>::default();
-
-        values.try_push(1).unwrap();
-        assert!(VecStorage::capacity(&values) >= 8);
-
-        values.try_resize(20, 0).unwrap();
-        assert_eq!(values.len(), 20);
-    }
-
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn heap_storage_reports_allocation_failure_without_changing_contents() {
-        let mut values = HeapVec::<u8, 0>::default();
-
-        values.try_push(1).unwrap();
-
-        assert_eq!(
-            values.try_reserve(usize::MAX - 1),
-            Err(StorageError::AllocationFailed)
-        );
-        assert_eq!(
-            values.try_resize(usize::MAX, 0),
-            Err(StorageError::AllocationFailed)
-        );
-        assert_eq!(values.try_reserve(usize::MAX), Err(StorageError::Full));
-        assert_eq!(&*values, &[1]);
     }
 }

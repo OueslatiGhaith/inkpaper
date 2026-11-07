@@ -24,7 +24,7 @@ impl TextMeasurer for TestTextMeasurer {
 #[test]
 fn visual_traversal_accumulates_nested_scroll_offsets() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -57,7 +57,7 @@ fn visual_traversal_accumulates_nested_scroll_offsets() {
 #[test]
 fn visual_traversal_intersects_nested_clips() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -106,7 +106,7 @@ fn visual_traversal_intersects_nested_clips() {
 #[test]
 fn scroll_translation_does_not_move_scroll_viewport_clip() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -286,7 +286,7 @@ impl PaintResources for RecordingResources {
 #[test]
 fn painting_uses_carried_scroll_and_clip_context() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -329,7 +329,7 @@ fn painting_uses_carried_scroll_and_clip_context() {
 #[test]
 fn explicit_size_can_overflow_parent_constraints() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -361,7 +361,7 @@ fn explicit_size_can_overflow_parent_constraints() {
 #[test]
 fn flex_shrink_can_reduce_explicitly_oversized_items() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -421,7 +421,7 @@ fn visual_traversal_handles_branch_depth_beyond_inline_stack() {
     const EXTRA_DEPTH: usize = 8;
 
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -451,7 +451,7 @@ fn visual_traversal_handles_branch_depth_beyond_inline_stack() {
 #[test]
 fn visual_traversal_visits_branching_tree_in_depth_first_order() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
     let mut cx = MountCx::new(&mut frame, cx);
 
@@ -485,7 +485,7 @@ fn visual_traversal_visits_branching_tree_in_depth_first_order() {
 #[test]
 fn subtree_paint_bounds_include_unclipped_overflow() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -509,7 +509,7 @@ fn subtree_paint_bounds_include_unclipped_overflow() {
 #[test]
 fn clipping_bounds_the_cached_subtree_extent() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -534,7 +534,7 @@ fn clipping_bounds_the_cached_subtree_extent() {
 #[test]
 fn visual_traversal_can_skip_children_and_remaining_siblings() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -574,7 +574,7 @@ fn visual_traversal_can_skip_children_and_remaining_siblings() {
 #[test]
 fn visual_traversal_can_skip_an_ordered_child_prefix() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame

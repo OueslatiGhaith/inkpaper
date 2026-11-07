@@ -1,13 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-type TestRuntime = Runtime<
-    FixedStorage<
-        4096, // entity bytes
-        1,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-    >,
->;
+type TestRuntime = Runtime;
 
 struct Card<'a, Content = EmptySlot> {
     title: &'a str,

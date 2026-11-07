@@ -1,16 +1,8 @@
 mod arena;
 mod store;
 
-#[cfg(feature = "alloc")]
-pub use arena::HeapEntityArena;
-pub use arena::{EntityAccessError, EntityAllocError, FixedEntityArena};
-
-// unit tests run against the storage the `alloc` feature implies
-#[cfg(all(test, not(feature = "alloc")))]
-pub(crate) type TestEntityArena<const BYTES: usize, const SLOTS: usize> =
-    FixedEntityArena<BYTES, SLOTS>;
-#[cfg(all(test, feature = "alloc"))]
-pub(crate) type TestEntityArena<const BYTES: usize, const SLOTS: usize> = HeapEntityArena<SLOTS>;
+pub(crate) use arena::EntityArena;
+pub use arena::{EntityAccessError, EntityAllocError};
 
 #[cfg(test)]
 pub(crate) use store::drop_value;

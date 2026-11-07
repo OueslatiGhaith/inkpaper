@@ -7,14 +7,7 @@ use inkpaper_ui::{
 
 const VIEWPORT: Size = Size::new(px(320), px(240));
 
-type BenchRuntime = Runtime<
-    FixedStorage<
-        4096, // entity bytes
-        4,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-    >,
->;
+type BenchRuntime = Runtime;
 
 #[derive(Default)]
 struct NullPainter;

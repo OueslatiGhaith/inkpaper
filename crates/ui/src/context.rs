@@ -242,7 +242,9 @@ impl<'a> AppContext<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{EntityAccessError, TestEntityArena, TestGlobalArena, callback::TestCallbackArena};
+    use crate::{
+        CallbackArena, EntityAccessError, EntityArena, GlobalArena, pool::testing::pool_ref,
+    };
 
     use core::cell::Cell;
 
@@ -257,9 +259,9 @@ mod tests {
 
     #[test]
     fn entity_can_update_through_context() {
-        let arena = TestEntityArena::<1024, 16>::default();
-        let callbacks = TestCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<1024, 16>::default();
+        let arena = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
@@ -282,9 +284,9 @@ mod tests {
 
     #[test]
     fn entity_notify_works_while_the_entity_is_borrowed() {
-        let arena = TestEntityArena::<1024, 16>::default();
-        let callbacks = TestCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let arena = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
@@ -304,9 +306,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "could not read entity: NotReady")]
     fn reading_an_initializing_entity_panics() {
-        let arena = TestEntityArena::<1024, 16>::default();
-        let callbacks = TestCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let arena = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
@@ -332,9 +334,9 @@ mod tests {
             child: Entity<Child>,
         }
 
-        let arena = TestEntityArena::<1024, 16>::default();
-        let callbacks = TestCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let arena = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
@@ -363,9 +365,9 @@ mod tests {
             parent: Entity<Parent>,
         }
 
-        let arena = TestEntityArena::<1024, 16>::default();
-        let callbacks = TestCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let arena = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
@@ -391,9 +393,9 @@ mod tests {
 
     #[test]
     fn initializing_entity_cannot_be_read() {
-        let arena = TestEntityArena::<1024, 16>::default();
-        let callbacks = TestCallbackArena::<1024, 16>::default();
-        let globals = TestGlobalArena::<0, 0>::default();
+        let arena = EntityArena::new_in(pool_ref());
+        let callbacks = CallbackArena::new_in(pool_ref());
+        let globals = GlobalArena::new_in(pool_ref());
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 

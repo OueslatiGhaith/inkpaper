@@ -1359,10 +1359,7 @@ fn runtime_font_from_args() -> Option<&'static TtfFont<'static>> {
 fn main() {
     let runtime_font = runtime_font_from_args();
 
-    let mut runtime = Runtime::<
-        FixedStorage<16_384, 32, 8_192, 64, 2_048, 8>,
-        RuntimeResources<'_, 3, 128, { 16 * 1024 }, 1>,
-    >::new(pool());
+    let mut runtime = Runtime::<RuntimeResources<'_, 3, 128, { 16 * 1024 }, 1>>::new(pool());
 
     let body_font_family = runtime
         .register_font_family()

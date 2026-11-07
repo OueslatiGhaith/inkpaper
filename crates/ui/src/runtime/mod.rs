@@ -7,19 +7,18 @@ use crate::{
     ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
     EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageRegistryError,
     ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintError,
-    PaintReport, PaintResources, Painter, Point, Rect, Render, RenderInvalidation, RuntimeStorage,
-    Size, TextMeasurer,
-    callback::ListenerInvokeError,
+    PaintReport, PaintResources, Painter, Point, Rect, Render, RenderInvalidation, Size,
+    TextMeasurer,
+    callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     emitter::{self, EventTable},
-    entity::{EntityStore, create_entity},
-    global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError},
+    entity::{EntityArena, EntityStore, create_entity},
+    global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
     pool::{MemoryStats, Pool, PoolVec, Table},
     px,
     resources::RuntimeResources,
     runtime::root::RuntimeRoot,
-    storage::{CallbackStorage, GlobalStorage},
 };
 #[cfg(feature = "metrics")]
 use crate::{GlyphCacheMetrics, PerformanceMetrics, TextPaintMetrics};
@@ -62,16 +61,12 @@ pub enum FramePhase {
     Layout,
 }
 
-/// the UI runtime. It keeps its frame, element states and events in the [`Pool`] it is
-/// created with. `S` chooses the storage behind its entities, callbacks and globals (see
-/// [`RuntimeStorage`]), and `RESOURCES` holds render resources such as fonts and images.
-pub struct Runtime<S, RESOURCES = ()>
-where
-    S: RuntimeStorage,
-{
-    entities: S::Entities,
-    globals: S::Globals,
-    callbacks: S::Callbacks,
+/// the UI runtime. It keeps its tables in the [`Pool`] it is created with, and
+/// `RESOURCES` holds render resources such as fonts and images.
+pub struct Runtime<RESOURCES = ()> {
+    entities: EntityArena,
+    globals: GlobalArena,
+    callbacks: CallbackArena,
     frame: FrameArena,
     element_states: ElementStateTable,
     scroll_states: ScrollStateTable,
@@ -123,19 +118,18 @@ impl Drop for CallDepth<'_> {
     }
 }
 
-impl<S, RESOURCES> Runtime<S, RESOURCES>
+impl<RESOURCES> Runtime<RESOURCES>
 where
-    S: RuntimeStorage,
     RESOURCES: Default,
 {
-    /// a runtime that keeps its frame, element states and events in `pool`
+    /// a runtime that keeps its tables in `pool`
     pub fn new(pool: Pool) -> Self {
         let memory = pool.handle();
 
         Self {
-            entities: S::Entities::default(),
-            globals: S::Globals::default(),
-            callbacks: S::Callbacks::default(),
+            entities: EntityArena::new_in(memory),
+            globals: GlobalArena::new_in(memory),
+            callbacks: CallbackArena::new_in(memory),
             frame: FrameArena::new_in(memory),
             element_states: ElementStateTable::new_in(memory),
             scroll_states: ScrollStateTable::new_in(memory),
@@ -160,10 +154,7 @@ where
     }
 }
 
-impl<S, RESOURCES> Runtime<S, RESOURCES>
-where
-    S: RuntimeStorage,
-{
+impl<RESOURCES> Runtime<RESOURCES> {
     pub fn create<T>(
         &self,
         build: impl FnOnce(&mut Context<'_, T>) -> T,
@@ -1173,23 +1164,10 @@ where
     pub fn global_count(&self) -> usize {
         self.globals.len()
     }
-
-    pub fn global_bytes_used(&self) -> usize {
-        self.globals.used_bytes()
-    }
-
-    pub fn global_capacity(&self) -> usize {
-        self.globals.capacity()
-    }
-
-    pub fn global_byte_capacity(&self) -> usize {
-        self.globals.byte_capacity()
-    }
 }
 
-impl<S, RESOURCES> Runtime<S, RESOURCES>
+impl<RESOURCES> Runtime<RESOURCES>
 where
-    S: RuntimeStorage,
     RESOURCES: TextMeasurer,
 {
     pub fn layout(&mut self, viewport: Size) -> Option<Size> {
@@ -1255,14 +1233,11 @@ where
 
 impl<
     'resource,
-    S,
     const FONTS: usize,
     const GLYPH_SLOTS: usize,
     const GLYPH_BYTES: usize,
     const IMAGES: usize,
-> Runtime<S, RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
-where
-    S: RuntimeStorage,
+> Runtime<RuntimeResources<'resource, FONTS, GLYPH_SLOTS, GLYPH_BYTES, IMAGES>>
 {
     pub fn register_font(
         &mut self,
@@ -1372,7 +1347,7 @@ mod partial_tests;
 mod tests {
     use crate::{entity::EntityStore, pool::testing::pool, *};
 
-    type TestRuntime = Runtime<TestStorage<1024, 8, 1024, 8, 64, 2>>;
+    type TestRuntime = Runtime;
 
     struct Counter {
         value: i32,

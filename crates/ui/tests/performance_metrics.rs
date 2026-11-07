@@ -6,7 +6,7 @@ use inkpaper_ui::{
     AvailableSpace, BoxPaint, GlyphBitmap, Painter, ResolvedTextStyle, TextMeasurer, prelude::*,
 };
 
-type TestRuntime = Runtime<FixedStorage<4096, 4, 4096, 16>>;
+type TestRuntime = Runtime;
 
 struct TestPainter;
 

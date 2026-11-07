@@ -1,6 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-type TestRuntime = Runtime<FixedStorage<1024, 4, 1024, 8>>;
+type TestRuntime = Runtime;
 
 struct TestApp {
     show_extra: bool,

@@ -1,252 +1,34 @@
 //! the slot table shared by the entity, callback and global arenas.
 //!
-//! a [`SlotTable`] stores type-erased values. Each slot records where its value lives,
-//! arena-specific metadata, the value's destructor, its lifecycle state and its borrow
-//! state. [`SlotStorage`] picks where values and slots live: [`FixedSlots`] places values
-//! in an inline byte buffer, [`HeapSlots`] gives each value its own allocation.
+//! a [`SlotTable`] stores type-erased values. Each slot records the value's memory in the
+//! runtime's pool, arena-specific metadata, the value's destructor, its lifecycle state
+//! and its borrow state. Every value has its own allocation, released when the value is
+//! removed.
 //!
 //! SAFETY INVARIANTS:
 //!
-//! 1. a place is never reused while its slot exists, so values never move and never
+//! 1. a slot's memory is never shared with another slot and never moves, so values never
 //!    overlap. Growing the slot list moves slots, not values.
 //! 2. only `Live` slots hold an initialized value. Each is dropped exactly once: when it
 //!    is removed, or when the table is cleared or dropped, in reverse reservation order.
 //! 3. no `RefCell` guard on the slot list is held while user code runs, so callbacks may
 //!    reserve new slots.
-//! 4. no reference to a fixed byte buffer as a whole is created while references to
-//!    stored values may exist.
-//! 5. borrow states only count borrows. Arenas pair each `acquire` with one `release`
+//! 4. borrow states only count borrows. Arenas pair each `acquire` with one `release`
 //!    and convert pointers into references only while the matching borrow is held.
 
 use core::{alloc::Layout, cell::RefCell, ptr::NonNull};
 
-use crate::storage::VecStorage;
-
-/// where a slot table keeps its values and slots
-pub trait SlotStorage {
-    type Memory: ValueMemory;
-    type Slots<T>: VecStorage<T> + Default;
-}
-
-/// at most `SLOTS` values in an inline buffer of `BYTES` bytes. Never allocates.
-pub struct FixedSlots<const BYTES: usize, const SLOTS: usize>;
-
-impl<const BYTES: usize, const SLOTS: usize> SlotStorage for FixedSlots<BYTES, SLOTS> {
-    type Memory = FixedMemory<BYTES>;
-    type Slots<T> = heapless::Vec<T, SLOTS>;
-}
-
-/// one allocation per value. The first slot allocation reserves `INITIAL_SLOTS` slots.
-#[cfg(feature = "alloc")]
-pub struct HeapSlots<const INITIAL_SLOTS: usize>;
-
-#[cfg(feature = "alloc")]
-impl<const INITIAL_SLOTS: usize> SlotStorage for HeapSlots<INITIAL_SLOTS> {
-    type Memory = HeapMemory;
-    type Slots<T> = crate::storage::HeapVec<T, INITIAL_SLOTS>;
-}
+use crate::{
+    pool::{PoolRef, PoolVec, Table},
+    storage::VecStorage,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReserveError {
+    /// every slot number is taken
     SlotsFull,
+    /// the pool has no room for the value or the slot
     StorageFull,
-    UnsupportedAlignment { requested: usize, supported: usize },
-    AllocationFailed,
-}
-
-/// memory for the values of a slot table
-pub trait ValueMemory: Default {
-    /// where one value lives. Dropping it releases the memory, not the value.
-    type Place;
-
-    /// reserves memory for one value. Zero-sized values still get distinct places.
-    fn place(&self, layout: Layout) -> Result<Self::Place, ReserveError>;
-
-    /// the value's address. Only called for places that still hold memory.
-    fn ptr(&self, place: &Self::Place) -> NonNull<u8>;
-
-    /// releases an abandoned or removed place's memory early, if the memory can
-    fn free(&self, place: &mut Self::Place);
-
-    /// whether a removed place still holds memory a value of `layout` fits in
-    fn fits(&self, place: &Self::Place, layout: Layout) -> bool;
-
-    /// called once all places have been dropped
-    fn reset(&mut self);
-
-    fn used_bytes(&self) -> usize;
-
-    fn byte_capacity(&self) -> usize;
-}
-
-const FIXED_ALIGNMENT: usize = 16;
-
-#[repr(C, align(16))]
-struct Bytes<const N: usize> {
-    bytes: [core::mem::MaybeUninit<u8>; N],
-}
-
-/// bump allocation in an inline buffer of `BYTES` bytes, aligned to 16
-pub struct FixedMemory<const BYTES: usize> {
-    storage: core::cell::UnsafeCell<Bytes<BYTES>>,
-    cursor: core::cell::Cell<usize>,
-}
-
-impl<const BYTES: usize> Default for FixedMemory<BYTES> {
-    fn default() -> Self {
-        Self {
-            storage: core::cell::UnsafeCell::new(Bytes {
-                bytes: [core::mem::MaybeUninit::uninit(); BYTES],
-            }),
-            cursor: core::cell::Cell::new(0),
-        }
-    }
-}
-
-impl<const BYTES: usize> FixedMemory<BYTES> {
-    fn base(&self) -> *mut u8 {
-        let storage = self.storage.get();
-
-        // SAFETY: creates a raw pointer to the buffer without referencing it as a whole
-        unsafe { core::ptr::addr_of_mut!((*storage).bytes).cast::<u8>() }
-    }
-}
-
-/// where a value lives in a [`FixedMemory`] buffer
-pub struct FixedPlace {
-    offset: usize,
-    size: usize,
-}
-
-impl<const BYTES: usize> ValueMemory for FixedMemory<BYTES> {
-    type Place = FixedPlace;
-
-    fn place(&self, layout: Layout) -> Result<FixedPlace, ReserveError> {
-        let alignment = layout.align();
-        if alignment > FIXED_ALIGNMENT {
-            return Err(ReserveError::UnsupportedAlignment {
-                requested: alignment,
-                supported: FIXED_ALIGNMENT,
-            });
-        }
-
-        let offset = align_up(self.cursor.get(), alignment).ok_or(ReserveError::StorageFull)?;
-        let size = layout.size().max(1);
-        let end = offset.checked_add(size).ok_or(ReserveError::StorageFull)?;
-        if end > BYTES {
-            return Err(ReserveError::StorageFull);
-        }
-
-        self.cursor.set(end);
-
-        Ok(FixedPlace { offset, size })
-    }
-
-    fn ptr(&self, place: &FixedPlace) -> NonNull<u8> {
-        // SAFETY: `place` checked that the offset lies inside the buffer
-        unsafe { NonNull::new_unchecked(self.base().add(place.offset)) }
-    }
-
-    // a bump buffer only frees memory on reset, but a removed place can be refilled
-    fn free(&self, _: &mut FixedPlace) {}
-
-    fn fits(&self, place: &FixedPlace, layout: Layout) -> bool {
-        layout.align() <= FIXED_ALIGNMENT
-            && place.offset.is_multiple_of(layout.align())
-            && layout.size() <= place.size
-    }
-
-    fn reset(&mut self) {
-        self.cursor.set(0);
-    }
-
-    fn used_bytes(&self) -> usize {
-        self.cursor.get()
-    }
-
-    fn byte_capacity(&self) -> usize {
-        BYTES
-    }
-}
-
-fn align_up(value: usize, alignment: usize) -> Option<usize> {
-    debug_assert!(alignment.is_power_of_two());
-
-    let mask = alignment - 1;
-    value.checked_add(mask).map(|v| v & !mask)
-}
-
-/// one allocation per value, so any alignment is supported
-#[cfg(feature = "alloc")]
-#[derive(Default)]
-pub struct HeapMemory {
-    used: core::cell::Cell<usize>,
-}
-
-/// an owned allocation, or `None` once freed
-#[cfg(feature = "alloc")]
-pub struct HeapPlace(Option<(NonNull<u8>, Layout)>);
-
-#[cfg(feature = "alloc")]
-impl Drop for HeapPlace {
-    fn drop(&mut self) {
-        if let Some((ptr, layout)) = self.0.take() {
-            // SAFETY: this place owns the allocation and its original layout
-            unsafe { alloc::alloc::dealloc(ptr.as_ptr(), layout) };
-        }
-    }
-}
-
-#[cfg(feature = "alloc")]
-impl ValueMemory for HeapMemory {
-    type Place = HeapPlace;
-
-    fn place(&self, layout: Layout) -> Result<HeapPlace, ReserveError> {
-        let layout = Layout::from_size_align(layout.size().max(1), layout.align())
-            .map_err(|_| ReserveError::StorageFull)?;
-        let used = self
-            .used
-            .get()
-            .checked_add(layout.size())
-            .ok_or(ReserveError::StorageFull)?;
-
-        // SAFETY: the layout has a nonzero size
-        let ptr = NonNull::new(unsafe { alloc::alloc::alloc(layout) })
-            .ok_or(ReserveError::AllocationFailed)?;
-
-        self.used.set(used);
-
-        Ok(HeapPlace(Some((ptr, layout))))
-    }
-
-    fn ptr(&self, place: &HeapPlace) -> NonNull<u8> {
-        place.0.expect("place holds memory").0
-    }
-
-    fn free(&self, place: &mut HeapPlace) {
-        if let Some((_, layout)) = place.0 {
-            self.used.set(self.used.get() - layout.size());
-            drop(core::mem::replace(place, HeapPlace(None)));
-        }
-    }
-
-    /// removed places are freed, so a reused slot allocates again
-    fn fits(&self, _: &HeapPlace, _: Layout) -> bool {
-        false
-    }
-
-    fn reset(&mut self) {
-        self.used.set(0);
-    }
-
-    fn used_bytes(&self) -> usize {
-        self.used.get()
-    }
-
-    /// heap memory has no fixed capacity, so this is the bytes in use
-    fn byte_capacity(&self) -> usize {
-        self.used.get()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,47 +90,69 @@ pub(crate) enum NotLive {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BorrowConflict;
 
-struct Slot<P, M> {
-    place: P,
+struct Slot<M> {
+    /// the value's memory in the pool, until it is released
+    memory: Option<NonNull<u8>>,
+    layout: Layout,
     meta: M,
     drop_fn: unsafe fn(*mut u8),
     state: SlotState,
     borrow: BorrowState,
 }
 
-type Place<S> = <<S as SlotStorage>::Memory as ValueMemory>::Place;
-type Slots<S, M> = <S as SlotStorage>::Slots<Slot<Place<S>, M>>;
-
-/// type-erased values with per-slot metadata `M`
-pub(crate) struct SlotTable<S: SlotStorage, M> {
-    memory: S::Memory,
-    slots: RefCell<Slots<S, M>>,
+impl<M> Slot<M> {
+    fn ptr(&self) -> NonNull<u8> {
+        self.memory.expect("only slots with a value are read")
+    }
 }
 
-impl<S: SlotStorage, M> Default for SlotTable<S, M> {
-    fn default() -> Self {
+/// type-erased values with per-slot metadata `M`, in the runtime's pool
+pub(crate) struct SlotTable<M> {
+    pool: PoolRef,
+    /// the table the values count under
+    table: Table,
+    slots: RefCell<PoolVec<Slot<M>>>,
+}
+
+impl<M> SlotTable<M> {
+    pub(crate) fn new_in(pool: PoolRef, table: Table) -> Self {
         Self {
-            memory: S::Memory::default(),
-            slots: RefCell::new(Slots::<S, M>::default()),
+            pool,
+            table,
+            slots: RefCell::new(PoolVec::new_in(pool, table)),
+        }
+    }
+
+    fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, ReserveError> {
+        self.pool
+            .allocate(self.table, layout)
+            .ok_or(ReserveError::StorageFull)
+    }
+
+    /// returns a slot's memory to the pool, if it still holds any
+    fn release_memory(pool: PoolRef, table: Table, slot: &mut Slot<M>) {
+        if let Some(memory) = slot.memory.take() {
+            // SAFETY: the memory came from this pool for the slot's layout, and the
+            // slot no longer points to it
+            unsafe { pool.deallocate(table, memory, slot.layout) };
         }
     }
 }
 
-impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
+impl<M: Copy> SlotTable<M> {
     pub(crate) fn len(&self) -> usize {
         self.slots.borrow().len()
     }
 
+    #[cfg(test)]
     pub(crate) fn capacity(&self) -> usize {
         self.slots.borrow().capacity()
     }
 
+    /// the bytes the values and their slots take from the pool
+    #[cfg(test)]
     pub(crate) fn used_bytes(&self) -> usize {
-        self.memory.used_bytes()
-    }
-
-    pub(crate) fn byte_capacity(&self) -> usize {
-        self.memory.byte_capacity()
+        self.pool.stats().table(self.table)
     }
 
     /// reserves an `Initializing` slot whose memory fits `layout`. Slot numbers fit in a
@@ -362,17 +166,16 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
         let mut slots = self.slots.borrow_mut();
         let slot = u16::try_from(slots.len()).map_err(|_| ReserveError::SlotsFull)?;
 
-        // reserve the slot first, so a full slot list doesn't consume memory
+        // reserve the slot first, so a failed slot list doesn't leave a value behind
         slots
             .try_reserve(1)
-            .map_err(|error| error.or(ReserveError::SlotsFull, ReserveError::AllocationFailed))?;
-
-        let place = self.memory.place(layout)?;
-        let ptr = self.memory.ptr(&place);
+            .map_err(|_| ReserveError::StorageFull)?;
+        let ptr = self.allocate(layout)?;
 
         slots
             .try_push(Slot {
-                place,
+                memory: Some(ptr),
+                layout,
                 meta,
                 drop_fn,
                 state: SlotState::Initializing,
@@ -383,9 +186,8 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
         Ok((slot, ptr))
     }
 
-    /// reserves like [`Self::reserve`], but in a removed slot when there is one,
-    /// refilling its memory if the value fits. The caller must make sure handles to
-    /// the removed value can't match the new one
+    /// reserves like [`Self::reserve`], but in a removed slot when there is one. The
+    /// caller must make sure handles to the removed value can't match the new one
     pub(crate) fn reserve_reusing(
         &self,
         layout: Layout,
@@ -393,31 +195,25 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<(u16, NonNull<u8>), ReserveError> {
         let mut slots = self.slots.borrow_mut();
-        let removed = || {
-            (0..=u16::MAX)
-                .zip(slots.iter())
-                .filter(|(_, slot)| slot.state == SlotState::Removed)
-        };
-        // prefer a slot whose memory the value fits, so a fixed buffer doesn't fill up
-        let Some(index) = removed()
-            .find(|(_, slot)| self.memory.fits(&slot.place, layout))
-            .or_else(|| removed().next())
+        let Some(index) = (0..=u16::MAX)
+            .zip(slots.iter())
+            .find(|(_, slot)| slot.state == SlotState::Removed)
             .map(|(index, _)| index)
         else {
             drop(slots);
             return self.reserve(layout, meta, drop_fn);
         };
 
+        let ptr = self.allocate(layout)?;
         let slot = &mut slots[usize::from(index)];
-        if !self.memory.fits(&slot.place, layout) {
-            slot.place = self.memory.place(layout)?;
-        }
+        slot.memory = Some(ptr);
+        slot.layout = layout;
         slot.meta = meta;
         slot.drop_fn = drop_fn;
         slot.state = SlotState::Initializing;
         slot.borrow = BorrowState::Free;
 
-        Ok((index, self.memory.ptr(&slot.place)))
+        Ok((index, ptr))
     }
 
     /// marks a reserved slot's value as initialized
@@ -444,7 +240,7 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
 
         if slot.state == SlotState::Initializing {
             slot.state = SlotState::Abandoned;
-            self.memory.free(&mut slot.place);
+            Self::release_memory(self.pool, self.table, slot);
         }
     }
 
@@ -454,18 +250,18 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
         let slot = slots.get(slot).ok_or(NotLive::Missing)?;
 
         match slot.state {
-            SlotState::Live => Ok((slot.meta, self.memory.ptr(&slot.place))),
+            SlotState::Live => Ok((slot.meta, slot.ptr())),
             SlotState::Initializing => Err(NotLive::Initializing),
             SlotState::Abandoned => Err(NotLive::Abandoned),
             SlotState::Removed => Err(NotLive::Removed),
         }
     }
 
-    /// drops the live values whose slot number and metadata match `predicate`, in
-    /// reverse reservation order, and releases their memory if the memory can. Their
-    /// slot numbers stay taken, so handles to them become invalid. Returns how many
-    /// values were removed.
+    /// drops the live values whose metadata match `predicate`, in reverse reservation
+    /// order, and returns their memory to the pool. Their slot numbers stay taken, so
+    /// handles to them become invalid. Returns how many values were removed.
     pub(crate) fn remove_where(&mut self, mut predicate: impl FnMut(&M) -> bool) -> usize {
+        let (pool, table) = (self.pool, self.table);
         let slots = self.slots.get_mut();
         let mut removed = 0;
 
@@ -479,8 +275,8 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
             removed += 1;
 
             // SAFETY: live slots hold an initialized value matching `drop_fn`
-            unsafe { (slot.drop_fn)(self.memory.ptr(&slot.place).as_ptr()) };
-            self.memory.free(&mut slot.place);
+            unsafe { (slot.drop_fn)(slot.ptr().as_ptr()) };
+            Self::release_memory(pool, table, slot);
         }
 
         removed
@@ -536,29 +332,30 @@ impl<S: SlotStorage, M: Copy> SlotTable<S, M> {
     pub(crate) fn clear(&mut self) {
         self.drop_values();
         self.slots.get_mut().clear();
-        self.memory.reset();
     }
 }
 
-impl<S: SlotStorage, M> SlotTable<S, M> {
+impl<M> SlotTable<M> {
+    /// drops every live value and returns each slot's memory to the pool
     fn drop_values(&mut self) {
+        let (pool, table) = (self.pool, self.table);
         let slots = self.slots.get_mut();
 
         for slot in slots.iter_mut().rev() {
-            if slot.state != SlotState::Live {
-                continue;
+            if slot.state == SlotState::Live {
+                // mark first, so an unwinding destructor can't lead to a second drop
+                slot.state = SlotState::Abandoned;
+
+                // SAFETY: live slots hold an initialized value matching `drop_fn`
+                unsafe { (slot.drop_fn)(slot.ptr().as_ptr()) };
             }
 
-            // mark first, so an unwinding destructor can't lead to a second drop
-            slot.state = SlotState::Abandoned;
-
-            // SAFETY: live slots hold an initialized value matching `drop_fn`
-            unsafe { (slot.drop_fn)(self.memory.ptr(&slot.place).as_ptr()) };
+            Self::release_memory(pool, table, slot);
         }
     }
 }
 
-impl<S: SlotStorage, M> Drop for SlotTable<S, M> {
+impl<M> Drop for SlotTable<M> {
     fn drop(&mut self) {
         self.drop_values();
     }

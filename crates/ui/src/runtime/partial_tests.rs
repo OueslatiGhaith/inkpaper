@@ -11,7 +11,7 @@ use std::{
 use crate::pool::testing::pool;
 use crate::{frame::NodeKind, *};
 
-type TestRuntime = Runtime<TestStorage<8192, 16, 8192, 128, 64, 2>, KeyedText>;
+type TestRuntime = Runtime<KeyedText>;
 
 struct Label {
     text: &'static str,
@@ -390,7 +390,7 @@ impl Render for BusyShell {
 #[test]
 fn rendering_an_entity_again_reuses_its_released_callback_slots() {
     // fixed storage whatever the features, with eight callback slots
-    let mut runtime = Runtime::<FixedStorage<8192, 16, 1024, 8, 64, 2>, KeyedText>::new(pool());
+    let mut runtime = Runtime::<KeyedText>::new(pool());
     let busy = runtime.create(|_| Busy { renders: 0 }).unwrap();
     let shell = runtime
         .create_root(|_| BusyShell { busy, renders: 0 })

@@ -151,7 +151,7 @@ impl Painter for Recorder {
     }
 }
 
-type TestRuntime = Runtime<TestStorage<1024, 4, 1024, 8>, RecordingResources>;
+type TestRuntime = Runtime<RecordingResources>;
 
 fn rect(x: i32, y: i32, width: i32, height: i32) -> Rect {
     Rect::new(Point::new(px(x), px(y)), Size::new(px(width), px(height)))
@@ -389,7 +389,7 @@ fn canvas_paint_returns_first_backend_error_and_stops_drawing() {
 fn canvas_paint_callbacks_validate_kind_borrow_and_generation_and_drop_captures() {
     use crate::callback::CanvasInvokeError;
     use crate::callback::{
-        CallbackStore, TestCallbackArena, register_canvas_callback, register_listener,
+        CallbackArena, CallbackStore, register_canvas_callback, register_listener,
     };
     use crate::{BorrowKind, entity::RawEntityBorrow};
     use core::any::TypeId;
@@ -402,9 +402,9 @@ fn canvas_paint_callbacks_validate_kind_borrow_and_generation_and_drop_captures(
         }
     }
 
-    let entities = TestEntityArena::<256, 2>::default();
+    let entities = EntityArena::new_in(pool_ref());
     let entity = entities.insert(42u32).unwrap();
-    let mut callbacks = TestCallbackArena::<256, 2>::default();
+    let mut callbacks = CallbackArena::new_in(pool_ref());
     let drops = Rc::new(Cell::new(0));
     let capture = Capture(drops.clone());
 
@@ -493,9 +493,11 @@ fn canvas_paint_callbacks_validate_kind_borrow_and_generation_and_drop_captures(
 }
 
 #[test]
-#[cfg(not(feature = "alloc"))]
-fn canvas_paint_fixed_storage_exhaustion_drops_captures() {
-    use crate::callback::{TestCallbackArena, register_canvas_callback};
+fn canvas_storage_exhaustion_drops_captures() {
+    use crate::{
+        callback::{CallbackArena, register_canvas_callback},
+        pool::testing::pool_ref_with_room,
+    };
 
     struct Capture(Rc<Cell<usize>>);
 
@@ -505,30 +507,19 @@ fn canvas_paint_fixed_storage_exhaustion_drops_captures() {
         }
     }
 
-    let entities = TestEntityArena::<64, 1>::default();
+    let entities = EntityArena::new_in(pool_ref());
     let entity = entities.insert(()).unwrap();
     let drops = Rc::new(Cell::new(0));
     let capture = Capture(drops.clone());
-    let slots = TestCallbackArena::<64, 0>::default();
+    let full = CallbackArena::new_in(pool_ref_with_room(0));
 
     assert_eq!(
-        register_canvas_callback(&slots, entity.entity_id(), entity, move |_, _| {
-            let _ = &capture;
-        }),
-        Err(CallbackAllocError::SlotsFull)
-    );
-    assert_eq!(drops.get(), 1);
-
-    let capture = Capture(drops.clone());
-    let bytes = TestCallbackArena::<1, 1>::default();
-
-    assert_eq!(
-        register_canvas_callback(&bytes, entity.entity_id(), entity, move |_, _| {
+        register_canvas_callback(&full, entity.entity_id(), entity, move |_, _| {
             let _ = &capture;
         }),
         Err(CallbackAllocError::StorageFull)
     );
-    assert_eq!(drops.get(), 2);
+    assert_eq!(drops.get(), 1);
 }
 
 #[test]
@@ -538,7 +529,7 @@ fn static_canvas_paints_text_without_runtime_callback_context() {
     }
 
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let root = frame
         .mount(
             canvas(draw).size(Size::new(px(20), px(10))),

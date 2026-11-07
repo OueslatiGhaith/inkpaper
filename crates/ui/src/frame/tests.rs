@@ -3,7 +3,7 @@ use std::string::String;
 
 use crate::pool::testing::{pool_ref, pool_ref_of, pool_ref_with_room};
 use crate::{
-    callback::TestCallbackArena,
+    callback::CallbackArena,
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity::EntityStore,
     *,
@@ -69,7 +69,7 @@ where
 #[test]
 fn mounts_div_tree() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let root = frame.mount(div().child("A").child("B"), app).unwrap();
 
@@ -90,7 +90,7 @@ fn mounts_div_tree() {
 #[test]
 fn mounts_nested_elements() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
 
     let root = frame
@@ -122,7 +122,7 @@ fn mounts_nested_elements() {
 #[test]
 fn preserves_styles_when_mounting() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
 
     let root = frame
@@ -146,7 +146,7 @@ fn preserves_styles_when_mounting() {
 #[test]
 fn text_is_copied_into_frame_storage() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
 
     let root = {
@@ -164,7 +164,7 @@ fn text_is_copied_into_frame_storage() {
 #[test]
 fn mounts_stateful_element_identity() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
 
     let button = frame.mount(div().id("button").child("Press"), app).unwrap();
@@ -185,7 +185,7 @@ const SMALL_POOL: usize = 4 * 1024;
 #[test]
 fn reports_full_nodes_when_the_pool_has_no_room() {
     let mut frame = FrameArena::new_in(pool_ref_of(SMALL_POOL));
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
 
     let result = frame.mount(div().children((0..64).map(|_| div())), app);
@@ -196,7 +196,7 @@ fn reports_full_nodes_when_the_pool_has_no_room() {
 #[test]
 fn reports_full_text_when_the_pool_has_no_room() {
     let mut frame = FrameArena::new_in(pool_ref_of(SMALL_POOL));
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let long = "x".repeat(SMALL_POOL);
 
@@ -227,7 +227,7 @@ fn node_growth_failure_drops_the_text_it_added() {
 #[test]
 fn only_nodes_with_interaction_styles_take_table_entries() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
 
     frame
@@ -259,7 +259,7 @@ fn only_nodes_with_interaction_styles_take_table_entries() {
 #[test]
 fn clear_resets_frame_storage() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
 
     frame.mount(div().child("Hello"), app).unwrap();
@@ -301,7 +301,7 @@ impl Render for Parent {
 #[test]
 fn mounts_entities_as_placeholders() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
 
     // we don't need a real EntityArena for this test yet because mounting an
@@ -323,10 +323,10 @@ fn mounts_entities_as_placeholders() {
 
 #[test]
 fn expands_nested_entities() {
-    let entities = TestEntityArena::<2048, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
-    let callbacks = TestCallbackArena::<2048, 16>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let all_dirty = Cell::new(false);
 
@@ -381,9 +381,9 @@ fn expands_nested_entities() {
 
 #[test]
 fn releases_entity_borrows_after_rendering() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<2048, 16>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -413,9 +413,9 @@ impl Render for Label {
 
 #[test]
 fn copies_entity_text_into_frame_storage() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<2048, 16>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -457,9 +457,9 @@ impl Render for DuplicateParent {
 
 #[test]
 fn rejects_duplicate_entity_mounts() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<2048, 16>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -479,9 +479,9 @@ fn rejects_duplicate_entity_mounts() {
 
 #[test]
 fn indexes_mounted_entity_nodes() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<2048, 16>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -510,7 +510,7 @@ fn indexes_mounted_entity_nodes() {
 
 #[test]
 fn identities_resolve_in_tree_order_when_children_precede_parents() {
-    let entities = TestEntityArena::<1024, 4>::default();
+    let entities = EntityArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
 
@@ -541,7 +541,7 @@ fn identities_resolve_in_tree_order_when_children_precede_parents() {
 
 #[test]
 fn resolving_one_entity_subtree_leaves_other_entities_untouched() {
-    let entities = TestEntityArena::<1024, 4>::default();
+    let entities = EntityArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
 
@@ -601,9 +601,9 @@ fn resolving_one_entity_subtree_leaves_other_entities_untouched() {
 
 #[test]
 fn expanding_entities_twice_does_not_duplicate_nodes() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<2048, 16>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -650,9 +650,9 @@ impl Render for Counter {
 
 #[test]
 fn entity_render_mounts_click_listener() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<2048, 16>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -672,9 +672,9 @@ fn entity_render_mounts_click_listener() {
 
 #[test]
 fn mounted_listener_updates_owning_entity() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<2048, 16>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -739,9 +739,9 @@ impl Render for Controller {
 
 #[test]
 fn rendered_listener_can_update_another_entity() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<2048, 16>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -777,9 +777,9 @@ fn rendered_listener_can_update_another_entity() {
 
 #[test]
 fn entity_render_access_errors_become_mount_errors() {
-    let entities = TestEntityArena::<1024, 8>::default();
-    let callbacks = TestCallbackArena::<1024, 8>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -799,9 +799,9 @@ fn entity_render_access_errors_become_mount_errors() {
 
 #[test]
 fn expanded_entity_root_is_child_of_entity_node() {
-    let entities = TestEntityArena::<1024, 8>::default();
-    let callbacks = TestCallbackArena::<1024, 8>::default();
-    let globals = TestGlobalArena::<0, 0>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
+    let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -829,10 +829,10 @@ impl Render for StableApp {
 
 #[test]
 fn element_identity_is_stable_across_frames() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
 
@@ -892,10 +892,10 @@ impl Render for WrappedApp {
 
 #[test]
 fn unnamed_wrappers_do_not_affect_identity_path() {
-    let entities = TestEntityArena::<4096, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
 
@@ -957,10 +957,10 @@ impl Render for NestedApp {
 
 #[test]
 fn nested_element_uses_nearest_identified_parent() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
 
@@ -1007,10 +1007,10 @@ impl Render for DuplicateApp {
 
 #[test]
 fn duplicate_ids_in_same_scope_are_rejected() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -1044,10 +1044,10 @@ impl Render for SeparateScopesApp {
 
 #[test]
 fn same_local_id_is_allowed_under_different_identified_parents() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
 
@@ -1098,10 +1098,10 @@ impl Render for WidgetsApp {
 
 #[test]
 fn separate_entities_have_separate_identity_namespaces() {
-    let entities = TestEntityArena::<4096, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
 
@@ -1175,10 +1175,10 @@ impl Render for ParentB {
 
 #[test]
 fn moving_entity_does_not_change_internal_element_identity() {
-    let entities = TestEntityArena::<4096, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
 
@@ -1238,10 +1238,10 @@ impl Render for WithoutButton {
 
 #[test]
 fn element_state_is_removed_when_element_disappears() {
-    let entities = TestEntityArena::<4096, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
 
@@ -1277,10 +1277,10 @@ fn element_state_is_removed_when_element_disappears() {
 
 #[test]
 fn reappearing_element_gets_new_generation() {
-    let entities = TestEntityArena::<4096, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
 
@@ -1344,10 +1344,10 @@ impl Render for TooManyStatesApp {
 
 #[test]
 fn identity_resolution_reports_state_capacity_exhaustion() {
-    let entities = TestEntityArena::<2048, 16>::default();
-    let callbacks = TestCallbackArena::<1024, 16>::default();
+    let entities = EntityArena::new_in(pool_ref());
+    let callbacks = CallbackArena::new_in(pool_ref());
     let mut states = ElementStateTable::new_in(pool_ref_with_room(0));
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -1368,7 +1368,7 @@ fn identity_resolution_reports_state_capacity_exhaustion() {
 #[test]
 fn plain_string_mounts_without_text_style_overrides() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let node = frame.mount("Hello", cx).unwrap();
@@ -1380,7 +1380,7 @@ fn plain_string_mounts_without_text_style_overrides() {
 #[test]
 fn explicit_text_element_preserves_text_style_overrides() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let node = frame
@@ -1408,7 +1408,7 @@ fn explicit_text_element_preserves_text_style_overrides() {
 #[test]
 fn text_style_resolves_through_nested_elements() {
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame
@@ -1454,7 +1454,7 @@ fn mounts_image_leaf() {
     let source = ImageSource::new(ImageId::new(1), Size::new(px(16), px(12)));
 
     let mut frame = FrameArena::new_in(pool_ref());
-    let globals = TestGlobalArena::<0, 0>::default();
+    let globals = GlobalArena::new_in(pool_ref());
     let cx = AppContext::from_globals(&globals);
 
     let root = frame.mount(div().child(image(source)), cx).unwrap();

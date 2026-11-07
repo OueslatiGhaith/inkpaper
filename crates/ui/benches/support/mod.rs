@@ -39,14 +39,7 @@ pub const ALL_CASES: &[(BenchScenario, &[usize])] = &[
     (BenchScenario::MixedScreen, MIXED_SCREEN_SIZES),
 ];
 
-pub type BenchRuntime = Runtime<
-    FixedStorage<
-        4096, // entity bytes
-        4,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-    >,
->;
+pub type BenchRuntime = Runtime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

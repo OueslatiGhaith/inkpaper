@@ -86,6 +86,7 @@ impl<T> PoolVec<T> {
 }
 
 impl<T> VecStorage<T> for PoolVec<T> {
+    #[cfg(test)]
     fn capacity(&self) -> usize {
         self.capacity
     }
