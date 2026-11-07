@@ -1,12 +1,11 @@
 use core::{any::TypeId, cell::Cell};
 use std::string::String;
 
-use crate::pool::testing::{pool_ref, pool_ref_of};
+use crate::pool::testing::{pool_ref, pool_ref_of, pool_ref_with_room};
 use crate::{
     callback::TestCallbackArena,
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     entity::EntityStore,
-    storage::ElementStateStorage,
     *,
 };
 
@@ -42,9 +41,9 @@ fn state_id(frame: &FrameArena, node: NodeId) -> ElementStateId {
         .expect("element should have resolved state identity")
 }
 
-fn build_frame<Root, E: ElementStateStorage>(
+fn build_frame<Root>(
     frame: &mut FrameArena,
-    states: &mut ElementStateTable<E>,
+    states: &mut ElementStateTable,
     root: Entity<Root>,
     runtime: RuntimeCx<'_>,
     generation: u32,
@@ -512,7 +511,7 @@ fn indexes_mounted_entity_nodes() {
 #[test]
 fn identities_resolve_in_tree_order_when_children_precede_parents() {
     let entities = TestEntityArena::<1024, 4>::default();
-    let mut states = ElementStateTable::<TestElementStates<8>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
 
     let owner = entities.insert(Child).unwrap();
@@ -543,7 +542,7 @@ fn identities_resolve_in_tree_order_when_children_precede_parents() {
 #[test]
 fn resolving_one_entity_subtree_leaves_other_entities_untouched() {
     let entities = TestEntityArena::<1024, 4>::default();
-    let mut states = ElementStateTable::<TestElementStates<8>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let mut frame = FrameArena::new_in(pool_ref());
 
     let rerendered = entities.insert(Child).unwrap();
@@ -832,7 +831,7 @@ impl Render for StableApp {
 fn element_identity_is_stable_across_frames() {
     let entities = TestEntityArena::<2048, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<32>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -895,7 +894,7 @@ impl Render for WrappedApp {
 fn unnamed_wrappers_do_not_affect_identity_path() {
     let entities = TestEntityArena::<4096, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<32>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -960,7 +959,7 @@ impl Render for NestedApp {
 fn nested_element_uses_nearest_identified_parent() {
     let entities = TestEntityArena::<2048, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<32>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -1010,7 +1009,7 @@ impl Render for DuplicateApp {
 fn duplicate_ids_in_same_scope_are_rejected() {
     let entities = TestEntityArena::<2048, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<32>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());
@@ -1047,7 +1046,7 @@ impl Render for SeparateScopesApp {
 fn same_local_id_is_allowed_under_different_identified_parents() {
     let entities = TestEntityArena::<2048, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<32>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -1101,7 +1100,7 @@ impl Render for WidgetsApp {
 fn separate_entities_have_separate_identity_namespaces() {
     let entities = TestEntityArena::<4096, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<32>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -1178,7 +1177,7 @@ impl Render for ParentB {
 fn moving_entity_does_not_change_internal_element_identity() {
     let entities = TestEntityArena::<4096, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<32>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -1241,7 +1240,7 @@ impl Render for WithoutButton {
 fn element_state_is_removed_when_element_disappears() {
     let entities = TestEntityArena::<4096, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<32>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -1280,7 +1279,7 @@ fn element_state_is_removed_when_element_disappears() {
 fn reappearing_element_gets_new_generation() {
     let entities = TestEntityArena::<4096, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<32>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let mut frame = FrameArena::new_in(pool_ref());
     let all_dirty = Cell::new(false);
@@ -1335,22 +1334,19 @@ fn reappearing_element_gets_new_generation() {
     assert_ne!(old.generation(), new.generation());
 }
 
-#[cfg(not(feature = "alloc"))]
 struct TooManyStatesApp;
 
-#[cfg(not(feature = "alloc"))]
 impl Render for TooManyStatesApp {
     fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
         div().child(div().id("a")).child(div().id("b"))
     }
 }
 
-#[cfg(not(feature = "alloc"))]
 #[test]
 fn identity_resolution_reports_state_capacity_exhaustion() {
     let entities = TestEntityArena::<2048, 16>::default();
     let callbacks = TestCallbackArena::<1024, 16>::default();
-    let mut states = ElementStateTable::<TestElementStates<1>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref_with_room(0));
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
     let mut frame = FrameArena::new_in(pool_ref());

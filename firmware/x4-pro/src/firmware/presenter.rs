@@ -1,7 +1,6 @@
 use inkpaper_app::AppResources;
 use inkpaper_ui::{
-    FramePhase, HeapCallbackArena, HeapElementStates, HeapEntityArena, HeapEvents, HeapGlobalArena,
-    PaintError, prelude::*,
+    FramePhase, HeapCallbackArena, HeapEntityArena, HeapGlobalArena, PaintError, prelude::*,
 };
 use inkpaper_ui_eink::{EInkPaintReport, EInkPainter, EInkTone, EInkUiMode};
 
@@ -18,14 +17,14 @@ use crate::firmware::{
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
 
-/// the bytes the UI keeps its frame in: twice the simulator's peak over every screen.
+/// the bytes the UI keeps its frame, element states and events in: twice the
+/// simulator's peak over every screen.
 /// Allocated from the heap, which puts it in PSRAM
 pub const UI_POOL_BYTES: usize = 128 * 1024;
 
 // initial reservations. The other runtime tables live on the heap and grow past these
 const UI_ENTITY_SLOTS: usize = 8;
 const UI_CALLBACK_SLOTS: usize = 16;
-const UI_ELEMENT_STATES: usize = 32;
 const UI_GLOBAL_SLOTS: usize = 4;
 
 const UI_GLYPH_CACHE_SLOTS: usize = 128;
@@ -37,8 +36,6 @@ impl RuntimeStorage for UiStorage {
     type Entities = HeapEntityArena<UI_ENTITY_SLOTS>;
     type Callbacks = HeapCallbackArena<UI_CALLBACK_SLOTS>;
     type Globals = HeapGlobalArena<UI_GLOBAL_SLOTS>;
-    type ElementStates = HeapElementStates<UI_ELEMENT_STATES>;
-    type Events = HeapEvents;
 }
 
 pub type UiRuntime =

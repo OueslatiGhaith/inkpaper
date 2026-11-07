@@ -348,9 +348,10 @@ fn footprint(layout: Layout) -> usize {
 /// pools for unit tests, over leaked memory
 #[cfg(test)]
 pub(crate) mod testing {
+    use core::alloc::Layout;
     use std::boxed::Box;
 
-    use super::{Pool, PoolRef};
+    use super::{Pool, PoolRef, Table};
 
     /// a pool of `bytes` bytes
     pub(crate) fn pool_of(bytes: usize) -> Pool {
@@ -370,5 +371,29 @@ pub(crate) mod testing {
     /// a handle to a pool large enough for any test's frame
     pub(crate) fn pool_ref() -> PoolRef {
         pool_ref_of(256 * 1024)
+    }
+
+    /// a pool with about `room` bytes left, the rest taken by allocations that stay
+    pub(crate) fn pool_with_room(room: usize) -> Pool {
+        let pool = pool_of(4 * 1024 + room);
+        let handle = pool.handle();
+        let bytes = |size| Layout::from_size_align(size, 1).unwrap();
+
+        let reserved = handle.allocate(Table::Text, bytes(room)).unwrap();
+        let mut size = pool.stats().capacity;
+        while size > 0 {
+            if handle.allocate(Table::Text, bytes(size)).is_none() {
+                size /= 2;
+            }
+        }
+        // SAFETY: allocated above with the same layout and table
+        unsafe { handle.deallocate(Table::Text, reserved, bytes(room)) };
+
+        pool
+    }
+
+    /// a handle to a pool with about `room` bytes left
+    pub(crate) fn pool_ref_with_room(room: usize) -> PoolRef {
+        Box::leak(Box::new(pool_with_room(room))).handle()
     }
 }

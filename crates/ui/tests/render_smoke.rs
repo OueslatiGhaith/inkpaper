@@ -36,7 +36,7 @@ static TEST_FONT_FACE: MonoFontFace<'static> = MonoFontFace::new(&FONT_6X10);
 #[test]
 fn full_runtime_can_render_to_simulator_display() {
     let mut runtime = Runtime::<
-        FixedStorage<4096, 16, 4096, 16, 32>,
+        FixedStorage<4096, 16, 4096, 16>,
         RuntimeResources<'_, 1, 64, 4096, 0>,
     >::new(pool());
 

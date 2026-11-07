@@ -29,8 +29,6 @@ use crate::{HeapCallbackArena, HeapEntityArena, HeapGlobalArena};
 ///     type Entities = FixedEntityArena<4_096, 8>;
 ///     type Callbacks = FixedCallbackArena<2_048, 16>;
 ///     type Globals = FixedGlobalArena<256, 4>;
-///     type ElementStates = FixedElementStates<32>;
-///     type Events = FixedEvents<8>;
 /// }
 ///
 /// type DeviceRuntime = Runtime<DeviceStorage>;
@@ -41,22 +39,17 @@ pub trait RuntimeStorage {
     type Entities: EntityStorage;
     type Callbacks: CallbackStorage;
     type Globals: GlobalStorage;
-    type ElementStates: ElementStateStorage;
-    type Events: EventStorage;
 }
 
 /// fixed-capacity storage for every runtime table, with the capacities in the order the
-/// tables appear in [`RuntimeStorage`], globals and events last. Never allocates.
+/// tables appear in [`RuntimeStorage`], globals last. Never allocates.
 pub struct FixedStorage<
     const ENTITY_BYTES: usize,
     const ENTITY_SLOTS: usize,
     const CALLBACK_BYTES: usize,
     const CALLBACK_SLOTS: usize,
-    const ELEMENT_STATES: usize,
     const GLOBAL_BYTES: usize = 0,
     const GLOBAL_SLOTS: usize = 0,
-    const SUBSCRIPTIONS: usize = 0,
-    const PENDING_EVENTS: usize = 0,
 >;
 
 impl<
@@ -64,29 +57,21 @@ impl<
     const ENTITY_SLOTS: usize,
     const CALLBACK_BYTES: usize,
     const CALLBACK_SLOTS: usize,
-    const ELEMENT_STATES: usize,
     const GLOBAL_BYTES: usize,
     const GLOBAL_SLOTS: usize,
-    const SUBSCRIPTIONS: usize,
-    const PENDING_EVENTS: usize,
 > RuntimeStorage
     for FixedStorage<
         ENTITY_BYTES,
         ENTITY_SLOTS,
         CALLBACK_BYTES,
         CALLBACK_SLOTS,
-        ELEMENT_STATES,
         GLOBAL_BYTES,
         GLOBAL_SLOTS,
-        SUBSCRIPTIONS,
-        PENDING_EVENTS,
     >
 {
     type Entities = FixedEntityArena<ENTITY_BYTES, ENTITY_SLOTS>;
     type Callbacks = FixedCallbackArena<CALLBACK_BYTES, CALLBACK_SLOTS>;
     type Globals = FixedGlobalArena<GLOBAL_BYTES, GLOBAL_SLOTS>;
-    type ElementStates = FixedElementStates<ELEMENT_STATES>;
-    type Events = FixedEvents<SUBSCRIPTIONS, PENDING_EVENTS>;
 }
 
 /// heap storage for every runtime table. Tables grow as needed and are limited only by
@@ -99,8 +84,6 @@ impl RuntimeStorage for HeapStorage {
     type Entities = HeapEntityArena;
     type Callbacks = HeapCallbackArena;
     type Globals = HeapGlobalArena;
-    type ElementStates = HeapElementStates;
-    type Events = HeapEvents;
 }
 
 /// storage for entity state
@@ -144,57 +127,6 @@ pub trait GlobalStorage: GlobalStore + Default {
     fn capacity(&self) -> usize;
 
     fn byte_capacity(&self) -> usize;
-}
-
-/// storage for element identities and the state kept for them, such as scroll offsets
-pub trait ElementStateStorage {
-    type Slots<T>: VecStorage<T> + Default;
-}
-
-/// fixed storage for at most `SLOTS` element identities
-pub struct FixedElementStates<const SLOTS: usize>;
-
-impl<const SLOTS: usize> ElementStateStorage for FixedElementStates<SLOTS> {
-    type Slots<T> = heapless::Vec<T, SLOTS>;
-}
-
-/// heap storage for element identities. The first allocation reserves `INITIAL_SLOTS`.
-#[cfg(feature = "alloc")]
-pub struct HeapElementStates<const INITIAL_SLOTS: usize = 0>;
-
-#[cfg(feature = "alloc")]
-impl<const INITIAL_SLOTS: usize> ElementStateStorage for HeapElementStates<INITIAL_SLOTS> {
-    type Slots<T> = HeapVec<T, INITIAL_SLOTS>;
-}
-
-/// storage for event subscriptions and the events waiting for delivery
-pub trait EventStorage {
-    /// sized by subscription count
-    type Subscriptions<T>: VecStorage<T> + Default;
-    /// sized by the events emitted during one runtime call, before they're delivered
-    type Pending<T>: VecStorage<T> + Default;
-}
-
-/// fixed storage for at most `SUBSCRIPTIONS` subscriptions and `PENDING` events waiting
-/// for delivery
-pub struct FixedEvents<const SUBSCRIPTIONS: usize, const PENDING: usize = 8>;
-
-impl<const SUBSCRIPTIONS: usize, const PENDING: usize> EventStorage
-    for FixedEvents<SUBSCRIPTIONS, PENDING>
-{
-    type Subscriptions<T> = heapless::Vec<T, SUBSCRIPTIONS>;
-    type Pending<T> = heapless::Vec<T, PENDING>;
-}
-
-/// heap storage for subscriptions and pending events. The first allocation reserves
-/// `INITIAL_SUBSCRIPTIONS`.
-#[cfg(feature = "alloc")]
-pub struct HeapEvents<const INITIAL_SUBSCRIPTIONS: usize = 0>;
-
-#[cfg(feature = "alloc")]
-impl<const INITIAL_SUBSCRIPTIONS: usize> EventStorage for HeapEvents<INITIAL_SUBSCRIPTIONS> {
-    type Subscriptions<T> = HeapVec<T, INITIAL_SUBSCRIPTIONS>;
-    type Pending<T> = HeapVec<T, 4>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,7 +325,6 @@ pub(crate) type TestStorage<
     const ENTITY_SLOTS: usize,
     const CALLBACK_BYTES: usize,
     const CALLBACK_SLOTS: usize,
-    const ELEMENT_STATES: usize,
     const GLOBAL_BYTES: usize = 0,
     const GLOBAL_SLOTS: usize = 0,
 > = FixedStorage<
@@ -401,11 +332,8 @@ pub(crate) type TestStorage<
     ENTITY_SLOTS,
     CALLBACK_BYTES,
     CALLBACK_SLOTS,
-    ELEMENT_STATES,
     GLOBAL_BYTES,
     GLOBAL_SLOTS,
-    16,
-    16,
 >;
 #[cfg(all(test, feature = "alloc"))]
 pub(crate) type TestStorage<
@@ -413,15 +341,9 @@ pub(crate) type TestStorage<
     const ENTITY_SLOTS: usize,
     const CALLBACK_BYTES: usize,
     const CALLBACK_SLOTS: usize,
-    const ELEMENT_STATES: usize,
     const GLOBAL_BYTES: usize = 0,
     const GLOBAL_SLOTS: usize = 0,
 > = HeapStorage;
-
-#[cfg(all(test, not(feature = "alloc")))]
-pub(crate) type TestElementStates<const SLOTS: usize> = FixedElementStates<SLOTS>;
-#[cfg(all(test, feature = "alloc"))]
-pub(crate) type TestElementStates<const SLOTS: usize> = HeapElementStates<SLOTS>;
 
 #[cfg(test)]
 mod tests {

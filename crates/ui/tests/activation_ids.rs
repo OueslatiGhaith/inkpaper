@@ -4,16 +4,10 @@ use inkpaper_ui::{AvailableSpace, ResolvedTextStyle, TextMeasurer, prelude::*};
 
 type TestRuntime = Runtime<
     FixedStorage<
-        4096,
-        // entity bytes
-        1,
-        // entity slots
-        4096,
-        // callback bytes
-        16,
-        // frame text bytes
-        32,
-        // element states,
+        4096, // entity bytes
+        1,    // entity slots
+        4096, // callback bytes
+        16,   // callback slots
     >,
 >;
 

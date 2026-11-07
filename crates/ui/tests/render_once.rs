@@ -18,16 +18,10 @@ const DISPLAY_HEIGHT: u32 = 64;
 type TestResources = RuntimeResources<'static, 1, 64, 4096, 0>;
 type TestRuntime = Runtime<
     FixedStorage<
-        4096,
-        // entity bytes
-        1,
-        // entity slots
-        4096,
-        // callback bytes
-        16,
-        // frame text bytes
-        32,
-        // element states,
+        4096, // entity bytes
+        1,    // entity slots
+        4096, // callback bytes
+        16,   // callback slots
     >,
     TestResources,
 >;

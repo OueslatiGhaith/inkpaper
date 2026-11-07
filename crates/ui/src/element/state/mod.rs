@@ -1,9 +1,10 @@
 use crate::{
     ElementId, EntityId, NodeId,
-    storage::{ElementStateStorage, VecStorage},
+    pool::{PoolRef, PoolVec, Table},
+    storage::VecStorage,
 };
 
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(test)]
 mod alloc_tests;
 #[cfg(test)]
 mod tests;
@@ -81,19 +82,17 @@ pub enum IdentityError {
     AllocationFailed,
 }
 
-pub(crate) struct ElementStateTable<E: ElementStateStorage> {
-    slots: E::Slots<ElementStateSlot>,
+pub(crate) struct ElementStateTable {
+    slots: PoolVec<ElementStateSlot>,
 }
 
-impl<E: ElementStateStorage> Default for ElementStateTable<E> {
-    fn default() -> Self {
+impl ElementStateTable {
+    pub(crate) fn new_in(pool: PoolRef) -> Self {
         Self {
-            slots: E::Slots::default(),
+            slots: PoolVec::new_in(pool, Table::ElementStates),
         }
     }
-}
 
-impl<E: ElementStateStorage> ElementStateTable<E> {
     pub(crate) fn resolve(
         &mut self,
         parent: IdentityParent,

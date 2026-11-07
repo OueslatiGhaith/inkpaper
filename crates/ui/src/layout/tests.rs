@@ -4,7 +4,7 @@ use crate::pool::testing::pool;
 use crate::pool::testing::pool_ref;
 use crate::*;
 
-type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 32>>;
+type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32>>;
 
 struct TestTextMeasurer {
     character_width: Pixels,
@@ -237,7 +237,7 @@ impl Render for App {
 
 #[test]
 fn entity_nodes_are_layout_transparent() {
-    type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 16, 32>>;
+    type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 16>>;
 
     let measurer = TestTextMeasurer::new(8, 10);
     let mut runtime = TestRuntime::new(pool());

@@ -1,10 +1,7 @@
-use core::{alloc::Layout, any::TypeId};
+use core::any::TypeId;
 
 use super::*;
-use crate::pool::{
-    PoolRef, Table,
-    testing::{pool_ref, pool_ref_of},
-};
+use crate::pool::testing::{pool_ref, pool_ref_of, pool_ref_with_room};
 use crate::{callback::CallbackId, *};
 
 #[test]
@@ -115,20 +112,10 @@ fn clear_reuses_capacity_and_explicit_shrink_preserves_live_text() {
         .unwrap();
 }
 
-/// a pool with only about `room` bytes left
-fn pool_with_room(room: usize) -> PoolRef {
-    let pool = pool_ref_of(4 * 1024);
-    let filler = pool.stats().capacity - room;
-    pool.allocate(Table::Text, Layout::from_size_align(filler, 1).unwrap())
-        .unwrap();
-
-    pool
-}
-
 #[test]
 fn reservation_failure_keeps_nodes_caches_and_text_consistent() {
     // room for the text, but not for the first nodes
-    let mut nodes = FrameArena::new_in(pool_with_room(256));
+    let mut nodes = FrameArena::new_in(pool_ref_with_room(256));
 
     assert_eq!(
         nodes.push_text("rollback", TextStyle::default()),

@@ -19,7 +19,7 @@ use crate::{
     px,
     resources::RuntimeResources,
     runtime::root::RuntimeRoot,
-    storage::{CallbackStorage, EventStorage, GlobalStorage},
+    storage::{CallbackStorage, GlobalStorage},
 };
 #[cfg(feature = "metrics")]
 use crate::{GlyphCacheMetrics, PerformanceMetrics, TextPaintMetrics};
@@ -62,9 +62,9 @@ pub enum FramePhase {
     Layout,
 }
 
-/// the UI runtime. It keeps its frame in the [`Pool`] it is created with. `S` chooses
-/// the storage behind its other tables (see [`RuntimeStorage`]), and `RESOURCES` holds
-/// render resources such as fonts and images.
+/// the UI runtime. It keeps its frame, element states and events in the [`Pool`] it is
+/// created with. `S` chooses the storage behind its entities, callbacks and globals (see
+/// [`RuntimeStorage`]), and `RESOURCES` holds render resources such as fonts and images.
 pub struct Runtime<S, RESOURCES = ()>
 where
     S: RuntimeStorage,
@@ -73,8 +73,8 @@ where
     globals: S::Globals,
     callbacks: S::Callbacks,
     frame: FrameArena,
-    element_states: ElementStateTable<S::ElementStates>,
-    scroll_states: ScrollStateTable<S::ElementStates>,
+    element_states: ElementStateTable,
+    scroll_states: ScrollStateTable,
     resources: RESOURCES,
 
     /// every entity needs to render again. Entities changed one at a time are marked
@@ -98,18 +98,13 @@ where
     focused: Option<ElementStateId>,
     pending_scroll_into_view: Option<ElementStateId>,
     /// subscriptions, and the events emitted during the runtime call running now
-    events: RuntimeEvents<S>,
+    events: EventTable,
     /// how many runtime calls that run user code are running, nested. Events are
     /// delivered when the outermost returns
     call_depth: Cell<u32>,
     /// the memory of the tables above. Declared last, so it is dropped after them
     pool: Pool,
 }
-
-type RuntimeEvents<S> = EventTable<
-    <<S as RuntimeStorage>::Events as EventStorage>::Subscriptions<emitter::Subscription>,
-    <<S as RuntimeStorage>::Events as EventStorage>::Pending<emitter::PendingEvent>,
->;
 
 /// counts a runtime call while it runs, even when it unwinds
 struct CallDepth<'a>(&'a Cell<u32>);
@@ -133,7 +128,7 @@ where
     S: RuntimeStorage,
     RESOURCES: Default,
 {
-    /// a runtime that keeps its frame in `pool`
+    /// a runtime that keeps its frame, element states and events in `pool`
     pub fn new(pool: Pool) -> Self {
         let memory = pool.handle();
 
@@ -142,8 +137,8 @@ where
             globals: S::Globals::default(),
             callbacks: S::Callbacks::default(),
             frame: FrameArena::new_in(memory),
-            element_states: ElementStateTable::default(),
-            scroll_states: ScrollStateTable::default(),
+            element_states: ElementStateTable::new_in(memory),
+            scroll_states: ScrollStateTable::new_in(memory),
             resources: RESOURCES::default(),
             all_dirty: Cell::new(false),
             full_rebuild_pending: Cell::new(false),
@@ -158,7 +153,7 @@ where
             activation: ActivationState::default(),
             focused: None,
             pending_scroll_into_view: None,
-            events: EventTable::default(),
+            events: EventTable::new_in(memory),
             call_depth: Cell::new(0),
             pool,
         }
@@ -1377,7 +1372,7 @@ mod partial_tests;
 mod tests {
     use crate::{entity::EntityStore, pool::testing::pool, *};
 
-    type TestRuntime = Runtime<TestStorage<1024, 8, 1024, 8, 8, 64, 2>>;
+    type TestRuntime = Runtime<TestStorage<1024, 8, 1024, 8, 64, 2>>;
 
     struct Counter {
         value: i32,

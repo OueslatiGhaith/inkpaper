@@ -151,7 +151,7 @@ impl Painter for Recorder {
     }
 }
 
-type TestRuntime = Runtime<TestStorage<1024, 4, 1024, 8, 8>, RecordingResources>;
+type TestRuntime = Runtime<TestStorage<1024, 4, 1024, 8>, RecordingResources>;
 
 fn rect(x: i32, y: i32, width: i32, height: i32) -> Rect {
     Rect::new(Point::new(px(x), px(y)), Size::new(px(width), px(height)))

@@ -6,7 +6,6 @@ use crate::{
     interaction::scroll::{ScrollAxes, ScrollStateTable},
     layout::BorderBox,
     px,
-    storage::ElementStateStorage,
 };
 
 #[cfg(test)]
@@ -273,10 +272,7 @@ impl FrameArena {
     /// scroll containers seen for the first time start at their requested child.
     /// must run after layout and before `clamp_scroll_offset`, which marks every
     /// container's offset as initialized
-    pub(crate) fn apply_initial_scroll_offsets<E: ElementStateStorage>(
-        &mut self,
-        states: &mut ScrollStateTable<E>,
-    ) {
+    pub(crate) fn apply_initial_scroll_offsets(&mut self, states: &mut ScrollStateTable) {
         for node_id in self.node_ids() {
             let node = self.node(node_id);
             if node.detached {
@@ -320,10 +316,7 @@ impl FrameArena {
         }
     }
 
-    pub(crate) fn clamp_scroll_offset<E: ElementStateStorage>(
-        &mut self,
-        states: &mut ScrollStateTable<E>,
-    ) {
+    pub(crate) fn clamp_scroll_offset(&mut self, states: &mut ScrollStateTable) {
         for node_id in self.node_ids() {
             let node = self.node(node_id);
             if node.detached {
@@ -466,11 +459,11 @@ impl FrameArena {
             .rect()
     }
 
-    pub(crate) fn scroll_element_into_view<E: ElementStateStorage>(
+    pub(crate) fn scroll_element_into_view(
         &mut self,
         root: NodeId,
         element: ElementStateId,
-        states: &mut ScrollStateTable<E>,
+        states: &mut ScrollStateTable,
     ) -> DamageRegion {
         let Some(target_node) = self.node_for_element(root, element) else {
             return DamageRegion::none();

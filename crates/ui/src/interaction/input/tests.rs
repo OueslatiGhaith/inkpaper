@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::pool::testing::pool;
 use crate::*;
 
-type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 32>>;
+type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32>>;
 
 struct TestTextMeasurer;
 

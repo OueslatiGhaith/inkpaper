@@ -9,16 +9,10 @@ const VIEWPORT: Size = Size::new(px(320), px(240));
 
 type BenchRuntime = Runtime<
     FixedStorage<
-        4096,
-        // entity bytes
-        4,
-        // entity slots
-        4096,
-        // callback bytes
-        16,
-        // frame text bytes
-        1024,
-        // element states,
+        4096, // entity bytes
+        4,    // entity slots
+        4096, // callback bytes
+        16,   // callback slots
     >,
 >;
 

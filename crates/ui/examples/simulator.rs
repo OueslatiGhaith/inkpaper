@@ -1360,7 +1360,7 @@ fn main() {
     let runtime_font = runtime_font_from_args();
 
     let mut runtime = Runtime::<
-        FixedStorage<16_384, 32, 8_192, 64, 256, 2_048, 8>,
+        FixedStorage<16_384, 32, 8_192, 64, 2_048, 8>,
         RuntimeResources<'_, 3, 128, { 16 * 1024 }, 1>,
     >::new(pool());
 

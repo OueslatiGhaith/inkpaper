@@ -77,11 +77,11 @@ pub use rendering::*;
 pub use resources::*;
 pub use runtime::*;
 pub(crate) use slot_table::BorrowKind;
-pub use storage::{FixedElementStates, FixedEvents, FixedStorage, RuntimeStorage};
 #[cfg(feature = "alloc")]
-pub use storage::{HeapElementStates, HeapEvents, HeapStorage};
+pub use storage::HeapStorage;
 #[cfg(test)]
-pub(crate) use storage::{TestElementStates, TestStorage};
+pub(crate) use storage::TestStorage;
+pub use storage::{FixedStorage, RuntimeStorage};
 pub use style::*;
 pub use svg_source::*;
 pub use text_shaping::*;

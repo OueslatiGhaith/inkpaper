@@ -12,7 +12,6 @@ use super::{FrameArena, FrameStore, MountError, NodeId, NodeKind};
 use crate::{
     DamageRegion, EntityId, RuntimeCx, count_metric,
     element::state::{ElementStateTable, IdentityError},
-    storage::ElementStateStorage,
 };
 
 impl FrameArena {
@@ -30,9 +29,9 @@ impl FrameArena {
 
     /// resolves the identities under the entity nodes the last partial rebuild rendered
     /// again. None is inside another, so their subtrees hold every node it mounted
-    pub(crate) fn resolve_rerendered_identities<E: ElementStateStorage>(
+    pub(crate) fn resolve_rerendered_identities(
         &mut self,
-        states: &mut ElementStateTable<E>,
+        states: &mut ElementStateTable,
         frame_generation: u32,
     ) -> Result<(), IdentityError> {
         for index in 0..self.rerendered_nodes.len() {

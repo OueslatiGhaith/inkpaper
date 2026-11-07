@@ -12,21 +12,14 @@ use std::{
 };
 
 /// heap storage with the initial reservation of each table
-struct Heap<
-    const ENTITIES: usize,
-    const CALLBACKS: usize,
-    const STATES: usize,
-    const GLOBALS: usize = 0,
->;
+struct Heap<const ENTITIES: usize, const CALLBACKS: usize, const GLOBALS: usize = 0>;
 
-impl<const ENTITIES: usize, const CALLBACKS: usize, const STATES: usize, const GLOBALS: usize>
-    RuntimeStorage for Heap<ENTITIES, CALLBACKS, STATES, GLOBALS>
+impl<const ENTITIES: usize, const CALLBACKS: usize, const GLOBALS: usize> RuntimeStorage
+    for Heap<ENTITIES, CALLBACKS, GLOBALS>
 {
     type Entities = HeapEntityArena<ENTITIES>;
     type Callbacks = HeapCallbackArena<CALLBACKS>;
     type Globals = HeapGlobalArena<GLOBALS>;
-    type ElementStates = HeapElementStates<STATES>;
-    type Events = HeapEvents;
 }
 
 std::thread_local! {
@@ -209,7 +202,7 @@ impl PaintResources for BlockText {
 
 #[test]
 fn dynamic_runtime_allocates_on_growth_and_reuses_storage_for_rebuild_layout_and_paint() {
-    let mut runtime = Runtime::<Heap<4, 4, 8>, BlockText>::new(pool());
+    let mut runtime = Runtime::<Heap<4, 4>, BlockText>::new(pool());
 
     let screen = runtime.create_root(|_| Screen).unwrap();
 
@@ -273,13 +266,19 @@ impl Render for StatefulScreen {
     }
 }
 
-type StateRuntime = Runtime<Heap<4, 4, 1>>;
+type StateRuntime = Runtime<Heap<4, 4>>;
 
 fn state_runtime() -> (StateRuntime, Entity<StatefulScreen>) {
-    let mut runtime = StateRuntime::new(pool());
+    state_runtime_in(pool()).unwrap()
+}
+
+/// a runtime showing four rows, with the first focused and scrolled, or the error that
+/// stopped the first rebuild
+fn state_runtime_in(pool: Pool) -> Result<(StateRuntime, Entity<StatefulScreen>), FrameBuildError> {
+    let mut runtime = StateRuntime::new(pool);
     let screen = runtime.create_root(|_| StatefulScreen { rows: 4 }).unwrap();
 
-    runtime.rebuild().unwrap();
+    runtime.rebuild()?;
     runtime
         .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
         .unwrap();
@@ -287,7 +286,7 @@ fn state_runtime() -> (StateRuntime, Entity<StatefulScreen>) {
     assert!(runtime.focus_next());
     assert!(runtime.scroll_at(Point::new(px(10), px(10)), Offset::new(px(0), px(10))));
 
-    (runtime, screen)
+    Ok((runtime, screen))
 }
 
 #[test]
@@ -348,8 +347,10 @@ fn dynamic_identity_growth_preserves_focus_and_scrolling_without_input_allocatio
 }
 
 #[test]
-fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
+fn rebuilds_that_run_out_of_pool_can_be_retried() {
     let (mut probe, screen) = state_runtime();
+    let header = 256 * 1024 - probe.memory().capacity;
+    let four_rows = probe.memory().peak;
 
     probe
         .update(screen, |screen, cx| {
@@ -357,12 +358,18 @@ fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
             cx.notify();
         })
         .unwrap();
+    probe.rebuild().unwrap();
+    let thirty_two_rows = probe.memory().peak;
 
-    let allocations = allocations_during(|| probe.rebuild().unwrap());
-    assert!(allocations > 0);
-
-    for after in 0..allocations {
-        let (mut runtime, screen) = state_runtime();
+    // pools from too small for four rows to large enough for 32, so the rebuild runs out
+    // in each table it grows
+    let mut failures = 0;
+    let mut recoveries = 0;
+    for room in (four_rows..thirty_two_rows).step_by(64) {
+        let pool = Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(header + room)));
+        let Ok((mut runtime, screen)) = state_runtime_in(pool) else {
+            continue;
+        };
         let original = runtime.focused_target().unwrap();
 
         runtime
@@ -372,19 +379,34 @@ fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
             })
             .unwrap();
 
-        assert_eq!(
-            failing_allocation(after, || runtime.rebuild()),
-            Err(FrameBuildError::Identity(IdentityError::AllocationFailed))
+        let Err(error) = runtime.rebuild() else {
+            continue;
+        };
+        failures += 1;
+
+        assert!(
+            matches!(
+                error,
+                FrameBuildError::Mount(_) | FrameBuildError::Identity(IdentityError::StatesFull)
+            ),
+            "{error:?}"
         );
         assert_eq!(runtime.frame_node_count(), 0);
 
+        // the tables keep what they grew before running out, so four rows may no longer
+        // fit in the smallest pools. Either way the runtime stays consistent
         runtime
             .update(screen, |screen, cx| {
                 screen.rows = 4;
                 cx.notify();
             })
             .unwrap();
-        runtime.rebuild().unwrap();
+        if runtime.rebuild().is_err() {
+            assert_eq!(runtime.frame_node_count(), 0);
+            continue;
+        }
+        recoveries += 1;
+
         runtime
             .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
             .unwrap();
@@ -392,15 +414,10 @@ fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
         assert!(runtime.scroll_at(Point::new(px(10), px(10)), Offset::new(px(0), px(-10))));
         assert!(runtime.focus_next());
         assert_eq!(runtime.focused_target(), Some(original));
-
-        runtime
-            .update(screen, |screen, cx| {
-                screen.rows = 32;
-                cx.notify();
-            })
-            .unwrap();
-        runtime.rebuild().unwrap();
     }
+
+    assert!(failures > 0);
+    assert!(recoveries > 0);
 }
 
 #[test]
@@ -435,7 +452,7 @@ fn entity_allocation_failures_do_not_run_constructors_and_allow_retry() {
 
 #[test]
 fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
-    let runtime = Runtime::<Heap<1, 0, 0>>::new(pool());
+    let runtime = Runtime::<Heap<1, 0>>::new(pool());
 
     let parent = runtime
         .create(|cx| {
@@ -564,7 +581,7 @@ fn globals_grow_without_moving_values_and_support_aligned_zsts() {
     struct Empty;
     impl Global for Empty {}
 
-    let mut runtime = Runtime::<Heap<0, 0, 0, 1>>::new(pool());
+    let mut runtime = Runtime::<Heap<0, 0, 1>>::new(pool());
 
     assert_eq!(runtime.global_capacity(), 0);
     assert_eq!(runtime.global_byte_capacity(), 0);

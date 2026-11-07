@@ -1,11 +1,16 @@
 use super::*;
-use crate::{HeapElementStates, Offset, interaction::scroll::ScrollStateTable, px};
+use crate::{
+    Offset,
+    interaction::scroll::ScrollStateTable,
+    pool::testing::{pool_ref, pool_ref_of},
+    px,
+};
 
 #[test]
 fn growing_tables_preserve_offsets_and_reused_slots_reset_them() {
     let parent = IdentityParent::Entity(EntityId::new(0, 0));
-    let mut states = ElementStateTable::<HeapElementStates<1>>::default();
-    let mut scroll = ScrollStateTable::<HeapElementStates<1>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
+    let mut scroll = ScrollStateTable::new_in(pool_ref());
 
     let old = states.resolve(parent, ElementId::Value(0), 1).unwrap();
     scroll.prepare(states.slot_count()).unwrap();
@@ -41,8 +46,8 @@ fn growing_tables_preserve_offsets_and_reused_slots_reset_them() {
 #[test]
 fn failed_scroll_reservation_can_abort_new_identities_without_losing_old_state() {
     let parent = IdentityParent::Entity(EntityId::new(0, 0));
-    let mut states = ElementStateTable::<HeapElementStates<0>>::default();
-    let mut scroll = ScrollStateTable::<HeapElementStates<0>>::default();
+    let mut states = ElementStateTable::new_in(pool_ref());
+    let mut scroll = ScrollStateTable::new_in(pool_ref());
 
     let old = states.resolve(parent, ElementId::Value(0), 1).unwrap();
     states.sweep(1);
@@ -55,10 +60,7 @@ fn failed_scroll_reservation_can_abort_new_identities_without_losing_old_state()
 
     let new = states.resolve(parent, ElementId::Value(1), 2).unwrap();
 
-    assert_eq!(
-        scroll.prepare(usize::MAX),
-        Err(IdentityError::AllocationFailed)
-    );
+    assert_eq!(scroll.prepare(usize::MAX), Err(IdentityError::StatesFull));
 
     states.abort_frame(2);
 
@@ -75,17 +77,11 @@ fn failed_scroll_reservation_can_abort_new_identities_without_losing_old_state()
 }
 
 #[test]
-fn identity_allocation_failure_and_id_exhaustion_are_distinct() {
+fn running_out_of_ids_reports_full_states() {
     let parent = IdentityParent::Entity(EntityId::new(0, 0));
-    let mut impossible = ElementStateTable::<HeapElementStates<{ usize::MAX }>>::default();
+    // room for every id
+    let mut full = ElementStateTable::new_in(pool_ref_of(16 * 1024 * 1024));
 
-    assert_eq!(
-        impossible.resolve(parent, ElementId::Value(0), 1),
-        Err(IdentityError::AllocationFailed)
-    );
-    assert_eq!(impossible.slot_count(), 0);
-
-    let mut full = ElementStateTable::<HeapElementStates<0>>::default();
     full.resolve(parent, ElementId::Value(0), 1).unwrap();
     full.slots
         .try_resize(usize::from(u16::MAX) + 1, full.slots[0])

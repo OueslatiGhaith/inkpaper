@@ -4,7 +4,6 @@ use crate::{
     Offset,
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     interaction::scroll::ScrollStateTable,
-    storage::ElementStateStorage,
 };
 
 impl FrameArena {
@@ -33,10 +32,10 @@ impl FrameArena {
     ///
     /// walks in tree order rather than arena order, so each node's identity scope is
     /// resolved before the node itself wherever its subtree sits in the arena
-    pub(crate) fn resolve_identities<E: ElementStateStorage>(
+    pub(crate) fn resolve_identities(
         &mut self,
         root: NodeId,
-        states: &mut ElementStateTable<E>,
+        states: &mut ElementStateTable,
         frame_generation: u32,
     ) -> Result<(), IdentityError> {
         let mut current = Some(root);
@@ -67,10 +66,7 @@ impl FrameArena {
         self.focused = focused;
         self.pressed = pressed;
     }
-    pub(crate) fn resolve_scroll_offsets<E: ElementStateStorage>(
-        &mut self,
-        states: &ScrollStateTable<E>,
-    ) {
+    pub(crate) fn resolve_scroll_offsets(&mut self, states: &ScrollStateTable) {
         for node in self.nodes.iter_mut().filter(|node| !node.detached) {
             node.interaction.scroll_offset = node
                 .element_state_id

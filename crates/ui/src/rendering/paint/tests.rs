@@ -593,7 +593,7 @@ fn canvas_callback_draws_in_local_coordinates() {
     );
 }
 
-type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 32>>;
+type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32>>;
 
 #[test]
 fn entity_canvas_can_draw_from_entity_state() {

@@ -12,7 +12,11 @@ use core::{
     mem::{self, MaybeUninit},
 };
 
-use crate::{Context, Entity, EntityAccessError, EntityId, RuntimeCx, storage::VecStorage};
+use crate::{
+    Context, Entity, EntityAccessError, EntityId, RuntimeCx,
+    pool::{PoolRef, PoolVec, Table},
+    storage::VecStorage,
+};
 
 /// marks an entity type as emitting events of type `E`, for [`Context::emit`] and
 /// [`Context::subscribe`].
@@ -101,33 +105,21 @@ impl EventStore for NoEvents {
     }
 }
 
-pub(crate) struct EventTable<S, P>
-where
-    S: VecStorage<Subscription>,
-    P: VecStorage<PendingEvent>,
-{
-    subscriptions: RefCell<S>,
-    pending: RefCell<P>,
+pub(crate) struct EventTable {
+    subscriptions: RefCell<PoolVec<Subscription>>,
+    pending: RefCell<PoolVec<PendingEvent>>,
 }
 
-impl<S, P> Default for EventTable<S, P>
-where
-    S: VecStorage<Subscription> + Default,
-    P: VecStorage<PendingEvent> + Default,
-{
-    fn default() -> Self {
+impl EventTable {
+    pub(crate) fn new_in(pool: PoolRef) -> Self {
         Self {
-            subscriptions: RefCell::new(S::default()),
-            pending: RefCell::new(P::default()),
+            subscriptions: RefCell::new(PoolVec::new_in(pool, Table::Events)),
+            pending: RefCell::new(PoolVec::new_in(pool, Table::Events)),
         }
     }
 }
 
-impl<S, P> EventStore for EventTable<S, P>
-where
-    S: VecStorage<Subscription>,
-    P: VecStorage<PendingEvent>,
-{
+impl EventStore for EventTable {
     fn subscribe(&self, subscription: Subscription) -> Result<(), EventError> {
         self.subscriptions
             .borrow_mut()

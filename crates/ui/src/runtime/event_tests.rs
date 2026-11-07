@@ -1,9 +1,9 @@
 use std::vec::Vec;
 
-use crate::pool::testing::pool;
+use crate::pool::testing::{pool, pool_with_room};
 use crate::*;
 
-type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 16>>;
+type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32>>;
 
 /// what a [`Child`] says happened
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,22 +269,27 @@ fn events_handlers_emit_are_delivered_too() {
     assert_eq!(runtime.update(relay, |relay, _| relay.child), Ok(child));
 }
 
-#[cfg(not(feature = "alloc"))]
 #[test]
 fn a_full_queue_reports_it() {
-    let (runtime, parent) = fixture();
+    let mut runtime = TestRuntime::new(pool_with_room(512));
+    let parent = runtime.create_root(Parent::new).unwrap();
     let (first, _) = children(&runtime, parent);
 
     let results = runtime
         .update(first, |_, cx| {
-            (0..17)
+            (0..64)
                 .map(|value| cx.try_emit(Ping::Value(value)))
                 .collect::<Vec<_>>()
         })
         .unwrap();
+    let sent = results.iter().take_while(|result| result.is_ok()).count();
 
-    assert!(results[..16].iter().all(Result::is_ok));
-    assert_eq!(results[16], Err(EventError::QueueFull));
+    assert!(sent > 0);
+    assert!(
+        results[sent..]
+            .iter()
+            .all(|result| *result == Err(EventError::QueueFull))
+    );
     // the ones that fit are delivered
-    assert_eq!(log(&runtime, parent).len(), 16);
+    assert_eq!(log(&runtime, parent).len(), sent);
 }
