@@ -38,10 +38,19 @@ impl NodeId {
     }
 }
 
+/// where a text node's bytes sit in the frame's text. 32-bit, to keep nodes small
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TextRange {
-    start: usize,
-    len: usize,
+    start: u32,
+    len: u32,
+}
+
+impl TextRange {
+    fn bytes(self) -> core::ops::Range<usize> {
+        let start = self.start as usize;
+
+        start..start + self.len as usize
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -56,18 +65,18 @@ pub(crate) enum NodeKind {
         style: u16,
     },
     Image {
-        source: ImageSource,
-        style: ImageStyle,
+        /// where the image sits in the frame's images
+        image: u16,
     },
     Svg {
-        source: SvgSource,
-        style: SvgStyle,
+        /// where the svg sits in the frame's svgs
+        svg: u16,
         /// where the svg's text style sits in the frame's text styles
         text_style: u16,
     },
     Canvas {
-        draw: CanvasDraw,
-        style: CanvasStyle,
+        /// where the canvas sits in the frame's canvases
+        canvas: u16,
     },
     Entity {
         entity: EntityId,
@@ -99,6 +108,10 @@ pub(crate) struct Node {
     /// longer in the tree, so passes over the whole arena skip them
     pub(crate) detached: bool,
 }
+
+// nodes are the frame's largest table, and a partial rebuild can double it, so each
+// stays small. Whatever only some nodes need lives in a side table
+const _: () = assert!(core::mem::size_of::<Node>() <= 64);
 
 impl Node {
     fn new(kind: NodeKind) -> Self {
@@ -242,6 +255,10 @@ pub(crate) struct FrameArena {
     styles: FrameBuffer<Style>,
     /// the text style of each text and svg node, in mount order
     text_styles: FrameBuffer<TextStyle>,
+    /// the source and style of each image, svg and canvas, in mount order
+    images: FrameBuffer<(ImageSource, ImageStyle)>,
+    svgs: FrameBuffer<(SvgSource, SvgStyle)>,
+    canvases: FrameBuffer<(CanvasDraw, CanvasStyle)>,
     /// each text style the last resolve pass found, once. Nodes point into it
     resolved_text_styles: FrameBuffer<ResolvedTextStyle>,
     /// the nodes that can change the text style they inherit. A resolve pass finds at
@@ -278,6 +295,9 @@ impl FrameArena {
             text: FrameBuffer::new_in(pool, Table::Text),
             styles: FrameBuffer::new_in(pool, Table::Nodes),
             text_styles: FrameBuffer::new_in(pool, Table::Nodes),
+            images: FrameBuffer::new_in(pool, Table::Nodes),
+            svgs: FrameBuffer::new_in(pool, Table::Nodes),
+            canvases: FrameBuffer::new_in(pool, Table::Nodes),
             resolved_text_styles: FrameBuffer::new_in(pool, Table::Nodes),
             text_style_changes: 0,
             node_cache: FrameBuffer::new_in(pool, Table::Nodes),
@@ -309,6 +329,12 @@ impl FrameArena {
     #[cfg(test)]
     pub(crate) fn div_style_count(&self) -> usize {
         self.styles.len()
+    }
+
+    /// how many images, svgs and canvases the frame holds
+    #[cfg(test)]
+    pub(crate) fn media_counts(&self) -> (usize, usize, usize) {
+        (self.images.len(), self.svgs.len(), self.canvases.len())
     }
 
     #[cfg(test)]
@@ -344,6 +370,9 @@ impl FrameArena {
         self.text.clear();
         self.styles.clear();
         self.text_styles.clear();
+        self.images.clear();
+        self.svgs.clear();
+        self.canvases.clear();
         self.resolved_text_styles.clear();
         self.text_style_changes = 0;
         self.event_bindings.clear();
@@ -366,6 +395,9 @@ impl FrameArena {
         self.text.shrink_to_fit();
         self.styles.shrink_to_fit();
         self.text_styles.shrink_to_fit();
+        self.images.shrink_to_fit();
+        self.svgs.shrink_to_fit();
+        self.canvases.shrink_to_fit();
         // the resolved styles keep the room mounting reserved, so resolving never
         // allocates
         self.interaction_styles.shrink_to_fit();
@@ -537,8 +569,20 @@ impl FrameArena {
             .unwrap_or_default()
     }
 
+    pub(crate) fn image(&self, image: u16) -> (ImageSource, ImageStyle) {
+        self.images[usize::from(image)]
+    }
+
+    pub(crate) fn svg(&self, svg: u16) -> (SvgSource, SvgStyle) {
+        self.svgs[usize::from(svg)]
+    }
+
+    pub(crate) fn canvas(&self, canvas: u16) -> (CanvasDraw, CanvasStyle) {
+        self.canvases[usize::from(canvas)]
+    }
+
     pub(crate) fn text(&self, range: TextRange) -> &str {
-        let bytes = &self.text[range.start..range.start + range.len];
+        let bytes = &self.text[range.bytes()];
 
         // bytes were copied from a valid str
         unsafe { core::str::from_utf8_unchecked(bytes) }

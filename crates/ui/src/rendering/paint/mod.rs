@@ -276,8 +276,8 @@ impl FrameArena {
                 Ok(())
             }
 
-            NodeKind::Canvas { draw, .. } => canvas::paint_canvas(
-                draw,
+            NodeKind::Canvas { canvas } => canvas::paint_canvas(
+                self.canvas(canvas).0,
                 bounds,
                 clip,
                 self.resolved_text_style(node_id),
@@ -287,7 +287,8 @@ impl FrameArena {
                 painter,
             ),
 
-            NodeKind::Image { source, style } => {
+            NodeKind::Image { image } => {
+                let (source, style) = self.image(image);
                 resources.paint_image(painter, source, bounds, style.paint, clip)?;
 
                 report.mark_image(style.paint.color_mode);
@@ -295,8 +296,8 @@ impl FrameArena {
                 Ok(())
             }
 
-            NodeKind::Svg { source, .. } => svg::paint_svg(
-                source,
+            NodeKind::Svg { svg, .. } => svg::paint_svg(
+                self.svg(svg).0,
                 bounds,
                 clip,
                 self.resolved_text_style(node_id),

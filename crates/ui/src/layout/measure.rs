@@ -27,9 +27,15 @@ impl FrameArena {
         count_metric!(self, measurement_cache_misses);
         let measured = match self.node(node).kind {
             NodeKind::Text { .. } => unreachable!("text nodes are measured above"),
-            NodeKind::Image { source, style } => measure_image(source, style, available),
-            NodeKind::Svg { source, style, .. } => measure_svg(source, style, available),
-            NodeKind::Canvas { style, .. } => measure_canvas(style, available),
+            NodeKind::Image { image } => {
+                let (source, style) = self.image(image);
+                measure_image(source, style, available)
+            }
+            NodeKind::Svg { svg, .. } => {
+                let (source, style) = self.svg(svg);
+                measure_svg(source, style, available)
+            }
+            NodeKind::Canvas { canvas } => measure_canvas(self.canvas(canvas).1, available),
             NodeKind::Entity { .. } => match self.node(node).first_child {
                 Some(child) => self.measure_node(child, available, text_measurer),
                 None => Size::ZERO,

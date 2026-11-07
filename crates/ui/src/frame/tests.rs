@@ -1484,7 +1484,7 @@ fn text_style_resolves_through_nested_elements() {
 
 fn node_image_source(frame: &FrameArena, node: NodeId) -> ImageSource {
     match frame.node(node).kind {
-        NodeKind::Image { source, .. } => source,
+        NodeKind::Image { image } => frame.image(image).0,
         _ => panic!("expected image node"),
     }
 }

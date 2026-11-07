@@ -1031,3 +1031,54 @@ fn preparing_a_frame_without_a_root_fails() {
         Err(FrameBuildError::RootNotSet)
     );
 }
+
+#[test]
+fn partial_rebuilds_reclaim_svgs_and_canvases() {
+    const ICON: SvgSource = SvgSource::new(
+        Size::new(px(8), px(8)),
+        SvgViewBox::new(0.0, 0.0, 8.0, 8.0),
+        &[],
+    );
+
+    fn draw(_: &mut PaintCx<'_>) {}
+
+    struct Media;
+
+    impl Render for Media {
+        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div()
+                .child(svg(ICON))
+                .child(canvas(draw).size(Size::new(px(4), px(4))))
+                .child("media")
+        }
+    }
+
+    struct Screen {
+        media: Entity<Media>,
+    }
+
+    impl Render for Screen {
+        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+            div().child(svg(ICON)).child(self.media)
+        }
+    }
+
+    let mut runtime = TestRuntime::new(pool());
+    let media = runtime.create(|_| Media).unwrap();
+    runtime.create_root(|_| Screen { media }).unwrap();
+    runtime.set_partial_rebuilds(true);
+    runtime.rebuild().unwrap();
+
+    let frame = runtime.frame();
+    let (nodes, counts) = (frame.node_count(), frame.media_counts());
+    assert_eq!(counts, (0, 2, 1));
+
+    for _ in 0..20 {
+        runtime.update(media, |_, cx| cx.notify()).unwrap();
+        runtime.rebuild().unwrap();
+    }
+
+    let frame = runtime.frame();
+    assert_eq!(frame.detached_node_count(), 0);
+    assert_eq!((frame.node_count(), frame.media_counts()), (nodes, counts));
+}

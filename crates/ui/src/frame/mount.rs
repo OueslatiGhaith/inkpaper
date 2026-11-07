@@ -1,6 +1,7 @@
 use core::any::TypeId;
 
 use super::{BindingRun, FrameArena, InteractionStyles, MountError, NodeId, NodeKind, TextRange};
+use crate::{OutOfMemory, Table};
 
 use crate::{
     AppContext, CanvasDraw, CanvasStyle, Element, ElementId, EntityId, EntityRenderFn,
@@ -135,11 +136,16 @@ pub(crate) trait FrameStore {
     ) -> Result<(), MountError>;
 }
 
+/// the index of the next entry of a table that holds one entry per node of a kind, so
+/// it never outnumbers the nodes
+fn table_index(len: usize) -> Result<u16, MountError> {
+    u16::try_from(len).map_err(|_| MountError::NodesFull)
+}
+
 impl FrameArena {
     /// adds the text style of a text or svg node about to mount, returning its index
     fn push_text_style(&mut self, style: TextStyle) -> Result<u16, MountError> {
-        // a node comes with each, so the text styles never outnumber the nodes
-        let index = u16::try_from(self.text_styles.len()).map_err(|_| MountError::NodesFull)?;
+        let index = table_index(self.text_styles.len())?;
         if style != TextStyle::DEFAULT {
             self.reserve_text_style_change()?;
         }
@@ -152,8 +158,7 @@ impl FrameArena {
 impl FrameStore for FrameArena {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError> {
         let index = self.styles.len();
-        // a div's node comes with its style, so the styles never outnumber the nodes
-        let style_id = u16::try_from(index).map_err(|_| MountError::NodesFull)?;
+        let style_id = table_index(index)?;
         if style.text != TextStyle::DEFAULT {
             self.reserve_text_style_change()?;
         }
@@ -165,13 +170,19 @@ impl FrameStore for FrameArena {
 
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
         let start = self.text.len();
+        // past 4 GiB of text, the text table can't grow either
+        let too_long = || {
+            MountError::OutOfMemory(OutOfMemory {
+                table: Table::Text,
+                requested: text.len(),
+            })
+        };
+        let range = TextRange {
+            start: u32::try_from(start).map_err(|_| too_long())?,
+            len: u32::try_from(text.len()).map_err(|_| too_long())?,
+        };
 
         self.text.extend_from_slice(text.as_bytes())?;
-
-        let range = TextRange {
-            start,
-            len: text.len(),
-        };
 
         let styles = self.text_styles.len();
         let pushed = self
@@ -185,7 +196,12 @@ impl FrameStore for FrameArena {
     }
 
     fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError> {
-        self.push_node(NodeKind::Image { source, style })
+        let index = self.images.len();
+        let image = table_index(index)?;
+        self.images.push((source, style))?;
+
+        self.push_node(NodeKind::Image { image })
+            .inspect_err(|_| self.images.truncate(index))
     }
 
     fn push_svg(
@@ -194,19 +210,28 @@ impl FrameStore for FrameArena {
         style: SvgStyle,
         text_style: TextStyle,
     ) -> Result<NodeId, MountError> {
-        let styles = self.text_styles.len();
-        let text_style = self.push_text_style(text_style)?;
+        let index = self.svgs.len();
+        let svg = table_index(index)?;
+        self.svgs.push((source, style))?;
 
-        self.push_node(NodeKind::Svg {
-            source,
-            style,
-            text_style,
+        let styles = self.text_styles.len();
+        let pushed = self
+            .push_text_style(text_style)
+            .and_then(|text_style| self.push_node(NodeKind::Svg { svg, text_style }));
+
+        pushed.inspect_err(|_| {
+            self.svgs.truncate(index);
+            self.text_styles.truncate(styles);
         })
-        .inspect_err(|_| self.text_styles.truncate(styles))
     }
 
     fn push_canvas(&mut self, draw: CanvasDraw, style: CanvasStyle) -> Result<NodeId, MountError> {
-        self.push_node(NodeKind::Canvas { draw, style })
+        let index = self.canvases.len();
+        let canvas = table_index(index)?;
+        self.canvases.push((draw, style))?;
+
+        self.push_node(NodeKind::Canvas { canvas })
+            .inspect_err(|_| self.canvases.truncate(index))
     }
 
     fn push_entity(
