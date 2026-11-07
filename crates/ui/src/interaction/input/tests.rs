@@ -637,7 +637,7 @@ fn focus_navigation_scrolls_target_into_view() {
 
     assert!(runtime.focus_next());
     assert_eq!(
-        runtime.frame().node(scroll).interaction.scroll_offset,
+        runtime.frame().interaction(scroll).scroll_offset,
         Offset::ZERO,
     );
 
@@ -645,7 +645,7 @@ fn focus_navigation_scrolls_target_into_view() {
 
     assert!(runtime.focus_next());
     assert_eq!(
-        runtime.frame().node(scroll).interaction.scroll_offset,
+        runtime.frame().interaction(scroll).scroll_offset,
         Offset::new(px(0), px(20),),
     );
 
@@ -661,7 +661,7 @@ fn focus_navigation_scrolls_target_into_view() {
     );
     assert!(runtime.focus_next());
     assert_eq!(
-        runtime.frame().node(scroll).interaction.scroll_offset,
+        runtime.frame().interaction(scroll).scroll_offset,
         Offset::new(px(0), px(50),),
     );
 
@@ -669,7 +669,7 @@ fn focus_navigation_scrolls_target_into_view() {
 
     assert!(runtime.focus_previous());
     assert_eq!(
-        runtime.frame().node(scroll).interaction.scroll_offset,
+        runtime.frame().interaction(scroll).scroll_offset,
         Offset::new(px(0), px(30),),
     );
 }
@@ -698,7 +698,7 @@ impl Render for InitialScrollApp {
 fn initial_scroll_offset(runtime: &TestRuntime) -> Offset {
     let root = runtime.root_node().unwrap();
     let list = runtime.frame().node(root).first_child.unwrap();
-    runtime.frame().node(list).interaction.scroll_offset
+    runtime.frame().interaction(list).scroll_offset
 }
 
 #[test]
@@ -812,11 +812,11 @@ fn focus_scrolls_nested_containers_inside_out() {
 
     assert!(runtime.focus_next());
     assert_eq!(
-        runtime.frame().node(inner).interaction.scroll_offset,
+        runtime.frame().interaction(inner).scroll_offset,
         Offset::new(px(0), px(20),)
     );
     assert_eq!(
-        runtime.frame().node(outer).interaction.scroll_offset,
+        runtime.frame().interaction(outer).scroll_offset,
         Offset::new(px(0), px(10),)
     );
 }
@@ -880,7 +880,7 @@ fn focus_scroll_waits_for_layout_when_focus_changes_size() {
     // bounds have not been recalculated yet, therefore scrolling must
     // still be unchanged.
     assert_eq!(
-        runtime.frame().node(scroll).interaction.scroll_offset,
+        runtime.frame().interaction(scroll).scroll_offset,
         Offset::ZERO
     );
 
@@ -892,7 +892,7 @@ fn focus_scroll_waits_for_layout_when_focus_changes_size() {
     // second item was 10px tall, but focus changed it to 30px. After layout
     // it occupies y=30..60, so the viewport must scroll by 20px.
     assert_eq!(
-        runtime.frame().node(scroll).interaction.scroll_offset,
+        runtime.frame().interaction(scroll).scroll_offset,
         Offset::new(px(0), px(20),)
     );
 }
@@ -2034,7 +2034,7 @@ fn focus_scrolls_nested_absolute_target_into_view() {
 
     assert!(runtime.focus_next());
     assert_eq!(
-        runtime.frame().node(scroll).interaction.scroll_offset,
+        runtime.frame().interaction(scroll).scroll_offset,
         Offset::new(px(0), px(60)),
     );
     assert_eq!(

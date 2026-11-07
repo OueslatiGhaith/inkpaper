@@ -49,7 +49,7 @@ impl FrameArena {
         let viewport_content_size = content_box.size;
         let child_available =
             self.child_layout_available(node, AvailableSize::definite(viewport_content_size));
-        let scroll_axes = self.node(node).interaction.scroll_axes;
+        let scroll_axes = self.interaction(node).scroll_axes;
         let scrolling_main = match axis {
             Axis::Horizontal => scroll_axes.horizontal(),
             Axis::Vertical => scroll_axes.vertical(),
@@ -470,7 +470,7 @@ impl FrameArena {
         node: NodeId,
         viewport: AvailableSize,
     ) -> AvailableSize {
-        let axes = self.node(node).interaction.scroll_axes;
+        let axes = self.interaction(node).scroll_axes;
 
         AvailableSize::new(
             if axes.horizontal() {

@@ -1,8 +1,8 @@
 //! reclaims what partial rebuilds leave behind. A re-rendered entity's old subtree
 //! stays in the arena as detached nodes, along with its text, div and text styles,
-//! event bindings and interaction styles, until the frame compacts.
+//! event bindings, interaction styles and extras, until the frame compacts.
 
-use super::{FrameArena, NodeCache, NodeId, NodeKind};
+use super::{FrameArena, NodeCache, NodeExtras, NodeId, NodeKind};
 
 use crate::{EventBinding, TextStyle};
 
@@ -27,6 +27,7 @@ impl FrameArena {
         self.compact_text_styles();
         self.compact_event_bindings();
         self.compact_interaction_styles();
+        self.compact_extras();
         self.count_text_style_changes();
         self.relink();
         let root = self.moved(root);
@@ -179,13 +180,37 @@ impl FrameArena {
                 continue;
             }
 
-            self.node_mut(owner).interaction.styles =
-                Some(u16::try_from(kept).expect("interaction style indices fit in u16"));
+            self.extras_mut(owner)
+                .expect("nodes with interaction styles have extras")
+                .interaction
+                .styles = Some(u16::try_from(kept).expect("interaction style indices fit in u16"));
             self.interaction_styles[kept] = (self.moved(owner), styles);
             kept += 1;
         }
 
         self.interaction_styles.truncate(kept);
+    }
+
+    /// after the interaction styles, which find their nodes' extras by the old indices
+    fn compact_extras(&mut self) {
+        let mut kept = 0;
+
+        for index in 0..self.extras.len() {
+            let extras = self.extras[index];
+            if self.node(extras.owner).detached {
+                continue;
+            }
+
+            self.node_mut(extras.owner).extras =
+                Some(u16::try_from(kept).expect("extras indices fit in u16"));
+            self.extras[kept] = NodeExtras {
+                owner: self.moved(extras.owner),
+                ..extras
+            };
+            kept += 1;
+        }
+
+        self.extras.truncate(kept);
     }
 
     /// points the links of live nodes, and the frame's own node lists, at the nodes'

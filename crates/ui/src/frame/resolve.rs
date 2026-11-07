@@ -18,7 +18,7 @@ impl FrameArena {
                 return Some(IdentityParent::Entity(entity));
             }
             // otherwise the nearest identified ancestor establishes the scope
-            if let Some(state_id) = parent.element_state_id {
+            if let Some(state_id) = self.element_state_id(parent_id) {
                 return Some(IdentityParent::Element(state_id));
             }
             // unnamed elements do not contribute
@@ -41,14 +41,16 @@ impl FrameArena {
         let mut current = Some(root);
 
         while let Some(node_id) = current {
-            if let Some(local_id) = self.node(node_id).element_id {
+            if let Some(local_id) = self.element_id(node_id) {
                 let parent = self
                     .identity_parent(node_id)
                     .ok_or(IdentityError::MissingEntityScope { node: node_id })?;
 
                 let state_id = states.resolve(parent, local_id, frame_generation)?;
 
-                self.node_mut(node_id).element_state_id = Some(state_id);
+                self.extras_mut(node_id)
+                    .expect("identified nodes have extras")
+                    .element_state_id = Some(state_id);
             }
 
             current = self.next_depth_first_node_within(node_id, root);
@@ -66,9 +68,15 @@ impl FrameArena {
         self.focused = focused;
         self.pressed = pressed;
     }
+    /// nodes without extras don't scroll
     pub(crate) fn resolve_scroll_offsets(&mut self, states: &ScrollStateTable) {
-        for node in self.nodes.iter_mut().filter(|node| !node.detached) {
-            node.interaction.scroll_offset = node
+        for index in 0..self.extras.len() {
+            let extras = &mut self.extras[index];
+            if self.nodes[extras.owner.index()].detached {
+                continue;
+            }
+
+            extras.interaction.scroll_offset = extras
                 .element_state_id
                 .map(|id| states.offset(id))
                 .unwrap_or(Offset::ZERO);

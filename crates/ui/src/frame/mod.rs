@@ -88,9 +88,9 @@ pub(crate) struct Node {
     pub(crate) first_child: Option<NodeId>,
     pub(crate) last_child: Option<NodeId>,
     pub(crate) next_sibling: Option<NodeId>,
-    pub(crate) element_id: Option<ElementId>,
-    pub(crate) element_state_id: Option<ElementStateId>,
-    pub(crate) interaction: NodeInteraction,
+    /// where the node's identity and interaction sit in the frame's node extras, for
+    /// the few nodes that have them
+    pub(crate) extras: Option<u16>,
     pub(crate) layout: NodeLayout,
     /// where the node's resolved text style sits in the frame's resolved text styles
     pub(crate) resolved_text_style: u16,
@@ -108,9 +108,7 @@ impl Node {
             first_child: None,
             last_child: None,
             next_sibling: None,
-            element_id: None,
-            element_state_id: None,
-            interaction: NodeInteraction::default(),
+            extras: None,
             layout: NodeLayout::default(),
             resolved_text_style: 0,
             event_bindings: BindingRun::EMPTY,
@@ -134,6 +132,17 @@ impl BindingRun {
 
         start..start + usize::from(self.len)
     }
+}
+
+/// the identity and interaction of a node that has an element id or is interactive.
+/// Few nodes do, so the frame keeps them in their own table instead of in every [`Node`]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NodeExtras {
+    /// the node these belong to
+    owner: NodeId,
+    pub(crate) element_id: Option<ElementId>,
+    pub(crate) element_state_id: Option<ElementStateId>,
+    pub(crate) interaction: NodeInteraction,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -242,6 +251,8 @@ pub(crate) struct FrameArena {
     node_cache: FrameBuffer<NodeCache>,
     /// each with the node it belongs to
     interaction_styles: FrameBuffer<(NodeId, InteractionStyles)>,
+    /// the identity and interaction of the nodes that have them, each with its node
+    extras: FrameBuffer<NodeExtras>,
     /// the elements whose interaction styles apply
     focused: Option<ElementStateId>,
     pressed: Option<ElementStateId>,
@@ -271,6 +282,7 @@ impl FrameArena {
             text_style_changes: 0,
             node_cache: FrameBuffer::new_in(pool, Table::Nodes),
             interaction_styles: FrameBuffer::new_in(pool, Table::Nodes),
+            extras: FrameBuffer::new_in(pool, Table::Nodes),
             focused: None,
             pressed: None,
             subtree_paint_bounds_valid: false,
@@ -297,6 +309,11 @@ impl FrameArena {
     #[cfg(test)]
     pub(crate) fn div_style_count(&self) -> usize {
         self.styles.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn extras_count(&self) -> usize {
+        self.extras.len()
     }
 
     #[cfg(test)]
@@ -332,6 +349,7 @@ impl FrameArena {
         self.event_bindings.clear();
         self.node_cache.clear();
         self.interaction_styles.clear();
+        self.extras.clear();
         self.focused = None;
         self.pressed = None;
         self.subtree_paint_bounds_valid = false;
@@ -351,6 +369,7 @@ impl FrameArena {
         // the resolved styles keep the room mounting reserved, so resolving never
         // allocates
         self.interaction_styles.shrink_to_fit();
+        self.extras.shrink_to_fit();
     }
 
     /// every node in the frame, detached ones included. Doesn't borrow the frame
@@ -388,7 +407,8 @@ impl FrameArena {
             return None;
         };
         let style = self.styles[usize::from(style)];
-        let (Some(index), Some(element)) = (node.interaction.styles, node.element_state_id) else {
+        let (Some(index), Some(element)) = (self.interaction(id).styles, self.element_state_id(id))
+        else {
             return Some(style);
         };
 
@@ -449,14 +469,72 @@ impl FrameArena {
         &self,
         element: ElementStateId,
     ) -> Option<&InteractionStyles> {
-        let node = self
-            .nodes
-            .iter()
-            .find(|node| !node.detached && node.element_state_id == Some(element))?;
+        let extras = self.extras.iter().find(|extras| {
+            !self.node(extras.owner).detached && extras.element_state_id == Some(element)
+        })?;
 
-        node.interaction
+        extras
+            .interaction
             .styles
             .map(|index| &self.interaction_styles[usize::from(index)].1)
+    }
+
+    fn extras(&self, id: NodeId) -> Option<&NodeExtras> {
+        self.node(id)
+            .extras
+            .map(|index| &self.extras[usize::from(index)])
+    }
+
+    pub(crate) fn extras_mut(&mut self, id: NodeId) -> Option<&mut NodeExtras> {
+        self.node(id)
+            .extras
+            .map(|index| &mut self.extras[usize::from(index)])
+    }
+
+    /// the node's extras, adding empty ones if it has none
+    fn extras_or_insert(&mut self, id: NodeId) -> Result<&mut NodeExtras, MountError> {
+        let index = match self.node(id).extras {
+            Some(index) => index,
+            None => {
+                // each belongs to a node, so they never outnumber the nodes
+                let index = u16::try_from(self.extras.len()).map_err(|_| MountError::NodesFull)?;
+                self.extras.push(NodeExtras {
+                    owner: id,
+                    element_id: None,
+                    element_state_id: None,
+                    interaction: NodeInteraction::default(),
+                })?;
+                self.node_mut(id).extras = Some(index);
+
+                index
+            }
+        };
+
+        Ok(&mut self.extras[usize::from(index)])
+    }
+
+    /// scrolls any node, giving it extras if it has none
+    #[cfg(test)]
+    pub(crate) fn scroll_node(&mut self, id: NodeId, offset: Offset) {
+        self.extras_or_insert(id)
+            .expect("test pools have room")
+            .interaction
+            .scroll_offset = offset;
+    }
+
+    pub(crate) fn element_id(&self, id: NodeId) -> Option<ElementId> {
+        self.extras(id).and_then(|extras| extras.element_id)
+    }
+
+    pub(crate) fn element_state_id(&self, id: NodeId) -> Option<ElementStateId> {
+        self.extras(id).and_then(|extras| extras.element_state_id)
+    }
+
+    /// how the node takes input. Nodes without extras take none
+    pub(crate) fn interaction(&self, id: NodeId) -> NodeInteraction {
+        self.extras(id)
+            .map(|extras| extras.interaction)
+            .unwrap_or_default()
     }
 
     pub(crate) fn text(&self, range: TextRange) -> &str {

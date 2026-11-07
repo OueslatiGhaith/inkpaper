@@ -119,7 +119,7 @@ pub(crate) trait FrameStore {
 
     fn append_child(&mut self, parent: NodeId, child: NodeId);
 
-    fn identify(&mut self, node: NodeId, id: ElementId);
+    fn identify(&mut self, node: NodeId, id: ElementId) -> Result<(), MountError>;
 
     fn apply_interactivity(
         &mut self,
@@ -259,8 +259,10 @@ impl FrameStore for FrameArena {
         self.nodes[parent_idx].last_child = Some(child);
     }
 
-    fn identify(&mut self, node: NodeId, id: ElementId) {
-        self.nodes[node.index()].element_id = Some(id);
+    fn identify(&mut self, node: NodeId, id: ElementId) -> Result<(), MountError> {
+        self.extras_or_insert(node)?.element_id = Some(id);
+
+        Ok(())
     }
 
     fn apply_interactivity(
@@ -273,8 +275,17 @@ impl FrameStore for FrameArena {
             pressed: interactivity.pressed_style,
         };
 
+        let interactive = !styles.is_empty()
+            || interactivity.focusable
+            || interactivity.scroll_axes.any()
+            || interactivity.initial_scroll_child.is_some();
+        if !interactive {
+            return Ok(());
+        }
+        self.extras_or_insert(node)?;
+
         if !styles.is_empty() {
-            match self.nodes[node.index()].interaction.styles {
+            match self.interaction(node).styles {
                 Some(index) => {
                     let (_, existing) = &mut self.interaction_styles[usize::from(index)];
                     *existing = existing.merge(styles);
@@ -285,12 +296,12 @@ impl FrameStore for FrameArena {
                     // focused or pressed, the node may change its text style
                     self.reserve_text_style_change()?;
                     self.interaction_styles.push((node, styles))?;
-                    self.nodes[node.index()].interaction.styles = Some(index);
+                    self.extras_or_insert(node)?.interaction.styles = Some(index);
                 }
             }
         }
 
-        let interaction = &mut self.nodes[node.index()].interaction;
+        let interaction = &mut self.extras_or_insert(node)?.interaction;
         interaction.focusable |= interactivity.focusable;
         if interactivity.scroll_axes.any() {
             interaction.scroll_axes = interactivity.scroll_axes;
@@ -373,8 +384,8 @@ impl MountCx<'_> {
         self.frame.append_child(parent, child);
     }
 
-    pub(crate) fn identify(&mut self, node: NodeId, id: ElementId) {
-        self.frame.identify(node, id);
+    pub(crate) fn identify(&mut self, node: NodeId, id: ElementId) -> Result<(), MountError> {
+        self.frame.identify(node, id)
     }
 
     pub(crate) fn apply_interactivity(

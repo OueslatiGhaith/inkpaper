@@ -293,6 +293,7 @@ fn partial_rebuild_matches_a_full_rebuild() {
         partial_frame.text_style_count(),
         full_frame.text_style_count()
     );
+    assert_eq!(partial_frame.extras_count(), full_frame.extras_count());
 
     for fixture in [&mut partial, &mut full] {
         fixture.runtime.clear_focus();
@@ -648,7 +649,11 @@ fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
     let (nodes, text, styles) = (
         frame.node_count(),
         frame.text_bytes_used(),
-        (frame.div_style_count(), frame.text_style_count()),
+        (
+            frame.div_style_count(),
+            frame.text_style_count(),
+            frame.extras_count(),
+        ),
     );
 
     for _ in 0..50 {
@@ -667,7 +672,11 @@ fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
         (
             frame.node_count(),
             frame.text_bytes_used(),
-            (frame.div_style_count(), frame.text_style_count())
+            (
+                frame.div_style_count(),
+                frame.text_style_count(),
+                frame.extras_count()
+            )
         ),
         (nodes, text, styles)
     );

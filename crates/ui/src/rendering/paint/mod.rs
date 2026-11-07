@@ -467,7 +467,7 @@ impl FrameArena {
         let parent_layout_bounds = self.node(parent).layout.bounds;
         let parent_translation = visual.bounds().origin - parent_layout_bounds.origin;
         // children additionally receive this parent's own scroll translation
-        let child_translation = parent_translation - self.node(parent).interaction.scroll_offset;
+        let child_translation = parent_translation - self.interaction(parent).scroll_offset;
 
         // search the physical mount interval before the last sibling root.
         // every point in this interval belongs to one of the non-last direct-child
