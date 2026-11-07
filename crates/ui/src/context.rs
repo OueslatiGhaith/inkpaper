@@ -1,7 +1,7 @@
 use core::any::TypeId;
 
 use crate::{
-    Canvas, Entity, EntityAllocError, EntityId, EventEmitter, EventError, Listener, PaintCx,
+    Canvas, Entity, EntityAllocError, EntityId, EventEmitter, Listener, OutOfMemory, PaintCx,
     RuntimeCx,
     callback::{CallbackAllocError, register_canvas_callback, register_listener},
     emitter::{self, Handler},
@@ -38,7 +38,7 @@ impl<'a, T> Context<'a, T> {
     ///
     /// # Panics
     ///
-    /// when the entity table is full. See [`Self::try_new`]
+    /// when every entity id is taken or the pool has no room. See [`Self::try_new`]
     #[allow(clippy::new_ret_no_self)]
     #[track_caller]
     pub fn new<U>(&mut self, build: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U>
@@ -143,7 +143,7 @@ impl<T: 'static> Context<'_, T> {
     ///
     /// # Panics
     ///
-    /// when the queue of events waiting for delivery is full. See [`Self::try_emit`]
+    /// when the pool has no room for the event. See [`Self::try_emit`]
     #[track_caller]
     pub fn emit<E>(&mut self, event: E)
     where
@@ -155,7 +155,7 @@ impl<T: 'static> Context<'_, T> {
         }
     }
 
-    pub fn try_emit<E>(&mut self, event: E) -> Result<(), EventError>
+    pub fn try_emit<E>(&mut self, event: E) -> Result<(), OutOfMemory>
     where
         T: EventEmitter<E>,
         E: Copy + 'static,
@@ -168,7 +168,7 @@ impl<T: 'static> Context<'_, T> {
     ///
     /// # Panics
     ///
-    /// when the subscription table is full. See [`Self::try_subscribe`]
+    /// when the pool has no room for the subscription. See [`Self::try_subscribe`]
     #[track_caller]
     pub fn subscribe<U, E>(&mut self, emitter: Entity<U>, handler: Handler<T, U, E>)
     where
@@ -184,7 +184,7 @@ impl<T: 'static> Context<'_, T> {
         &mut self,
         emitter: Entity<U>,
         handler: Handler<T, U, E>,
-    ) -> Result<(), EventError>
+    ) -> Result<(), OutOfMemory>
     where
         U: EventEmitter<E>,
         E: 'static,

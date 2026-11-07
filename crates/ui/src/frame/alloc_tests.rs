@@ -117,10 +117,13 @@ fn reservation_failure_keeps_nodes_caches_and_text_consistent() {
     // room for the text, but not for the first nodes
     let mut nodes = FrameArena::new_in(pool_ref_with_room(256));
 
-    assert_eq!(
+    assert!(matches!(
         nodes.push_text("rollback", TextStyle::default()),
-        Err(MountError::NodesFull)
-    );
+        Err(MountError::OutOfMemory(OutOfMemory {
+            table: Table::Nodes,
+            ..
+        }))
+    ));
     assert_eq!(nodes.node_count(), 0);
     assert_eq!(nodes.text_bytes_used(), 0);
     assert_eq!(nodes.node_cache.len(), 0);
@@ -132,7 +135,10 @@ fn reservation_failure_keeps_nodes_caches_and_text_consistent() {
 
     assert_eq!(
         text.push_text(&long, TextStyle::default()),
-        Err(MountError::TextStorageFull)
+        Err(MountError::OutOfMemory(OutOfMemory {
+            table: Table::Text,
+            requested: 4 * 1024,
+        }))
     );
     assert_eq!(text.node_count(), 1);
     assert_eq!(text.node_cache.len(), 1);

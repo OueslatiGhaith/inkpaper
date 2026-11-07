@@ -3,7 +3,10 @@ use core::{
     cell::{Cell, RefCell},
 };
 
-use crate::{EntityId, storage::VecStorage};
+use crate::{
+    EntityId,
+    pool::{PoolRef, PoolVec, Table},
+};
 
 /// state a render can read
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,21 +57,21 @@ impl DependencyStore for NoDependencies {
     fn clear(&self) {}
 }
 
-pub(crate) struct Dependencies<V: VecStorage<Dependency>> {
-    edges: RefCell<V>,
+pub(crate) struct Dependencies {
+    edges: RefCell<PoolVec<Dependency>>,
     incomplete: Cell<bool>,
 }
 
-impl<V: VecStorage<Dependency>> Dependencies<V> {
-    pub(crate) fn new(edges: V) -> Self {
+impl Dependencies {
+    pub(crate) fn new_in(pool: PoolRef) -> Self {
         Self {
-            edges: RefCell::new(edges),
+            edges: RefCell::new(PoolVec::new_in(pool, Table::Dependencies)),
             incomplete: Cell::new(false),
         }
     }
 }
 
-impl<V: VecStorage<Dependency>> DependencyStore for Dependencies<V> {
+impl DependencyStore for Dependencies {
     fn record(&self, reader: EntityId, source: Source) {
         if source == Source::Entity(reader) {
             return;
@@ -120,6 +123,7 @@ impl<V: VecStorage<Dependency>> DependencyStore for Dependencies<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pool::testing::{pool_ref, pool_ref_with_room};
 
     fn entity(slot: u16) -> EntityId {
         EntityId::new(slot, 0)
@@ -133,7 +137,7 @@ mod tests {
 
     #[test]
     fn records_each_read_once() {
-        let dependencies = Dependencies::new(heapless::Vec::<Dependency, 8>::new());
+        let dependencies = Dependencies::new_in(pool_ref());
 
         dependencies.record(entity(0), Source::Entity(entity(1)));
         dependencies.record(entity(0), Source::Entity(entity(1)));
@@ -149,7 +153,7 @@ mod tests {
 
     #[test]
     fn forgetting_a_reader_keeps_the_others() {
-        let dependencies = Dependencies::new(heapless::Vec::<Dependency, 8>::new());
+        let dependencies = Dependencies::new_in(pool_ref());
         let theme = Source::Global(TypeId::of::<u8>());
 
         dependencies.record(entity(0), theme);
@@ -163,12 +167,14 @@ mod tests {
 
     #[test]
     fn a_full_table_is_incomplete_until_cleared() {
-        let dependencies = Dependencies::new(heapless::Vec::<Dependency, 1>::new());
+        let dependencies = Dependencies::new_in(pool_ref_with_room(256));
 
         dependencies.record(entity(0), Source::Entity(entity(1)));
         assert!(!dependencies.is_incomplete());
 
-        dependencies.record(entity(0), Source::Entity(entity(2)));
+        for source in 2..1_000 {
+            dependencies.record(entity(0), Source::Entity(entity(source)));
+        }
         assert!(dependencies.is_incomplete());
 
         dependencies.clear();

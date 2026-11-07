@@ -285,11 +285,13 @@ fn a_full_queue_reports_it() {
     let sent = results.iter().take_while(|result| result.is_ok()).count();
 
     assert!(sent > 0);
-    assert!(
-        results[sent..]
-            .iter()
-            .all(|result| *result == Err(EventError::QueueFull))
-    );
+    assert!(results[sent..].iter().all(|result| matches!(
+        result,
+        Err(OutOfMemory {
+            table: Table::Events,
+            ..
+        })
+    )));
     // the ones that fit are delivered
     assert_eq!(log(&runtime, parent).len(), sent);
 }

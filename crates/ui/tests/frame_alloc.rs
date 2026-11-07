@@ -332,7 +332,8 @@ fn rebuilds_that_run_out_of_pool_can_be_retried() {
         assert!(
             matches!(
                 error,
-                FrameBuildError::Mount(_) | FrameBuildError::Identity(IdentityError::StatesFull)
+                FrameBuildError::Mount(MountError::OutOfMemory(_))
+                    | FrameBuildError::Identity(IdentityError::OutOfMemory(_))
             ),
             "{error:?}"
         );
@@ -377,7 +378,13 @@ fn entity_allocation_failures_do_not_run_constructors() {
         });
 
         let Ok(entity) = result else {
-            assert_eq!(result, Err(EntityAllocError::StorageFull));
+            assert!(matches!(
+                result,
+                Err(EntityAllocError::OutOfMemory(OutOfMemory {
+                    table: Table::Entities,
+                    ..
+                }))
+            ));
             assert!(!called.get());
             failures += 1;
             continue;
@@ -484,7 +491,13 @@ fn callback_allocation_failures_drop_captures() {
                 .unwrap();
 
             if result.is_err() {
-                assert_eq!(result, Err(CallbackAllocError::StorageFull));
+                assert!(matches!(
+                    result,
+                    Err(CallbackAllocError::OutOfMemory(OutOfMemory {
+                        table: Table::Callbacks,
+                        ..
+                    }))
+                ));
                 assert_eq!(drops.get(), 1);
                 failures += 1;
                 continue;
@@ -572,7 +585,13 @@ fn global_allocation_failures_drop_inputs_and_keep_existing_globals() {
             break;
         }
 
-        assert_eq!(result, Err(GlobalSetError::StorageFull));
+        assert!(matches!(
+            result,
+            Err(GlobalSetError::OutOfMemory(OutOfMemory {
+                table: Table::Globals,
+                ..
+            }))
+        ));
         assert_eq!(runtime.global_count(), 1);
         assert_eq!(runtime.memory().table(Table::Globals), bytes);
         assert_eq!(runtime.global::<Value>().0.get(), 0);

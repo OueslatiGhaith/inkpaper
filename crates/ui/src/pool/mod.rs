@@ -61,9 +61,33 @@ pub enum Table {
 impl Table {
     const COUNT: usize = 8;
 
+    /// every table, in declaration order
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::Nodes,
+        Self::Text,
+        Self::Dependencies,
+        Self::ElementStates,
+        Self::Events,
+        Self::Entities,
+        Self::Callbacks,
+        Self::Globals,
+    ];
+
     const fn index(self) -> usize {
         self as usize
     }
+}
+
+/// a runtime table needed more memory than its [`Pool`] had left.
+///
+/// [`MemoryStats`] tells how much of the pool each table uses, to size it
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct OutOfMemory {
+    /// the table that asked
+    pub table: Table,
+    /// the bytes it asked for
+    pub requested: usize,
 }
 
 /// how much of a [`Pool`] the runtime uses.

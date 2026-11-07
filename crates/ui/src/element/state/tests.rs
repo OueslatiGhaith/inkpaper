@@ -359,12 +359,18 @@ fn clear_changes_generation_when_slot_is_reused() {
 }
 
 #[test]
-fn reports_full_states_when_the_pool_has_no_room() {
+fn reports_out_of_memory_when_the_pool_has_no_room_for_states() {
     let mut states = ElementStateTable::new_in(pool_ref_of(4 * 1024));
     let parent = entity_parent(0);
 
     let result =
         (0..1024).try_for_each(|id| states.resolve(parent, ElementId::Value(id), 1).map(|_| ()));
 
-    assert_eq!(result, Err(IdentityError::StatesFull));
+    assert!(matches!(
+        result,
+        Err(IdentityError::OutOfMemory(OutOfMemory {
+            table: Table::ElementStates,
+            ..
+        }))
+    ));
 }

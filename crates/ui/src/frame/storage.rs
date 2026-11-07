@@ -3,7 +3,6 @@ use core::ops::{Deref, DerefMut};
 use crate::{
     MountError,
     pool::{PoolRef, PoolVec, Table},
-    storage::VecStorage,
 };
 
 pub(crate) struct FrameBuffer<T> {
@@ -30,33 +29,23 @@ impl<T> FrameBuffer<T> {
         self.values.truncate(len);
     }
 
-    pub(super) fn reserve(
-        &mut self,
-        additional: usize,
-        full: MountError,
-    ) -> Result<(), MountError> {
+    pub(super) fn reserve(&mut self, additional: usize) -> Result<(), MountError> {
         self.values
             .try_reserve(additional)
-            .map_err(|error| error.or(full, MountError::AllocationFailed))
+            .map_err(MountError::OutOfMemory)
     }
 
-    pub(super) fn push(&mut self, value: T, full: MountError) -> Result<(), MountError> {
-        self.values
-            .try_push(value)
-            .map_err(|error| error.or(full, MountError::AllocationFailed))
+    pub(super) fn push(&mut self, value: T) -> Result<(), MountError> {
+        self.values.try_push(value).map_err(MountError::OutOfMemory)
     }
 
-    pub(super) fn extend_from_slice(
-        &mut self,
-        values: &[T],
-        full: MountError,
-    ) -> Result<(), MountError>
+    pub(super) fn extend_from_slice(&mut self, values: &[T]) -> Result<(), MountError>
     where
         T: Copy,
     {
         self.values
             .try_extend_from_slice(values)
-            .map_err(|error| error.or(full, MountError::AllocationFailed))
+            .map_err(MountError::OutOfMemory)
     }
 
     pub(super) fn shrink_to_fit(&mut self) {

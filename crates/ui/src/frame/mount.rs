@@ -12,13 +12,12 @@ use crate::{
 impl FrameArena {
     fn push_node(&mut self, kind: NodeKind) -> Result<NodeId, MountError> {
         let index = u16::try_from(self.nodes.len()).map_err(|_| MountError::NodesFull)?;
-        self.nodes.reserve(1, MountError::NodesFull)?;
-        self.node_cache.reserve(1, MountError::NodesFull)?;
+        self.nodes.reserve(1)?;
+        self.node_cache.reserve(1)?;
 
         let id = NodeId::new(index);
-        self.nodes.push(Node::new(kind), MountError::NodesFull)?;
-        self.node_cache
-            .push(NodeCache::Empty, MountError::NodesFull)?;
+        self.nodes.push(Node::new(kind))?;
+        self.node_cache.push(NodeCache::Empty)?;
 
         self.subtree_paint_bounds_valid = false;
 
@@ -73,14 +72,11 @@ impl FrameArena {
             "a node's event bindings must be contiguous"
         );
 
-        self.event_bindings.push(
-            EventBinding {
-                event_type,
-                callback,
-                node,
-            },
-            MountError::EventBindingsFull,
-        )?;
+        self.event_bindings.push(EventBinding {
+            event_type,
+            callback,
+            node,
+        })?;
 
         let start = if run.len == 0 { index } else { run.start };
         self.nodes[node.index()].event_bindings = BindingRun { start, len };
@@ -143,8 +139,7 @@ impl FrameStore for FrameArena {
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
         let start = self.text.len();
 
-        self.text
-            .extend_from_slice(text.as_bytes(), MountError::TextStorageFull)?;
+        self.text.extend_from_slice(text.as_bytes())?;
 
         let range = TextRange {
             start,
@@ -195,15 +190,14 @@ impl FrameStore for FrameArena {
         };
 
         // reserve the index entry first, so a mounted entity node is always indexed
-        self.entity_nodes.reserve(1, MountError::NodesFull)?;
+        self.entity_nodes.reserve(1)?;
         let node = self.push_node(NodeKind::Entity {
             entity,
             render,
             expanded: false,
         })?;
 
-        self.entity_nodes
-            .push((entity, node), MountError::NodesFull)?;
+        self.entity_nodes.push((entity, node))?;
         self.entity_nodes[position..].rotate_right(1);
 
         Ok(node)
@@ -259,8 +253,7 @@ impl FrameStore for FrameArena {
                 None => {
                     let index = u16::try_from(self.interaction_styles.len())
                         .map_err(|_| MountError::InteractionStylesFull)?;
-                    self.interaction_styles
-                        .push((node, styles), MountError::InteractionStylesFull)?;
+                    self.interaction_styles.push((node, styles))?;
                     self.nodes[node.index()].interaction.styles = Some(index);
                 }
             }

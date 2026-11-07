@@ -1,7 +1,6 @@
 use crate::{
     ElementId, EntityId, NodeId,
-    pool::{PoolRef, PoolVec, Table},
-    storage::VecStorage,
+    pool::{OutOfMemory, PoolRef, PoolVec, Table},
 };
 
 #[cfg(test)]
@@ -69,6 +68,7 @@ impl ElementStateSlot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityError {
+    /// every element state id is taken
     StatesFull,
     DuplicateElementId {
         id: ElementId,
@@ -78,8 +78,7 @@ pub enum IdentityError {
     },
     /// the parent element's identity was not resolved in this frame
     MissingParentState,
-    /// heap-backed storage could not allocate
-    AllocationFailed,
+    OutOfMemory(OutOfMemory),
 }
 
 pub(crate) struct ElementStateTable {
@@ -138,9 +137,7 @@ impl ElementStateTable {
 
                 self.slots
                     .try_push(ElementStateSlot::vacant())
-                    .map_err(|error| {
-                        error.or(IdentityError::StatesFull, IdentityError::AllocationFailed)
-                    })?;
+                    .map_err(IdentityError::OutOfMemory)?;
                 index
             }
         };

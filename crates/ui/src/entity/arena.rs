@@ -1,7 +1,7 @@
 use core::{alloc::Layout, any::TypeId, ptr::NonNull};
 
 use crate::{
-    pool::{PoolRef, Table},
+    pool::{OutOfMemory, PoolRef, Table},
     slot_table::{BorrowKind, NotLive, ReserveError, SlotTable},
 };
 
@@ -11,10 +11,9 @@ use super::{EntityId, EntityStore, RawEntityReservation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityAllocError {
+    /// every slot number is taken
     SlotsFull,
-    StorageFull,
-    /// heap-backed storage could not allocate
-    AllocationFailed,
+    OutOfMemory(OutOfMemory),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +28,7 @@ impl From<ReserveError> for EntityAllocError {
     fn from(error: ReserveError) -> Self {
         match error {
             ReserveError::SlotsFull => Self::SlotsFull,
-            ReserveError::StorageFull => Self::StorageFull,
+            ReserveError::OutOfMemory(error) => Self::OutOfMemory(error),
         }
     }
 }
@@ -397,7 +396,10 @@ mod tests {
 
         assert!(matches!(
             arena.insert(Big { _data: [0; 256] }),
-            Err(EntityAllocError::StorageFull),
+            Err(EntityAllocError::OutOfMemory(OutOfMemory {
+                table: Table::Entities,
+                ..
+            })),
         ));
     }
 

@@ -183,18 +183,24 @@ fn mounts_stateful_element_identity() {
 const SMALL_POOL: usize = 4 * 1024;
 
 #[test]
-fn reports_full_nodes_when_the_pool_has_no_room() {
+fn reports_out_of_memory_when_the_pool_has_no_room_for_nodes() {
     let mut frame = FrameArena::new_in(pool_ref_of(SMALL_POOL));
     let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
 
     let result = frame.mount(div().children((0..64).map(|_| div())), app);
 
-    assert_eq!(result, Err(MountError::NodesFull));
+    assert!(matches!(
+        result,
+        Err(MountError::OutOfMemory(OutOfMemory {
+            table: Table::Nodes,
+            ..
+        }))
+    ));
 }
 
 #[test]
-fn reports_full_text_when_the_pool_has_no_room() {
+fn reports_out_of_memory_when_the_pool_has_no_room_for_text() {
     let mut frame = FrameArena::new_in(pool_ref_of(SMALL_POOL));
     let globals = GlobalArena::new_in(pool_ref());
     let app = AppContext::from_globals(&globals);
@@ -202,7 +208,13 @@ fn reports_full_text_when_the_pool_has_no_room() {
 
     let result = frame.mount(div().child(long.as_str()), app);
 
-    assert_eq!(result, Err(MountError::TextStorageFull));
+    assert_eq!(
+        result,
+        Err(MountError::OutOfMemory(OutOfMemory {
+            table: Table::Text,
+            requested: SMALL_POOL,
+        }))
+    );
 }
 
 #[test]
@@ -216,10 +228,13 @@ fn node_growth_failure_drops_the_text_it_added() {
         nodes += 1;
     }
 
-    assert_eq!(
+    assert!(matches!(
         frame.push_text("rollback", TextStyle::default()),
-        Err(MountError::NodesFull)
-    );
+        Err(MountError::OutOfMemory(OutOfMemory {
+            table: Table::Nodes,
+            ..
+        }))
+    ));
     assert_eq!(frame.text_bytes_used(), 0);
     assert_eq!(frame.node_count(), nodes);
 }
@@ -1359,10 +1374,13 @@ fn identity_resolution_reports_state_capacity_exhaustion() {
         .expand_entities(RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty))
         .unwrap();
 
-    assert_eq!(
-        frame.resolve_identities(root, &mut states, 1,),
-        Err(IdentityError::StatesFull)
-    );
+    assert!(matches!(
+        frame.resolve_identities(root, &mut states, 1),
+        Err(IdentityError::OutOfMemory(OutOfMemory {
+            table: Table::ElementStates,
+            ..
+        }))
+    ));
 }
 
 #[test]

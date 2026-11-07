@@ -15,7 +15,7 @@ use crate::{
     entity::{EntityArena, EntityStore, create_entity},
     global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
-    pool::{MemoryStats, Pool, PoolVec, Table},
+    pool::{MemoryStats, Pool},
     px,
     resources::RuntimeResources,
     runtime::root::RuntimeRoot,
@@ -30,9 +30,9 @@ mod root;
 
 pub use api::{RenderRuntimeApi, ResourceRuntimeApi, RuntimeApi};
 pub(crate) use cx::RuntimeCx;
+use dependencies::Dependencies;
 #[cfg(test)]
 pub(crate) use dependencies::NoDependencies;
-use dependencies::{Dependencies, Dependency};
 pub(crate) use dependencies::{DependencyStore, Source};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +80,7 @@ pub struct Runtime<RESOURCES = ()> {
     /// whether a rebuild renders only the entities that need it
     partial_rebuilds: bool,
     /// what each entity read during its last render
-    dependencies: Dependencies<PoolVec<Dependency>>,
+    dependencies: Dependencies,
     /// the damage of the last rebuild, once the layout after it ran
     rebuild_damage: Option<DamageRegion>,
     /// the visual damage taken along with a rebuild, which its damage includes
@@ -137,7 +137,7 @@ where
             all_dirty: Cell::new(false),
             full_rebuild_pending: Cell::new(false),
             partial_rebuilds: false,
-            dependencies: Dependencies::new(PoolVec::new_in(memory, Table::Dependencies)),
+            dependencies: Dependencies::new_in(memory),
             rebuild_damage: None,
             taken_visual_damage: Cell::new(DamageRegion::none()),
             visual_invalidation: Cell::new(RenderInvalidation::none()),
@@ -421,10 +421,10 @@ impl<RESOURCES> Runtime<RESOURCES> {
         self.frame.text_bytes_used()
     }
 
-    /// releases spare frame capacity while preserving the current frame.
+    /// returns spare frame capacity to the pool while preserving the current frame.
     ///
-    /// call after rebuilding a smaller screen, rather than after every frame. The allocator
-    /// may retain some capacity. Does nothing for fixed storage
+    /// call after rebuilding a smaller screen, rather than after every frame. A table
+    /// that can't move keeps its capacity
     pub fn shrink_frame_storage(&mut self) {
         self.frame.shrink_to_fit();
     }

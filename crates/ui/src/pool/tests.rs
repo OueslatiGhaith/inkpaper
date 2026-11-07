@@ -1,10 +1,10 @@
 use core::alloc::Layout;
 use std::{rc::Rc, vec, vec::Vec};
 
+use super::OutOfMemory;
 #[cfg(feature = "alloc")]
 use super::Pool;
 use super::{GRANULARITY, PoolVec, Table, testing::pool_of as pool};
-use crate::storage::{StorageError, VecStorage};
 
 fn bytes(size: usize) -> Layout {
     Layout::from_size_align(size, 1).unwrap()
@@ -180,13 +180,20 @@ fn vec_reports_full_without_changing_contents() {
     values.try_extend_from_slice(&[1u8, 2]).unwrap();
     let too_many = pool.stats().capacity;
 
-    assert_eq!(values.try_reserve(too_many), Err(StorageError::Full));
-    assert_eq!(values.try_resize(too_many, 0), Err(StorageError::Full));
+    let out_of_memory = |requested| {
+        Err(OutOfMemory {
+            table: Table::Text,
+            requested,
+        })
+    };
+
+    assert_eq!(values.try_reserve(too_many), out_of_memory(too_many + 2));
+    assert_eq!(values.try_resize(too_many, 0), out_of_memory(too_many));
     assert_eq!(
         values.try_extend_from_slice(&vec![0; too_many]),
-        Err(StorageError::Full)
+        out_of_memory(too_many + 2)
     );
-    assert_eq!(values.try_reserve(usize::MAX), Err(StorageError::Full));
+    assert_eq!(values.try_reserve(usize::MAX), out_of_memory(usize::MAX));
     assert_eq!(&*values, &[1, 2]);
 }
 
@@ -238,4 +245,11 @@ fn vec_of_zero_sized_values_uses_no_memory() {
 
     assert_eq!(values.len(), 1_000);
     assert_eq!(pool.stats().used, 0);
+}
+
+#[test]
+fn lists_every_table_in_index_order() {
+    for (index, table) in Table::ALL.into_iter().enumerate() {
+        assert_eq!(table.index(), index);
+    }
 }

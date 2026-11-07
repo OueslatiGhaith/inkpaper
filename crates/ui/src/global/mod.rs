@@ -8,7 +8,7 @@ use core::{
 
 use crate::{
     BorrowKind, RuntimeCx,
-    pool::{PoolRef, Table},
+    pool::{OutOfMemory, PoolRef, Table},
     runtime::Source,
     slot_table::{ReserveError, SlotTable},
 };
@@ -31,11 +31,10 @@ pub enum GlobalAccessError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GlobalSetError {
+    /// every slot number is taken
     SlotsFull,
-    StorageFull,
+    OutOfMemory(OutOfMemory),
     BorrowConflict,
-    /// heap-backed storage could not allocate
-    AllocationFailed,
 }
 
 pub trait GlobalStore {
@@ -51,7 +50,7 @@ impl From<ReserveError> for GlobalSetError {
     fn from(error: ReserveError) -> Self {
         match error {
             ReserveError::SlotsFull => Self::SlotsFull,
-            ReserveError::StorageFull => Self::StorageFull,
+            ReserveError::OutOfMemory(error) => Self::OutOfMemory(error),
         }
     }
 }

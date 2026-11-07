@@ -4,16 +4,15 @@ use crate::{
     BorrowKind, Context, Entity, EntityAccessError, EntityId, Listener, PaintCx, RuntimeCx,
     callback::CallbackId,
     entity::{EntityStore, RawEntityBorrow},
-    pool::{PoolRef, Table},
+    pool::{OutOfMemory, PoolRef, Table},
     slot_table::{ReserveError, SlotTable},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallbackAllocError {
+    /// every slot number is taken
     SlotsFull,
-    StorageFull,
-    /// heap-backed storage could not allocate
-    AllocationFailed,
+    OutOfMemory(OutOfMemory),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +115,7 @@ impl From<ReserveError> for CallbackAllocError {
     fn from(error: ReserveError) -> Self {
         match error {
             ReserveError::SlotsFull => Self::SlotsFull,
-            ReserveError::StorageFull => Self::StorageFull,
+            ReserveError::OutOfMemory(error) => Self::OutOfMemory(error),
         }
     }
 }
@@ -818,6 +817,12 @@ mod tests {
             let _ = &capture;
         });
 
-        assert!(matches!(result, Err(CallbackAllocError::StorageFull)));
+        assert!(matches!(
+            result,
+            Err(CallbackAllocError::OutOfMemory(OutOfMemory {
+                table: Table::Callbacks,
+                ..
+            }))
+        ));
     }
 }

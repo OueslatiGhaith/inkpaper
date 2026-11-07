@@ -6,7 +6,7 @@ use crate::{
     frame::storage::FrameBuffer,
     interaction::scroll::ScrollAxes,
     layout::AvailableSize,
-    pool::{PoolRef, Table},
+    pool::{OutOfMemory, PoolRef, Table},
 };
 #[cfg(feature = "metrics")]
 use crate::{PerformanceMetrics, PerformanceMetricsCell};
@@ -165,15 +165,15 @@ impl InteractionStyles {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MountError {
+    /// every node id is taken
     NodesFull,
-    TextStorageFull,
+    /// every event binding id is taken
     EventBindingsFull,
-    /// too many nodes have focused or pressed styles
+    /// every interaction style id is taken
     InteractionStylesFull,
     EntityAccess(EntityAccessError),
     DuplicateEntityMount(EntityId),
-    /// heap-backed storage could not allocate
-    AllocationFailed,
+    OutOfMemory(OutOfMemory),
 }
 
 impl From<EntityAccessError> for MountError {

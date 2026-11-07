@@ -63,7 +63,7 @@ impl FrameArena {
             if let NodeKind::Entity { entity, .. } = self.node(node).kind
                 && runtime.entities.needs_render(entity)
             {
-                self.rerendered_nodes.push(node, MountError::NodesFull)?;
+                self.rerendered_nodes.push(node)?;
                 current = self.next_node_after_subtree_within(node, root);
                 continue;
             }
@@ -89,7 +89,7 @@ impl FrameArena {
         while let Some(&(entity, node)) = self.detached_entities.last() {
             self.detached_entities
                 .truncate(self.detached_entities.len() - 1);
-            self.stale_entities.push(entity, MountError::NodesFull)?;
+            self.stale_entities.push(entity)?;
             runtime.dependencies.forget(entity);
             self.detach_content(node)?;
         }
@@ -202,7 +202,7 @@ impl FrameArena {
         runtime.entities.mark_rendered(entity);
         // the render records what it reads again
         runtime.dependencies.forget(entity);
-        self.stale_entities.push(entity, MountError::NodesFull)?;
+        self.stale_entities.push(entity)?;
 
         count_metric!(self, entity_render_calls);
         let content = render(entity, runtime, self)?;
@@ -230,8 +230,7 @@ impl FrameArena {
             };
 
             self.unindex_entity(entity);
-            self.detached_entities
-                .push((entity, node), MountError::NodesFull)?;
+            self.detached_entities.push((entity, node))?;
 
             current = self.next_node_after_subtree_within(node, content);
         }

@@ -60,7 +60,13 @@ fn failed_scroll_reservation_can_abort_new_identities_without_losing_old_state()
 
     let new = states.resolve(parent, ElementId::Value(1), 2).unwrap();
 
-    assert_eq!(scroll.prepare(usize::MAX), Err(IdentityError::StatesFull));
+    assert_eq!(
+        scroll.prepare(usize::MAX),
+        Err(IdentityError::OutOfMemory(OutOfMemory {
+            table: Table::ElementStates,
+            requested: usize::MAX,
+        }))
+    );
 
     states.abort_frame(2);
 

@@ -2,7 +2,6 @@ use crate::{
     Offset,
     element::state::{ElementStateId, IdentityError},
     pool::{PoolRef, PoolVec, Table},
-    storage::VecStorage,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -60,9 +59,7 @@ impl ScrollStateTable {
         if slots > self.slots.len() {
             self.slots
                 .try_resize(slots, ScrollSlot::EMPTY)
-                .map_err(|error| {
-                    error.or(IdentityError::StatesFull, IdentityError::AllocationFailed)
-                })?;
+                .map_err(IdentityError::OutOfMemory)?;
         }
 
         Ok(())

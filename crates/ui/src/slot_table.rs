@@ -18,17 +18,14 @@
 
 use core::{alloc::Layout, cell::RefCell, ptr::NonNull};
 
-use crate::{
-    pool::{PoolRef, PoolVec, Table},
-    storage::VecStorage,
-};
+use crate::pool::{OutOfMemory, PoolRef, PoolVec, Table};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReserveError {
     /// every slot number is taken
     SlotsFull,
     /// the pool has no room for the value or the slot
-    StorageFull,
+    OutOfMemory(OutOfMemory),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,7 +123,10 @@ impl<M> SlotTable<M> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<u8>, ReserveError> {
         self.pool
             .allocate(self.table, layout)
-            .ok_or(ReserveError::StorageFull)
+            .ok_or(ReserveError::OutOfMemory(OutOfMemory {
+                table: self.table,
+                requested: layout.size(),
+            }))
     }
 
     /// returns a slot's memory to the pool, if it still holds any
@@ -167,9 +167,7 @@ impl<M: Copy> SlotTable<M> {
         let slot = u16::try_from(slots.len()).map_err(|_| ReserveError::SlotsFull)?;
 
         // reserve the slot first, so a failed slot list doesn't leave a value behind
-        slots
-            .try_reserve(1)
-            .map_err(|_| ReserveError::StorageFull)?;
+        slots.try_reserve(1).map_err(ReserveError::OutOfMemory)?;
         let ptr = self.allocate(layout)?;
 
         slots

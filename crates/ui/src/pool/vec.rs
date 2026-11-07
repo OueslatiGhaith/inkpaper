@@ -6,8 +6,7 @@ use core::{
     ptr::{self, NonNull},
 };
 
-use super::{PoolRef, Table};
-use crate::storage::{StorageError, VecStorage};
+use super::{OutOfMemory, PoolRef, Table};
 
 /// the fewest values a table makes room for when it first grows
 const MIN_CAPACITY: usize = 4;
@@ -42,8 +41,16 @@ impl<T> PoolVec<T> {
         }
     }
 
-    fn grow_to(&mut self, capacity: usize) -> Result<(), StorageError> {
-        let new = Layout::array::<T>(capacity).map_err(|_| StorageError::Full)?;
+    /// an error for growing to `capacity` values
+    fn out_of_memory(&self, capacity: usize) -> OutOfMemory {
+        OutOfMemory {
+            table: self.table,
+            requested: capacity.saturating_mul(mem::size_of::<T>()),
+        }
+    }
+
+    fn grow_to(&mut self, capacity: usize) -> Result<(), OutOfMemory> {
+        let new = Layout::array::<T>(capacity).map_err(|_| self.out_of_memory(capacity))?;
 
         let ptr = if self.capacity == 0 {
             self.pool.allocate(self.table, new)
@@ -56,7 +63,7 @@ impl<T> PoolVec<T> {
             }
         };
 
-        self.ptr = ptr.ok_or(StorageError::Full)?.cast();
+        self.ptr = ptr.ok_or_else(|| self.out_of_memory(capacity))?.cast();
         self.capacity = capacity;
 
         Ok(())
@@ -83,19 +90,17 @@ impl<T> PoolVec<T> {
         self.ptr = NonNull::dangling();
         self.capacity = 0;
     }
-}
 
-impl<T> VecStorage<T> for PoolVec<T> {
     #[cfg(test)]
-    fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         self.capacity
     }
 
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.truncate(0);
     }
 
-    fn truncate(&mut self, len: usize) {
+    pub(crate) fn truncate(&mut self, len: usize) {
         if len >= self.len {
             return;
         }
@@ -113,8 +118,11 @@ impl<T> VecStorage<T> for PoolVec<T> {
     }
 
     /// ensures `additional` more values can be pushed without failing
-    fn try_reserve(&mut self, additional: usize) -> Result<(), StorageError> {
-        let required = self.len.checked_add(additional).ok_or(StorageError::Full)?;
+    pub(crate) fn try_reserve(&mut self, additional: usize) -> Result<(), OutOfMemory> {
+        let required = self
+            .len
+            .checked_add(additional)
+            .ok_or_else(|| self.out_of_memory(usize::MAX))?;
         if required <= self.capacity {
             return Ok(());
         }
@@ -127,7 +135,7 @@ impl<T> VecStorage<T> for PoolVec<T> {
         self.grow_to(required)
     }
 
-    fn try_push(&mut self, value: T) -> Result<(), StorageError> {
+    pub(crate) fn try_push(&mut self, value: T) -> Result<(), OutOfMemory> {
         self.try_reserve(1)?;
 
         // SAFETY: the slot after the last value is reserved and uninitialized
@@ -137,7 +145,7 @@ impl<T> VecStorage<T> for PoolVec<T> {
         Ok(())
     }
 
-    fn try_extend_from_slice(&mut self, values: &[T]) -> Result<(), StorageError>
+    pub(crate) fn try_extend_from_slice(&mut self, values: &[T]) -> Result<(), OutOfMemory>
     where
         T: Copy,
     {
@@ -157,7 +165,7 @@ impl<T> VecStorage<T> for PoolVec<T> {
         Ok(())
     }
 
-    fn try_resize(&mut self, len: usize, value: T) -> Result<(), StorageError>
+    pub(crate) fn try_resize(&mut self, len: usize, value: T) -> Result<(), OutOfMemory>
     where
         T: Clone,
     {
@@ -177,7 +185,7 @@ impl<T> VecStorage<T> for PoolVec<T> {
     }
 
     /// returns spare capacity to the pool
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         if mem::size_of::<T>() == 0 || self.capacity == self.len {
             return;
         }

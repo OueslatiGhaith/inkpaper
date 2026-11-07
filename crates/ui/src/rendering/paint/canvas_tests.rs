@@ -513,12 +513,15 @@ fn canvas_storage_exhaustion_drops_captures() {
     let capture = Capture(drops.clone());
     let full = CallbackArena::new_in(pool_ref_with_room(0));
 
-    assert_eq!(
+    assert!(matches!(
         register_canvas_callback(&full, entity.entity_id(), entity, move |_, _| {
             let _ = &capture;
         }),
-        Err(CallbackAllocError::StorageFull)
-    );
+        Err(CallbackAllocError::OutOfMemory(OutOfMemory {
+            table: Table::Callbacks,
+            ..
+        }))
+    ));
     assert_eq!(drops.get(), 1);
 }
 

@@ -14,8 +14,7 @@ use core::{
 
 use crate::{
     Context, Entity, EntityAccessError, EntityId, RuntimeCx,
-    pool::{PoolRef, PoolVec, Table},
-    storage::VecStorage,
+    pool::{OutOfMemory, PoolRef, PoolVec, Table},
 };
 
 /// marks an entity type as emitting events of type `E`, for [`Context::emit`] and
@@ -24,16 +23,6 @@ use crate::{
 /// events are copied into the runtime's queue, so they are small `Copy` values of at
 /// most 16 bytes, such as an enum naming what happened
 pub trait EventEmitter<E: 'static>: 'static {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EventError {
-    /// the runtime's subscription table is full
-    SubscriptionsFull,
-    /// the queue of events waiting for delivery is full
-    QueueFull,
-    /// heap-backed storage could not allocate
-    AllocationFailed,
-}
 
 /// a subscriber's handler: its state, the emitter and the event
 pub(crate) type Handler<T, U, E> = fn(&mut T, Entity<U>, &E, &mut Context<'_, T>);
@@ -74,9 +63,9 @@ pub(crate) struct PendingEvent {
 
 /// the runtime's subscriptions and the events waiting for delivery
 pub(crate) trait EventStore {
-    fn subscribe(&self, subscription: Subscription) -> Result<(), EventError>;
+    fn subscribe(&self, subscription: Subscription) -> Result<(), OutOfMemory>;
 
-    fn push(&self, event: PendingEvent) -> Result<(), EventError>;
+    fn push(&self, event: PendingEvent) -> Result<(), OutOfMemory>;
 
     /// takes the event emitted first
     fn pop(&self) -> Option<PendingEvent>;
@@ -87,13 +76,21 @@ pub(crate) trait EventStore {
 /// holds nothing, for contexts outside a runtime. Every subscription and event fails
 pub(crate) struct NoEvents;
 
+/// the error for a `T` that [`NoEvents`] has no room for
+fn no_room<T>() -> OutOfMemory {
+    OutOfMemory {
+        table: Table::Events,
+        requested: mem::size_of::<T>(),
+    }
+}
+
 impl EventStore for NoEvents {
-    fn subscribe(&self, _: Subscription) -> Result<(), EventError> {
-        Err(EventError::SubscriptionsFull)
+    fn subscribe(&self, _: Subscription) -> Result<(), OutOfMemory> {
+        Err(no_room::<Subscription>())
     }
 
-    fn push(&self, _: PendingEvent) -> Result<(), EventError> {
-        Err(EventError::QueueFull)
+    fn push(&self, _: PendingEvent) -> Result<(), OutOfMemory> {
+        Err(no_room::<PendingEvent>())
     }
 
     fn pop(&self) -> Option<PendingEvent> {
@@ -120,18 +117,12 @@ impl EventTable {
 }
 
 impl EventStore for EventTable {
-    fn subscribe(&self, subscription: Subscription) -> Result<(), EventError> {
-        self.subscriptions
-            .borrow_mut()
-            .try_push(subscription)
-            .map_err(|error| error.or(EventError::SubscriptionsFull, EventError::AllocationFailed))
+    fn subscribe(&self, subscription: Subscription) -> Result<(), OutOfMemory> {
+        self.subscriptions.borrow_mut().try_push(subscription)
     }
 
-    fn push(&self, event: PendingEvent) -> Result<(), EventError> {
-        self.pending
-            .borrow_mut()
-            .try_push(event)
-            .map_err(|error| error.or(EventError::QueueFull, EventError::AllocationFailed))
+    fn push(&self, event: PendingEvent) -> Result<(), OutOfMemory> {
+        self.pending.borrow_mut().try_push(event)
     }
 
     fn pop(&self) -> Option<PendingEvent> {
@@ -155,7 +146,7 @@ pub(crate) fn emit<E>(
     events: &dyn EventStore,
     emitter: EntityId,
     event: E,
-) -> Result<(), EventError>
+) -> Result<(), OutOfMemory>
 where
     E: Copy + 'static,
 {
@@ -184,7 +175,7 @@ pub(crate) fn subscribe<T, U, E>(
     subscriber: Entity<T>,
     emitter: Entity<U>,
     handler: Handler<T, U, E>,
-) -> Result<(), EventError>
+) -> Result<(), OutOfMemory>
 where
     T: 'static,
     U: 'static,
