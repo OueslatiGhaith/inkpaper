@@ -15,10 +15,11 @@ use crate::{
     entity::{EntityStore, create_entity},
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
+    pool::{MemoryStats, Pool, PoolVec, Table},
     px,
     resources::RuntimeResources,
     runtime::root::RuntimeRoot,
-    storage::{CallbackStorage, EventStorage, FrameStorage, GlobalStorage},
+    storage::{CallbackStorage, EventStorage, GlobalStorage},
 };
 #[cfg(feature = "metrics")]
 use crate::{GlyphCacheMetrics, PerformanceMetrics, TextPaintMetrics};
@@ -61,8 +62,9 @@ pub enum FramePhase {
     Layout,
 }
 
-/// the UI runtime. `S` chooses the storage behind each runtime table (see
-/// [`RuntimeStorage`]), and `RESOURCES` holds render resources such as fonts and images.
+/// the UI runtime. It keeps its frame in the [`Pool`] it is created with. `S` chooses
+/// the storage behind its other tables (see [`RuntimeStorage`]), and `RESOURCES` holds
+/// render resources such as fonts and images.
 pub struct Runtime<S, RESOURCES = ()>
 where
     S: RuntimeStorage,
@@ -70,7 +72,7 @@ where
     entities: S::Entities,
     globals: S::Globals,
     callbacks: S::Callbacks,
-    frame: FrameArena<S::Frame>,
+    frame: FrameArena,
     element_states: ElementStateTable<S::ElementStates>,
     scroll_states: ScrollStateTable<S::ElementStates>,
     resources: RESOURCES,
@@ -82,8 +84,8 @@ where
     full_rebuild_pending: Cell<bool>,
     /// whether a rebuild renders only the entities that need it
     partial_rebuilds: bool,
-    /// what each entity read during its last render. Shares the frame's node capacity
-    dependencies: Dependencies<<S::Frame as FrameStorage>::Nodes<Dependency>>,
+    /// what each entity read during its last render
+    dependencies: Dependencies<PoolVec<Dependency>>,
     /// the damage of the last rebuild, once the layout after it ran
     rebuild_damage: Option<DamageRegion>,
     /// the visual damage taken along with a rebuild, which its damage includes
@@ -100,6 +102,8 @@ where
     /// how many runtime calls that run user code are running, nested. Events are
     /// delivered when the outermost returns
     call_depth: Cell<u32>,
+    /// the memory of the tables above. Declared last, so it is dropped after them
+    pool: Pool,
 }
 
 type RuntimeEvents<S> = EventTable<
@@ -124,24 +128,27 @@ impl Drop for CallDepth<'_> {
     }
 }
 
-impl<S, RESOURCES> Default for Runtime<S, RESOURCES>
+impl<S, RESOURCES> Runtime<S, RESOURCES>
 where
     S: RuntimeStorage,
     RESOURCES: Default,
 {
-    fn default() -> Self {
+    /// a runtime that keeps its frame in `pool`
+    pub fn new(pool: Pool) -> Self {
+        let memory = pool.handle();
+
         Self {
             entities: S::Entities::default(),
             globals: S::Globals::default(),
             callbacks: S::Callbacks::default(),
-            frame: FrameArena::default(),
+            frame: FrameArena::new_in(memory),
             element_states: ElementStateTable::default(),
             scroll_states: ScrollStateTable::default(),
             resources: RESOURCES::default(),
             all_dirty: Cell::new(false),
             full_rebuild_pending: Cell::new(false),
             partial_rebuilds: false,
-            dependencies: Dependencies::default(),
+            dependencies: Dependencies::new(PoolVec::new_in(memory, Table::Dependencies)),
             rebuild_damage: None,
             taken_visual_damage: Cell::new(DamageRegion::none()),
             visual_invalidation: Cell::new(RenderInvalidation::none()),
@@ -153,6 +160,7 @@ where
             pending_scroll_into_view: None,
             events: EventTable::default(),
             call_depth: Cell::new(0),
+            pool,
         }
     }
 }
@@ -415,7 +423,7 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) fn frame(&self) -> &FrameArena<S::Frame> {
+    pub(crate) fn frame(&self) -> &FrameArena {
         &self.frame
     }
 
@@ -1105,6 +1113,11 @@ where
         self.dispatch_to_node(node, event)
     }
 
+    /// how much of the runtime's pool its tables use
+    pub fn memory(&self) -> MemoryStats {
+        self.pool.stats()
+    }
+
     #[cfg(feature = "metrics")]
     pub fn reset_performance_metrics(&self) {
         self.frame.reset_performance_metrics();
@@ -1362,9 +1375,9 @@ mod partial_tests;
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity::EntityStore, *};
+    use crate::{entity::EntityStore, pool::testing::pool, *};
 
-    type TestRuntime = Runtime<TestStorage<1024, 8, 1024, 8, 16, 64, 8, 64, 2>>;
+    type TestRuntime = Runtime<TestStorage<1024, 8, 1024, 8, 8, 64, 2>>;
 
     struct Counter {
         value: i32,
@@ -1396,7 +1409,7 @@ mod tests {
 
     #[test]
     fn notify_marks_only_the_notifying_entity() {
-        let runtime = TestRuntime::default();
+        let runtime = TestRuntime::new(pool());
         let first = runtime.create(|_| Counter { value: 0 }).unwrap();
         let second = runtime.create(|_| Counter { value: 0 }).unwrap();
 
@@ -1412,7 +1425,7 @@ mod tests {
 
     #[test]
     fn taking_the_invalidation_clears_dirty_entities() {
-        let runtime = TestRuntime::default();
+        let runtime = TestRuntime::new(pool());
         let counter = runtime.create(|_| Counter { value: 0 }).unwrap();
 
         notify(&runtime, counter);
@@ -1424,7 +1437,7 @@ mod tests {
 
     #[test]
     fn global_changes_without_readers_mark_nothing() {
-        let mut runtime = TestRuntime::default();
+        let mut runtime = TestRuntime::new(pool());
         let counter = runtime.create(|_| Counter { value: 0 }).unwrap();
 
         runtime.set_global(Theme).unwrap();
@@ -1437,7 +1450,7 @@ mod tests {
 
     #[test]
     fn rebuild_clears_dirty_entities_except_those_notified_while_rendering() {
-        let mut runtime = TestRuntime::default();
+        let mut runtime = TestRuntime::new(pool());
         let root = runtime.create_root(|_| Counter { value: 0 }).unwrap();
 
         notify(&runtime, root);

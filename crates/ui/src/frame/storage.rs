@@ -1,27 +1,23 @@
-use core::{
-    marker::PhantomData,
-    ops::{Deref, DerefMut},
+use core::ops::{Deref, DerefMut};
+
+use crate::{
+    MountError,
+    pool::{PoolRef, PoolVec, Table},
+    storage::VecStorage,
 };
 
-use crate::{MountError, storage::VecStorage};
-
-pub(crate) struct FrameBuffer<T, S> {
-    values: S,
-    marker: PhantomData<fn() -> T>,
+pub(crate) struct FrameBuffer<T> {
+    values: PoolVec<T>,
 }
 
-impl<T, S> FrameBuffer<T, S>
-where
-    S: VecStorage<T>,
-{
-    pub(super) fn new() -> Self {
+impl<T> FrameBuffer<T> {
+    pub(super) fn new_in(pool: PoolRef, table: Table) -> Self {
         Self {
-            values: S::default(),
-            marker: PhantomData,
+            values: PoolVec::new_in(pool, table),
         }
     }
 
-    #[cfg(all(test, feature = "alloc"))]
+    #[cfg(test)]
     pub(super) fn capacity(&self) -> usize {
         self.values.capacity()
     }
@@ -68,10 +64,7 @@ where
     }
 }
 
-impl<T, S> Deref for FrameBuffer<T, S>
-where
-    S: VecStorage<T>,
-{
+impl<T> Deref for FrameBuffer<T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -79,10 +72,7 @@ where
     }
 }
 
-impl<T, S> DerefMut for FrameBuffer<T, S>
-where
-    S: VecStorage<T>,
-{
+impl<T> DerefMut for FrameBuffer<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.values
     }

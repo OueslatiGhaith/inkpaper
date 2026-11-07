@@ -7,7 +7,7 @@ use core::{
 };
 
 use super::{PoolRef, Table};
-use crate::storage::StorageError;
+use crate::storage::{StorageError, VecStorage};
 
 /// the fewest values a table makes room for when it first grows
 const MIN_CAPACITY: usize = 4;
@@ -42,46 +42,6 @@ impl<T> PoolVec<T> {
         }
     }
 
-    pub(crate) fn capacity(&self) -> usize {
-        self.capacity
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.truncate(0);
-    }
-
-    pub(crate) fn truncate(&mut self, len: usize) {
-        if len >= self.len {
-            return;
-        }
-
-        let dropped = ptr::slice_from_raw_parts_mut(
-            // SAFETY: `len` is within the initialized values
-            unsafe { self.ptr.as_ptr().add(len) },
-            self.len - len,
-        );
-        // shorten first, so a panicking drop can't drop a value twice
-        self.len = len;
-
-        // SAFETY: the values past `len` were initialized and are no longer reachable
-        unsafe { ptr::drop_in_place(dropped) };
-    }
-
-    /// ensures `additional` more values can be pushed without failing
-    pub(crate) fn try_reserve(&mut self, additional: usize) -> Result<(), StorageError> {
-        let required = self.len.checked_add(additional).ok_or(StorageError::Full)?;
-        if required <= self.capacity {
-            return Ok(());
-        }
-
-        let doubled = self.capacity.saturating_mul(2).max(MIN_CAPACITY);
-        if doubled > required && self.grow_to(doubled).is_ok() {
-            return Ok(());
-        }
-
-        self.grow_to(required)
-    }
-
     fn grow_to(&mut self, capacity: usize) -> Result<(), StorageError> {
         let new = Layout::array::<T>(capacity).map_err(|_| StorageError::Full)?;
 
@@ -102,7 +62,71 @@ impl<T> PoolVec<T> {
         Ok(())
     }
 
-    pub(crate) fn try_push(&mut self, value: T) -> Result<(), StorageError> {
+    fn layout(&self) -> Layout {
+        Layout::array::<T>(self.capacity).expect("the current capacity was allocated")
+    }
+
+    /// returns the memory to the pool. Only called without values
+    fn release(&mut self) {
+        debug_assert_eq!(self.len, 0);
+
+        if mem::size_of::<T>() == 0 || self.capacity == 0 {
+            return;
+        }
+
+        // SAFETY: the memory came from this pool for the current capacity, and nothing
+        // points into it once the capacity is gone
+        unsafe {
+            self.pool
+                .deallocate(self.table, self.ptr.cast(), self.layout());
+        }
+        self.ptr = NonNull::dangling();
+        self.capacity = 0;
+    }
+}
+
+impl<T> VecStorage<T> for PoolVec<T> {
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn clear(&mut self) {
+        self.truncate(0);
+    }
+
+    fn truncate(&mut self, len: usize) {
+        if len >= self.len {
+            return;
+        }
+
+        let dropped = ptr::slice_from_raw_parts_mut(
+            // SAFETY: `len` is within the initialized values
+            unsafe { self.ptr.as_ptr().add(len) },
+            self.len - len,
+        );
+        // shorten first, so a panicking drop can't drop a value twice
+        self.len = len;
+
+        // SAFETY: the values past `len` were initialized and are no longer reachable
+        unsafe { ptr::drop_in_place(dropped) };
+    }
+
+    /// ensures `additional` more values can be pushed without failing
+    fn try_reserve(&mut self, additional: usize) -> Result<(), StorageError> {
+        let required = self.len.checked_add(additional).ok_or(StorageError::Full)?;
+        if required <= self.capacity {
+            return Ok(());
+        }
+
+        let doubled = self.capacity.saturating_mul(2).max(MIN_CAPACITY);
+        if doubled > required && self.grow_to(doubled).is_ok() {
+            return Ok(());
+        }
+
+        self.grow_to(required)
+    }
+
+    fn try_push(&mut self, value: T) -> Result<(), StorageError> {
         self.try_reserve(1)?;
 
         // SAFETY: the slot after the last value is reserved and uninitialized
@@ -112,7 +136,7 @@ impl<T> PoolVec<T> {
         Ok(())
     }
 
-    pub(crate) fn try_extend_from_slice(&mut self, values: &[T]) -> Result<(), StorageError>
+    fn try_extend_from_slice(&mut self, values: &[T]) -> Result<(), StorageError>
     where
         T: Copy,
     {
@@ -132,7 +156,7 @@ impl<T> PoolVec<T> {
         Ok(())
     }
 
-    pub(crate) fn try_resize(&mut self, len: usize, value: T) -> Result<(), StorageError>
+    fn try_resize(&mut self, len: usize, value: T) -> Result<(), StorageError>
     where
         T: Clone,
     {
@@ -152,7 +176,7 @@ impl<T> PoolVec<T> {
     }
 
     /// returns spare capacity to the pool
-    pub(crate) fn shrink_to_fit(&mut self) {
+    fn shrink_to_fit(&mut self) {
         if mem::size_of::<T>() == 0 || self.capacity == self.len {
             return;
         }
@@ -177,28 +201,6 @@ impl<T> PoolVec<T> {
             self.ptr = ptr.cast();
             self.capacity = self.len;
         }
-    }
-
-    fn layout(&self) -> Layout {
-        Layout::array::<T>(self.capacity).expect("the current capacity was allocated")
-    }
-
-    /// returns the memory to the pool. Only called without values
-    fn release(&mut self) {
-        debug_assert_eq!(self.len, 0);
-
-        if mem::size_of::<T>() == 0 || self.capacity == 0 {
-            return;
-        }
-
-        // SAFETY: the memory came from this pool for the current capacity, and nothing
-        // points into it once the capacity is gone
-        unsafe {
-            self.pool
-                .deallocate(self.table, self.ptr.cast(), self.layout());
-        }
-        self.ptr = NonNull::dangling();
-        self.capacity = 0;
     }
 }
 

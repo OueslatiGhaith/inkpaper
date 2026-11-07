@@ -25,7 +25,7 @@ use crate::storage::VecStorage;
 /// where a slot table keeps its values and slots
 pub trait SlotStorage {
     type Memory: ValueMemory;
-    type Slots<T>: VecStorage<T>;
+    type Slots<T>: VecStorage<T> + Default;
 }
 
 /// at most `SLOTS` values in an inline buffer of `BYTES` bytes. Never allocates.

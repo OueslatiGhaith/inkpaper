@@ -4,10 +4,10 @@ use crate::{
     Offset,
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
     interaction::scroll::ScrollStateTable,
-    storage::{ElementStateStorage, FrameStorage},
+    storage::ElementStateStorage,
 };
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     fn identity_parent(&self, node: NodeId) -> Option<IdentityParent> {
         let mut current = self.nodes[node.index()].parent;
 

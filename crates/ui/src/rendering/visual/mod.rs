@@ -1,8 +1,6 @@
 use heapless::Vec;
 
-use crate::{
-    DamageRegion, FrameArena, NodeId, Offset, Point, Rect, count_metric, storage::FrameStorage,
-};
+use crate::{DamageRegion, FrameArena, NodeId, Offset, Point, Rect, count_metric};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClipRegion {
@@ -130,8 +128,8 @@ struct VisualContinuation {
     depth: u16,
 }
 
-pub(crate) struct VisualTraversal<'a, F: FrameStorage> {
-    frame: &'a FrameArena<F>,
+pub(crate) struct VisualTraversal<'a> {
+    frame: &'a FrameArena,
     root: NodeId,
     current: Option<(NodeId, VisualContext)>,
     pending_advance: Option<(NodeId, VisualContext)>,
@@ -141,8 +139,8 @@ pub(crate) struct VisualTraversal<'a, F: FrameStorage> {
     depth: u16,
 }
 
-impl<'a, F: FrameStorage> VisualTraversal<'a, F> {
-    pub(crate) fn new(frame: &'a FrameArena<F>, root: NodeId) -> Self {
+impl<'a> VisualTraversal<'a> {
+    pub(crate) fn new(frame: &'a FrameArena, root: NodeId) -> Self {
         count_metric!(frame, visual_traversal_passes);
 
         Self {
@@ -372,7 +370,7 @@ impl<'a, F: FrameStorage> VisualTraversal<'a, F> {
     }
 }
 
-impl<F: FrameStorage> Iterator for VisualTraversal<'_, F> {
+impl Iterator for VisualTraversal<'_> {
     type Item = VisualNode;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -397,8 +395,8 @@ impl<F: FrameStorage> Iterator for VisualTraversal<'_, F> {
     }
 }
 
-impl<F: FrameStorage> FrameArena<F> {
-    pub(crate) fn visual_nodes(&self, root: NodeId) -> VisualTraversal<'_, F> {
+impl FrameArena {
+    pub(crate) fn visual_nodes(&self, root: NodeId) -> VisualTraversal<'_> {
         VisualTraversal::new(self, root)
     }
 

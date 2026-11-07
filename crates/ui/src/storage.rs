@@ -29,7 +29,6 @@ use crate::{HeapCallbackArena, HeapEntityArena, HeapGlobalArena};
 ///     type Entities = FixedEntityArena<4_096, 8>;
 ///     type Callbacks = FixedCallbackArena<2_048, 16>;
 ///     type Globals = FixedGlobalArena<256, 4>;
-///     type Frame = FixedFrame<96, 2_048>;
 ///     type ElementStates = FixedElementStates<32>;
 ///     type Events = FixedEvents<8>;
 /// }
@@ -42,23 +41,17 @@ pub trait RuntimeStorage {
     type Entities: EntityStorage;
     type Callbacks: CallbackStorage;
     type Globals: GlobalStorage;
-    type Frame: FrameStorage;
     type ElementStates: ElementStateStorage;
     type Events: EventStorage;
 }
 
 /// fixed-capacity storage for every runtime table, with the capacities in the order the
 /// tables appear in [`RuntimeStorage`], globals and events last. Never allocates.
-///
-/// nodes with focused or pressed styles get [`FixedFrame`]'s default capacity. Implement
-/// [`RuntimeStorage`] directly to choose another.
 pub struct FixedStorage<
     const ENTITY_BYTES: usize,
     const ENTITY_SLOTS: usize,
     const CALLBACK_BYTES: usize,
     const CALLBACK_SLOTS: usize,
-    const FRAME_NODES: usize,
-    const FRAME_TEXT_BYTES: usize,
     const ELEMENT_STATES: usize,
     const GLOBAL_BYTES: usize = 0,
     const GLOBAL_SLOTS: usize = 0,
@@ -71,8 +64,6 @@ impl<
     const ENTITY_SLOTS: usize,
     const CALLBACK_BYTES: usize,
     const CALLBACK_SLOTS: usize,
-    const FRAME_NODES: usize,
-    const FRAME_TEXT_BYTES: usize,
     const ELEMENT_STATES: usize,
     const GLOBAL_BYTES: usize,
     const GLOBAL_SLOTS: usize,
@@ -84,8 +75,6 @@ impl<
         ENTITY_SLOTS,
         CALLBACK_BYTES,
         CALLBACK_SLOTS,
-        FRAME_NODES,
-        FRAME_TEXT_BYTES,
         ELEMENT_STATES,
         GLOBAL_BYTES,
         GLOBAL_SLOTS,
@@ -96,7 +85,6 @@ impl<
     type Entities = FixedEntityArena<ENTITY_BYTES, ENTITY_SLOTS>;
     type Callbacks = FixedCallbackArena<CALLBACK_BYTES, CALLBACK_SLOTS>;
     type Globals = FixedGlobalArena<GLOBAL_BYTES, GLOBAL_SLOTS>;
-    type Frame = FixedFrame<FRAME_NODES, FRAME_TEXT_BYTES>;
     type ElementStates = FixedElementStates<ELEMENT_STATES>;
     type Events = FixedEvents<SUBSCRIPTIONS, PENDING_EVENTS>;
 }
@@ -111,7 +99,6 @@ impl RuntimeStorage for HeapStorage {
     type Entities = HeapEntityArena;
     type Callbacks = HeapCallbackArena;
     type Globals = HeapGlobalArena;
-    type Frame = HeapFrame;
     type ElementStates = HeapElementStates;
     type Events = HeapEvents;
 }
@@ -159,48 +146,9 @@ pub trait GlobalStorage: GlobalStore + Default {
     fn byte_capacity(&self) -> usize;
 }
 
-/// storage for frame nodes and their text
-pub trait FrameStorage {
-    /// sized by node count: nodes, event bindings and node caches
-    type Nodes<T>: VecStorage<T>;
-    type Text: VecStorage<u8>;
-    /// sized by the number of nodes with focused or pressed styles
-    type InteractionStyles<T>: VecStorage<T>;
-}
-
-/// fixed storage for at most `NODES` frame nodes, `TEXT_BYTES` bytes of text and
-/// `INTERACTION_STYLES` nodes with focused or pressed styles
-pub struct FixedFrame<
-    const NODES: usize,
-    const TEXT_BYTES: usize,
-    const INTERACTION_STYLES: usize = 32,
->;
-
-impl<const NODES: usize, const TEXT_BYTES: usize, const INTERACTION_STYLES: usize> FrameStorage
-    for FixedFrame<NODES, TEXT_BYTES, INTERACTION_STYLES>
-{
-    type Nodes<T> = heapless::Vec<T, NODES>;
-    type Text = heapless::Vec<u8, TEXT_BYTES>;
-    type InteractionStyles<T> = heapless::Vec<T, INTERACTION_STYLES>;
-}
-
-/// heap storage for frame nodes and text. The first allocations reserve the initial
-/// counts.
-#[cfg(feature = "alloc")]
-pub struct HeapFrame<const INITIAL_NODES: usize = 0, const INITIAL_TEXT_BYTES: usize = 0>;
-
-#[cfg(feature = "alloc")]
-impl<const INITIAL_NODES: usize, const INITIAL_TEXT_BYTES: usize> FrameStorage
-    for HeapFrame<INITIAL_NODES, INITIAL_TEXT_BYTES>
-{
-    type Nodes<T> = HeapVec<T, INITIAL_NODES>;
-    type Text = HeapVec<u8, INITIAL_TEXT_BYTES>;
-    type InteractionStyles<T> = HeapVec<T, 0>;
-}
-
 /// storage for element identities and the state kept for them, such as scroll offsets
 pub trait ElementStateStorage {
-    type Slots<T>: VecStorage<T>;
+    type Slots<T>: VecStorage<T> + Default;
 }
 
 /// fixed storage for at most `SLOTS` element identities
@@ -222,9 +170,9 @@ impl<const INITIAL_SLOTS: usize> ElementStateStorage for HeapElementStates<INITI
 /// storage for event subscriptions and the events waiting for delivery
 pub trait EventStorage {
     /// sized by subscription count
-    type Subscriptions<T>: VecStorage<T>;
+    type Subscriptions<T>: VecStorage<T> + Default;
     /// sized by the events emitted during one runtime call, before they're delivered
-    type Pending<T>: VecStorage<T>;
+    type Pending<T>: VecStorage<T> + Default;
 }
 
 /// fixed storage for at most `SUBSCRIPTIONS` subscriptions and `PENDING` events waiting
@@ -269,9 +217,9 @@ impl StorageError {
 
 /// growable storage for runtime tables.
 ///
-/// implemented by fixed-capacity [`heapless::Vec`] and, with `alloc`, by [`HeapVec`].
-/// Failed operations leave the contents unchanged.
-pub trait VecStorage<T>: Default + Deref<Target = [T]> + DerefMut {
+/// implemented by fixed-capacity [`heapless::Vec`], by the runtime pool's vectors and,
+/// with `alloc`, by [`HeapVec`]. Failed operations leave the contents unchanged.
+pub trait VecStorage<T>: Deref<Target = [T]> + DerefMut {
     fn capacity(&self) -> usize;
 
     fn clear(&mut self);
@@ -440,20 +388,11 @@ impl<T, const INITIAL: usize> VecStorage<T> for HeapVec<T, INITIAL> {
 // unit tests run against the storage the `alloc` feature implies, so both builds keep
 // covering their own storage kind
 #[cfg(all(test, not(feature = "alloc")))]
-pub(crate) type TestFrame<const NODES: usize, const TEXT_BYTES: usize> =
-    FixedFrame<NODES, TEXT_BYTES>;
-#[cfg(all(test, feature = "alloc"))]
-pub(crate) type TestFrame<const NODES: usize, const TEXT_BYTES: usize> =
-    HeapFrame<NODES, TEXT_BYTES>;
-
-#[cfg(all(test, not(feature = "alloc")))]
 pub(crate) type TestStorage<
     const ENTITY_BYTES: usize,
     const ENTITY_SLOTS: usize,
     const CALLBACK_BYTES: usize,
     const CALLBACK_SLOTS: usize,
-    const FRAME_NODES: usize,
-    const FRAME_TEXT_BYTES: usize,
     const ELEMENT_STATES: usize,
     const GLOBAL_BYTES: usize = 0,
     const GLOBAL_SLOTS: usize = 0,
@@ -462,8 +401,6 @@ pub(crate) type TestStorage<
     ENTITY_SLOTS,
     CALLBACK_BYTES,
     CALLBACK_SLOTS,
-    FRAME_NODES,
-    FRAME_TEXT_BYTES,
     ELEMENT_STATES,
     GLOBAL_BYTES,
     GLOBAL_SLOTS,
@@ -476,8 +413,6 @@ pub(crate) type TestStorage<
     const ENTITY_SLOTS: usize,
     const CALLBACK_BYTES: usize,
     const CALLBACK_SLOTS: usize,
-    const FRAME_NODES: usize,
-    const FRAME_TEXT_BYTES: usize,
     const ELEMENT_STATES: usize,
     const GLOBAL_BYTES: usize = 0,
     const GLOBAL_SLOTS: usize = 0,

@@ -1,4 +1,6 @@
 use super::*;
+use crate::pool::testing::pool;
+use crate::pool::testing::pool_ref;
 use crate::*;
 use core::cell::{Cell, RefCell};
 use std::{rc::Rc, string::String, vec, vec::Vec};
@@ -149,7 +151,7 @@ impl Painter for Recorder {
     }
 }
 
-type TestRuntime = Runtime<TestStorage<1024, 4, 1024, 8, 16, 64, 8>, RecordingResources>;
+type TestRuntime = Runtime<TestStorage<1024, 4, 1024, 8, 8>, RecordingResources>;
 
 fn rect(x: i32, y: i32, width: i32, height: i32) -> Rect {
     Rect::new(Point::new(px(x), px(y)), Size::new(px(width), px(height)))
@@ -194,7 +196,7 @@ fn canvas_paint_preserves_local_bounds_clips_styles_and_damage() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     runtime.create_root(|_| View).unwrap();
     runtime.rebuild().unwrap();
 
@@ -302,7 +304,7 @@ fn canvas_paint_reports_images_and_reads_updated_entity_state() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     let view = runtime.create_root(|_| View { value: "old" }).unwrap();
     let mut recorder = Recorder::default();
     *runtime.resources_mut() = recorder.resources();
@@ -363,7 +365,7 @@ fn canvas_paint_returns_first_backend_error_and_stops_drawing() {
     }
 
     for first in 0..4 {
-        let mut runtime = TestRuntime::default();
+        let mut runtime = TestRuntime::new(pool());
         runtime.create_root(|_| View { first }).unwrap();
         runtime.rebuild().unwrap();
 
@@ -535,7 +537,7 @@ fn static_canvas_paints_text_without_runtime_callback_context() {
         paint.draw_text(paint.bounds(), text("static"));
     }
 
-    let mut frame = FrameArena::<TestFrame<4, 0>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let root = frame
         .mount(
@@ -578,7 +580,7 @@ fn canvas_routes_prelaid_out_text_runs_to_run_painter() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| View).unwrap();
     runtime.rebuild().unwrap();

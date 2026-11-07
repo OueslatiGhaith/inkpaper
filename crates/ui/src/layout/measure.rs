@@ -2,10 +2,10 @@ use super::*;
 
 use crate::{
     CanvasStyle, FrameArena, ImageSource, ImageStyle, NodeId, NodeKind, Position, SvgSource,
-    SvgStyle, TextRange, count_metric, storage::FrameStorage,
+    SvgStyle, TextRange, count_metric,
 };
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     pub(super) fn measure_node(
         &mut self,
         node: NodeId,

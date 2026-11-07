@@ -112,8 +112,8 @@ where
 
 impl<S, P> Default for EventTable<S, P>
 where
-    S: VecStorage<Subscription>,
-    P: VecStorage<PendingEvent>,
+    S: VecStorage<Subscription> + Default,
+    P: VecStorage<PendingEvent> + Default,
 {
     fn default() -> Self {
         Self {

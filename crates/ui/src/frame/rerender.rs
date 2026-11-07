@@ -12,10 +12,10 @@ use super::{FrameArena, FrameStore, MountError, NodeId, NodeKind};
 use crate::{
     DamageRegion, EntityId, RuntimeCx, count_metric,
     element::state::{ElementStateTable, IdentityError},
-    storage::{ElementStateStorage, FrameStorage},
+    storage::ElementStateStorage,
 };
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     /// how many nodes previous partial rebuilds left behind
     #[cfg(test)]
     pub(crate) fn detached_node_count(&self) -> usize {

@@ -8,9 +8,10 @@ use std::{
     vec::Vec,
 };
 
+use crate::pool::testing::pool;
 use crate::{frame::NodeKind, *};
 
-type TestRuntime = Runtime<TestStorage<8192, 16, 8192, 128, 256, 1024, 32, 64, 2>, KeyedText>;
+type TestRuntime = Runtime<TestStorage<8192, 16, 8192, 128, 32, 64, 2>, KeyedText>;
 
 struct Label {
     text: &'static str,
@@ -117,7 +118,7 @@ struct Fixture {
 }
 
 fn fixture(partial: bool) -> Fixture {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     let first = runtime.create(|_| Label::new("first")).unwrap();
     let second = runtime.create(|_| Label::new("second")).unwrap();
     let shell = runtime
@@ -389,8 +390,7 @@ impl Render for BusyShell {
 #[test]
 fn rendering_an_entity_again_reuses_its_released_callback_slots() {
     // fixed storage whatever the features, with eight callback slots
-    let mut runtime =
-        Runtime::<FixedStorage<8192, 16, 1024, 8, 256, 1024, 32, 64, 2>, KeyedText>::default();
+    let mut runtime = Runtime::<FixedStorage<8192, 16, 1024, 8, 32, 64, 2>, KeyedText>::new(pool());
     let busy = runtime.create(|_| Busy { renders: 0 }).unwrap();
     let shell = runtime
         .create_root(|_| BusyShell { busy, renders: 0 })
@@ -560,7 +560,7 @@ impl Render for Caption {
 
 #[test]
 fn a_child_that_reads_its_parent_renders_again_when_the_parent_changes() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     let parent = runtime
         .create_root(|cx| {
             let parent = cx.entity();
@@ -985,7 +985,7 @@ fn preparing_a_frame_rebuilds_then_lays_out() {
 
 #[test]
 fn the_first_frame_damages_everything() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     runtime.create_root(|_| Label::new("first")).unwrap();
     runtime.set_partial_rebuilds(true);
 
@@ -994,7 +994,7 @@ fn the_first_frame_damages_everything() {
 
 #[test]
 fn preparing_a_frame_without_a_root_fails() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     let label = runtime.create(|_| Label::new("first")).unwrap();
     runtime.update(label, |_, cx| cx.notify()).unwrap();
 

@@ -1,8 +1,10 @@
 use core::cell::Cell;
 
+use crate::pool::testing::pool;
+use crate::pool::testing::pool_ref;
 use crate::*;
 
-type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 64, 512, 32>>;
+type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 32>>;
 
 struct TestTextMeasurer {
     character_width: Pixels,
@@ -50,7 +52,7 @@ fn assert_bounds(actual: Rect, x: i32, y: i32, width: i32, height: i32) {
 #[test]
 fn fixed_div_and_padding_layout_children() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -76,7 +78,7 @@ fn fixed_div_and_padding_layout_children() {
 #[test]
 fn block_children_flow_vertically_with_gap() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -104,7 +106,7 @@ fn block_children_flow_vertically_with_gap() {
 #[test]
 fn flex_row_children_flow_horizontally() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -133,7 +135,7 @@ fn flex_row_children_flow_horizontally() {
 #[test]
 fn fill_children_split_remaining_main_axis_space() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -165,7 +167,7 @@ fn fill_children_split_remaining_main_axis_space() {
 #[test]
 fn text_uses_text_measurer_for_intrinsic_size() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -182,7 +184,7 @@ fn text_uses_text_measurer_for_intrinsic_size() {
 #[test]
 fn padding_and_gap_are_combined_in_column_layout() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -235,10 +237,10 @@ impl Render for App {
 
 #[test]
 fn entity_nodes_are_layout_transparent() {
-    type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 16, 32, 256, 32>>;
+    type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 16, 32>>;
 
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(App::new).unwrap();
     runtime.rebuild().unwrap();
@@ -259,7 +261,7 @@ fn entity_nodes_are_layout_transparent() {
 #[test]
 fn auto_root_sizes_to_its_content() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -272,7 +274,7 @@ fn auto_root_sizes_to_its_content() {
 #[test]
 fn fill_root_consumes_the_viewport() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -286,7 +288,7 @@ fn fill_root_consumes_the_viewport() {
 #[test]
 fn items_center_centers_children_on_cross_axis() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -312,7 +314,7 @@ fn items_center_centers_children_on_cross_axis() {
 #[test]
 fn justify_center_centers_children_on_main_axis() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -342,7 +344,7 @@ fn justify_center_centers_children_on_main_axis() {
 #[test]
 fn justify_between_distributes_remaining_space() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -374,7 +376,7 @@ fn justify_between_distributes_remaining_space() {
 #[test]
 fn margins_participate_in_flex_flow() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -402,7 +404,7 @@ fn margins_participate_in_flex_flow() {
 #[test]
 fn min_width_expands_auto_element() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -416,7 +418,7 @@ fn min_width_expands_auto_element() {
 #[test]
 fn max_width_limits_auto_element() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -437,7 +439,7 @@ fn max_width_limits_auto_element() {
 #[test]
 fn border_width_reduces_content_area() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -464,7 +466,7 @@ fn border_width_reduces_content_area() {
 #[test]
 fn flex_1_consumes_space_after_fixed_child() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -492,7 +494,7 @@ fn flex_1_consumes_space_after_fixed_child() {
 #[test]
 fn flex_grow_distributes_space_by_weight() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -523,7 +525,7 @@ fn flex_grow_distributes_space_by_weight() {
 #[test]
 fn flex_basis_is_used_before_grow_distribution() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -551,7 +553,7 @@ fn flex_basis_is_used_before_grow_distribution() {
 #[test]
 fn flex_shrink_reduces_items_when_they_overflow() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -579,7 +581,7 @@ fn flex_shrink_reduces_items_when_they_overflow() {
 #[test]
 fn flex_shrink_uses_weight_and_base_size() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -607,7 +609,7 @@ fn flex_shrink_uses_weight_and_base_size() {
 #[test]
 fn flex_grow_respects_gap() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -636,7 +638,7 @@ fn flex_grow_respects_gap() {
 #[test]
 fn flex_grow_respects_item_margins() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -664,7 +666,7 @@ fn flex_grow_respects_item_margins() {
 #[test]
 fn fill_on_main_axis_remains_compatible_with_equal_flex_grow() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -706,7 +708,7 @@ fn vertical_scroll_moves_content_without_relayout() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| App).unwrap();
 
@@ -743,7 +745,7 @@ fn scroll_offset_is_clamped_to_content_extent() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| App).unwrap();
 
@@ -774,7 +776,7 @@ fn scroll_offset_survives_rebuild() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| App).unwrap();
 
@@ -820,7 +822,7 @@ fn text_measurement_receives_resolved_text_style() {
         }
     }
 
-    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -875,7 +877,7 @@ fn text_is_measured_once_per_width_and_clamped_to_each_height() {
         }
     }
 
-    let mut frame = FrameArena::<TestFrame<8, 64>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -914,7 +916,7 @@ fn image_uses_intrinsic_size() {
 
     let source = ImageSource::new(ImageId::new(0), Size::new(px(32), px(18)));
 
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -933,7 +935,7 @@ fn image_intrinsic_size_is_clamped_to_available_space() {
 
     let source = ImageSource::new(ImageId::new(0), Size::new(px(80), px(40)));
 
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -955,7 +957,7 @@ fn images_participate_in_block_flow() {
     let first = ImageSource::new(ImageId::new(0), Size::new(px(20), px(10)));
     let second = ImageSource::new(ImageId::new(1), Size::new(px(30), px(15)));
 
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -982,7 +984,7 @@ fn images_participate_in_flex_row_layout() {
     let first = ImageSource::new(ImageId::new(0), Size::new(px(20), px(10)));
     let second = ImageSource::new(ImageId::new(1), Size::new(px(30), px(15)));
 
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1010,7 +1012,7 @@ fn images_participate_in_flex_row_layout() {
 fn image_width_preserves_intrinsic_aspect_ratio() {
     let measurer = TestTextMeasurer::new(8, 10);
     let source = ImageSource::new(ImageId::new(0), Size::new(px(40), px(20)));
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1029,7 +1031,7 @@ fn image_width_preserves_intrinsic_aspect_ratio() {
 fn image_height_preserves_intrinsic_aspect_ratio() {
     let measurer = TestTextMeasurer::new(8, 10);
     let source = ImageSource::new(ImageId::new(0), Size::new(px(40), px(20)));
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1048,7 +1050,7 @@ fn image_height_preserves_intrinsic_aspect_ratio() {
 fn image_can_use_explicit_box_size() {
     let measurer = TestTextMeasurer::new(8, 10);
     let source = ImageSource::new(ImageId::new(0), Size::new(px(40), px(20)));
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1084,7 +1086,7 @@ fn draw_test_canvas(paint: &mut PaintCx<'_>) {
 
 #[test]
 fn mounts_canvas_as_leaf() {
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1111,7 +1113,7 @@ fn mounts_canvas_as_leaf() {
 fn canvas_uses_explicit_size() {
     let measurer = TestTextMeasurer::new(8, 10);
 
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
     let root = frame
@@ -1132,7 +1134,7 @@ fn canvas_uses_explicit_size() {
 fn canvas_size_is_clamped_to_available_space() {
     let measurer = TestTextMeasurer::new(8, 10);
 
-    let mut frame = FrameArena::<TestFrame<8, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1162,7 +1164,7 @@ fn fixed_main_length_does_not_require_intrinsic_measurement() {
         }
     }
 
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1190,7 +1192,7 @@ fn fixed_main_length_does_not_require_intrinsic_measurement() {
 fn layout_caches_cumulative_paint_bounds_for_ordered_sibling_prefixes() {
     let measurer = TestTextMeasurer::new(8, 10);
 
-    let mut frame = FrameArena::<TestFrame<32, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1237,7 +1239,7 @@ fn layout_caches_cumulative_paint_bounds_for_ordered_sibling_prefixes() {
 #[test]
 fn absolute_child_is_removed_from_block_flow() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1276,7 +1278,7 @@ fn absolute_child_is_removed_from_block_flow() {
 #[test]
 fn absolute_child_does_not_contribute_to_auto_parent_size() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1300,7 +1302,7 @@ fn absolute_child_does_not_contribute_to_auto_parent_size() {
 #[test]
 fn absolute_child_insets_measure_from_positioned_ancestor_padding_box() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1334,7 +1336,7 @@ fn absolute_child_insets_measure_from_positioned_ancestor_padding_box() {
 #[test]
 fn absolute_child_without_insets_starts_at_positioned_ancestor_content() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1363,7 +1365,7 @@ fn absolute_child_without_insets_starts_at_positioned_ancestor_content() {
 #[test]
 fn opposing_absolute_insets_stretch_auto_size() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1391,7 +1393,7 @@ fn opposing_absolute_insets_stretch_auto_size() {
 #[test]
 fn absolute_descendant_uses_nearest_positioned_ancestor() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1423,7 +1425,7 @@ fn absolute_descendant_uses_nearest_positioned_ancestor() {
 #[test]
 fn absolute_child_does_not_participate_in_flex_distribution() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1455,7 +1457,7 @@ fn absolute_child_does_not_participate_in_flex_distribution() {
 #[test]
 fn relative_offset_preserves_normal_flow_slot() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1486,7 +1488,7 @@ fn relative_offset_preserves_normal_flow_slot() {
 #[test]
 fn relative_right_and_bottom_offset_in_negative_direction() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1514,7 +1516,7 @@ fn relative_right_and_bottom_offset_in_negative_direction() {
 #[test]
 fn relative_left_and_top_take_precedence_over_opposing_insets() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1544,7 +1546,7 @@ fn relative_left_and_top_take_precedence_over_opposing_insets() {
 #[test]
 fn relative_offset_does_not_change_parent_intrinsic_size() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1575,7 +1577,7 @@ fn relative_offset_does_not_change_parent_intrinsic_size() {
 #[test]
 fn absolute_descendant_uses_shifted_relative_containing_block() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
     let root = frame
@@ -1620,7 +1622,7 @@ fn absolute_descendant_uses_shifted_relative_containing_block() {
 #[test]
 fn relative_positioning_can_overlap_following_flow_sibling() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1654,7 +1656,7 @@ fn relative_positioning_can_overlap_following_flow_sibling() {
 #[test]
 fn positioned_descendant_extends_scroll_range_through_static_wrapper() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1688,7 +1690,7 @@ fn positioned_descendant_extends_scroll_range_through_static_wrapper() {
 #[test]
 fn nested_scroll_content_does_not_expand_outer_scroll_range() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1731,7 +1733,7 @@ fn nested_scroll_content_does_not_expand_outer_scroll_range() {
 #[test]
 fn relative_position_moves_entire_descendant_subtree() {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 
@@ -1785,7 +1787,7 @@ fn full_height_child_of_a_scrolled_row_fills_the_row() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     runtime.create_root(|_| App).unwrap();
     runtime.rebuild().unwrap();
     runtime
@@ -1813,7 +1815,7 @@ fn scroll_padding_only_extends_overflowing_content() {
     let cx = AppContext::from_globals(&globals);
 
     let max_offset = |content_height: i32| {
-        let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+        let mut frame = FrameArena::new_in(pool_ref());
         let root = frame
             .mount(
                 div()
@@ -1840,7 +1842,7 @@ fn scroll_padding_only_extends_overflowing_content() {
 
 fn flex_row_widths<const N: usize>(row_width: i32, children: [Div; N]) -> [i32; N] {
     let measurer = TestTextMeasurer::new(8, 10);
-    let mut frame = FrameArena::<TestFrame<16, 128>>::default();
+    let mut frame = FrameArena::new_in(pool_ref());
     let globals = TestGlobalArena::<0, 0>::default();
     let cx = AppContext::from_globals(&globals);
 

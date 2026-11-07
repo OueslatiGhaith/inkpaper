@@ -2,13 +2,16 @@ use inkpaper_ui::prelude::*;
 
 type TestRuntime = Runtime<
     FixedStorage<
-        4096, // entity bytes
-        1,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-        64,   // frame nodes
-        1024, // frame text bytes
-        32,   // element states
+        4096,
+        // entity bytes
+        1,
+        // entity slots
+        4096,
+        // callback bytes
+        16,
+        // frame text bytes
+        32,
+        // element states,
     >,
 >;
 
@@ -65,7 +68,7 @@ impl Render for App {
 
 #[test]
 fn component_can_require_typed_child_content() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| App).unwrap();
 
@@ -102,7 +105,7 @@ fn component_slot_accepts_render_once_content() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| BadgeApp).unwrap();
 
@@ -180,7 +183,7 @@ fn component_can_have_multiple_named_typed_slots() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| RowApp).unwrap();
 
@@ -203,7 +206,7 @@ fn named_slots_can_be_filled_in_either_order() {
         }
     }
 
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime.create_root(|_| ReverseSlotApp).unwrap();
 
@@ -211,4 +214,9 @@ fn named_slots_can_be_filled_in_either_order() {
 
     assert!(runtime.frame_node_count() >= 4);
     assert!(runtime.frame_text_bytes_used() > 0);
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

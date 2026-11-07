@@ -77,11 +77,11 @@ pub use rendering::*;
 pub use resources::*;
 pub use runtime::*;
 pub(crate) use slot_table::BorrowKind;
-pub use storage::{FixedElementStates, FixedEvents, FixedFrame, FixedStorage, RuntimeStorage};
+pub use storage::{FixedElementStates, FixedEvents, FixedStorage, RuntimeStorage};
 #[cfg(feature = "alloc")]
-pub use storage::{HeapElementStates, HeapEvents, HeapFrame, HeapStorage};
+pub use storage::{HeapElementStates, HeapEvents, HeapStorage};
 #[cfg(test)]
-pub(crate) use storage::{TestElementStates, TestFrame, TestStorage};
+pub(crate) use storage::{TestElementStates, TestStorage};
 pub use style::*;
 pub use svg_source::*;
 pub use text_shaping::*;
@@ -102,7 +102,7 @@ pub mod prelude {
         ImageSource, IntoElement, Invalidation, LineHeight, Listener, Luminance, MountCx,
         MountError, NoChildren, NodeId, Offset, OnEvent, PaintCx, PaintReport, PaintResources,
         ParentElement, ParentElementChildrenExt, PathCommand, PathFill, PathStroke, Pixels, Point,
-        Rect, Render, RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourceRuntimeApi,
+        Pool, Rect, Render, RenderInvalidation, RenderOnce, RenderRuntimeApi, ResourceRuntimeApi,
         Runtime, RuntimeApi, RuntimeStorage, Size, StatefulInteractiveElementExt, StrokeCap,
         StrokeJoin, Style, Styled, Svg, SvgFill, SvgPaint, SvgPath, SvgSource, SvgStroke,
         SvgViewBox, TextAlign, TextDarkness, TextMaxLines, TextOverflow, TextStyled, TextWrap,

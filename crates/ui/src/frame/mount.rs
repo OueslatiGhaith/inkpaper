@@ -6,10 +6,10 @@ use crate::{
     AppContext, CanvasDraw, CanvasStyle, Element, ElementId, EntityId, EntityRenderFn,
     EventBinding, EventCallbacks, ImageSource, ImageStyle, IntoElement, Node, RuntimeCx,
     StatefulInteractivity, Style, SvgSource, SvgStyle, TextStyle, callback::CallbackId,
-    count_metric, frame::NodeCache, storage::FrameStorage,
+    count_metric, frame::NodeCache,
 };
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     fn push_node(&mut self, kind: NodeKind) -> Result<NodeId, MountError> {
         let index = u16::try_from(self.nodes.len()).map_err(|_| MountError::NodesFull)?;
         self.nodes.reserve(1, MountError::NodesFull)?;
@@ -135,7 +135,7 @@ pub(crate) trait FrameStore {
     ) -> Result<(), MountError>;
 }
 
-impl<F: FrameStorage> FrameStore for FrameArena<F> {
+impl FrameStore for FrameArena {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError> {
         self.push_node(NodeKind::Div { style })
     }

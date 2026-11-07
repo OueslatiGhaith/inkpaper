@@ -41,13 +41,16 @@ pub const ALL_CASES: &[(BenchScenario, &[usize])] = &[
 
 pub type BenchRuntime = Runtime<
     FixedStorage<
-        4096,  // entity bytes
-        4,     // entity slots
-        4096,  // callback bytes
-        16,    // callback slots
-        2048,  // frame nodes
-        32768, // frame text bytes
-        1024,  // element states
+        4096,
+        // entity bytes
+        4,
+        // entity slots
+        4096,
+        // callback bytes
+        16,
+        // frame text bytes
+        1024,
+        // element states,
     >,
 >;
 
@@ -398,7 +401,7 @@ impl Element for NestedScrollFocus {
 }
 
 pub fn setup(scenario: BenchScenario, size: usize) -> (Box<BenchRuntime>, BenchPainter) {
-    let mut runtime = Box::new(BenchRuntime::default());
+    let mut runtime = Box::new(BenchRuntime::new(pool()));
 
     runtime
         .create_root(move |_| BenchApp { scenario, size })
@@ -411,4 +414,9 @@ pub fn setup(scenario: BenchScenario, size: usize) -> (Box<BenchRuntime>, BenchP
     runtime.layout_with_measurer(VIEWPORT, &painter).unwrap();
 
     (runtime, painter)
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(16 * 1024 * 1024)))
 }

@@ -1,9 +1,12 @@
 use crate::{
     CanvasDraw, CanvasStyle, DamageRegion, ElementId, EntityAccessError, EntityId, EntityRenderFn,
     EventBinding, ImageSource, ImageStyle, Offset, Rect, ResolvedTextStyle, Size, Style,
-    StylePatch, SvgSource, SvgStyle, TextStyle, element::state::ElementStateId,
-    frame::storage::FrameBuffer, interaction::scroll::ScrollAxes, layout::AvailableSize,
-    storage::FrameStorage,
+    StylePatch, SvgSource, SvgStyle, TextStyle,
+    element::state::ElementStateId,
+    frame::storage::FrameBuffer,
+    interaction::scroll::ScrollAxes,
+    layout::AvailableSize,
+    pool::{PoolRef, Table},
 };
 #[cfg(feature = "metrics")]
 use crate::{PerformanceMetrics, PerformanceMetricsCell};
@@ -14,7 +17,7 @@ mod rerender;
 mod resolve;
 mod storage;
 
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(test)]
 mod alloc_tests;
 #[cfg(test)]
 mod tests;
@@ -198,17 +201,17 @@ enum NodeCache {
     MovedTo(NodeId),
 }
 
-pub(crate) struct FrameArena<F: FrameStorage> {
-    pub(crate) nodes: FrameBuffer<Node, F::Nodes<Node>>,
+pub(crate) struct FrameArena {
+    pub(crate) nodes: FrameBuffer<Node>,
     /// the node of each mounted entity, sorted by entity id
-    entity_nodes: FrameBuffer<(EntityId, NodeId), F::Nodes<(EntityId, NodeId)>>,
+    entity_nodes: FrameBuffer<(EntityId, NodeId)>,
     /// during a partial rebuild, the entity nodes cut from the tree that may be mounted
     /// again
-    detached_entities: FrameBuffer<(EntityId, NodeId), F::Nodes<(EntityId, NodeId)>>,
+    detached_entities: FrameBuffer<(EntityId, NodeId)>,
     /// the entities that rendered or left the frame in the last rebuild
-    stale_entities: FrameBuffer<EntityId, F::Nodes<EntityId>>,
+    stale_entities: FrameBuffer<EntityId>,
     /// the entity nodes a partial rebuild rendered again, none inside another
-    rerendered_nodes: FrameBuffer<NodeId, F::Nodes<NodeId>>,
+    rerendered_nodes: FrameBuffer<NodeId>,
     detached_nodes: usize,
     /// what the re-rendered subtrees painted before the last partial rebuild, while the
     /// layout after it is pending. `None` when unknown
@@ -219,12 +222,11 @@ pub(crate) struct FrameArena<F: FrameStorage> {
     /// a node outside the re-rendered subtrees moved or scrolled since the partial
     /// rebuild
     layout_changed_outside: bool,
-    pub(crate) event_bindings: FrameBuffer<EventBinding, F::Nodes<EventBinding>>,
-    text: FrameBuffer<u8, F::Text>,
-    node_cache: FrameBuffer<NodeCache, F::Nodes<NodeCache>>,
+    pub(crate) event_bindings: FrameBuffer<EventBinding>,
+    text: FrameBuffer<u8>,
+    node_cache: FrameBuffer<NodeCache>,
     /// each with the node it belongs to
-    interaction_styles:
-        FrameBuffer<(NodeId, InteractionStyles), F::InteractionStyles<(NodeId, InteractionStyles)>>,
+    interaction_styles: FrameBuffer<(NodeId, InteractionStyles)>,
     /// the elements whose interaction styles apply
     focused: Option<ElementStateId>,
     pressed: Option<ElementStateId>,
@@ -233,22 +235,23 @@ pub(crate) struct FrameArena<F: FrameStorage> {
     pub(crate) metrics: PerformanceMetricsCell,
 }
 
-impl<F: FrameStorage> Default for FrameArena<F> {
-    fn default() -> Self {
+impl FrameArena {
+    /// an empty frame whose tables grow in `pool`
+    pub(crate) fn new_in(pool: PoolRef) -> Self {
         Self {
-            nodes: FrameBuffer::new(),
-            entity_nodes: FrameBuffer::new(),
-            detached_entities: FrameBuffer::new(),
-            stale_entities: FrameBuffer::new(),
-            rerendered_nodes: FrameBuffer::new(),
+            nodes: FrameBuffer::new_in(pool, Table::Nodes),
+            entity_nodes: FrameBuffer::new_in(pool, Table::Nodes),
+            detached_entities: FrameBuffer::new_in(pool, Table::Nodes),
+            stale_entities: FrameBuffer::new_in(pool, Table::Nodes),
+            rerendered_nodes: FrameBuffer::new_in(pool, Table::Nodes),
             detached_nodes: 0,
             rerendered_damage: None,
             tracked_layout_start: None,
             layout_changed_outside: false,
-            event_bindings: FrameBuffer::new(),
-            text: FrameBuffer::new(),
-            node_cache: FrameBuffer::new(),
-            interaction_styles: FrameBuffer::new(),
+            event_bindings: FrameBuffer::new_in(pool, Table::Nodes),
+            text: FrameBuffer::new_in(pool, Table::Text),
+            node_cache: FrameBuffer::new_in(pool, Table::Nodes),
+            interaction_styles: FrameBuffer::new_in(pool, Table::Nodes),
             focused: None,
             pressed: None,
             subtree_paint_bounds_valid: false,
@@ -258,12 +261,12 @@ impl<F: FrameStorage> Default for FrameArena<F> {
     }
 }
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
-    #[cfg(all(test, feature = "alloc"))]
+    #[cfg(test)]
     pub fn node_capacity(&self) -> usize {
         self.nodes.capacity().min(self.node_cache.capacity())
     }
@@ -272,7 +275,7 @@ impl<F: FrameStorage> FrameArena<F> {
         self.text.len()
     }
 
-    #[cfg(all(test, feature = "alloc"))]
+    #[cfg(test)]
     pub fn text_capacity(&self) -> usize {
         self.text.capacity()
     }
@@ -309,7 +312,7 @@ impl<F: FrameStorage> FrameArena<F> {
     }
 
     /// every node in the frame, detached ones included. Doesn't borrow the frame
-    pub(crate) fn node_ids(&self) -> impl Iterator<Item = NodeId> + use<F> {
+    pub(crate) fn node_ids(&self) -> impl Iterator<Item = NodeId> + use<> {
         // `push_node` never indexes a node past u16
         (0..=u16::MAX).take(self.nodes.len()).map(NodeId::new)
     }

@@ -1,6 +1,6 @@
 use inkpaper_ui::prelude::*;
 
-type TestRuntime = Runtime<FixedStorage<1024, 4, 1024, 8, 32, 256, 16>>;
+type TestRuntime = Runtime<FixedStorage<1024, 4, 1024, 8, 16>>;
 
 struct TestApp {
     show_extra: bool,
@@ -16,14 +16,14 @@ impl Render for TestApp {
 
 #[test]
 fn rebuild_without_root_returns_error() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     assert_eq!(runtime.rebuild(), Err(FrameBuildError::RootNotSet),);
 }
 
 #[test]
 fn create_root_registers_entity_for_rebuild() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root(|_| TestApp { show_extra: false })
@@ -40,7 +40,7 @@ fn create_root_registers_entity_for_rebuild() {
 
 #[test]
 fn rebuild_reuses_registered_root_entity() {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     let app = runtime
         .create_root(|_| TestApp { show_extra: false })
@@ -62,4 +62,9 @@ fn rebuild_reuses_registered_root_entity() {
     runtime.rebuild().unwrap();
 
     assert_eq!(runtime.frame_node_count(), original_nodes + 1,);
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

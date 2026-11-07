@@ -15,25 +15,16 @@ use std::{
 struct Heap<
     const ENTITIES: usize,
     const CALLBACKS: usize,
-    const NODES: usize,
-    const TEXT_BYTES: usize,
     const STATES: usize,
     const GLOBALS: usize = 0,
 >;
 
-impl<
-    const ENTITIES: usize,
-    const CALLBACKS: usize,
-    const NODES: usize,
-    const TEXT_BYTES: usize,
-    const STATES: usize,
-    const GLOBALS: usize,
-> RuntimeStorage for Heap<ENTITIES, CALLBACKS, NODES, TEXT_BYTES, STATES, GLOBALS>
+impl<const ENTITIES: usize, const CALLBACKS: usize, const STATES: usize, const GLOBALS: usize>
+    RuntimeStorage for Heap<ENTITIES, CALLBACKS, STATES, GLOBALS>
 {
     type Entities = HeapEntityArena<ENTITIES>;
     type Callbacks = HeapCallbackArena<CALLBACKS>;
     type Globals = HeapGlobalArena<GLOBALS>;
-    type Frame = HeapFrame<NODES, TEXT_BYTES>;
     type ElementStates = HeapElementStates<STATES>;
     type Events = HeapEvents;
 }
@@ -101,6 +92,20 @@ fn reject_allocation() -> bool {
 
 #[global_allocator]
 static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+/// allocations from the heap and from `runtime`'s pool while `operation` runs
+fn runtime_allocations<S, R>(
+    runtime: &mut Runtime<S, R>,
+    operation: impl FnOnce(&mut Runtime<S, R>),
+) -> usize
+where
+    S: RuntimeStorage,
+{
+    let pooled = runtime.memory().allocations;
+    let heap = allocations_during(|| operation(runtime));
+
+    heap + runtime.memory().allocations - pooled
+}
 
 fn allocations_during(operation: impl FnOnce()) -> usize {
     struct Reset;
@@ -204,17 +209,17 @@ impl PaintResources for BlockText {
 
 #[test]
 fn dynamic_runtime_allocates_on_growth_and_reuses_storage_for_rebuild_layout_and_paint() {
-    let mut runtime = Runtime::<Heap<4, 4, 1, 1, 8>, BlockText>::default();
+    let mut runtime = Runtime::<Heap<4, 4, 8>, BlockText>::new(pool());
 
     let screen = runtime.create_root(|_| Screen).unwrap();
 
-    assert!(allocations_during(|| runtime.rebuild().unwrap()) > 0);
+    assert!(runtime_allocations(&mut runtime, |runtime| runtime.rebuild().unwrap()) > 0);
     assert!(runtime.frame_node_count() > 1);
     assert_eq!(runtime.frame_text_bytes_used(), 10);
 
     let mut painter = TextCounter::default();
 
-    let allocations = allocations_during(|| {
+    let allocations = runtime_allocations(&mut runtime, |runtime| {
         runtime
             .layout_with_measurer(Size::new(px(80), px(40)), &painter)
             .unwrap();
@@ -268,10 +273,10 @@ impl Render for StatefulScreen {
     }
 }
 
-type StateRuntime = Runtime<Heap<4, 4, 128, 128, 1>>;
+type StateRuntime = Runtime<Heap<4, 4, 1>>;
 
 fn state_runtime() -> (StateRuntime, Entity<StatefulScreen>) {
-    let mut runtime = StateRuntime::default();
+    let mut runtime = StateRuntime::new(pool());
     let screen = runtime.create_root(|_| StatefulScreen { rows: 4 }).unwrap();
 
     runtime.rebuild().unwrap();
@@ -297,10 +302,10 @@ fn dynamic_identity_growth_preserves_focus_and_scrolling_without_input_allocatio
         })
         .unwrap();
 
-    assert!(allocations_during(|| runtime.rebuild().unwrap()) > 0);
+    assert!(runtime_allocations(&mut runtime, |runtime| runtime.rebuild().unwrap()) > 0);
     assert_eq!(runtime.focused_target(), Some(original));
 
-    let allocations = allocations_during(|| {
+    let allocations = runtime_allocations(&mut runtime, |runtime| {
         runtime
             .layout_with_measurer(Size::new(px(80), px(40)), &TextCounter::default())
             .unwrap();
@@ -402,13 +407,13 @@ fn every_identity_and_scroll_growth_allocation_can_fail_and_be_retried() {
 fn entity_allocation_failures_do_not_run_constructors_and_allow_retry() {
     type SmallRuntime = Runtime<HeapStorage>;
 
-    let expected = SmallRuntime::default()
+    let expected = SmallRuntime::new(pool())
         .create(|_| 7u32)
         .unwrap()
         .entity_id();
 
     for after in 0..2 {
-        let runtime = SmallRuntime::default();
+        let runtime = SmallRuntime::new(pool());
         let called = Cell::new(false);
 
         let result = failing_allocation(after, || {
@@ -430,7 +435,7 @@ fn entity_allocation_failures_do_not_run_constructors_and_allow_retry() {
 
 #[test]
 fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
-    let runtime = Runtime::<Heap<1, 0, 0, 0, 0>>::default();
+    let runtime = Runtime::<Heap<1, 0, 0>>::new(pool());
 
     let parent = runtime
         .create(|cx| {
@@ -497,7 +502,7 @@ fn callback_allocation_failures_drop_captures_and_allow_listener_and_canvas_retr
 
     for canvas in [false, true] {
         for after in 0..2 {
-            let runtime = Runtime::<HeapStorage>::default();
+            let runtime = Runtime::<HeapStorage>::new(pool());
             let entity = runtime.create(|_| ()).unwrap();
             let drops = Rc::new(Cell::new(0));
             let capture = Capture(drops.clone());
@@ -559,7 +564,7 @@ fn globals_grow_without_moving_values_and_support_aligned_zsts() {
     struct Empty;
     impl Global for Empty {}
 
-    let mut runtime = Runtime::<Heap<0, 0, 0, 0, 0, 1>>::default();
+    let mut runtime = Runtime::<Heap<0, 0, 0, 1>>::new(pool());
 
     assert_eq!(runtime.global_capacity(), 0);
     assert_eq!(runtime.global_byte_capacity(), 0);
@@ -609,7 +614,7 @@ fn global_allocation_failures_drop_inputs_and_allow_retry() {
 
     // Fail the slot allocation, then the payload allocation.
     for after in 0..2 {
-        let mut runtime = Runtime::<HeapStorage>::default();
+        let mut runtime = Runtime::<HeapStorage>::new(pool());
         let drops = Rc::new(Cell::new(0));
         let value = Value(drops.clone());
 
@@ -643,7 +648,7 @@ fn global_access_and_replacement_do_not_allocate() {
     struct Value(u32);
     impl Global for Value {}
 
-    let mut runtime = Runtime::<HeapStorage>::default();
+    let mut runtime = Runtime::<HeapStorage>::new(pool());
     runtime.set_global(Value(1)).unwrap();
     let bytes = runtime.global_bytes_used();
 
@@ -676,7 +681,7 @@ fn global_replacement_survives_a_panicking_destructor() {
     }
 
     let drops = Rc::new(Cell::new(0));
-    let mut runtime = Runtime::<HeapStorage>::default();
+    let mut runtime = Runtime::<HeapStorage>::new(pool());
 
     runtime
         .set_global(Value {
@@ -701,4 +706,9 @@ fn global_replacement_survives_a_panicking_destructor() {
 
     drop(runtime);
     assert_eq!(drops.get(), 2);
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }

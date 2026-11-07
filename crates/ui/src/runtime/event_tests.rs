@@ -1,8 +1,9 @@
 use std::vec::Vec;
 
+use crate::pool::testing::pool;
 use crate::*;
 
-type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 64, 256, 16>>;
+type TestRuntime = Runtime<TestStorage<4096, 16, 4096, 32, 16>>;
 
 /// what a [`Child`] says happened
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +99,7 @@ impl Render for Parent {
 }
 
 fn fixture() -> (TestRuntime, Entity<Parent>) {
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
     let parent = runtime.create_root(Parent::new).unwrap();
 
     (runtime, parent)
@@ -232,7 +233,7 @@ impl Collector {
 
 #[test]
 fn events_handlers_emit_are_delivered_too() {
-    let runtime = TestRuntime::default();
+    let runtime = TestRuntime::new(pool());
     let child = runtime.create(|_| Child::new()).unwrap();
     let relay = runtime
         .create(|cx| {

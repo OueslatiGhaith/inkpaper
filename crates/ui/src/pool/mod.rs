@@ -12,11 +12,6 @@
 //! 2. the allocator is only borrowed inside the methods of [`PoolRef`], which never run
 //!    other code meanwhile, so its borrows never overlap.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the runtime's tables move into the pool next")
-)]
-
 use core::{
     alloc::Layout,
     cell::{Cell, UnsafeCell},
@@ -30,6 +25,8 @@ mod vec;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use vec::PoolVec;
 
 /// with 8 second-level lists per first-level one
 const SECOND_LEVELS: usize = 8;
@@ -346,4 +343,32 @@ fn dangling(layout: Layout) -> NonNull<u8> {
 /// included. Alignments above the header's size can take a little more
 fn footprint(layout: Layout) -> usize {
     (layout.size() + ALLOCATION_HEADER.max(layout.align())).next_multiple_of(GRANULARITY)
+}
+
+/// pools for unit tests, over leaked memory
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::boxed::Box;
+
+    use super::{Pool, PoolRef};
+
+    /// a pool of `bytes` bytes
+    pub(crate) fn pool_of(bytes: usize) -> Pool {
+        Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(bytes)))
+    }
+
+    /// a pool large enough for any test's runtime
+    pub(crate) fn pool() -> Pool {
+        pool_of(256 * 1024)
+    }
+
+    /// a handle to a pool that is never dropped
+    pub(crate) fn pool_ref_of(bytes: usize) -> PoolRef {
+        Box::leak(Box::new(pool_of(bytes))).handle()
+    }
+
+    /// a handle to a pool large enough for any test's frame
+    pub(crate) fn pool_ref() -> PoolRef {
+        pool_ref_of(256 * 1024)
+    }
 }

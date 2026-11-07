@@ -59,10 +59,10 @@ pub(crate) struct Dependencies<V: VecStorage<Dependency>> {
     incomplete: Cell<bool>,
 }
 
-impl<V: VecStorage<Dependency>> Default for Dependencies<V> {
-    fn default() -> Self {
+impl<V: VecStorage<Dependency>> Dependencies<V> {
+    pub(crate) fn new(edges: V) -> Self {
         Self {
-            edges: RefCell::new(V::default()),
+            edges: RefCell::new(edges),
             incomplete: Cell::new(false),
         }
     }
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn records_each_read_once() {
-        let dependencies = Dependencies::<heapless::Vec<Dependency, 8>>::default();
+        let dependencies = Dependencies::new(heapless::Vec::<Dependency, 8>::new());
 
         dependencies.record(entity(0), Source::Entity(entity(1)));
         dependencies.record(entity(0), Source::Entity(entity(1)));
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn forgetting_a_reader_keeps_the_others() {
-        let dependencies = Dependencies::<heapless::Vec<Dependency, 8>>::default();
+        let dependencies = Dependencies::new(heapless::Vec::<Dependency, 8>::new());
         let theme = Source::Global(TypeId::of::<u8>());
 
         dependencies.record(entity(0), theme);
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn a_full_table_is_incomplete_until_cleared() {
-        let dependencies = Dependencies::<heapless::Vec<Dependency, 1>>::default();
+        let dependencies = Dependencies::new(heapless::Vec::<Dependency, 1>::new());
 
         dependencies.record(entity(0), Source::Entity(entity(1)));
         assert!(!dependencies.is_incomplete());

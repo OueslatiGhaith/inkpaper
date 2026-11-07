@@ -6,7 +6,7 @@ use crate::{
     interaction::scroll::{ScrollAxes, ScrollStateTable},
     layout::BorderBox,
     px,
-    storage::{ElementStateStorage, FrameStorage},
+    storage::ElementStateStorage,
 };
 
 #[cfg(test)]
@@ -73,7 +73,7 @@ fn scroll_axis_into_view(
     (current + delta).clamp(px(0), maximum)
 }
 
-impl<F: FrameStorage> FrameArena<F> {
+impl FrameArena {
     pub(crate) fn hit_test_event(
         &self,
         root: NodeId,

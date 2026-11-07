@@ -1,14 +1,10 @@
-use core::{alloc::Layout, mem::MaybeUninit};
-use std::{boxed::Box, rc::Rc, vec, vec::Vec};
+use core::alloc::Layout;
+use std::{rc::Rc, vec, vec::Vec};
 
-use super::{GRANULARITY, Pool, Table, vec::PoolVec};
-use crate::storage::StorageError;
-
-fn pool(bytes: usize) -> Pool {
-    Pool::new(Box::leak(
-        vec![MaybeUninit::uninit(); bytes].into_boxed_slice(),
-    ))
-}
+#[cfg(feature = "alloc")]
+use super::Pool;
+use super::{GRANULARITY, PoolVec, Table, testing::pool_of as pool};
+use crate::storage::{StorageError, VecStorage};
 
 fn bytes(size: usize) -> Layout {
     Layout::from_size_align(size, 1).unwrap()

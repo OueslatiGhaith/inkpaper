@@ -4,13 +4,16 @@ use inkpaper_ui::prelude::*;
 
 type TestRuntime = Runtime<
     FixedStorage<
-        4096, // entity bytes
-        1,    // entity slots
-        4096, // callback bytes
-        16,   // callback slots
-        64,   // frame nodes
-        1024, // frame text bytes
-        32,   // element states
+        4096,
+        // entity bytes
+        1,
+        // entity slots
+        4096,
+        // callback bytes
+        16,
+        // frame text bytes
+        32,
+        // element states,
     >,
 >;
 
@@ -31,7 +34,7 @@ impl Render for ConditionalChildren {
 
 #[test]
 fn when_can_change_the_concrete_builder_type() {
-    let mut without_footer = TestRuntime::default();
+    let mut without_footer = TestRuntime::new(pool());
 
     without_footer
         .create_root(|_| ConditionalChildren {
@@ -45,7 +48,7 @@ fn when_can_change_the_concrete_builder_type() {
     let nodes_without_footer = without_footer.frame_node_count();
     let text_without_footer = without_footer.frame_text_bytes_used();
 
-    let mut with_footer = TestRuntime::default();
+    let mut with_footer = TestRuntime::new(pool());
 
     with_footer
         .create_root(|_| ConditionalChildren {
@@ -101,7 +104,7 @@ impl Render for OptionalContent {
 
 #[test]
 fn when_some_adds_content_only_for_some_values() {
-    let mut without_message = TestRuntime::default();
+    let mut without_message = TestRuntime::new(pool());
 
     without_message
         .create_root(|_| OptionalContent { message: None })
@@ -112,7 +115,7 @@ fn when_some_adds_content_only_for_some_values() {
     let nodes_without_message = without_message.frame_node_count();
     let text_without_message = without_message.frame_text_bytes_used();
 
-    let mut with_message = TestRuntime::default();
+    let mut with_message = TestRuntime::new(pool());
 
     with_message
         .create_root(|_| OptionalContent {
@@ -177,7 +180,7 @@ impl Render for InteractiveConditional {
 #[test]
 fn conditional_composition_preserves_interaction_capabilities() {
     let activations = Rc::new(Cell::new(0));
-    let mut runtime = TestRuntime::default();
+    let mut runtime = TestRuntime::new(pool());
 
     runtime
         .create_root({
@@ -200,4 +203,9 @@ fn conditional_composition_preserves_interaction_capabilities() {
 
     assert!(runtime.complete_focused_activation().unwrap());
     assert_eq!(activations.get(), 1);
+}
+
+/// a pool large enough for this file's runtimes, over leaked memory
+fn pool() -> inkpaper_ui::Pool {
+    inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }
