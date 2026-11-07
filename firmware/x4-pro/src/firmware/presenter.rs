@@ -15,9 +15,10 @@ use crate::firmware::{
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
 
-/// the bytes the UI keeps its tables in: twice the simulator's peak over every screen.
-/// Allocated from the heap, which puts it in PSRAM
-pub const UI_POOL_BYTES: usize = 128 * 1024;
+/// the bytes the UI keeps its tables in. The simulator peaks near 120 KiB, after a list
+/// of about 90 nodes rebuilds and its nodes table doubles to 256 slots. This leaves room
+/// for the next doubling, to 512 slots. Allocated from the heap, which puts it in PSRAM
+pub const UI_POOL_BYTES: usize = 256 * 1024;
 
 const UI_GLYPH_CACHE_SLOTS: usize = 128;
 const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
