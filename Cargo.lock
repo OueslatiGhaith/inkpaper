@@ -2278,6 +2278,7 @@ dependencies = [
  "inkpaper-ui-style-schema",
  "libm",
  "num-traits",
+ "rlsf",
  "skrifa",
  "spin",
  "trybuild",
