@@ -285,6 +285,10 @@ fn partial_rebuild_matches_a_full_rebuild() {
         partial_frame.text_bytes_used(),
         full_frame.text_bytes_used()
     );
+    assert_eq!(
+        partial_frame.div_style_count(),
+        full_frame.div_style_count()
+    );
 
     for fixture in [&mut partial, &mut full] {
         fixture.runtime.clear_focus();
@@ -637,7 +641,11 @@ fn a_render_forgets_what_it_no_longer_reads() {
 fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
     let mut fixture = fixture(true);
     let frame = fixture.runtime.frame();
-    let (nodes, text) = (frame.node_count(), frame.text_bytes_used());
+    let (nodes, text, styles) = (
+        frame.node_count(),
+        frame.text_bytes_used(),
+        frame.div_style_count(),
+    );
 
     for _ in 0..50 {
         fixture.notify(fixture.first);
@@ -651,7 +659,14 @@ fn partial_rebuilds_reclaim_the_subtrees_they_replace() {
     assert_eq!(fixture.label(fixture.second).0, 1);
 
     let frame = fixture.runtime.frame();
-    assert_eq!((frame.node_count(), frame.text_bytes_used()), (nodes, text));
+    assert_eq!(
+        (
+            frame.node_count(),
+            frame.text_bytes_used(),
+            frame.div_style_count()
+        ),
+        (nodes, text, styles)
+    );
 
     // the moved event bindings still reach both labels
     assert!(fixture.activate(0));

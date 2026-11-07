@@ -47,7 +47,8 @@ pub(crate) struct TextRange {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum NodeKind {
     Div {
-        style: Style,
+        /// where the div's style sits in the frame's div styles
+        style: u16,
     },
     Text {
         text: TextRange,
@@ -224,6 +225,9 @@ pub(crate) struct FrameArena {
     layout_changed_outside: bool,
     pub(crate) event_bindings: FrameBuffer<EventBinding>,
     text: FrameBuffer<u8>,
+    /// the style of each div, in mount order, kept apart from the nodes since they're
+    /// most of a node's size
+    styles: FrameBuffer<Style>,
     node_cache: FrameBuffer<NodeCache>,
     /// each with the node it belongs to
     interaction_styles: FrameBuffer<(NodeId, InteractionStyles)>,
@@ -250,6 +254,7 @@ impl FrameArena {
             layout_changed_outside: false,
             event_bindings: FrameBuffer::new_in(pool, Table::Nodes),
             text: FrameBuffer::new_in(pool, Table::Text),
+            styles: FrameBuffer::new_in(pool, Table::Nodes),
             node_cache: FrameBuffer::new_in(pool, Table::Nodes),
             interaction_styles: FrameBuffer::new_in(pool, Table::Nodes),
             focused: None,
@@ -276,6 +281,11 @@ impl FrameArena {
     }
 
     #[cfg(test)]
+    pub(crate) fn div_style_count(&self) -> usize {
+        self.styles.len()
+    }
+
+    #[cfg(test)]
     pub fn text_capacity(&self) -> usize {
         self.text.capacity()
     }
@@ -291,6 +301,7 @@ impl FrameArena {
         self.tracked_layout_start = None;
         self.layout_changed_outside = false;
         self.text.clear();
+        self.styles.clear();
         self.event_bindings.clear();
         self.node_cache.clear();
         self.interaction_styles.clear();
@@ -308,6 +319,7 @@ impl FrameArena {
         self.node_cache.shrink_to_fit();
         self.event_bindings.shrink_to_fit();
         self.text.shrink_to_fit();
+        self.styles.shrink_to_fit();
         self.interaction_styles.shrink_to_fit();
     }
 
@@ -345,6 +357,7 @@ impl FrameArena {
         let NodeKind::Div { style } = node.kind else {
             return None;
         };
+        let style = self.styles[usize::from(style)];
         let (Some(index), Some(element)) = (node.interaction.styles, node.element_state_id) else {
             return Some(style);
         };

@@ -133,7 +133,13 @@ pub(crate) trait FrameStore {
 
 impl FrameStore for FrameArena {
     fn push_div(&mut self, style: Style) -> Result<NodeId, MountError> {
-        self.push_node(NodeKind::Div { style })
+        let index = self.styles.len();
+        // a div's node comes with its style, so the styles never outnumber the nodes
+        let style_id = u16::try_from(index).map_err(|_| MountError::NodesFull)?;
+        self.styles.push(style)?;
+
+        self.push_node(NodeKind::Div { style: style_id })
+            .inspect_err(|_| self.styles.truncate(index))
     }
 
     fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {

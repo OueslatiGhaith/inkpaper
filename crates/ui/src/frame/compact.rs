@@ -1,14 +1,14 @@
 //! reclaims what partial rebuilds leave behind. A re-rendered entity's old subtree
-//! stays in the arena as detached nodes, along with its text, event bindings and
-//! interaction styles, until the frame compacts.
+//! stays in the arena as detached nodes, along with its text, div styles, event
+//! bindings and interaction styles, until the frame compacts.
 
 use super::{FrameArena, NodeCache, NodeId, NodeKind};
 
 use crate::EventBinding;
 
 impl FrameArena {
-    /// removes the detached nodes, with the text, event bindings and interaction styles
-    /// only they used. The other nodes keep their order, so the ones a partial rebuild
+    /// removes the detached nodes, with the text, div styles, event bindings and
+    /// interaction styles only they used. The other nodes keep their order, so the ones a partial rebuild
     /// mounted still come after the rest, but they get new ids. Returns `root`'s.
     ///
     /// drops the layout caches, which the layout after a rebuild fills again
@@ -23,6 +23,7 @@ impl FrameArena {
 
         self.plan_moves();
         self.compact_text();
+        self.compact_styles();
         self.compact_event_bindings();
         self.compact_interaction_styles();
         self.relink();
@@ -81,6 +82,23 @@ impl FrameArena {
         }
 
         self.text.truncate(used);
+    }
+
+    /// div styles are appended as their node mounts, so live styles keep node order
+    fn compact_styles(&mut self) {
+        let mut used = 0;
+
+        for node in self.nodes.iter_mut().filter(|node| !node.detached) {
+            if let NodeKind::Div { style } = &mut node.kind {
+                debug_assert!(used <= usize::from(*style), "styles are in node order");
+
+                self.styles[used] = self.styles[usize::from(*style)];
+                *style = u16::try_from(used).expect("style indices fit in u16");
+                used += 1;
+            }
+        }
+
+        self.styles.truncate(used);
     }
 
     fn compact_event_bindings(&mut self) {

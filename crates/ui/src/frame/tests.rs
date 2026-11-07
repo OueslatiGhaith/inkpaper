@@ -129,8 +129,8 @@ fn preserves_styles_when_mounting() {
         .mount(div().flex().flex_col().w_full().p(px(8)), app)
         .unwrap();
 
-    match frame.node(root).kind {
-        NodeKind::Div { style } => {
+    match frame.style(root) {
+        Some(style) => {
             assert_eq!(style.display, Display::Flex);
             assert_eq!(style.flex_direction, FlexDirection::Column);
             assert_eq!(style.width, Length::Fill);
