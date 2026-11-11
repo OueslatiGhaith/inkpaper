@@ -111,20 +111,14 @@ impl RenderOnce for KeyButton<'_> {
         let width = self.width;
 
         rsx! {
-            <div class="relative h-[58px] w-{width}">
-                <div class="absolute left-0 top-0 w-{width} h-[58px] rounded-md border-2 border-{color:ink} bg-{background} flex items-center justify-center">
-                    <text class="text-xl no-wrap text-{color:ink}">
-                        {self.label}
-                    </text>
-                </div>
-
-                {#if let Some(listener) = self.on_key}
-                    <div
-                        id={("key", self.key.code())}
-                        on:activate={listener}
-                        class="absolute left-0 top-0 w-{width} h-[58px]"
-                    />
-                {/if}
+            <div
+                id={("key", self.key.code())}
+                on:activate={self.on_key}
+                class="w-{width} h-[58px] rounded-md border-2 border-{color:ink} bg-{background} flex items-center justify-center"
+            >
+                <text class="text-xl no-wrap text-{color:ink}">
+                    {self.label}
+                </text>
             </div>
         }
     }

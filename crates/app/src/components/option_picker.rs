@@ -76,10 +76,10 @@ struct OptionRow {
 
 impl RenderOnce for OptionRow {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
-        let background = if self.selected {
-            Color::BLACK
+        let (background, ink) = if self.selected {
+            (Color::BLACK, Color::WHITE)
         } else {
-            Color::WHITE
+            (Color::WHITE, Color::BLACK)
         };
 
         rsx! {
@@ -91,15 +91,9 @@ impl RenderOnce for OptionRow {
                 <div class="absolute left-2 top-1 w-[420px] h-12 rounded-sm bg-{background}" />
 
                 <div class="absolute left-4 top-0 w-[404px] h-14 flex items-center">
-                    {#if self.selected}
-                        <text class="text-xl text-white no-wrap max-lines-1 text-ellipsis">
-                            {self.label}
-                        </text>
-                    {:else}
-                        <text class="text-xl no-wrap max-lines-1 text-ellipsis">
-                            {self.label}
-                        </text>
-                    {/if}
+                    <text class="text-xl text-{color:ink} no-wrap max-lines-1 text-ellipsis">
+                        {self.label}
+                    </text>
                 </div>
             </div>
         }

@@ -58,13 +58,33 @@ pub(crate) struct EventBinding {
     pub(crate) node: NodeId,
 }
 
+/// what [`on`](crate::StatefulInteractiveElementExt::on) and
+/// [`on_activate`](crate::StatefulInteractiveElementExt::on_activate) take: a listener,
+/// or an `Option` of one for an element that only sometimes listens
+pub trait IntoListener<Event> {
+    fn into_listener(self) -> Option<Listener<Event>>;
+}
+
+impl<Event> IntoListener<Event> for Listener<Event> {
+    fn into_listener(self) -> Option<Listener<Event>> {
+        Some(self)
+    }
+}
+
+impl<Event> IntoListener<Event> for Option<Listener<Event>> {
+    fn into_listener(self) -> Option<Listener<Event>> {
+        self
+    }
+}
+
 pub struct OnEvent<E, Event> {
     element: E,
-    listener: Listener<Event>,
+    /// `None` binds nothing, so the element mounts as if it had no listener
+    listener: Option<Listener<Event>>,
 }
 
 impl<E, Event> OnEvent<E, Event> {
-    pub(crate) const fn new(element: E, listener: Listener<Event>) -> Self {
+    pub(crate) const fn new(element: E, listener: Option<Listener<Event>>) -> Self {
         Self { element, listener }
     }
 }
@@ -77,7 +97,9 @@ where
     fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
         let node = self.element.mount(cx)?;
 
-        cx.bind_event(node, TypeId::of::<Event>(), self.listener.id)?;
+        if let Some(listener) = self.listener {
+            cx.bind_event(node, TypeId::of::<Event>(), listener.id)?;
+        }
 
         Ok(node)
     }

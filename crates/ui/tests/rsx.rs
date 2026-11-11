@@ -688,3 +688,33 @@ impl Render for EventView {
 fn rsx_supports_builtin_and_typed_event_attributes() {
     let _ = EventView::render;
 }
+
+struct OptionalEventView {
+    enabled: bool,
+}
+
+impl OptionalEventView {
+    fn activated(&mut self, _: &ActivateEvent, _: &mut Context<'_, Self>) {}
+    fn book_selected(&mut self, _: &BookSelectedEvent, _: &mut Context<'_, Self>) {}
+}
+
+impl Render for OptionalEventView {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let activate = self.enabled.then(|| cx.listener(Self::activated));
+        let selected = self.enabled.then(|| cx.listener(Self::book_selected));
+
+        rsx! {
+            <div
+                id="book"
+                on:activate={activate}
+                on:BookSelectedEvent={selected}
+                class="bg-white active:bg-zinc-200"
+            />
+        }
+    }
+}
+
+#[test]
+fn rsx_event_attributes_accept_optional_listeners() {
+    let _ = OptionalEventView::render;
+}

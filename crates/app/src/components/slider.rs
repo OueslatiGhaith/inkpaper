@@ -79,24 +79,14 @@ struct SliderButton {
 impl RenderOnce for SliderButton {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         rsx! {
-            <div class="w-14 h-14">
-                {#if let Some(listener) = self.on_activate}
-                    <div
-                        id={self.id}
-                        on:activate={listener}
-                        class="w-full h-full flex items-center justify-center"
-                    >
-                        <text class="text-xl text-center">
-                            {self.label}
-                        </text>
-                    </div>
-                {:else}
-                    <div class="w-full h-full flex items-center justify-center">
-                        <text class="text-xl text-center">
-                            {self.label}
-                        </text>
-                    </div>
-                {/if}
+            <div
+                id={self.id}
+                on:activate={self.on_activate}
+                class="w-14 h-14 flex items-center justify-center"
+            >
+                <text class="text-xl text-center">
+                    {self.label}
+                </text>
             </div>
         }
     }
