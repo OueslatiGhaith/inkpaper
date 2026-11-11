@@ -2,7 +2,7 @@ use core::any::TypeId;
 
 use crate::{
     BorrowKind, Canvas, Entity, EntityAllocError, EntityId, EventEmitter, Listener, OutOfMemory,
-    PaintCx, RuntimeCx,
+    PaintCx, ReleaseError, RuntimeCx,
     callback::{CallbackAllocError, register_canvas_callback, register_listener},
     emitter::{self, Handler},
     entity::{LeaseOwner, create_entity},
@@ -56,6 +56,27 @@ impl<'a, T> Context<'a, T> {
             Ok(entity) => entity,
             Err(error) => panic!("could not allocate entity: {error:?}"),
         }
+    }
+
+    /// gives up `entity`. Its handle, and every copy of it, stops working, and its state
+    /// is dropped once nothing borrows it and it isn't mounted: when the runtime call
+    /// running now returns, or after the rebuild that unmounts it.
+    ///
+    /// releasing doesn't release the entities it holds. Release those too.
+    ///
+    /// # Panics
+    ///
+    /// when the entity is gone, is the runtime's root, or the pool has no room. See
+    /// [`Self::try_release`]
+    #[track_caller]
+    pub fn release<U>(&self, entity: Entity<U>) {
+        if let Err(error) = self.try_release(entity) {
+            panic!("could not release entity: {error:?}");
+        }
+    }
+
+    pub fn try_release<U>(&self, entity: Entity<U>) -> Result<(), ReleaseError> {
+        self.runtime.release(entity.entity_id())
     }
 
     pub fn try_new<U>(

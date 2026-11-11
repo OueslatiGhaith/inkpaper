@@ -418,7 +418,6 @@ impl FrameArena {
         &mut self.nodes[id.index()]
     }
 
-    #[cfg(test)]
     /// the node an entity is mounted at, if it is in this frame
     pub(crate) fn entity_node(&self, entity: EntityId) -> Option<NodeId> {
         self.entity_node_position(entity)

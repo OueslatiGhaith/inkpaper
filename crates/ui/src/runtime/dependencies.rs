@@ -71,6 +71,28 @@ impl Dependencies {
     }
 }
 
+impl Dependencies {
+    /// forgets every read of `source`, once it no longer exists
+    pub(crate) fn forget_source(&self, source: Source) {
+        let mut edges = self.edges.borrow_mut();
+        let mut kept = 0;
+
+        for index in 0..edges.len() {
+            if edges[index].source != source {
+                edges[kept] = edges[index];
+                kept += 1;
+            }
+        }
+
+        edges.truncate(kept);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.edges.borrow().len()
+    }
+}
+
 impl DependencyStore for Dependencies {
     fn record(&self, reader: EntityId, source: Source) {
         if source == Source::Entity(reader) {

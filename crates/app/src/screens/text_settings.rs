@@ -271,14 +271,6 @@ impl TextSettingsView {
         }
     }
 
-    /// Shows the Font tab, like crosspoint's screen opens on.
-    pub(crate) fn reset(&mut self, cx: &mut Context<'_, Self>) {
-        self.tab = TextSettingsTab::Font;
-        self.pager = Pager::default();
-        self.picker = None;
-        cx.notify();
-    }
-
     pub(crate) const fn picker_open(&self) -> bool {
         self.picker.is_some()
     }
@@ -429,27 +421,29 @@ impl ScreenLifecycle for TextSettingsRoute {
     fn enter(&self, app: &mut InkPaperApp, entry: Entry, cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
             app.text_settings.open(app.reader.menu_text_settings());
-            app.text_settings_view.update(cx, TextSettingsView::reset);
+
+            // a new view opens on the Font tab, like crosspoint's screen
+            let view =
+                InkPaperApp::open_view(&mut app.text_settings_view, cx, TextSettingsView::new);
+            cx.subscribe(view, InkPaperApp::on_text_settings_event);
         }
     }
 
     /// An open book is laid out again with the new settings.
-    fn exit(&self, app: &mut InkPaperApp, exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
         if exit == Exit::Closed {
             app.reader.request_text_settings(app.text_settings.draft());
+            InkPaperApp::close_view(&mut app.text_settings_view, cx);
         }
     }
 
     /// Back closes an open picker first.
     fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
-        if app
+        let closed = app
             .text_settings_view
-            .update(cx, TextSettingsView::close_picker)
-        {
-            return Back::Handled;
-        }
+            .is_some_and(|view| view.update(cx, TextSettingsView::close_picker));
 
-        Back::Leave
+        if closed { Back::Handled } else { Back::Leave }
     }
 }
 
@@ -460,8 +454,9 @@ impl ScreenInput for TextSettingsRoute {
         button: SideButton,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        app.text_settings_view
-            .update(cx, |view, cx| view.turn_page(button.into(), cx));
+        if let Some(view) = app.text_settings_view {
+            view.update(cx, |view, cx| view.turn_page(button.into(), cx));
+        }
     }
 
     fn drag(
@@ -471,7 +466,9 @@ impl ScreenInput for TextSettingsRoute {
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        let view = app.text_settings_view;
+        let Some(view) = app.text_settings_view else {
+            return;
+        };
 
         if view.read_with(cx, TextSettingsView::picker_open) {
             return;
@@ -487,6 +484,7 @@ impl ScreenInput for TextSettingsRoute {
 
 impl ScreenView for TextSettingsRoute {
     fn render<'a>(&self, app: &'a InkPaperApp, _: &mut Context<'_, InkPaperApp>) -> AnyElement<'a> {
-        app.text_settings_view.into_any_element()
+        app.text_settings_view
+            .map_or_else(|| div().into_any_element(), IntoElement::into_any_element)
     }
 }

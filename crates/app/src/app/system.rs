@@ -58,13 +58,15 @@ impl InkPaperApp {
     /// clock settings' timezone view shows it while it changes, so only it renders
     /// again; other screens render again on the way back.
     pub(crate) fn preview_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
-        if self.clock.preview_utc_offset(offset) {
-            self.timezone.notify(cx);
+        if self.clock.preview_utc_offset(offset)
+            && let Some(timezone) = self.timezone
+        {
+            timezone.notify(cx);
         }
     }
 
     /// Moves the timezone by the clock settings' slider buttons, and saves it.
-    pub(super) fn on_step_timezone(
+    pub(crate) fn on_step_timezone(
         &mut self,
         _: Entity<TimezoneView>,
         &StepTimezone(quarters): &StepTimezone,
@@ -76,8 +78,10 @@ impl InkPaperApp {
 
     /// Saves a timezone, rendering again what [`Self::preview_utc_offset`] does.
     pub(crate) fn set_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
-        if self.clock.set_utc_offset(offset) {
-            self.timezone.notify(cx);
+        if self.clock.set_utc_offset(offset)
+            && let Some(timezone) = self.timezone
+        {
+            timezone.notify(cx);
         }
     }
 

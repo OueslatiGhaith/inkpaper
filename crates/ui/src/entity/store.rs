@@ -12,7 +12,8 @@ pub struct RawEntityReservation {
 /// # Safety
 ///
 /// a reservation must fit its layout, and values must not move once reserved. Only
-/// committed entities can be borrowed, `borrow` must check the registered type, and every
+/// committed entities can be borrowed, `borrow` must check the registered type and that
+/// the id still names the value in its slot, `remove` must refuse borrowed entities, and every
 /// returned pointer must stay valid until the matching `release`, with shared and
 /// exclusive borrows tracked so they never overlap.
 pub unsafe trait EntityStore {
@@ -39,6 +40,13 @@ pub unsafe trait EntityStore {
     ) -> Result<NonNull<u8>, EntityAccessError>;
 
     fn release(&self, entity: EntityId, kind: BorrowKind);
+
+    /// whether `entity` still names a value, committed or being built
+    fn contains(&self, entity: EntityId) -> bool;
+
+    /// drops the entity's value and frees its slot for reuse. Its id, and every copy
+    /// of it, no longer reaches anything. Fails while the entity is borrowed
+    fn remove(&self, entity: EntityId) -> Result<(), EntityAccessError>;
 
     /// records that the entity changed and needs to render again. Ignores invalid ids
     fn mark_dirty(&self, entity: EntityId);

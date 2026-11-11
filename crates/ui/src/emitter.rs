@@ -116,6 +116,30 @@ impl EventTable {
     }
 }
 
+impl EventTable {
+    /// forgets the subscriptions of a released entity, as subscriber or emitter
+    pub(crate) fn forget(&self, entity: EntityId) {
+        let mut subscriptions = self.subscriptions.borrow_mut();
+        let mut kept = 0;
+
+        for index in 0..subscriptions.len() {
+            let subscription = subscriptions[index];
+
+            if subscription.subscriber != entity && subscription.emitter != entity {
+                subscriptions[kept] = subscription;
+                kept += 1;
+            }
+        }
+
+        subscriptions.truncate(kept);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn subscription_count(&self) -> usize {
+        self.subscriptions.borrow().len()
+    }
+}
+
 impl EventStore for EventTable {
     fn subscribe(&self, subscription: Subscription) -> Result<(), OutOfMemory> {
         self.subscriptions.borrow_mut().try_push(subscription)

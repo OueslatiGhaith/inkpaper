@@ -2,10 +2,10 @@ use core::{any::TypeId, cell::Cell};
 
 use super::dependencies::{DependencyStore, NoDependencies, Source};
 use crate::{
-    EntityId,
+    EntityId, ReleaseError,
     callback::CallbackStore,
     emitter::{EventStore, NoEvents},
-    entity::{EntityStore, LeaseStore, NoLeases},
+    entity::{EntityStore, LeaseStore, NoLeases, NoReleases, ReleaseStore},
     global::GlobalStore,
 };
 
@@ -24,6 +24,8 @@ pub struct RuntimeCx<'a> {
     pub(crate) events: &'a dyn EventStore,
     /// the entities borrowed by the references contexts handed out
     pub(crate) leases: &'a dyn LeaseStore,
+    /// the entities released and waiting to be dropped
+    pub(crate) releases: &'a dyn ReleaseStore,
     /// the entity being rendered, which owns the callbacks registered meanwhile
     pub(crate) rendering: Option<EntityId>,
 }
@@ -43,6 +45,7 @@ impl<'a> RuntimeCx<'a> {
             dependencies: &NoDependencies,
             events: &NoEvents,
             leases: &NoLeases,
+            releases: &NoReleases,
             rendering: None,
         }
     }
@@ -53,6 +56,19 @@ impl<'a> RuntimeCx<'a> {
 
     pub(crate) fn with_leases(self, leases: &'a dyn LeaseStore) -> Self {
         Self { leases, ..self }
+    }
+
+    pub(crate) fn with_releases(self, releases: &'a dyn ReleaseStore) -> Self {
+        Self { releases, ..self }
+    }
+
+    /// queues `entity` to be dropped once nothing borrows it and it isn't mounted
+    pub(crate) fn release(self, entity: EntityId) -> Result<(), ReleaseError> {
+        if !self.entities.contains(entity) {
+            return Err(ReleaseError::InvalidEntity);
+        }
+
+        self.releases.push(entity)
     }
 
     pub(crate) fn with_dependencies(self, dependencies: &'a dyn DependencyStore) -> Self {

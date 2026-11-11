@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     ClockSyncStatus, InkPaperApp, UtcOffset,
-    app::{Entry, ScreenInput, ScreenLifecycle, ScreenView},
+    app::{Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
         settings_row::{ListRow, ListRowProps, SettingsValueRow, SettingsValueRowProps},
@@ -169,9 +169,18 @@ impl Render for TimezoneView {
 pub(crate) struct ClockSettingsRoute;
 
 impl ScreenLifecycle for ClockSettingsRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry, _cx: &mut Context<'_, InkPaperApp>) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
             app.clock.clear_sync_result();
+
+            let view = InkPaperApp::open_view(&mut app.timezone, cx, TimezoneView::new);
+            cx.subscribe(view, InkPaperApp::on_step_timezone);
+        }
+    }
+
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
+        if exit == Exit::Closed {
+            InkPaperApp::close_view(&mut app.timezone, cx);
         }
     }
 }
@@ -217,10 +226,14 @@ impl ScreenView for ClockSettingsRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
+        let Some(timezone) = app.timezone else {
+            return div().into_any_element();
+        };
+
         ClockSettingsScreen::from(ClockSettingsScreenProps {
             network: app.wifi.saved().connected().map(|network| network.ssid()),
             battery: app.battery_indicator,
-            timezone: app.timezone,
+            timezone,
             sync: app.clock.sync_status(),
             on_back: cx.listener(InkPaperApp::activate_back),
             on_sync: cx.listener(InkPaperApp::activate_sync_clock),

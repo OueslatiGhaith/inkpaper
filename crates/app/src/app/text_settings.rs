@@ -23,7 +23,7 @@ impl InkPaperApp {
 
     /// What the Text Settings screen's taps mean. Like crosspoint, every change is
     /// saved as it is made.
-    pub(super) fn on_text_settings_event(
+    pub(crate) fn on_text_settings_event(
         &mut self,
         _: Entity<TextSettingsView>,
         event: &TextSettingsEvent,

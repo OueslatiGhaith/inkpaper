@@ -1,13 +1,18 @@
 mod arena;
 mod lease;
+mod release;
 mod store;
 
 #[cfg(test)]
 mod read_tests;
+#[cfg(test)]
+mod release_tests;
 
 pub(crate) use arena::EntityArena;
 pub use arena::{EntityAccessError, EntityAllocError};
 pub(crate) use lease::{LeaseOwner, LeaseStore, LeaseTable, NoLeases};
+pub use release::ReleaseError;
+pub(crate) use release::{NoReleases, ReleaseQueue, ReleaseStore};
 
 #[cfg(test)]
 pub(crate) use store::drop_value;
