@@ -21,16 +21,20 @@ use super::{
 
 mod kw {
     syn::custom_keyword!(each);
+    syn::custom_keyword!(case);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Marker {
     OpenIf,
     OpenEach,
+    OpenMatch,
     ElseIf,
     Else,
+    Case,
     CloseIf,
     CloseEach,
+    CloseMatch,
 }
 
 #[derive(Clone, Debug)]
@@ -58,17 +62,31 @@ pub struct EachBlock {
 }
 
 #[derive(Clone, Debug)]
+pub struct MatchArm {
+    pub pattern: Pat,
+    pub guard: Option<Expr>,
+    pub body: Vec<RsxNode>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchBlock {
+    pub scrutinee: Expr,
+    pub arms: Vec<MatchArm>,
+}
+
+#[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum ControlFlow {
     If(IfBlock),
     Each(EachBlock),
+    Match(MatchBlock),
 }
 
 impl CustomNode for ControlFlow {
     fn peek_element(input: ParseStream) -> bool {
         matches!(
             inspect_marker(input),
-            Some(Marker::OpenIf | Marker::OpenEach)
+            Some(Marker::OpenIf | Marker::OpenEach | Marker::OpenMatch)
         )
     }
 }
@@ -78,6 +96,7 @@ impl ParseRecoverable for ControlFlow {
         match inspect_marker(input) {
             Some(Marker::OpenIf) => parse_if_block(parser, input).map(Self::If),
             Some(Marker::OpenEach) => parse_each_block(parser, input).map(Self::Each),
+            Some(Marker::OpenMatch) => parse_match_block(parser, input).map(Self::Match),
             _ => {
                 parser.push_diagnostic(syn::Error::new(
                     input.span(),
@@ -103,6 +122,7 @@ pub(super) fn expand_control_flow(control_flow: &ControlFlow) -> syn::Result<Tok
             block.iterable.span(),
             "root `{#each}` is not supported because rsx! must produce exactly one root element",
         )),
+        ControlFlow::Match(block) => expand_match(block),
     }
 }
 
@@ -113,6 +133,7 @@ pub(super) fn expand_control_flow_into(
     match control_flow {
         ControlFlow::If(block) => expand_if_into(parent, block),
         ControlFlow::Each(block) => expand_each_into(parent, block),
+        ControlFlow::Match(block) => expand_match_into(parent, block),
     }
 }
 
@@ -123,18 +144,19 @@ pub(super) fn expand_control_flow_group_into(
     match control_flow {
         ControlFlow::If(block) => expand_if_group_into(group, block),
         ControlFlow::Each(block) => expand_each_group_into(group, block),
+        ControlFlow::Match(block) => expand_match_group_into(group, block),
     }
 }
 
 fn parse_if_block(parser: &mut RecoverableContext, input: ParseStream) -> Option<IfBlock> {
     let condition = parse_if_marker(parser, input)?;
-    let then_branch = parse_if_branch(parser, input)?;
+    let then_branch = parse_branch(parser, input)?;
 
     let mut else_ifs = Vec::new();
 
     while inspect_marker(input) == Some(Marker::ElseIf) {
         let condition = parse_else_if_marker(parser, input)?;
-        let body = parse_if_branch(parser, input)?;
+        let body = parse_branch(parser, input)?;
 
         else_ifs.push(ConditionalBranch { condition, body });
     }
@@ -142,7 +164,7 @@ fn parse_if_block(parser: &mut RecoverableContext, input: ParseStream) -> Option
     let else_branch = if inspect_marker(input) == Some(Marker::Else) {
         parse_else_marker(parser, input)?;
 
-        Some(parse_if_branch(parser, input)?)
+        Some(parse_branch(parser, input)?)
     } else {
         None
     };
@@ -167,12 +189,12 @@ fn parse_if_block(parser: &mut RecoverableContext, input: ParseStream) -> Option
 fn parse_each_block(parser: &mut RecoverableContext, input: ParseStream) -> Option<EachBlock> {
     let (iterable, pattern, index, key) = parse_each_marker(parser, input)?;
 
-    let body = parse_each_branch(parser, input)?;
+    let body = parse_branch(parser, input)?;
 
     let else_branch = if inspect_marker(input) == Some(Marker::Else) {
         parse_else_marker(parser, input)?;
 
-        Some(parse_each_branch(parser, input)?)
+        Some(parse_branch(parser, input)?)
     } else {
         None
     };
@@ -373,6 +395,145 @@ fn expand_keyed_each_body(body: &[RsxNode], key: &Expr) -> syn::Result<TokenStre
     Ok(quote! { ::inkpaper_ui::ChildrenExt::child(::inkpaper_ui::NoChildren, #child) })
 }
 
+fn parse_match_block(parser: &mut RecoverableContext, input: ParseStream) -> Option<MatchBlock> {
+    let scrutinee = parse_match_marker(parser, input)?;
+
+    let stray = parse_branch(parser, input)?;
+    if let Some(node) = stray.first() {
+        parser.push_diagnostic(syn::Error::new_spanned(
+            node,
+            "content in `{#match}` must follow a `{:case ...}`",
+        ));
+    }
+
+    let mut arms = Vec::new();
+
+    while inspect_marker(input) == Some(Marker::Case) {
+        let (pattern, guard) = parse_case_marker(parser, input)?;
+        let body = parse_branch(parser, input)?;
+
+        arms.push(MatchArm {
+            pattern,
+            guard,
+            body,
+        });
+    }
+
+    if arms.is_empty() {
+        parser.push_diagnostic(syn::Error::new(
+            scrutinee.span(),
+            "`{#match}` requires at least one `{:case ...}`",
+        ));
+    }
+
+    if inspect_marker(input) == Some(Marker::CloseMatch) {
+        parse_close_match_marker(parser, input)?;
+    } else {
+        parser.push_diagnostic(syn::Error::new(
+            scrutinee.span(),
+            "unclosed `{#match}` block; expected `{/match}`",
+        ));
+    }
+
+    Some(MatchBlock { scrutinee, arms })
+}
+
+fn expand_match(block: &MatchBlock) -> syn::Result<TokenStream> {
+    let bodies = block
+        .arms
+        .iter()
+        .map(|arm| expand_root_branch(&arm.body, arm.pattern.span(), "`{:case ...}`"))
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    Ok(expand_match_arms(block, bodies))
+}
+
+fn expand_match_into(parent: TokenStream, block: &MatchBlock) -> syn::Result<TokenStream> {
+    let parent_ident = Ident::new("__inkpaper_rsx_parent", Span::mixed_site());
+    let parent_ref = quote! { #parent_ident };
+
+    let bodies = block
+        .arms
+        .iter()
+        .map(|arm| expand_children_into(parent_ref.clone(), &arm.body))
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    let arms = expand_match_arms(block, bodies);
+
+    Ok(quote! {
+        {
+            let #parent_ident = #parent;
+
+            #arms
+        }
+    })
+}
+
+fn expand_match_group_into(group: TokenStream, block: &MatchBlock) -> syn::Result<TokenStream> {
+    let group_ident = Ident::new("__inkpaper_rsx_children", Span::mixed_site());
+    let group_ref = quote! { #group_ident };
+
+    let bodies = block
+        .arms
+        .iter()
+        .map(|arm| expand_children_group_into(group_ref.clone(), &arm.body))
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    let arms = expand_match_arms(block, bodies);
+
+    Ok(quote! {
+        {
+            let #group_ident = #group;
+
+            #arms
+        }
+    })
+}
+
+/// a Rust `match` whose arms are wrapped in nested `Either`s, so every arm has one type.
+/// The nesting is a balanced tree, keeping it log2 of the arm count deep
+fn expand_match_arms(block: &MatchBlock, bodies: Vec<TokenStream>) -> TokenStream {
+    let count = bodies.len();
+
+    let arms = block
+        .arms
+        .iter()
+        .zip(bodies)
+        .enumerate()
+        .map(|(index, (arm, body))| {
+            let pattern = &arm.pattern;
+            let guard = arm.guard.as_ref().map(|guard| quote! { if #guard });
+            let body = wrap_either(body, index, count);
+
+            quote! { #pattern #guard => #body, }
+        });
+
+    let scrutinee = &block.scrutinee;
+
+    quote! {
+        match #scrutinee {
+            #(#arms)*
+        }
+    }
+}
+
+/// wraps the body of arm `index` of `count` in the `Either` path that leads to it
+fn wrap_either(body: TokenStream, index: usize, count: usize) -> TokenStream {
+    if count <= 1 {
+        return body;
+    }
+
+    let left = count.div_ceil(2);
+
+    if index < left {
+        let inner = wrap_either(body, index, left);
+        quote! { ::inkpaper_ui::Either::Left(#inner) }
+    } else {
+        let inner = wrap_either(body, index - left, count - left);
+        quote! { ::inkpaper_ui::Either::Right(#inner) }
+    }
+}
+
 fn expand_root_branch(body: &[RsxNode], span: Span, branch_name: &str) -> syn::Result<TokenStream> {
     match body {
         [] => Err(syn::Error::new(
@@ -389,33 +550,22 @@ fn expand_root_branch(body: &[RsxNode], span: Span, branch_name: &str) -> syn::R
     }
 }
 
-fn parse_if_branch(parser: &mut RecoverableContext, input: ParseStream) -> Option<Vec<RsxNode>> {
+/// parses nodes up to the next marker that continues or closes a block
+fn parse_branch(parser: &mut RecoverableContext, input: ParseStream) -> Option<Vec<RsxNode>> {
     let mut nodes = Vec::new();
 
     while !input.is_empty() {
         if starts_element_close(input)
             || matches!(
                 inspect_marker(input),
-                Some(Marker::ElseIf | Marker::Else | Marker::CloseIf | Marker::CloseEach)
-            )
-        {
-            break;
-        }
-
-        nodes.push(parser.parse_recoverable(input)?);
-    }
-
-    Some(nodes)
-}
-
-fn parse_each_branch(parser: &mut RecoverableContext, input: ParseStream) -> Option<Vec<RsxNode>> {
-    let mut nodes = Vec::new();
-
-    while !input.is_empty() {
-        if starts_element_close(input)
-            || matches!(
-                inspect_marker(input),
-                Some(Marker::Else | Marker::ElseIf | Marker::CloseEach | Marker::CloseIf)
+                Some(
+                    Marker::ElseIf
+                        | Marker::Else
+                        | Marker::Case
+                        | Marker::CloseIf
+                        | Marker::CloseEach
+                        | Marker::CloseMatch
+                )
             )
         {
             break;
@@ -451,11 +601,19 @@ fn inspect_marker_inner(input: ParseStream) -> syn::Result<Option<Marker>> {
             return Ok(Some(Marker::OpenEach));
         }
 
+        if content.peek(Token![match]) {
+            return Ok(Some(Marker::OpenMatch));
+        }
+
         return Ok(None);
     }
 
     if content.peek(Token![:]) {
         content.parse::<Token![:]>()?;
+
+        if content.peek(kw::case) {
+            return Ok(Some(Marker::Case));
+        }
 
         if !content.peek(Token![else]) {
             return Ok(None);
@@ -483,6 +641,10 @@ fn inspect_marker_inner(input: ParseStream) -> syn::Result<Option<Marker>> {
 
         if content.peek(kw::each) {
             return Ok(Some(Marker::CloseEach));
+        }
+
+        if content.peek(Token![match]) {
+            return Ok(Some(Marker::CloseMatch));
         }
     }
 
@@ -711,6 +873,68 @@ fn parse_close_each_marker(parser: &mut RecoverableContext, input: ParseStream) 
 
         if !content.is_empty() {
             return Err(content.error("unexpected tokens in `{/each}`"));
+        }
+
+        Ok(())
+    })
+}
+
+fn parse_match_marker(parser: &mut RecoverableContext, input: ParseStream) -> Option<Expr> {
+    parser.parse_mixed_fn(input, |_, input| {
+        let content;
+        braced!(content in input);
+
+        content.parse::<Token![#]>()?;
+        content.parse::<Token![match]>()?;
+
+        let scrutinee = content.parse::<Expr>()?;
+
+        if !content.is_empty() {
+            return Err(content.error("unexpected token after `{#match ...}` expression"));
+        }
+
+        Ok(scrutinee)
+    })
+}
+
+fn parse_case_marker(
+    parser: &mut RecoverableContext,
+    input: ParseStream,
+) -> Option<(Pat, Option<Expr>)> {
+    parser.parse_mixed_fn(input, |_, input| {
+        let content;
+        braced!(content in input);
+
+        content.parse::<Token![:]>()?;
+        content.parse::<kw::case>()?;
+
+        let pattern = Pat::parse_multi_with_leading_vert(&content)?;
+
+        let guard = if content.peek(Token![if]) {
+            content.parse::<Token![if]>()?;
+            Some(content.parse::<Expr>()?)
+        } else {
+            None
+        };
+
+        if !content.is_empty() {
+            return Err(content.error("unexpected token after `{:case ...}` pattern"));
+        }
+
+        Ok((pattern, guard))
+    })
+}
+
+fn parse_close_match_marker(parser: &mut RecoverableContext, input: ParseStream) -> Option<()> {
+    parser.parse_mixed_fn(input, |_, input| {
+        let content;
+        braced!(content in input);
+
+        content.parse::<Token![/]>()?;
+        content.parse::<Token![match]>()?;
+
+        if !content.is_empty() {
+            return Err(content.error("unexpected tokens in `{/match}`"));
         }
 
         Ok(())

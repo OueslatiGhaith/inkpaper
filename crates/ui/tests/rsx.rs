@@ -718,3 +718,78 @@ impl Render for OptionalEventView {
 fn rsx_event_attributes_accept_optional_listeners() {
     let _ = OptionalEventView::render;
 }
+
+#[derive(Clone, Copy)]
+enum Shelf {
+    Empty,
+    Loading { percent: u8 },
+    Books(usize),
+}
+
+#[test]
+fn rsx_supports_root_match() {
+    let shelf = Shelf::Books(3);
+
+    let tree = rsx! {
+        {#match shelf}
+            {:case Shelf::Empty}
+                <text>"No books"</text>
+            {:case Shelf::Loading { percent }}
+                <div class="flex">
+                    <div class="w-{length:px(percent.into())}" />
+                </div>
+            {:case Shelf::Books(count) if count > 99}
+                <TestCard title="Many books" width={px(240)} />
+            {:case Shelf::Books(_)}
+                <div />
+        {/match}
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_match_children() {
+    let shelf = Shelf::Loading { percent: 40 };
+
+    let tree = rsx! {
+        <div class="flex flex-col gap-2">
+            <text>"Shelf"</text>
+
+            {#match shelf}
+                {:case Shelf::Empty}
+                {:case Shelf::Loading { percent }}
+                    <div class="w-{length:px(percent.into())}" />
+                    <text>"Loading"</text>
+                {:case Shelf::Books(count)}
+                    {#each 0..count as index}
+                        <div class="h-{length:px(index as i32)}" />
+                    {/each}
+            {/match}
+
+            <text>"Footer"</text>
+        </div>
+    };
+
+    assert_into_element(tree);
+}
+
+#[test]
+fn rsx_supports_match_inside_each() {
+    let shelves = [Shelf::Empty, Shelf::Books(2)];
+
+    let tree = rsx! {
+        <div class="flex flex-col">
+            {#each shelves as shelf}
+                {#match shelf}
+                    {:case Shelf::Empty}
+                        <text>"Empty"</text>
+                    {:case _}
+                        <div />
+                {/match}
+            {/each}
+        </div>
+    };
+
+    assert_into_element(tree);
+}

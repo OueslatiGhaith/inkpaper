@@ -196,3 +196,66 @@ fn conditional_composition_preserves_interaction_capabilities() {
 fn pool() -> inkpaper_ui::Pool {
     inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
 }
+
+#[derive(Clone, Copy)]
+enum Download {
+    Idle,
+    Running { percent: u8 },
+    Failed,
+}
+
+struct MatchedContent {
+    download: Download,
+}
+
+impl Render for MatchedContent {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
+        rsx! {
+            <div>
+                <text>"Status"</text>
+
+                {#match self.download}
+                    {:case Download::Idle}
+                    {:case Download::Running { percent } if percent >= 100}
+                        <text>"Done"</text>
+                    {:case Download::Running { .. }}
+                        <text>"Running"</text>
+                        <text>"Cancel"</text>
+                    {:case Download::Failed}
+                        <div>
+                            <text>"Failed"</text>
+                        </div>
+                {/match}
+            </div>
+        }
+    }
+}
+
+#[test]
+fn match_renders_only_the_matching_arm() {
+    let render = |download| {
+        let mut runtime = TestRuntime::new(pool());
+        runtime
+            .create_root(move |_| MatchedContent { download })
+            .unwrap();
+        runtime.rebuild().unwrap();
+
+        (runtime.frame_node_count(), runtime.frame_text_bytes_used())
+    };
+
+    let (idle_nodes, idle_text) = render(Download::Idle);
+    let status = idle_text;
+
+    assert_eq!(
+        render(Download::Running { percent: 100 }),
+        (idle_nodes + 1, status + "Done".len())
+    );
+    assert_eq!(
+        render(Download::Running { percent: 40 }),
+        (idle_nodes + 2, status + "Running".len() + "Cancel".len())
+    );
+    assert_eq!(
+        render(Download::Failed),
+        (idle_nodes + 2, status + "Failed".len())
+    );
+}
