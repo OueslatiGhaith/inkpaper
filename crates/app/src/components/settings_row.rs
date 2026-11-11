@@ -36,15 +36,11 @@ impl RenderOnce for ListRow<'_> {
 
         rsx! {
             <div class="w-full h-{height} relative">
-                <div class="absolute left-5 top-0 w-[440px] h-{height} rounded-md bg-{background}" />
-
-                {#if let Some(listener) = self.on_activate}
-                    <div
-                        id={self.id}
-                        on:activate={listener}
-                        class="absolute left-5 top-0 w-[440px] h-{height} rounded-md"
-                    />
-                {/if}
+                <div
+                    id={self.id}
+                    on:activate={self.on_activate}
+                    class="absolute left-5 top-0 w-[440px] h-{height} rounded-md bg-{background}"
+                />
 
                 <div class="absolute left-{label_left} top-0 w-{label_width} h-{height} flex items-center">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
@@ -80,15 +76,11 @@ impl RenderOnce for SettingsValueRow<'_> {
 
         rsx! {
             <div class="w-full h-{height} relative">
-                <div class="absolute left-5 top-0 w-[440px] h-{height} rounded-md bg-{background}" />
-
-                {#if let Some(listener) = self.on_activate}
-                    <div
-                        id={self.id}
-                        on:activate={listener}
-                        class="absolute left-5 top-0 w-[440px] h-{height} rounded-md"
-                    />
-                {/if}
+                <div
+                    id={self.id}
+                    on:activate={self.on_activate}
+                    class="absolute left-5 top-0 w-[440px] h-{height} rounded-md bg-{background}"
+                />
 
                 <div class="absolute left-7 top-0 w-[290px] h-{height} flex items-center">
                     <text class="text-xl no-wrap max-lines-1 text-ellipsis">
