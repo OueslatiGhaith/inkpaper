@@ -154,37 +154,47 @@ fn setting_row(
     row: TextSettingsRow,
     text: TextSettings,
     on_row: Listener<ActivateEvent>,
-) -> AnyElement<'static> {
+) -> impl IntoElement {
     let id = ("text-settings-row", index);
 
-    let (label, value) = match row {
-        TextSettingsRow::Font { font, name } => (name, selected(font == text.font())),
+    rsx! {
+        {#match row}
+            {:case TextSettingsRow::Setting(setting) if setting.is_toggle()}
+                <SettingsToggleRow
+                    id={id}
+                    label={setting.screen_label()}
+                    on={setting.is_on(text)}
+                    on_activate={on_row}
+                />
 
-        TextSettingsRow::Size(size) => (format!("{size}"), selected(size == text.font_size())),
+            {:case TextSettingsRow::Font { font, name }}
+                <SettingsValueRow
+                    id={id}
+                    label={name.into()}
+                    value={selected(font == text.font()).into()}
+                    selected={false}
+                    on_activate={Some(on_row)}
+                />
 
-        TextSettingsRow::Setting(setting) if setting.is_toggle() => {
-            return SettingsToggleRow::from(SettingsToggleRowProps {
-                id,
-                label: setting.screen_label(),
-                on: setting.is_on(text),
-                on_activate: on_row,
-            })
-            .into_any_element();
-        }
+            {:case TextSettingsRow::Size(size)}
+                <SettingsValueRow
+                    id={id}
+                    label={format!("{size}").into()}
+                    value={selected(size == text.font_size()).into()}
+                    selected={false}
+                    on_activate={Some(on_row)}
+                />
 
-        TextSettingsRow::Setting(setting) => {
-            (String::from(setting.screen_label()), setting.value(text))
-        }
-    };
-
-    SettingsValueRow::from(SettingsValueRowProps {
-        id,
-        label: label.into(),
-        value: value.into(),
-        selected: false,
-        on_activate: Some(on_row),
-    })
-    .into_any_element()
+            {:case TextSettingsRow::Setting(setting)}
+                <SettingsValueRow
+                    id={id}
+                    label={setting.screen_label().into()}
+                    value={setting.value(text).into()}
+                    selected={false}
+                    on_activate={Some(on_row)}
+                />
+        {/match}
+    }
 }
 
 /// crosspoint marks the current font and size "Selected"
