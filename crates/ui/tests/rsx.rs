@@ -670,7 +670,7 @@ impl EventView {
 }
 
 impl Render for EventView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let activate = cx.listener(Self::activated);
         let selected = cx.listener(Self::book_selected);
 
@@ -699,7 +699,7 @@ impl OptionalEventView {
 }
 
 impl Render for OptionalEventView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let activate = self.enabled.then(|| cx.listener(Self::activated));
         let selected = self.enabled.then(|| cx.listener(Self::book_selected));
 

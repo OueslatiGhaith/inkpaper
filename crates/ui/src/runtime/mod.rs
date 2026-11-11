@@ -1358,7 +1358,7 @@ mod tests {
     impl Global for Theme {}
 
     impl Render for Counter {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             if self.value < 0 {
                 // a render that notifies keeps its entity dirty for the next frame
                 cx.notify();

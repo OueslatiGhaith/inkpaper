@@ -317,7 +317,7 @@ fn clear_resets_frame_storage() {
 struct Child;
 
 impl Render for Child {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child("Child")
     }
 }
@@ -327,7 +327,7 @@ struct Parent {
 }
 
 impl Render for Parent {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child("Parent").child(self.child)
     }
 }
@@ -440,7 +440,7 @@ struct Label {
 }
 
 impl Render for Label {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(self.text.as_str())
     }
 }
@@ -484,7 +484,7 @@ struct DuplicateParent {
 }
 
 impl Render for DuplicateParent {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(self.child).child(self.child)
     }
 }
@@ -672,7 +672,7 @@ impl Counter {
 }
 
 impl Render for Counter {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(
             div()
                 .id("increment")
@@ -761,7 +761,7 @@ impl Controller {
 }
 
 impl Render for Controller {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(
             div()
                 .id("update-status")
@@ -856,7 +856,7 @@ fn expanded_entity_root_is_child_of_entity_node() {
 struct StableApp;
 
 impl Render for StableApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(div().id("button").child("Press"))
     }
 }
@@ -906,7 +906,7 @@ struct WrapperApp {
 }
 
 impl Render for WrapperApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         // we can't return two unrelated concrete types from a normal if,
         // so keep the same outer type and conditionally insert unnamed
         // wrappers in separate test component types below.
@@ -917,7 +917,7 @@ impl Render for WrapperApp {
 struct WrappedApp;
 
 impl Render for WrappedApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("panel")
             .child(div().child(div().child(div().id("button"))))
@@ -984,7 +984,7 @@ fn unnamed_wrappers_do_not_affect_identity_path() {
 struct NestedApp;
 
 impl Render for NestedApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().id("panel").child(div().id("button"))
     }
 }
@@ -1034,7 +1034,7 @@ fn nested_element_uses_nearest_identified_parent() {
 struct DuplicateApp;
 
 impl Render for DuplicateApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(div().id("button")).child(div().id("button"))
     }
 }
@@ -1069,7 +1069,7 @@ fn duplicate_ids_in_same_scope_are_rejected() {
 struct SeparateScopesApp;
 
 impl Render for SeparateScopesApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .child(div().id("left").child(div().id("button")))
             .child(div().id("right").child(div().id("button")))
@@ -1114,7 +1114,7 @@ fn same_local_id_is_allowed_under_different_identified_parents() {
 struct Widget;
 
 impl Render for Widget {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().id("button").child("Button")
     }
 }
@@ -1125,7 +1125,7 @@ struct WidgetsApp {
 }
 
 impl Render for WidgetsApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(self.left).child(self.right)
     }
 }
@@ -1180,7 +1180,7 @@ fn separate_entities_have_separate_identity_namespaces() {
 struct MovableChild;
 
 impl Render for MovableChild {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().id("internal-button").child("Internal")
     }
 }
@@ -1190,7 +1190,7 @@ struct ParentA {
 }
 
 impl Render for ParentA {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().id("left").child(self.child)
     }
 }
@@ -1200,7 +1200,7 @@ struct ParentB {
 }
 
 impl Render for ParentB {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("right")
             .child(div().child(div().child(self.child)))
@@ -1257,7 +1257,7 @@ fn moving_entity_does_not_change_internal_element_identity() {
 struct WithButton;
 
 impl Render for WithButton {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(div().id("button"))
     }
 }
@@ -1265,7 +1265,7 @@ impl Render for WithButton {
 struct WithoutButton;
 
 impl Render for WithoutButton {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child("Nothing")
     }
 }
@@ -1371,7 +1371,7 @@ fn reappearing_element_gets_new_generation() {
 struct TooManyStatesApp;
 
 impl Render for TooManyStatesApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(div().id("a")).child(div().id("b"))
     }
 }

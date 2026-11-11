@@ -88,7 +88,7 @@ struct ListApp {
 }
 
 impl Render for ListApp {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .w_full()
             .flex()

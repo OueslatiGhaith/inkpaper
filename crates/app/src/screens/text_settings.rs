@@ -387,7 +387,7 @@ impl TextSettingsView {
 }
 
 impl Render for TextSettingsView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let tab = self.tab;
         let (preview, preview_for, preview_family) = (
             &mut self.preview,

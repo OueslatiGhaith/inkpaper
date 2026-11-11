@@ -162,7 +162,7 @@ pub struct BenchApp {
 }
 
 impl Render for BenchApp {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         BenchScene {
             scenario: self.scenario,
             size: self.size,

@@ -212,7 +212,7 @@ fn padding_and_gap_are_combined_in_column_layout() {
 struct Child;
 
 impl Render for Child {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl crate::IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl crate::IntoElement {
         div().w(px(30)).h(px(12))
     }
 }
@@ -230,7 +230,7 @@ impl App {
 }
 
 impl Render for App {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl crate::IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl crate::IntoElement {
         div().child(self.child)
     }
 }
@@ -695,7 +695,7 @@ fn fill_on_main_axis_remains_compatible_with_equal_flex_grow() {
 fn vertical_scroll_moves_content_without_relayout() {
     struct App;
     impl Render for App {
-        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
             div().w(px(100)).h(px(60)).child(
                 div()
                     .id("scroll")
@@ -734,7 +734,7 @@ fn scroll_offset_is_clamped_to_content_extent() {
     struct App;
 
     impl Render for App {
-        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
             div()
                 .id("scroll")
                 .w(px(100))
@@ -766,7 +766,7 @@ fn scroll_offset_survives_rebuild() {
     struct App;
 
     impl Render for App {
-        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
             div()
                 .id("scroll")
                 .w(px(100))
@@ -1772,7 +1772,7 @@ fn relative_position_moves_entire_descendant_subtree() {
 fn full_height_child_of_a_scrolled_row_fills_the_row() {
     struct App;
     impl Render for App {
-        fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
             div()
                 .id("scroll")
                 .w(px(100))
@@ -2038,7 +2038,7 @@ fn resolving_keeps_each_text_style_once_and_never_allocates() {
     struct App;
 
     impl Render for App {
-        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
             div()
                 .child("plain")
                 .child("also plain")

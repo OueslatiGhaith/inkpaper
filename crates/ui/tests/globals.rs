@@ -23,7 +23,7 @@ struct ReadsTheme {
 }
 
 impl Render for ReadsTheme {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let value = cx.global::<Theme>().value;
 
         self.observed.set(value);
@@ -72,7 +72,7 @@ struct RenderOnceApp {
 }
 
 impl Render for RenderOnceApp {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(ThemeBadge {
             observed: self.observed.as_ref(),
         })
@@ -111,7 +111,7 @@ impl CallbackApp {
 }
 
 impl Render for CallbackApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let activated = cx.listener(Self::activated);
 
         div().child(div().id("button").on_activate(activated).child("Activate"))

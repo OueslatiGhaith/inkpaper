@@ -110,7 +110,7 @@ impl TimezoneView {
 }
 
 impl Render for TimezoneView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let (clock, utc_offset) = self
             .app
             .read(cx, |app| (app.local_clock(cx), app.clock.utc_offset()));

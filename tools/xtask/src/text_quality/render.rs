@@ -451,7 +451,7 @@ impl PageView {
 }
 
 impl Render for PageView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let page = cx.canvas(|view: &PageView, paint| view.paint(paint));
 
         div()

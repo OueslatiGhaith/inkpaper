@@ -10,7 +10,7 @@ use crate::{
 /// `Render` components may hold mutable state across frames and receive a [`Context`]
 /// for interacting with the runtimes
 pub trait Render: Sized + 'static {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a;
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement;
 }
 
 /// a temporary, stateless component that is rendered exactly once.

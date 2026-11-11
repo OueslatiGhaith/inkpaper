@@ -177,7 +177,7 @@ impl SettingsView {
 }
 
 impl Render for SettingsView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let open_picker = self.picker;
 
         let (battery, clock, dictionary, resume, picker) = self.app.read(cx, |app| {

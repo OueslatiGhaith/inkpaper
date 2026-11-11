@@ -35,7 +35,7 @@ impl SharedListenerList {
 }
 
 impl Render for SharedListenerList {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let listener = cx.listener(Self::activated);
         let custom = cx.listener(Self::custom);
 

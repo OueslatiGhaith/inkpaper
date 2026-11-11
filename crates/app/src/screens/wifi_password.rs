@@ -90,7 +90,7 @@ impl PasswordFieldView {
 }
 
 impl Render for PasswordFieldView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let text = &mut self.text;
         text.clear();
 
@@ -160,7 +160,7 @@ impl PasswordKeyboardView {
 }
 
 impl Render for PasswordKeyboardView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let keyboard = self.app.read(cx, |app| {
             let entry = app.wifi.password_entry()?;
 

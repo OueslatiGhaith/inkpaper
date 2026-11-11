@@ -64,7 +64,7 @@ impl Painter for TestPainter {
 struct App;
 
 impl Render for App {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div().w(px(100)).h(px(40)).child("Hello")
     }
 }
@@ -126,7 +126,7 @@ fn performance_metrics_track_rebuild_layout_and_paint_work() {
 struct FlexListApp;
 
 impl Render for FlexListApp {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .w(px(320))
             .h(px(64))

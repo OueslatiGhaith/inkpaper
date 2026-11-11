@@ -350,7 +350,7 @@ impl WifiNetworksView {
 }
 
 impl Render for WifiNetworksView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let pager = self.pager;
         let menu = self.menu.as_ref();
 

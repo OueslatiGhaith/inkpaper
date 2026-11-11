@@ -34,7 +34,7 @@ impl Counter {
 }
 
 impl Render for Counter {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().w_full().h_full().p(px(10)).child(
             div()
                 .id("button")
@@ -152,7 +152,7 @@ impl NestedButtons {
 }
 
 impl Render for NestedButtons {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let parent_listener = cx.listener(Self::parent_clicked);
 
         let child_listener = cx.listener(Self::child_clicked);
@@ -264,7 +264,7 @@ impl FocusApp {
 }
 
 impl Render for FocusApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let first = cx.listener(Self::first_clicked);
         let second = cx.listener(Self::second_clicked);
         let third = cx.listener(Self::third_clicked);
@@ -537,7 +537,7 @@ fn successful_pointer_click_establishes_focus() {
 
 struct EmptyApp;
 impl Render for EmptyApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().w_full().h_full().child("Nothing interactive")
     }
 }
@@ -588,7 +588,7 @@ impl FocusScrollApp {
 }
 
 impl Render for FocusScrollApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("scroll")
             .w(px(100))
@@ -679,7 +679,7 @@ struct InitialScrollApp {
 }
 
 impl Render for InitialScrollApp {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("list")
             .w(px(100))
@@ -757,7 +757,7 @@ impl NestedFocusScrollApp {
 }
 
 impl Render for NestedFocusScrollApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("outer")
             .w(px(100))
@@ -827,7 +827,7 @@ impl LayoutFocusScrollApp {
 }
 
 impl Render for LayoutFocusScrollApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("scroll")
             .w(px(100))
@@ -900,7 +900,7 @@ fn focus_scroll_waits_for_layout_when_focus_changes_size() {
 struct ExplicitFocusApp;
 
 impl Render for ExplicitFocusApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(div().id("ignored").w(px(40)).h(px(20))).child(
             div()
                 .id("focusable")
@@ -935,7 +935,7 @@ impl ClickRemainsFocusableApp {
 }
 
 impl Render for ClickRemainsFocusableApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(
             div()
                 .id("button")
@@ -973,7 +973,7 @@ impl GenericEventApp {
 }
 
 impl Render for GenericEventApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let turn = cx.listener(Self::turned);
 
         div()
@@ -1019,7 +1019,7 @@ impl MultipleEventsApp {
 }
 
 impl Render for MultipleEventsApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let turn = cx.listener(Self::turned);
 
         let press = cx.listener(Self::pressed);
@@ -1069,7 +1069,7 @@ impl DuplicateEventApp {
 }
 
 impl Render for DuplicateEventApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let first = cx.listener(Self::first);
         let second = cx.listener(Self::second);
 
@@ -1114,7 +1114,7 @@ impl FocusedDispatchApp {
 }
 
 impl Render for FocusedDispatchApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("control")
             .focusable()
@@ -1221,7 +1221,7 @@ impl MultipleDispatchApp {
 }
 
 impl Render for MultipleDispatchApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let first = cx.listener(Self::first);
         let second = cx.listener(Self::second);
 
@@ -1269,7 +1269,7 @@ impl FocusRoutingApp {
 }
 
 impl Render for FocusRoutingApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let first = cx.listener(Self::first_turned);
         let second = cx.listener(Self::second_turned);
 
@@ -1339,7 +1339,7 @@ impl SpatialDispatchApp {
 }
 
 impl Render for SpatialDispatchApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().w(px(100)).h(px(100)).p(px(10)).child(
             div()
                 .id("target")
@@ -1446,7 +1446,7 @@ impl NestedSpatialDispatchApp {
 }
 
 impl Render for NestedSpatialDispatchApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let parent = cx.listener(Self::parent_touched);
         let child = cx.listener(Self::child_touched);
 
@@ -1504,7 +1504,7 @@ impl EventTypeSpatialApp {
 }
 
 impl Render for EventTypeSpatialApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("parent")
             .w(px(100))
@@ -1551,7 +1551,7 @@ impl ClippedSpatialApp {
 }
 
 impl Render for ClippedSpatialApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().w(px(40)).h(px(40)).overflow_hidden().child(
             div()
                 .id("large-child")
@@ -1659,7 +1659,7 @@ fn event_target_survives_rebuild_when_identity_survives() {
 struct TargetEmptyApp;
 
 impl Render for TargetEmptyApp {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
     }
 }
@@ -1899,7 +1899,7 @@ impl PositionedHitTestApp {
 }
 
 impl Render for PositionedHitTestApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().relative().w(px(100)).h(px(80)).child(
             div().w(px(20)).h(px(20)).child(
                 div()
@@ -1953,7 +1953,7 @@ impl ClippedPositionedHitTestApp {
 }
 
 impl Render for ClippedPositionedHitTestApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().relative().w(px(100)).h(px(80)).child(
             div().w(px(20)).h(px(20)).overflow_hidden().child(
                 div()
@@ -1994,7 +1994,7 @@ fn absolute_child_outside_clipping_parent_is_not_hittable() {
 struct AbsoluteFocusScrollApp;
 
 impl Render for AbsoluteFocusScrollApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("scroll")
             .relative()
@@ -2046,7 +2046,7 @@ fn focus_scrolls_nested_absolute_target_into_view() {
 struct PositionedFocusDamageApp;
 
 impl Render for PositionedFocusDamageApp {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().w(px(100)).h(px(100)).child(
             div()
                 .id("target")
@@ -2110,7 +2110,7 @@ impl OptionalListenerApp {
 }
 
 impl Render for OptionalListenerApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let clicked = self.enabled.then(|| cx.listener(Self::clicked));
         let turned = self.enabled.then(|| cx.listener(Self::turned));
 

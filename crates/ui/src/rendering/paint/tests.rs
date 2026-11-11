@@ -602,7 +602,7 @@ fn entity_canvas_can_draw_from_entity_state() {
     }
 
     impl Render for Gauge {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             div().w(px(100)).h(px(20)).child(
                 cx.canvas(|this, paint| {
                     paint.draw_shapes(paint.bounds(), |bounds, painter| {
@@ -645,7 +645,7 @@ fn entity_canvas_callback_can_capture_render_data() {
     }
 
     impl Render for Gauge {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             let inset = self.inset;
 
             div().child(
@@ -872,7 +872,7 @@ fn damage_paint_prunes_subtree_when_inherited_clip_misses_damage() {
     struct App;
 
     impl Render for App {
-        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
             div().w(px(100)).h(px(100)).bg(Color::BLACK).child(
                 div().w(px(40)).h(px(20)).overflow_hidden().child(
                     div()

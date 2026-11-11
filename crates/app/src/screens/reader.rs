@@ -212,7 +212,7 @@ impl ReaderBatteryIcon {
 }
 
 impl Render for ReaderBatteryIcon {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         let icon = self.icon;
 
         rsx! {

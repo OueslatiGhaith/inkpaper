@@ -7,7 +7,7 @@ type TestRuntime = Runtime;
 struct EmptyChildren;
 
 impl Render for EmptyChildren {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
     }
 }
@@ -15,7 +15,7 @@ impl Render for EmptyChildren {
 struct ArrayChildren;
 
 impl Render for ArrayChildren {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div().children(["One", "Two", "Three"])
     }
 }
@@ -60,7 +60,7 @@ struct BorrowedIterator {
 }
 
 impl Render for BorrowedIterator {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -91,7 +91,7 @@ fn children_accepts_borrowed_iterators_of_render_once_components() {
 struct EmptyIterator;
 
 impl Render for EmptyIterator {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .child("Before")
             .children(core::iter::empty::<&'static str>())
@@ -102,7 +102,7 @@ impl Render for EmptyIterator {
 struct WithoutEmptyIterator;
 
 impl Render for WithoutEmptyIterator {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div().child("Before").child("After")
     }
 }
@@ -144,7 +144,7 @@ impl InteractiveList {
 }
 
 impl Render for InteractiveList {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let activated = cx.listener(Self::activated);
 
         div().child(
@@ -187,7 +187,7 @@ struct ConditionalList {
 }
 
 impl Render for ConditionalList {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .when(self.highlighted, |root| root.bg(Color::rgb(40, 50, 70)))
             .children(["First", "Second", "Third"])

@@ -41,7 +41,7 @@ impl Child {
 }
 
 impl Render for Child {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         if let Some(value) = self.ping_on_render.take() {
             cx.emit(Ping::Value(value));
         }
@@ -93,7 +93,7 @@ impl Parent {
 }
 
 impl Render for Parent {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(self.first)
     }
 }

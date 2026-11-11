@@ -117,7 +117,7 @@ impl Header {
 }
 
 impl Render for Header {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .w_full()
             .p(px(10))
@@ -226,7 +226,7 @@ impl Counter {
 }
 
 impl Render for Counter {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let increment = cx.listener(Self::increment);
         let decrement = cx.listener(Self::decrement);
         let reset = cx.listener(Self::reset);
@@ -1234,7 +1234,7 @@ fn text_shaping_section(font_family: FontFamilyId) -> impl IntoElement {
 }
 
 impl Render for App {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let demo_click = cx.listener(Self::demo_clicked);
 
         let toggle_details = cx.listener(Self::toggle_details);

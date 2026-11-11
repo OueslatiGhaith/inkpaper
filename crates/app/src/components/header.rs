@@ -89,7 +89,7 @@ impl BatteryIndicator {
 }
 
 impl Render for BatteryIndicator {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let battery = self.battery.read(cx, |battery| battery.get());
 
         BatteryLabel::from(BatteryLabelProps { battery })

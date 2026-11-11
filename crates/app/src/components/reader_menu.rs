@@ -276,7 +276,7 @@ impl ReaderDrawer {
 }
 
 impl Render for ReaderDrawer {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let picker = self.picker;
         let (text, font_name, has_links, link_labels) = self.app.read(cx, |app| {
             let links = app.reader.page_link_labels();

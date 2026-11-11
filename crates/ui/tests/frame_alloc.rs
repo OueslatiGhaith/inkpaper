@@ -80,7 +80,7 @@ fn allocations_during(operation: impl FnOnce()) -> usize {
 struct Screen;
 
 impl Render for Screen {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div().child("Hello").child("World")
     }
 }
@@ -201,7 +201,7 @@ struct StatefulScreen {
 }
 
 impl Render for StatefulScreen {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("scroll")
             .w(px(80))
