@@ -2086,3 +2086,155 @@ fn positioned_element_damage_uses_final_visual_bounds() {
         ),],
     );
 }
+
+struct OptionalListenerApp {
+    /// whether the button listens
+    enabled: bool,
+    clicks: Rc<Cell<u32>>,
+    turns: Rc<Cell<u32>>,
+}
+
+impl OptionalListenerApp {
+    fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<Self>) {
+        self.clicks.set(self.clicks.get() + 1);
+    }
+
+    fn turned(&mut self, _: &EncoderTurn, _: &mut Context<Self>) {
+        self.turns.set(self.turns.get() + 1);
+    }
+
+    fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.enabled = enabled;
+        cx.notify();
+    }
+}
+
+impl Render for OptionalListenerApp {
+    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        let clicked = self.enabled.then(|| cx.listener(Self::clicked));
+        let turned = self.enabled.then(|| cx.listener(Self::turned));
+
+        div().w_full().h_full().child(
+            div()
+                .id("button")
+                .w(px(80))
+                .h(px(30))
+                .on_activate(clicked)
+                .on(turned),
+        )
+    }
+}
+
+struct OptionalListenerTest {
+    runtime: TestRuntime,
+    app: Entity<OptionalListenerApp>,
+    clicks: Rc<Cell<u32>>,
+    turns: Rc<Cell<u32>>,
+}
+
+fn optional_listener_test(enabled: bool) -> OptionalListenerTest {
+    let clicks = Rc::new(Cell::new(0));
+    let turns = Rc::new(Cell::new(0));
+    let mut runtime = TestRuntime::new(pool());
+
+    let app = runtime
+        .create_root({
+            let (clicks, turns) = (clicks.clone(), turns.clone());
+
+            move |_| OptionalListenerApp {
+                enabled,
+                clicks,
+                turns,
+            }
+        })
+        .unwrap();
+
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .unwrap();
+
+    OptionalListenerTest {
+        runtime,
+        app,
+        clicks,
+        turns,
+    }
+}
+
+#[test]
+fn listeners_given_as_some_bind_like_plain_listeners() {
+    let OptionalListenerTest {
+        mut runtime,
+        clicks,
+        turns,
+        ..
+    } = optional_listener_test(true);
+    let position = Point::new(px(20), px(20));
+
+    assert!(runtime.begin_activation_at(position));
+    assert!(runtime.complete_activation_at(position).unwrap());
+    assert_eq!(clicks.get(), 1);
+
+    assert!(
+        runtime
+            .dispatch_at(position, &EncoderTurn { delta: 1 })
+            .unwrap()
+    );
+    assert_eq!(turns.get(), 1);
+
+    // a listener for activations makes the button focusable
+    assert!(runtime.focus_next());
+}
+
+#[test]
+fn an_element_without_its_listeners_takes_no_input() {
+    let OptionalListenerTest {
+        mut runtime,
+        clicks,
+        turns,
+        ..
+    } = optional_listener_test(false);
+    let position = Point::new(px(20), px(20));
+
+    assert!(!runtime.begin_activation_at(position));
+    assert!(!runtime.complete_activation_at(position).unwrap());
+    assert_eq!(clicks.get(), 0);
+
+    assert!(
+        !runtime
+            .dispatch_at(position, &EncoderTurn { delta: 1 })
+            .unwrap()
+    );
+    assert_eq!(turns.get(), 0);
+
+    // `on_activate` makes an element focusable only when it listens
+    assert!(!runtime.focus_next());
+    assert!(runtime.frame().event_bindings.is_empty());
+}
+
+#[test]
+fn an_element_stops_taking_input_when_its_listeners_go() {
+    let OptionalListenerTest {
+        mut runtime,
+        app,
+        clicks,
+        ..
+    } = optional_listener_test(true);
+    let position = Point::new(px(20), px(20));
+
+    assert!(runtime.focus_next());
+
+    runtime
+        .update(app, |app, cx| app.set_enabled(false, cx))
+        .unwrap();
+    runtime.rebuild().unwrap();
+    runtime
+        .layout_with_measurer(Size::new(px(200), px(100)), &TestTextMeasurer)
+        .unwrap();
+
+    assert_eq!(runtime.focused_target(), None);
+    assert!(!runtime.begin_activation_at(position));
+    assert!(!runtime.focus_next());
+    assert_eq!(clicks.get(), 0);
+}

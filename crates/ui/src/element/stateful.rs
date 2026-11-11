@@ -1,5 +1,5 @@
 use crate::{
-    ActivateEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, Listener,
+    ActivateEvent, Element, ElementId, InteractionStyle, IntoElement, IntoElementId, IntoListener,
     MountCx, MountError, NodeId, OnEvent, ParentElement, Style, StylePatch, Styled,
     interaction::scroll::ScrollAxes,
 };
@@ -117,15 +117,26 @@ where
 }
 
 pub trait StatefulInteractiveElementExt: StatefulInteractiveElement {
-    fn on<Event>(self, listener: Listener<Event>) -> OnEvent<Self, Event>
+    /// listens for `Event`s sent to this element. `None` listens for nothing
+    fn on<Event>(self, listener: impl IntoListener<Event>) -> OnEvent<Self, Event>
     where
         Event: 'static,
     {
-        OnEvent::new(self, listener)
+        OnEvent::new(self, listener.into_listener())
     }
 
-    fn on_activate(mut self, listener: Listener<ActivateEvent>) -> OnEvent<Self, ActivateEvent> {
-        self.stateful_interactivity_mut().focusable = true;
+    /// listens for activations, and makes the element focusable. `None` does neither,
+    /// so the element can't be activated
+    fn on_activate(
+        mut self,
+        listener: impl IntoListener<ActivateEvent>,
+    ) -> OnEvent<Self, ActivateEvent> {
+        let listener = listener.into_listener();
+
+        if listener.is_some() {
+            self.stateful_interactivity_mut().focusable = true;
+        }
+
         OnEvent::new(self, listener)
     }
 
