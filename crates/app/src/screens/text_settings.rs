@@ -205,6 +205,11 @@ impl RenderOnce for Tab {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let left = px(self.index as i32 * TAB_WIDTH + 2);
         let width = px(TAB_WIDTH - 4);
+        let ink = if self.active {
+            Color::WHITE
+        } else {
+            Color::BLACK
+        };
 
         rsx! {
             <div
@@ -214,14 +219,11 @@ impl RenderOnce for Tab {
             >
                 {#if self.active}
                     <div class="absolute left-0 top-0 w-full h-full rounded-md bg-black" />
-                    <text class="text-xl text-white no-wrap max-lines-1">
-                        {self.label}
-                    </text>
-                {:else}
-                    <text class="text-xl no-wrap max-lines-1">
-                        {self.label}
-                    </text>
                 {/if}
+
+                <text class="text-xl text-{color:ink} no-wrap max-lines-1">
+                    {self.label}
+                </text>
             </div>
         }
     }
