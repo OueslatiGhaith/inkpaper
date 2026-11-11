@@ -422,7 +422,7 @@ mod tests {
         let all_dirty = Cell::new(false);
 
         let listener = {
-            let mut cx = Context::new_in(
+            let cx = Context::new_in(
                 root,
                 RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             );
@@ -451,7 +451,7 @@ mod tests {
         let amount = 5;
 
         let listener = {
-            let mut cx = Context::new_in(
+            let cx = Context::new_in(
                 counter,
                 RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             );
@@ -483,7 +483,7 @@ mod tests {
         let all_dirty = Cell::new(false);
 
         let listener = {
-            let mut cx = Context::new_in(
+            let cx = Context::new_in(
                 counter,
                 RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             );
@@ -518,7 +518,7 @@ mod tests {
         let all_dirty = Cell::new(false);
 
         let listener = {
-            let mut cx = Context::new_in(
+            let cx = Context::new_in(
                 counter,
                 RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             );
@@ -557,7 +557,7 @@ mod tests {
         let all_dirty = Cell::new(false);
 
         let listener = {
-            let mut cx = Context::new_in(
+            let cx = Context::new_in(
                 counter,
                 RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             );
@@ -599,7 +599,7 @@ mod tests {
         {
             let capture = DroppableCapture;
 
-            let mut cx = Context::new_in(
+            let cx = Context::new_in(
                 counter,
                 RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
             );
@@ -808,7 +808,7 @@ mod tests {
         let all_dirty = Cell::new(false);
         let capture = [0u8; 32];
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             counter,
             RuntimeCx::new(&entities, &globals, &callbacks, &all_dirty),
         );

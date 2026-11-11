@@ -29,7 +29,7 @@ impl<'a, T> Context<'a, T> {
     }
 
     /// marks this entity as changed, so it renders again
-    pub fn notify(&mut self) {
+    pub fn notify(&self) {
         self.runtime.notify(self.entity.entity_id());
     }
 
@@ -41,7 +41,7 @@ impl<'a, T> Context<'a, T> {
     /// when every entity id is taken or the pool has no room. See [`Self::try_new`]
     #[allow(clippy::new_ret_no_self)]
     #[track_caller]
-    pub fn new<U>(&mut self, build: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U>
+    pub fn new<U>(&self, build: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U>
     where
         U: 'static,
     {
@@ -52,7 +52,7 @@ impl<'a, T> Context<'a, T> {
     }
 
     pub fn try_new<U>(
-        &mut self,
+        &self,
         build: impl FnOnce(&mut Context<'_, U>) -> U,
     ) -> Result<Entity<U>, EntityAllocError>
     where
@@ -96,7 +96,7 @@ impl<'a, T> Context<'a, T> {
 }
 
 impl<T: 'static> Context<'_, T> {
-    pub fn try_listener<E, F>(&mut self, callback: F) -> Result<Listener<E>, CallbackAllocError>
+    pub fn try_listener<E, F>(&self, callback: F) -> Result<Listener<E>, CallbackAllocError>
     where
         E: 'static,
         F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
@@ -106,7 +106,7 @@ impl<T: 'static> Context<'_, T> {
         register_listener(self.runtime.callbacks, owner, self.entity, callback)
     }
 
-    pub fn listener<E, F>(&mut self, callback: F) -> Listener<E>
+    pub fn listener<E, F>(&self, callback: F) -> Listener<E>
     where
         E: 'static,
         F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
@@ -115,7 +115,7 @@ impl<T: 'static> Context<'_, T> {
             .unwrap_or_else(|error| panic!("could not allocate listener: {error:?}"))
     }
 
-    pub fn try_canvas<F>(&mut self, callback: F) -> Result<Canvas, CallbackAllocError>
+    pub fn try_canvas<F>(&self, callback: F) -> Result<Canvas, CallbackAllocError>
     where
         F: Fn(&T, &mut PaintCx<'_>) + 'static,
     {
@@ -129,7 +129,7 @@ impl<T: 'static> Context<'_, T> {
         Ok(Canvas::from_entity_callback(callback))
     }
 
-    pub fn canvas<F>(&mut self, callback: F) -> Canvas
+    pub fn canvas<F>(&self, callback: F) -> Canvas
     where
         F: Fn(&T, &mut PaintCx<'_>) + 'static,
     {
@@ -145,7 +145,7 @@ impl<T: 'static> Context<'_, T> {
     ///
     /// when the pool has no room for the event. See [`Self::try_emit`]
     #[track_caller]
-    pub fn emit<E>(&mut self, event: E)
+    pub fn emit<E>(&self, event: E)
     where
         T: EventEmitter<E>,
         E: Copy + 'static,
@@ -155,7 +155,7 @@ impl<T: 'static> Context<'_, T> {
         }
     }
 
-    pub fn try_emit<E>(&mut self, event: E) -> Result<(), OutOfMemory>
+    pub fn try_emit<E>(&self, event: E) -> Result<(), OutOfMemory>
     where
         T: EventEmitter<E>,
         E: Copy + 'static,
@@ -170,7 +170,7 @@ impl<T: 'static> Context<'_, T> {
     ///
     /// when the pool has no room for the subscription. See [`Self::try_subscribe`]
     #[track_caller]
-    pub fn subscribe<U, E>(&mut self, emitter: Entity<U>, handler: Handler<T, U, E>)
+    pub fn subscribe<U, E>(&self, emitter: Entity<U>, handler: Handler<T, U, E>)
     where
         U: EventEmitter<E>,
         E: 'static,
@@ -181,7 +181,7 @@ impl<T: 'static> Context<'_, T> {
     }
 
     pub fn try_subscribe<U, E>(
-        &mut self,
+        &self,
         emitter: Entity<U>,
         handler: Handler<T, U, E>,
     ) -> Result<(), OutOfMemory>
@@ -265,7 +265,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -290,7 +290,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -312,7 +312,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -340,7 +340,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -371,7 +371,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -399,7 +399,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
