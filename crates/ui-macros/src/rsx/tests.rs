@@ -551,3 +551,139 @@ fn rejects_image_utility_on_svg() {
             .contains("utility class `grayscale` is not valid on <svg>")
     );
 }
+
+#[test]
+fn expands_root_match_as_balanced_either() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        {#match row}
+            {:case Row::A}
+                <text>"A"</text>
+            {:case Row::B}
+                <text>"B"</text>
+            {:case Row::C}
+                <text>"C"</text>
+            {:case Row::D}
+                <text>"D"</text>
+        {/match}
+        "#,
+    ))
+    .unwrap()
+    .to_string()
+    .replace(' ', "");
+
+    // two levels for four arms, not three
+    assert!(result.contains("Either::Left(::inkpaper_ui::Either::Left("));
+    assert!(result.contains("Either::Right(::inkpaper_ui::Either::Right("));
+    assert!(!result.contains("Either::Right(::inkpaper_ui::Either::Right(::inkpaper_ui::Either"));
+}
+
+#[test]
+fn expands_single_arm_match_without_either() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        {#match row}
+            {:case _}
+                <text>"Only"</text>
+        {/match}
+        "#,
+    ))
+    .unwrap()
+    .to_string();
+
+    assert!(!result.contains("Either"));
+}
+
+#[test]
+fn expands_match_guards_and_empty_child_arms() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#match count}
+                {:case 0}
+                {:case n if n > 9}
+                    <text>"Many"</text>
+                {:case Some(_) | None}
+                    <text>"Few"</text>
+            {/match}
+        </div>
+        "#,
+    ))
+    .unwrap()
+    .to_string();
+
+    assert!(result.contains("if n > 9"));
+}
+
+#[test]
+fn rejects_match_without_case() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#match row}
+            {/match}
+        </div>
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("requires at least one `{:case ...}`")
+    );
+}
+
+#[test]
+fn rejects_content_before_first_case() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#match row}
+                <text>"Stray"</text>
+                {:case _}
+                    <text>"Row"</text>
+            {/match}
+        </div>
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(error.to_string().contains("must follow a `{:case ...}`"));
+}
+
+#[test]
+fn rejects_unclosed_match() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#match row}
+                {:case _}
+                    <text>"Row"</text>
+        </div>
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(error.to_string().contains("expected `{/match}`"));
+}
+
+#[test]
+fn rejects_empty_root_match_arm() {
+    let error = expand_rsx(rsx_tokens(
+        r#"
+        {#match row}
+            {:case Row::A}
+            {:case _}
+                <text>"Row"</text>
+        {/match}
+        "#,
+    ))
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("`{:case ...}` requires a renderable root element")
+    );
+}

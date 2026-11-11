@@ -1,0 +1,5 @@
+error: unclosed `{#match}` block; expected `{/match}`
+ --> tests/ui/rsx/fail/unclosed_match.rs:8:21
+  |
+8 |             {#match row}
+  |                     ^^^
