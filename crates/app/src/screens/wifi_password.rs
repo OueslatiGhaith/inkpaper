@@ -1,5 +1,3 @@
-use alloc::string::String;
-
 use inkpaper_ui::prelude::*;
 
 use crate::{
@@ -71,17 +69,13 @@ pub(crate) struct TogglePassword;
 /// again after each key.
 pub(crate) struct PasswordFieldView {
     app: Entity<InkPaperApp>,
-    text: String,
 }
 
 impl EventEmitter<TogglePassword> for PasswordFieldView {}
 
 impl PasswordFieldView {
     pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
-        Self {
-            app,
-            text: String::new(),
-        }
+        Self { app }
     }
 
     fn activate_toggle(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
@@ -91,27 +85,17 @@ impl PasswordFieldView {
 
 impl Render for PasswordFieldView {
     fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let text = &mut self.text;
-        text.clear();
-
-        let field = self.app.read_with(cx, |app| {
-            let entry = app.wifi.password_entry()?;
-            let keyboard = entry.keyboard();
-            text.push_str(keyboard.text());
-
-            let hint = match entry.status() {
-                // WPA passwords are at least 8 characters
-                JoinStatus::Typing if !keyboard.can_submit() => "At least 8 characters",
-                JoinStatus::Typing => "",
-                JoinStatus::Checking => "Checking...",
-                JoinStatus::Failed(failure) => failure.message(),
-            };
-
-            Some((entry.shown(), hint))
-        });
-
-        let Some((shown, hint)) = field else {
+        let Some(entry) = self.app.read(cx).wifi.password_entry() else {
             return div().into_any_element();
+        };
+        let keyboard = entry.keyboard();
+
+        let hint = match entry.status() {
+            // WPA passwords are at least 8 characters
+            JoinStatus::Typing if !keyboard.can_submit() => "At least 8 characters",
+            JoinStatus::Typing => "",
+            JoinStatus::Checking => "Checking...",
+            JoinStatus::Failed(failure) => failure.message(),
         };
         let on_toggle = cx.listener(Self::activate_toggle);
 
@@ -119,8 +103,8 @@ impl Render for PasswordFieldView {
             // the field 134 px down, and its hint 72 px under it
             <div class="absolute left-7 top-[134px] w-[424px] h-[104px]">
                 <TextField
-                    text={self.text.as_str()}
-                    shown={shown}
+                    text={keyboard.text()}
+                    shown={entry.shown()}
                     on_toggle={on_toggle}
                 />
 
@@ -161,15 +145,11 @@ impl PasswordKeyboardView {
 
 impl Render for PasswordKeyboardView {
     fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let keyboard = self.app.read_with(cx, |app| {
-            let entry = app.wifi.password_entry()?;
-
-            Some((entry.keyboard().rows(), keyboard_look(entry)))
-        });
-
-        let Some((rows, (layer, shift, can_submit))) = keyboard else {
+        let Some(entry) = self.app.read(cx).wifi.password_entry() else {
             return div().into_any_element();
         };
+        let rows = entry.keyboard().rows();
+        let (layer, shift, can_submit) = keyboard_look(entry);
         let on_key = cx.listener(Self::activate_key);
 
         rsx! {

@@ -111,9 +111,8 @@ impl TimezoneView {
 
 impl Render for TimezoneView {
     fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let (clock, utc_offset) = self
-            .app
-            .read_with(cx, |app| (app.local_clock(cx), app.clock.utc_offset()));
+        let app = self.app.read(cx);
+        let (clock, utc_offset) = (app.local_clock(cx), app.clock.utc_offset());
         let on_decrease = cx.listener(Self::activate_decrease);
         let on_increase = cx.listener(Self::activate_increase);
 
