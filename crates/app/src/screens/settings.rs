@@ -180,7 +180,7 @@ impl Render for SettingsView {
     fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let open_picker = self.picker;
 
-        let (battery, clock, dictionary, resume, picker) = self.app.read(cx, |app| {
+        let (battery, clock, dictionary, resume, picker) = self.app.read_with(cx, |app| {
             let names = app.dictionaries.names();
             // shown like crosspoint's only when the card has a dictionary
             let dictionary =

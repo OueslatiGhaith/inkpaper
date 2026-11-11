@@ -1,0 +1,17 @@
+error: lifetime may not live long enough
+  --> tests/ui/read/fail/reference_outlives_context.rs:18:47
+   |
+18 |     let model = runtime.update(other, |_, cx| model.read(cx)).unwrap();
+   |                                           --- ^^^^^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
+   |                                           | |
+   |                                           | return type of closure is &'2 Model
+   |                                           has type `&'1 mut inkpaper_ui::Context<'_, Other>`
+
+error: lifetime may not live long enough
+  --> tests/ui/read/fail/reference_outlives_context.rs:18:47
+   |
+18 |     let model = runtime.update(other, |_, cx| model.read(cx)).unwrap();
+   |                                           --- ^^^^^^^^^^^^^^ returning this value requires that `'3` must outlive `'2`
+   |                                           | |
+   |                                           | return type of closure is &'2 Model
+   |                                           has type `&mut inkpaper_ui::Context<'3, Other>`

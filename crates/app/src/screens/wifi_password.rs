@@ -94,7 +94,7 @@ impl Render for PasswordFieldView {
         let text = &mut self.text;
         text.clear();
 
-        let field = self.app.read(cx, |app| {
+        let field = self.app.read_with(cx, |app| {
             let entry = app.wifi.password_entry()?;
             let keyboard = entry.keyboard();
             text.push_str(keyboard.text());
@@ -161,7 +161,7 @@ impl PasswordKeyboardView {
 
 impl Render for PasswordKeyboardView {
     fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let keyboard = self.app.read(cx, |app| {
+        let keyboard = self.app.read_with(cx, |app| {
             let entry = app.wifi.password_entry()?;
 
             Some((entry.keyboard().rows(), keyboard_look(entry)))

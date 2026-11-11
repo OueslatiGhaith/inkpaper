@@ -92,7 +92,7 @@ impl Render for Shell {
         }
         let mirrored = self
             .mirror_first
-            .then(|| self.first.read(cx, |label| label.text));
+            .then(|| self.first.read_with(cx, |label| label.text));
 
         if self.touch_first {
             self.first.update(cx, |label, cx| {
@@ -563,7 +563,7 @@ impl Render for Caption {
     fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.renders += 1;
 
-        div().child(self.parent.read(cx, |parent| parent.title))
+        div().child(self.parent.read_with(cx, |parent| parent.title))
     }
 }
 

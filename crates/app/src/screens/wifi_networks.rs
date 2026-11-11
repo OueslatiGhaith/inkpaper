@@ -320,7 +320,7 @@ impl WifiNetworksView {
             return;
         };
 
-        let ssid = self.app.read(cx, |app| {
+        let ssid = self.app.read_with(cx, |app| {
             let network = app.wifi.networks().get(index)?;
 
             app.wifi
@@ -354,7 +354,7 @@ impl Render for WifiNetworksView {
         let pager = self.pager;
         let menu = self.menu.as_ref();
 
-        let (rows, network_count, menu, scan, revision, battery) = self.app.read(cx, |app| {
+        let (rows, network_count, menu, scan, revision, battery) = self.app.read_with(cx, |app| {
             let networks = app.wifi.networks();
             let saved = app.wifi.saved();
             let connected = saved.connected().map(|network| network.ssid());
@@ -475,7 +475,7 @@ impl ScreenInput for WifiNetworksRoute {
     ) {
         let view = app.wifi_networks_view;
 
-        if view.read(cx, WifiNetworksView::menu_open) {
+        if view.read_with(cx, WifiNetworksView::menu_open) {
             return;
         }
 
@@ -492,7 +492,8 @@ impl ScreenInput for WifiNetworksRoute {
         _position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> bool {
-        app.wifi_networks_view.read(cx, WifiNetworksView::menu_open)
+        app.wifi_networks_view
+            .read_with(cx, WifiNetworksView::menu_open)
     }
 }
 

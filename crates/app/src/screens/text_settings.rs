@@ -338,7 +338,7 @@ impl TextSettingsView {
         }
 
         let tab = self.tab;
-        let (draft, row) = self.app.read(cx, |app| {
+        let (draft, row) = self.app.read_with(cx, |app| {
             let state = &app.text_settings;
 
             (state.draft(), state.rows(tab).into_iter().nth(index))
@@ -371,7 +371,7 @@ impl TextSettingsView {
         };
         cx.notify();
 
-        let draft = self.app.read(cx, |app| app.text_settings.draft());
+        let draft = self.app.read_with(cx, |app| app.text_settings.draft());
         self.change(draft, setting.choose(draft, index), cx);
     }
 
@@ -395,7 +395,7 @@ impl Render for TextSettingsView {
             &mut self.preview_family,
         );
 
-        let (draft, font_name, rows, battery) = self.app.read(cx, |app| {
+        let (draft, font_name, rows, battery) = self.app.read_with(cx, |app| {
             let state = &app.text_settings;
             let draft = state.draft();
 
@@ -486,7 +486,7 @@ impl ScreenInput for TextSettingsRoute {
     ) {
         let view = app.text_settings_view;
 
-        if view.read(cx, TextSettingsView::picker_open) {
+        if view.read_with(cx, TextSettingsView::picker_open) {
             return;
         }
 

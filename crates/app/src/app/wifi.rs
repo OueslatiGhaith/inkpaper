@@ -118,7 +118,7 @@ impl InkPaperApp {
         item: WifiMenuItem,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(ssid) = view.read(cx, |view| view.menu_ssid().map(String::from)) else {
+        let Some(ssid) = view.read_with(cx, |view| view.menu_ssid().map(String::from)) else {
             return;
         };
 

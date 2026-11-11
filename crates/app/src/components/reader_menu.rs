@@ -249,7 +249,10 @@ impl ReaderDrawer {
 
     /// With one link it follows it, like crosspoint, and with several it lists them.
     fn activate_links(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        match self.app.read(cx, |app| app.reader.page_link_labels().len()) {
+        match self
+            .app
+            .read_with(cx, |app| app.reader.page_link_labels().len())
+        {
             0 => {}
             1 => cx.emit(DrawerEvent::FollowLink(0)),
             _ => self.open_picker(DrawerPicker::Links, cx),
@@ -278,7 +281,7 @@ impl ReaderDrawer {
 impl Render for ReaderDrawer {
     fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let picker = self.picker;
-        let (text, font_name, has_links, link_labels) = self.app.read(cx, |app| {
+        let (text, font_name, has_links, link_labels) = self.app.read_with(cx, |app| {
             let links = app.reader.page_link_labels();
 
             (

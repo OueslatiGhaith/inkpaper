@@ -129,7 +129,7 @@ fn subscribers_get_events_once_the_emitting_call_returns() {
             cx.emit(Ping::Value(3));
 
             // nothing is delivered while the emitter runs
-            assert!(parent.read(cx, |parent| parent.log.is_empty()));
+            assert!(parent.read_with(cx, |parent| parent.log.is_empty()));
         })
         .unwrap();
 
