@@ -336,6 +336,39 @@ impl<M: Copy> SlotTable<M> {
         removed
     }
 
+    /// removes like [`Self::remove`] every live, unborrowed value whose metadata match
+    /// `predicate`. Returns how many values were removed
+    pub(crate) fn remove_matching(&self, mut predicate: impl FnMut(&M) -> bool) -> usize {
+        let mut removed = 0;
+
+        for index in 0.. {
+            let matches = {
+                let slots = self.slots.borrow();
+                let Some(slot) = slots.get(index) else {
+                    break;
+                };
+
+                slot.state == SlotState::Live && predicate(&slot.meta)
+            };
+
+            if matches && self.remove(index).is_ok() {
+                removed += 1;
+            }
+        }
+
+        removed
+    }
+
+    /// how many slots hold a live value
+    #[cfg(test)]
+    pub(crate) fn live_count(&self) -> usize {
+        self.slots
+            .borrow()
+            .iter()
+            .filter(|slot| slot.state == SlotState::Live)
+            .count()
+    }
+
     pub(crate) fn position(&self, mut predicate: impl FnMut(&M) -> bool) -> Option<usize> {
         self.slots
             .borrow()

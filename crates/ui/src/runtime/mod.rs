@@ -5,10 +5,10 @@ use alloc::boxed::Box;
 
 use crate::{
     ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
-    EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageRegistryError,
-    ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintError,
-    PaintReport, PaintResources, Painter, Point, Rect, ReleaseError, Render, RenderInvalidation,
-    Size, TextMeasurer,
+    EntityId, EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena,
+    ImageRegistryError, ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId,
+    Offset, PaintError, PaintReport, PaintResources, Painter, Point, Rect, ReleaseError, Render,
+    RenderInvalidation, Size, TextMeasurer,
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     emitter::{self, EventTable},
@@ -261,6 +261,17 @@ impl<RESOURCES> Runtime<RESOURCES> {
         Ok(())
     }
 
+    /// forgets what involved an entity that was just dropped: the callbacks it owns or
+    /// that run on it, its subscriptions, and what it read or was read by. Events it
+    /// emitted were delivered before it dropped
+    fn forget_released(&self, entity: EntityId) {
+        // SAFETY: entities drop only where no runtime call runs, so no callback does
+        unsafe { self.callbacks.release_entity(entity) };
+        self.events.forget(entity);
+        self.dependencies.forget(entity);
+        self.dependencies.forget_source(Source::Entity(entity));
+    }
+
     /// drops the released entities that are neither borrowed nor mounted. Runs where
     /// no runtime call is running, so none is borrowed unless a host holds a guard
     fn drop_released(&self) {
@@ -275,7 +286,10 @@ impl<RESOURCES> Runtime<RESOURCES> {
             }
 
             match self.entities.remove(entity) {
-                Ok(()) => true,
+                Ok(()) => {
+                    self.forget_released(entity);
+                    true
+                }
                 // still being built, or borrowed
                 Err(_) if self.entities.contains(entity) => false,
                 Err(_) => true,
@@ -487,6 +501,23 @@ impl<RESOURCES> Runtime<RESOURCES> {
     #[cfg(test)]
     pub(crate) fn lease_count(&self) -> usize {
         self.leases.len()
+    }
+
+    /// how many callbacks are registered
+    #[cfg(test)]
+    pub(crate) fn callback_count(&self) -> usize {
+        self.callbacks.live_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn subscription_count(&self) -> usize {
+        self.events.subscription_count()
+    }
+
+    /// how many reads of entities and globals renders recorded
+    #[cfg(test)]
+    pub(crate) fn dependency_count(&self) -> usize {
+        self.dependencies.len()
     }
 
     /// returns spare frame capacity to the pool while preserving the current frame.

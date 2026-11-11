@@ -211,6 +211,30 @@ impl CallbackArena {
         CallbackMark(self.advance_generation())
     }
 
+    /// drops the callbacks `entity` owns or that run on it, for an entity that was
+    /// released. Later callbacks may reuse their slots, under a newer generation, so
+    /// their ids never match again. Returns how many callbacks were released.
+    ///
+    /// # Safety
+    ///
+    /// no callback of this arena may be running
+    pub(crate) unsafe fn release_entity(&self, entity: EntityId) -> usize {
+        let removed = self
+            .slots
+            .remove_matching(|meta| meta.owner == entity || meta.target == entity);
+
+        if removed > 0 {
+            self.advance_generation();
+        }
+
+        removed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_count(&self) -> usize {
+        self.slots.live_count()
+    }
+
     /// drops the callbacks `owner` registered before `mark`, such as during its previous
     /// render. Other callbacks stay callable, and later ones may reuse the released
     /// slots. Returns how many callbacks were released.

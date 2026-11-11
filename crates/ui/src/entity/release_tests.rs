@@ -194,3 +194,88 @@ fn a_released_slot_goes_to_the_next_entity() {
     );
     assert_eq!(runtime.update(new, |value, _| *value), Ok(2));
 }
+
+#[derive(Debug, Clone, Copy)]
+struct Ping;
+
+struct Source;
+
+impl EventEmitter<Ping> for Source {}
+
+struct Model;
+
+impl EventEmitter<Ping> for Model {}
+
+impl Model {
+    fn on_ping(&mut self, _: Entity<Source>, _: &Ping, _: &mut Context<'_, Self>) {}
+
+    fn clicked(&mut self, _: &ActivateEvent, _: &mut Context<'_, Self>) {}
+}
+
+struct Watcher;
+
+impl Watcher {
+    fn on_ping(&mut self, _: Entity<Model>, _: &Ping, _: &mut Context<'_, Self>) {}
+}
+
+#[test]
+fn releasing_an_entity_forgets_its_subscriptions() {
+    let Setup { runtime, .. } = setup();
+    let source = runtime.create(|_| Source).unwrap();
+    let watcher = runtime.create(|_| Watcher).unwrap();
+    let before = runtime.subscription_count();
+
+    let model = runtime
+        .create(|cx| {
+            cx.subscribe(source, Model::on_ping);
+            Model
+        })
+        .unwrap();
+    runtime
+        .update(watcher, |_, cx| cx.subscribe(model, Watcher::on_ping))
+        .unwrap();
+    assert_eq!(runtime.subscription_count(), before + 2);
+
+    runtime.release(model);
+
+    assert_eq!(runtime.subscription_count(), before);
+}
+
+/// registers a listener on the model while rendering, so the reader owns a callback
+/// that runs on the model
+struct Reader {
+    model: Entity<Model>,
+}
+
+impl Render for Reader {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        // a read that ends at once, so the update below can borrow the model
+        self.model.read_with(cx, |_| ());
+        let clicked = self.model.update(cx, |_, cx| cx.listener(Model::clicked));
+
+        div().id("model").on_activate(clicked)
+    }
+}
+
+#[test]
+fn releasing_an_entity_forgets_its_callbacks_and_reads() {
+    let mut runtime = Runtime::<()>::new(pool());
+    let model = runtime.create(|_| Model).unwrap();
+    runtime.create_root(|_| Reader { model }).unwrap();
+    runtime.rebuild().unwrap();
+
+    // a listener the model registered for itself
+    runtime
+        .update(model, |_, cx| {
+            let _ = cx.listener(Model::clicked);
+        })
+        .unwrap();
+
+    assert_eq!(runtime.callback_count(), 2);
+    assert_eq!(runtime.dependency_count(), 1);
+
+    runtime.release(model);
+
+    assert_eq!(runtime.callback_count(), 0);
+    assert_eq!(runtime.dependency_count(), 0);
+}
