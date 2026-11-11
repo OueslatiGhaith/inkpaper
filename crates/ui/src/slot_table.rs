@@ -87,6 +87,16 @@ pub(crate) enum NotLive {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BorrowConflict;
 
+/// why [`SlotTable::remove`] left a value in place
+#[allow(dead_code, reason = "entity release removes entities")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemoveError {
+    /// the slot holds no live value
+    NotLive,
+    /// the value is borrowed
+    Borrowed,
+}
+
 struct Slot<M> {
     /// the value's memory in the pool, until it is released
     memory: Option<NonNull<u8>>,
@@ -192,26 +202,74 @@ impl<M: Copy> SlotTable<M> {
         meta: M,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<(u16, NonNull<u8>), ReserveError> {
+        self.reserve_reusing_where(layout, |_| true, |_| meta, drop_fn)
+    }
+
+    /// reserves like [`Self::reserve_reusing`], in the first removed slot whose metadata
+    /// `reusable` accepts. `meta` builds the new metadata from the removed value's, or
+    /// from `None` in a new slot
+    pub(crate) fn reserve_reusing_where(
+        &self,
+        layout: Layout,
+        reusable: impl Fn(&M) -> bool,
+        meta: impl FnOnce(Option<M>) -> M,
+        drop_fn: unsafe fn(*mut u8),
+    ) -> Result<(u16, NonNull<u8>), ReserveError> {
         let mut slots = self.slots.borrow_mut();
         let Some(index) = (0..=u16::MAX)
             .zip(slots.iter())
-            .find(|(_, slot)| slot.state == SlotState::Removed)
+            .find(|(_, slot)| slot.state == SlotState::Removed && reusable(&slot.meta))
             .map(|(index, _)| index)
         else {
             drop(slots);
-            return self.reserve(layout, meta, drop_fn);
+            return self.reserve(layout, meta(None), drop_fn);
         };
 
         let ptr = self.allocate(layout)?;
         let slot = &mut slots[usize::from(index)];
         slot.memory = Some(ptr);
         slot.layout = layout;
-        slot.meta = meta;
+        slot.meta = meta(Some(slot.meta));
         slot.drop_fn = drop_fn;
         slot.state = SlotState::Initializing;
         slot.borrow = BorrowState::Free;
 
         Ok((index, ptr))
+    }
+
+    /// drops the live, unborrowed value in `slot` and returns its memory to the pool.
+    /// The slot can then be reused. The value's destructor runs without a guard on the
+    /// slot list, and the slot can't be reused until the destructor returns
+    #[allow(dead_code, reason = "entity release removes entities")]
+    pub(crate) fn remove(&self, slot: usize) -> Result<(), RemoveError> {
+        let (ptr, drop_fn) = {
+            let mut slots = self.slots.borrow_mut();
+            let slot = slots.get_mut(slot).ok_or(RemoveError::NotLive)?;
+
+            if slot.state != SlotState::Live {
+                return Err(RemoveError::NotLive);
+            }
+            if slot.borrow != BorrowState::Free {
+                return Err(RemoveError::Borrowed);
+            }
+
+            // not `Removed` yet, so nothing reuses the slot while its value drops. Marked
+            // before the drop, so an unwinding destructor can't lead to a second one
+            slot.state = SlotState::Abandoned;
+
+            (slot.ptr(), slot.drop_fn)
+        };
+
+        // SAFETY: the slot was live, so it holds an initialized value matching
+        // `drop_fn`, and nothing borrows it
+        unsafe { drop_fn(ptr.as_ptr()) };
+
+        let mut slots = self.slots.borrow_mut();
+        let slot = &mut slots[slot];
+        Self::release_memory(self.pool, self.table, slot);
+        slot.state = SlotState::Removed;
+
+        Ok(())
     }
 
     /// marks a reserved slot's value as initialized

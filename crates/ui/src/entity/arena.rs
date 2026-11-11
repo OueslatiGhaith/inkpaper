@@ -2,7 +2,7 @@ use core::{alloc::Layout, any::TypeId, ptr::NonNull};
 
 use crate::{
     pool::{OutOfMemory, PoolRef, Table},
-    slot_table::{BorrowKind, NotLive, ReserveError, SlotTable},
+    slot_table::{BorrowKind, NotLive, RemoveError, ReserveError, SlotTable},
 };
 
 #[cfg(test)]
@@ -38,6 +38,11 @@ impl From<ReserveError> for EntityAllocError {
 
 #[derive(Debug, Clone, Copy)]
 struct EntityMeta {
+    /// the generation of the value in the slot. Ids carry it too, so an id only
+    /// matches the value it was issued for
+    generation: u16,
+    /// the value was removed. Its slot may be reused, under the next generation
+    removed: bool,
     type_id: TypeId,
     /// set by `notify` until the runtime takes the invalidation or renders the entity
     dirty: bool,
@@ -47,8 +52,9 @@ struct EntityMeta {
 
 /// entity state, stored by [`SlotTable`].
 ///
-/// entity ids always have generation 0: slots are never reused. A slot's [`TypeId`] is
-/// checked before its value is borrowed.
+/// removed slots are reused with their generation advanced, so ids of removed entities
+/// never match a later one. A slot whose generation would wrap around is retired
+/// instead. A slot's generation and [`TypeId`] are checked before its value is borrowed.
 pub(crate) struct EntityArena {
     slots: SlotTable<EntityMeta>,
 }
@@ -58,6 +64,23 @@ impl EntityArena {
         Self {
             slots: SlotTable::new_in(pool, Table::Entities),
         }
+    }
+
+    /// the metadata of the slot `entity` points to, if `entity` is still the value in it
+    fn meta(&self, entity: EntityId) -> Option<EntityMeta> {
+        self.slots
+            .meta(usize::from(entity.slot()))
+            .filter(|meta| meta.generation == entity.generation() && !meta.removed)
+    }
+
+    /// changes the metadata of the slot `entity` points to, if `entity` is still the
+    /// value in it
+    fn update_meta(&self, entity: EntityId, f: impl FnOnce(&mut EntityMeta)) {
+        self.slots.update_meta(usize::from(entity.slot()), |meta| {
+            if meta.generation == entity.generation() && !meta.removed {
+                f(meta);
+            }
+        });
     }
 }
 
@@ -135,28 +158,40 @@ unsafe impl EntityStore for EntityArena {
         type_id: TypeId,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<RawEntityReservation, EntityAllocError> {
-        let meta = EntityMeta {
-            type_id,
-            dirty: false,
-            pending: false,
-        };
-        let (slot, ptr) = self.slots.reserve(layout, meta, drop_fn)?;
+        let (slot, ptr) = self.slots.reserve_reusing_where(
+            layout,
+            // a slot whose generation would wrap around is retired
+            |meta| meta.generation < u16::MAX,
+            |removed| EntityMeta {
+                generation: removed.map_or(0, |meta| meta.generation + 1),
+                removed: false,
+                type_id,
+                dirty: false,
+                pending: false,
+            },
+            drop_fn,
+        )?;
+        let generation = self
+            .slots
+            .meta(usize::from(slot))
+            .expect("the slot was just reserved")
+            .generation;
 
         Ok(RawEntityReservation {
-            id: EntityId::new(slot, 0),
+            id: EntityId::new(slot, generation),
             ptr,
         })
     }
 
     unsafe fn commit(&self, entity: EntityId) {
-        debug_assert_eq!(entity.generation(), 0);
+        debug_assert!(self.meta(entity).is_some());
 
         // SAFETY: the caller initialized the reserved value
         unsafe { self.slots.commit(entity.slot()) };
     }
 
     fn abandon(&self, entity: EntityId) {
-        if entity.generation() == 0 {
+        if self.meta(entity).is_some() {
             self.slots.abandon(entity.slot());
         }
     }
@@ -167,10 +202,6 @@ unsafe impl EntityStore for EntityArena {
         type_id: TypeId,
         kind: BorrowKind,
     ) -> Result<NonNull<u8>, EntityAccessError> {
-        if entity.generation() != 0 {
-            return Err(EntityAccessError::InvalidEntity);
-        }
-
         let slot = usize::from(entity.slot());
         let (meta, ptr) = self.slots.live(slot).map_err(|error| match error {
             NotLive::Initializing => EntityAccessError::NotReady,
@@ -178,6 +209,10 @@ unsafe impl EntityStore for EntityArena {
                 EntityAccessError::InvalidEntity
             }
         })?;
+
+        if meta.generation != entity.generation() {
+            return Err(EntityAccessError::InvalidEntity);
+        }
 
         if meta.type_id != type_id {
             return Err(EntityAccessError::TypeMismatch);
@@ -194,20 +229,35 @@ unsafe impl EntityStore for EntityArena {
         self.slots.release(usize::from(entity.slot()), kind);
     }
 
-    fn mark_dirty(&self, entity: EntityId) {
-        if entity.generation() == 0 {
-            self.slots
-                .update_meta(usize::from(entity.slot()), |meta| meta.dirty = true);
+    fn remove(&self, entity: EntityId) -> Result<(), EntityAccessError> {
+        if self.meta(entity).is_none() {
+            return Err(EntityAccessError::InvalidEntity);
         }
+
+        self.slots
+            .remove(usize::from(entity.slot()))
+            .map_err(|error| match error {
+                RemoveError::NotLive => EntityAccessError::InvalidEntity,
+                RemoveError::Borrowed => EntityAccessError::BorrowConflict,
+            })?;
+
+        // a removed entity no longer needs to render, and its id reaches nothing
+        self.update_meta(entity, |meta| {
+            meta.dirty = false;
+            meta.pending = false;
+            meta.removed = true;
+        });
+
+        Ok(())
+    }
+
+    fn mark_dirty(&self, entity: EntityId) {
+        self.update_meta(entity, |meta| meta.dirty = true);
     }
 
     #[cfg(test)]
     fn is_dirty(&self, entity: EntityId) -> bool {
-        entity.generation() == 0
-            && self
-                .slots
-                .meta(usize::from(entity.slot()))
-                .is_some_and(|meta| meta.dirty)
+        self.meta(entity).is_some_and(|meta| meta.dirty)
     }
 
     fn has_dirty(&self) -> bool {
@@ -222,11 +272,8 @@ unsafe impl EntityStore for EntityArena {
     }
 
     fn needs_render(&self, entity: EntityId) -> bool {
-        entity.generation() == 0
-            && self
-                .slots
-                .meta(usize::from(entity.slot()))
-                .is_some_and(|meta| meta.dirty || meta.pending)
+        self.meta(entity)
+            .is_some_and(|meta| meta.dirty || meta.pending)
     }
 
     fn has_pending_render(&self) -> bool {
@@ -236,12 +283,10 @@ unsafe impl EntityStore for EntityArena {
     }
 
     fn mark_rendered(&self, entity: EntityId) {
-        if entity.generation() == 0 {
-            self.slots.update_meta(usize::from(entity.slot()), |meta| {
-                meta.dirty = false;
-                meta.pending = false;
-            });
-        }
+        self.update_meta(entity, |meta| {
+            meta.dirty = false;
+            meta.pending = false;
+        });
     }
 
     fn clear_pending(&self) {
@@ -480,5 +525,106 @@ mod tests {
         }
 
         assert_eq!(DROPS.load(Ordering::SeqCst), 2);
+    }
+
+    /// counts its drops in a shared cell
+    struct Counted(std::rc::Rc<core::cell::Cell<u32>>);
+
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    #[test]
+    fn removing_an_entity_drops_it_and_its_id_stops_working() {
+        let arena = EntityArena::new_in(pool_ref());
+        let drops = std::rc::Rc::new(core::cell::Cell::new(0));
+        let entity = arena.insert(Counted(drops.clone())).unwrap();
+        let used = arena.used_bytes();
+
+        assert_eq!(arena.remove(entity.entity_id()), Ok(()));
+
+        assert_eq!(drops.get(), 1);
+        assert!(arena.used_bytes() < used);
+        assert_eq!(
+            arena.read(entity, |_| ()),
+            Err(EntityAccessError::InvalidEntity)
+        );
+        assert_eq!(
+            arena.remove(entity.entity_id()),
+            Err(EntityAccessError::InvalidEntity)
+        );
+    }
+
+    #[test]
+    fn a_borrowed_entity_is_not_removed() {
+        let arena = EntityArena::new_in(pool_ref());
+        let counter = arena.insert(Counter { value: 1 }).unwrap();
+
+        arena
+            .read(counter, |_| {
+                assert_eq!(
+                    arena.remove(counter.entity_id()),
+                    Err(EntityAccessError::BorrowConflict)
+                );
+            })
+            .unwrap();
+
+        assert_eq!(arena.read(counter, |counter| counter.value), Ok(1));
+    }
+
+    #[test]
+    fn a_removed_slot_is_reused_under_a_new_generation() {
+        let arena = EntityArena::new_in(pool_ref());
+        let old = arena.insert(Counter { value: 1 }).unwrap();
+        arena.remove(old.entity_id()).unwrap();
+
+        let new = arena.insert(Settings { volume: 7 }).unwrap();
+
+        assert_eq!(new.entity_id().slot(), old.entity_id().slot());
+        assert_ne!(new.entity_id(), old.entity_id());
+        assert_eq!(arena.len(), 1);
+
+        // the old id reaches neither the new value nor its type
+        let old_as_new = Entity::<Settings>::from_id(old.entity_id());
+        assert_eq!(
+            arena.read(old_as_new, |_| ()),
+            Err(EntityAccessError::InvalidEntity)
+        );
+        assert_eq!(arena.read(new, |settings| settings.volume), Ok(7));
+    }
+
+    #[test]
+    fn a_removed_entity_no_longer_needs_to_render() {
+        let arena = EntityArena::new_in(pool_ref());
+        let entity = arena.insert(Counter { value: 1 }).unwrap();
+        arena.mark_dirty(entity.entity_id());
+
+        arena.remove(entity.entity_id()).unwrap();
+        // marking a stale id does nothing
+        arena.mark_dirty(entity.entity_id());
+
+        assert!(!arena.has_dirty());
+        assert!(!arena.needs_render(entity.entity_id()));
+    }
+
+    #[test]
+    fn a_slot_is_retired_before_its_generation_wraps_around() {
+        let arena = EntityArena::new_in(pool_ref());
+        let mut entity = arena.insert(Counter { value: 0 }).unwrap();
+
+        while entity.entity_id().generation() < u16::MAX {
+            arena.remove(entity.entity_id()).unwrap();
+            entity = arena.insert(Counter { value: 0 }).unwrap();
+
+            assert_eq!(entity.entity_id().slot(), 0);
+        }
+
+        arena.remove(entity.entity_id()).unwrap();
+        let next = arena.insert(Counter { value: 0 }).unwrap();
+
+        assert_eq!(next.entity_id().slot(), 1);
+        assert_eq!(next.entity_id().generation(), 0);
     }
 }
