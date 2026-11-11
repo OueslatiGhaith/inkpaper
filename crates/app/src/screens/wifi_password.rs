@@ -2,7 +2,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     InkPaperApp,
-    app::{Exit, ScreenInput, ScreenLifecycle, ScreenView},
+    app::{Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
         keyboard::{Keyboard, KeyboardProps},
@@ -171,10 +171,23 @@ impl Render for PasswordKeyboardView {
 pub(crate) struct WifiPasswordRoute;
 
 impl ScreenLifecycle for WifiPasswordRoute {
-    fn exit(&self, app: &mut InkPaperApp, exit: Exit, _cx: &mut Context<'_, InkPaperApp>) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, cx: &mut Context<'_, InkPaperApp>) {
+        if entry == Entry::Opened {
+            let field = InkPaperApp::open_view(&mut app.password_field, cx, PasswordFieldView::new);
+            cx.subscribe(field, InkPaperApp::on_toggle_password);
+
+            let keyboard =
+                InkPaperApp::open_view(&mut app.password_keyboard, cx, PasswordKeyboardView::new);
+            cx.subscribe(keyboard, InkPaperApp::on_password_key);
+        }
+    }
+
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
         // a password typed but not joined is dropped
         if exit == Exit::Closed {
             app.wifi.end_password_entry();
+            InkPaperApp::close_view(&mut app.password_field, cx);
+            InkPaperApp::close_view(&mut app.password_keyboard, cx);
         }
     }
 }
@@ -187,15 +200,19 @@ impl ScreenView for WifiPasswordRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
-        let Some(entry) = app.wifi.password_entry() else {
+        let (Some(entry), Some(field), Some(keyboard)) = (
+            app.wifi.password_entry(),
+            app.password_field,
+            app.password_keyboard,
+        ) else {
             return div().into_any_element();
         };
 
         WifiPasswordScreen::from(WifiPasswordScreenProps {
             ssid: entry.ssid(),
             battery: app.battery_indicator,
-            field: app.password_field,
-            keyboard: app.password_keyboard,
+            field,
+            keyboard,
             on_back: cx.listener(InkPaperApp::activate_back),
         })
         .into_any_element()

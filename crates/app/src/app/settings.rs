@@ -8,7 +8,7 @@ use crate::{
 
 impl InkPaperApp {
     /// What the Settings screen's taps mean.
-    pub(super) fn on_settings_event(
+    pub(crate) fn on_settings_event(
         &mut self,
         settings: Entity<SettingsView>,
         event: &SettingsEvent,

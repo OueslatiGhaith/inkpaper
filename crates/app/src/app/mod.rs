@@ -125,14 +125,15 @@ pub struct InkPaperApp {
     frontlight_panel: Entity<FrontlightPanel>,
     /// the reader's drawer
     pub(crate) reader_menu: Entity<ReaderDrawer>,
+    // the views of screens, which live while their screen is open
     /// the Wi-Fi password field and its keyboard
-    pub(crate) password_field: Entity<PasswordFieldView>,
-    pub(crate) password_keyboard: Entity<PasswordKeyboardView>,
+    pub(crate) password_field: Option<Entity<PasswordFieldView>>,
+    pub(crate) password_keyboard: Option<Entity<PasswordKeyboardView>>,
     /// the local time and timezone slider of the clock settings
-    pub(crate) timezone: Entity<TimezoneView>,
-    pub(crate) settings: Entity<SettingsView>,
-    pub(crate) text_settings_view: Entity<TextSettingsView>,
-    pub(crate) wifi_networks_view: Entity<WifiNetworksView>,
+    pub(crate) timezone: Option<Entity<TimezoneView>>,
+    pub(crate) settings: Option<Entity<SettingsView>>,
+    pub(crate) text_settings_view: Option<Entity<TextSettingsView>>,
+    pub(crate) wifi_networks_view: Option<Entity<WifiNetworksView>>,
     control_center: ControlCenterState,
     /// the toast over every screen
     toasts: Entity<ToastLayer>,
@@ -155,18 +156,6 @@ impl InkPaperApp {
         let app = cx.entity();
         let reader_menu = cx.new(|_| ReaderDrawer::new(app));
         cx.subscribe(reader_menu, Self::on_reader_drawer_event);
-        let password_field = cx.new(|_| PasswordFieldView::new(app));
-        cx.subscribe(password_field, Self::on_toggle_password);
-        let password_keyboard = cx.new(|_| PasswordKeyboardView::new(app));
-        cx.subscribe(password_keyboard, Self::on_password_key);
-        let timezone = cx.new(|_| TimezoneView::new(app));
-        cx.subscribe(timezone, Self::on_step_timezone);
-        let settings = cx.new(|_| SettingsView::new(app));
-        cx.subscribe(settings, Self::on_settings_event);
-        let text_settings_view = cx.new(|_| TextSettingsView::new(app));
-        cx.subscribe(text_settings_view, Self::on_text_settings_event);
-        let wifi_networks_view = cx.new(|_| WifiNetworksView::new(app));
-        cx.subscribe(wifi_networks_view, Self::on_wifi_networks_event);
         let toasts = cx.new(|_| ToastLayer::default());
 
         Self {
@@ -188,17 +177,41 @@ impl InkPaperApp {
             frontlight,
             frontlight_panel,
             reader_menu,
-            password_field,
-            password_keyboard,
-            timezone,
-            settings,
-            text_settings_view,
-            wifi_networks_view,
+            password_field: None,
+            password_keyboard: None,
+            timezone: None,
+            settings: None,
+            text_settings_view: None,
+            wifi_networks_view: None,
             control_center: ControlCenterState::default(),
             toasts,
             pointer_captured: false,
             pointer_held: false,
             file_transfer: FileTransferState::default(),
+        }
+    }
+
+    /// Creates the view of a screen being opened, into `slot`. A view left from an
+    /// earlier opening, such as one the navigation stack dropped, is released.
+    pub(crate) fn open_view<V: 'static>(
+        slot: &mut Option<Entity<V>>,
+        cx: &mut Context<'_, Self>,
+        view: impl FnOnce(Entity<Self>) -> V,
+    ) -> Entity<V> {
+        Self::close_view(slot, cx);
+
+        let app = cx.entity();
+        let entity = cx.new(|_| view(app));
+        *slot = Some(entity);
+
+        entity
+    }
+
+    /// Releases the view of a screen being closed. It is dropped once the screen is
+    /// no longer drawn.
+    pub(crate) fn close_view<V: 'static>(slot: &mut Option<Entity<V>>, cx: &mut Context<'_, Self>) {
+        if let Some(view) = slot.take() {
+            cx.release(view);
         }
     }
 

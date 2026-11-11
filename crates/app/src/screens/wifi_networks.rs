@@ -418,27 +418,35 @@ impl Render for WifiNetworksView {
 pub(crate) struct WifiNetworksRoute;
 
 impl ScreenLifecycle for WifiNetworksRoute {
-    fn enter(&self, app: &mut InkPaperApp, entry: Entry, _cx: &mut Context<'_, InkPaperApp>) {
+    fn enter(&self, app: &mut InkPaperApp, entry: Entry, cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
             app.wifi.request_scan();
+
+            let view =
+                InkPaperApp::open_view(&mut app.wifi_networks_view, cx, WifiNetworksView::new);
+            cx.subscribe(view, InkPaperApp::on_wifi_networks_event);
         }
     }
 
-    fn exit(&self, app: &mut InkPaperApp, _exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
-        app.wifi_networks_view
-            .update(cx, WifiNetworksView::close_menu);
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
+        match exit {
+            // the menu is closed when the screen shows again
+            Exit::Covered => {
+                if let Some(view) = app.wifi_networks_view {
+                    view.update(cx, WifiNetworksView::close_menu);
+                }
+            }
+            Exit::Closed => InkPaperApp::close_view(&mut app.wifi_networks_view, cx),
+        }
     }
 
     // Back closes an open menu first
     fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
-        if app
+        let closed = app
             .wifi_networks_view
-            .update(cx, WifiNetworksView::close_menu)
-        {
-            return Back::Handled;
-        }
+            .is_some_and(|view| view.update(cx, WifiNetworksView::close_menu));
 
-        Back::Leave
+        if closed { Back::Handled } else { Back::Leave }
     }
 }
 
@@ -451,8 +459,9 @@ impl ScreenInput for WifiNetworksRoute {
         button: SideButton,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        app.wifi_networks_view
-            .update(cx, |view, cx| view.turn_page(button.into(), cx));
+        if let Some(view) = app.wifi_networks_view {
+            view.update(cx, |view, cx| view.turn_page(button.into(), cx));
+        }
     }
 
     fn drag(
@@ -462,7 +471,9 @@ impl ScreenInput for WifiNetworksRoute {
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        let view = app.wifi_networks_view;
+        let Some(view) = app.wifi_networks_view else {
+            return;
+        };
 
         if view.read_with(cx, WifiNetworksView::menu_open) {
             return;
@@ -482,12 +493,13 @@ impl ScreenInput for WifiNetworksRoute {
         cx: &mut Context<'_, InkPaperApp>,
     ) -> bool {
         app.wifi_networks_view
-            .read_with(cx, WifiNetworksView::menu_open)
+            .is_some_and(|view| view.read_with(cx, WifiNetworksView::menu_open))
     }
 }
 
 impl ScreenView for WifiNetworksRoute {
     fn render<'a>(&self, app: &'a InkPaperApp, _: &mut Context<'_, InkPaperApp>) -> AnyElement<'a> {
-        app.wifi_networks_view.into_any_element()
+        app.wifi_networks_view
+            .map_or_else(|| div().into_any_element(), IntoElement::into_any_element)
     }
 }

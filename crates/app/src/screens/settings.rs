@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     ClockStatus, InkPaperApp,
-    app::{Back, Entry, ScreenInput, ScreenLifecycle, ScreenView},
+    app::{Back, Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
         option_picker::{OptionPicker, OptionPickerProps},
@@ -248,17 +248,24 @@ pub(crate) struct SettingsRoute;
 impl ScreenLifecycle for SettingsRoute {
     fn enter(&self, app: &mut InkPaperApp, entry: Entry, cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
-            app.settings.update(cx, SettingsView::close_picker);
+            let view = InkPaperApp::open_view(&mut app.settings, cx, SettingsView::new);
+            cx.subscribe(view, InkPaperApp::on_settings_event);
+        }
+    }
+
+    fn exit(&self, app: &mut InkPaperApp, exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
+        if exit == Exit::Closed {
+            InkPaperApp::close_view(&mut app.settings, cx);
         }
     }
 
     /// Back closes a picker first.
     fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
-        if app.settings.update(cx, SettingsView::close_picker) {
-            return Back::Handled;
-        }
+        let closed = app
+            .settings
+            .is_some_and(|view| view.update(cx, SettingsView::close_picker));
 
-        Back::Leave
+        if closed { Back::Handled } else { Back::Leave }
     }
 }
 
@@ -266,6 +273,7 @@ impl ScreenInput for SettingsRoute {}
 
 impl ScreenView for SettingsRoute {
     fn render<'a>(&self, app: &'a InkPaperApp, _: &mut Context<'_, InkPaperApp>) -> AnyElement<'a> {
-        app.settings.into_any_element()
+        app.settings
+            .map_or_else(|| div().into_any_element(), IntoElement::into_any_element)
     }
 }

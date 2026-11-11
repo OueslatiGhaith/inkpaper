@@ -40,7 +40,7 @@ impl InkPaperApp {
     }
 
     /// What the WiFi screen's taps mean.
-    pub(super) fn on_wifi_networks_event(
+    pub(crate) fn on_wifi_networks_event(
         &mut self,
         view: Entity<WifiNetworksView>,
         event: &WifiNetworksEvent,
@@ -65,8 +65,9 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.wifi.finish_scan(result);
-        self.wifi_networks_view
-            .update(cx, WifiNetworksView::reset_page);
+        if let Some(view) = self.wifi_networks_view {
+            view.update(cx, WifiNetworksView::reset_page);
+        }
 
         if self.screen() == Screen::WifiNetworks {
             cx.notify();
@@ -149,7 +150,7 @@ impl InkPaperApp {
     }
 
     /// Shows or hides the password typed.
-    pub(super) fn on_toggle_password(
+    pub(crate) fn on_toggle_password(
         &mut self,
         field: Entity<PasswordFieldView>,
         _: &TogglePassword,
@@ -162,7 +163,7 @@ impl InkPaperApp {
     }
 
     /// Types a key of the password keyboard.
-    pub(super) fn on_password_key(
+    pub(crate) fn on_password_key(
         &mut self,
         keyboard: Entity<PasswordKeyboardView>,
         &PressKey(key): &PressKey,
@@ -180,7 +181,9 @@ impl InkPaperApp {
         // a key changes the field. The keyboard renders again only when it looks
         // different, such as after Shift
         let keyboard_changed = keyboard_look(entry) != look;
-        self.password_field.notify(cx);
+        if let Some(field) = self.password_field {
+            field.notify(cx);
+        }
         if keyboard_changed {
             keyboard.notify(cx);
         }
