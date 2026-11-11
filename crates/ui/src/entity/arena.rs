@@ -229,6 +229,10 @@ unsafe impl EntityStore for EntityArena {
         self.slots.release(usize::from(entity.slot()), kind);
     }
 
+    fn contains(&self, entity: EntityId) -> bool {
+        self.meta(entity).is_some()
+    }
+
     fn remove(&self, entity: EntityId) -> Result<(), EntityAccessError> {
         if self.meta(entity).is_none() {
             return Err(EntityAccessError::InvalidEntity);

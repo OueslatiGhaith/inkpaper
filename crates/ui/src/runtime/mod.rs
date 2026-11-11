@@ -7,12 +7,12 @@ use crate::{
     ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
     EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageRegistryError,
     ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId, Offset, PaintError,
-    PaintReport, PaintResources, Painter, Point, Rect, Render, RenderInvalidation, Size,
-    TextMeasurer,
+    PaintReport, PaintResources, Painter, Point, Rect, ReleaseError, Render, RenderInvalidation,
+    Size, TextMeasurer,
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     emitter::{self, EventTable},
-    entity::{EntityArena, EntityStore, LeaseTable, create_entity},
+    entity::{EntityArena, EntityStore, LeaseTable, ReleaseQueue, create_entity},
     global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
     pool::{MemoryStats, Pool},
@@ -96,6 +96,8 @@ pub struct Runtime<RESOURCES = ()> {
     events: EventTable,
     /// the entities borrowed by references that contexts handed out
     leases: LeaseTable,
+    /// the entities released and waiting to be dropped
+    releases: ReleaseQueue,
     /// how many runtime calls that run user code are running, nested. Events are
     /// delivered when the outermost returns
     call_depth: Cell<u32>,
@@ -151,6 +153,7 @@ where
             pending_scroll_into_view: None,
             events: EventTable::new_in(memory),
             leases: LeaseTable::new_in(memory),
+            releases: ReleaseQueue::new_in(memory),
             call_depth: Cell::new(0),
             pool,
         }
@@ -186,6 +189,7 @@ impl<RESOURCES> Runtime<RESOURCES> {
         T: Render,
     {
         self.root_entity = Some(RuntimeRoot::from_entity(root));
+        self.releases.set_root(root.entity_id());
 
         // changing the registered root requires a full rebuild, but keep the currently
         // mounted frame alive until that rebuild occurs.
@@ -215,6 +219,7 @@ impl<RESOURCES> Runtime<RESOURCES> {
         .with_dependencies(&self.dependencies)
         .with_events(&self.events)
         .with_leases(&self.leases)
+        .with_releases(&self.releases)
     }
 
     /// runs `call`, which runs user code, then delivers the events it emitted unless
@@ -226,9 +231,56 @@ impl<RESOURCES> Runtime<RESOURCES> {
 
         if self.call_depth.get() == 0 {
             emitter::deliver(&self.events, self.runtime_cx());
+            self.drop_released();
         }
 
         result
+    }
+
+    /// releases `entity`, like [`Context::release`]. Outside a runtime call, it is
+    /// dropped at once unless it is mounted in the frame.
+    ///
+    /// # Panics
+    ///
+    /// when the entity is gone, is the root, or the pool has no room. See
+    /// [`Self::try_release`]
+    #[track_caller]
+    pub fn release<T>(&self, entity: Entity<T>) {
+        if let Err(error) = self.try_release(entity) {
+            panic!("could not release entity: {error:?}");
+        }
+    }
+
+    pub fn try_release<T>(&self, entity: Entity<T>) -> Result<(), ReleaseError> {
+        self.runtime_cx().release(entity.entity_id())?;
+
+        if self.call_depth.get() == 0 {
+            self.drop_released();
+        }
+
+        Ok(())
+    }
+
+    /// drops the released entities that are neither borrowed nor mounted. Runs where
+    /// no runtime call is running, so none is borrowed unless a host holds a guard
+    fn drop_released(&self) {
+        if self.releases.is_empty() {
+            return;
+        }
+
+        self.releases.drain(|entity| {
+            // a mounted entity waits for the rebuild that unmounts it
+            if self.frame.entity_node(entity).is_some() {
+                return false;
+            }
+
+            match self.entities.remove(entity) {
+                Ok(()) => true,
+                // still being built, or borrowed
+                Err(_) if self.entities.contains(entity) => false,
+                Err(_) => true,
+            }
+        });
     }
 
     fn next_frame_generation(&mut self) -> u32 {
@@ -267,6 +319,8 @@ impl<RESOURCES> Runtime<RESOURCES> {
 
         // renders may emit too
         emitter::deliver(&self.events, self.runtime_cx());
+        // the entities this rebuild unmounted can go
+        self.drop_released();
 
         result
     }
@@ -297,7 +351,8 @@ impl<RESOURCES> Runtime<RESOURCES> {
         )
         .with_dependencies(&self.dependencies)
         .with_events(&self.events)
-        .with_leases(&self.leases);
+        .with_leases(&self.leases)
+        .with_releases(&self.releases);
         let result = self
             .frame
             .rerender(root, runtime)
@@ -398,7 +453,8 @@ impl<RESOURCES> Runtime<RESOURCES> {
         )
         .with_dependencies(&self.dependencies)
         .with_events(&self.events)
-        .with_leases(&self.leases);
+        .with_leases(&self.leases)
+        .with_releases(&self.releases);
         let root_node = self.frame.mount_and_expand(root, runtime)?;
 
         self.frame

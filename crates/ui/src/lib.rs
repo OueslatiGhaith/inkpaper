@@ -54,7 +54,7 @@ pub use element::*;
 pub use emitter::EventEmitter;
 #[cfg(test)]
 pub(crate) use entity::EntityArena;
-pub use entity::{Entity, EntityAccessError, EntityAllocError, EntityId};
+pub use entity::{Entity, EntityAccessError, EntityAllocError, EntityId, ReleaseError};
 pub use font::*;
 pub use frame::*;
 pub use geometry::*;

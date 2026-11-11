@@ -41,7 +41,9 @@ pub unsafe trait EntityStore {
 
     fn release(&self, entity: EntityId, kind: BorrowKind);
 
-    #[allow(dead_code, reason = "entity release calls it")]
+    /// whether `entity` still names a value, committed or being built
+    fn contains(&self, entity: EntityId) -> bool;
+
     /// drops the entity's value and frees its slot for reuse. Its id, and every copy
     /// of it, no longer reaches anything. Fails while the entity is borrowed
     fn remove(&self, entity: EntityId) -> Result<(), EntityAccessError>;

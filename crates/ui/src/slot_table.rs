@@ -88,7 +88,6 @@ pub(crate) enum NotLive {
 pub(crate) struct BorrowConflict;
 
 /// why [`SlotTable::remove`] left a value in place
-#[allow(dead_code, reason = "entity release removes entities")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoveError {
     /// the slot holds no live value
@@ -240,7 +239,6 @@ impl<M: Copy> SlotTable<M> {
     /// drops the live, unborrowed value in `slot` and returns its memory to the pool.
     /// The slot can then be reused. The value's destructor runs without a guard on the
     /// slot list, and the slot can't be reused until the destructor returns
-    #[allow(dead_code, reason = "entity release removes entities")]
     pub(crate) fn remove(&self, slot: usize) -> Result<(), RemoveError> {
         let (ptr, drop_fn) = {
             let mut slots = self.slots.borrow_mut();
