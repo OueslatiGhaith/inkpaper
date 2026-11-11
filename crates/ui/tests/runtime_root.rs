@@ -7,7 +7,7 @@ struct TestApp {
 }
 
 impl Render for TestApp {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .child("root")
             .when(self.show_extra, |root| root.child("extra"))

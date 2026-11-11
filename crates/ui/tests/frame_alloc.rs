@@ -80,7 +80,7 @@ fn allocations_during(operation: impl FnOnce()) -> usize {
 struct Screen;
 
 impl Render for Screen {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div().child("Hello").child("World")
     }
 }
@@ -201,7 +201,7 @@ struct StatefulScreen {
 }
 
 impl Render for StatefulScreen {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .id("scroll")
             .w(px(80))
@@ -424,7 +424,10 @@ fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
         .create(|cx| {
             let me = cx.entity();
 
-            assert_eq!(me.try_read(cx, |_| ()), Err(EntityAccessError::NotReady));
+            assert_eq!(
+                me.try_read_with(cx, |_| ()),
+                Err(EntityAccessError::NotReady)
+            );
 
             cx.new(|_| 42u32)
         })
@@ -432,13 +435,13 @@ fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
 
     runtime
         .update(parent, |child, cx| {
-            assert_eq!(child.read(cx, |value| *value), 42);
+            assert_eq!(child.read_with(cx, |value| *value), 42);
 
             for index in 0..32 {
                 cx.new(|_| index);
             }
 
-            assert_eq!(child.read(cx, |value| *value), 42);
+            assert_eq!(child.read_with(cx, |value| *value), 42);
         })
         .unwrap();
 
@@ -468,7 +471,7 @@ fn nested_entity_creation_and_constructor_unwind_preserve_existing_entities() {
 
     runtime
         .update(parent, |child, cx| {
-            assert_eq!(child.read(cx, |value| *value), 42)
+            assert_eq!(child.read_with(cx, |value| *value), 42)
         })
         .unwrap();
 }

@@ -41,7 +41,7 @@ impl InkPaperApp {
 
     /// The RTC's time, in UTC.
     pub(crate) fn utc_clock<T: 'static>(&self, cx: &Context<'_, T>) -> Option<ClockStatus> {
-        self.rtc.read(cx, |rtc| rtc.get())
+        self.rtc.read_with(cx, |rtc| rtc.get())
     }
 
     pub(crate) fn apply_clock_preferences(

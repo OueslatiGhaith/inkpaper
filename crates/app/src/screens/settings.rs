@@ -177,40 +177,28 @@ impl SettingsView {
 }
 
 impl Render for SettingsView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-        let open_picker = self.picker;
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let app = self.app.read(cx);
+        // shown like crosspoint's only when the card has a dictionary
+        let dictionary =
+            (!app.dictionaries.names().is_empty()).then(|| app.dictionary_name().unwrap_or("None"));
+        let resume = app.reader.resume_limit();
 
-        let (battery, clock, dictionary, resume, picker) = self.app.read(cx, |app| {
-            let names = app.dictionaries.names();
-            // shown like crosspoint's only when the card has a dictionary
-            let dictionary =
-                (!names.is_empty()).then(|| String::from(app.dictionary_name().unwrap_or("None")));
-            let resume = app.reader.resume_limit();
+        let picker = self.picker.map(|picker| match picker {
+            SettingsPicker::Dictionary => {
+                // none is the first option
+                let selected = app
+                    .reader
+                    .dictionary()
+                    .map_or(0, |index| usize::from(index) + 1);
 
-            let picker = open_picker.map(|picker| match picker {
-                SettingsPicker::Dictionary => {
-                    // none is the first option
-                    let selected = app
-                        .reader
-                        .dictionary()
-                        .map_or(0, |index| usize::from(index) + 1);
-
-                    ("Dictionary", app.dictionaries.options(), selected)
-                }
-                SettingsPicker::Resume => (
-                    "Reopen Book on Wake",
-                    ResumeLimit::options(),
-                    usize::from(resume.index()),
-                ),
-            });
-
-            (
-                app.battery_indicator,
-                app.local_clock(cx),
-                dictionary,
-                resume,
-                picker,
-            )
+                ("Dictionary", app.dictionaries.options(), selected)
+            }
+            SettingsPicker::Resume => (
+                "Reopen Book on Wake",
+                ResumeLimit::options(),
+                usize::from(resume.index()),
+            ),
         });
 
         let dictionary = dictionary.map(|name| {
@@ -243,8 +231,8 @@ impl Render for SettingsView {
         });
 
         SettingsScreen::from(SettingsScreenProps {
-            battery,
-            clock,
+            battery: app.battery_indicator,
+            clock: app.local_clock(cx),
             dictionary,
             resume,
             picker,

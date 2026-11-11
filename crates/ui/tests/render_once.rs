@@ -70,7 +70,7 @@ impl App {
 }
 
 impl Render for App {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div().w_full().h_full().p(px(4)).child(Card {
             title: self.title.as_str(),
             badge: self.status.as_str(),

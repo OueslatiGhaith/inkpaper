@@ -21,7 +21,7 @@ struct IdentityKinds {
 }
 
 impl Render for IdentityKinds {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         let source = ImageSource::new(ImageId::new(0), Size::new(px(8), px(8)));
 
         div()
@@ -77,7 +77,7 @@ impl ReidentifiedApp {
 }
 
 impl Render for ReidentifiedApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let activated = cx.listener(Self::activated);
 
         div().child(

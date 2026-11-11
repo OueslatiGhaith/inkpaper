@@ -22,6 +22,9 @@ pub enum EntityAccessError {
     TypeMismatch,
     NotReady,
     BorrowConflict,
+    /// the pool had no room to record a borrow that outlives the call, such as the
+    /// reference [`Entity::read`](crate::Entity::read) returns
+    OutOfMemory(OutOfMemory),
 }
 
 impl From<ReserveError> for EntityAllocError {

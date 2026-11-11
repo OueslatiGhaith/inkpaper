@@ -5,7 +5,7 @@ use crate::{
     EntityId,
     callback::CallbackStore,
     emitter::{EventStore, NoEvents},
-    entity::EntityStore,
+    entity::{EntityStore, LeaseStore, NoLeases},
     global::GlobalStore,
 };
 
@@ -22,6 +22,8 @@ pub struct RuntimeCx<'a> {
     pub(crate) dependencies: &'a dyn DependencyStore,
     /// subscriptions, and the events waiting for delivery
     pub(crate) events: &'a dyn EventStore,
+    /// the entities borrowed by the references contexts handed out
+    pub(crate) leases: &'a dyn LeaseStore,
     /// the entity being rendered, which owns the callbacks registered meanwhile
     pub(crate) rendering: Option<EntityId>,
 }
@@ -40,12 +42,17 @@ impl<'a> RuntimeCx<'a> {
             all_dirty,
             dependencies: &NoDependencies,
             events: &NoEvents,
+            leases: &NoLeases,
             rendering: None,
         }
     }
 
     pub(crate) fn with_events(self, events: &'a dyn EventStore) -> Self {
         Self { events, ..self }
+    }
+
+    pub(crate) fn with_leases(self, leases: &'a dyn LeaseStore) -> Self {
+        Self { leases, ..self }
     }
 
     pub(crate) fn with_dependencies(self, dependencies: &'a dyn DependencyStore) -> Self {

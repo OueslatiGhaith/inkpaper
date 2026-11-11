@@ -162,7 +162,7 @@ fn canvas_paint_preserves_local_bounds_clips_styles_and_damage() {
     struct View;
 
     impl Render for View {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             div()
                 .relative()
                 .left(px(10))
@@ -277,7 +277,7 @@ fn canvas_paint_reports_images_and_reads_updated_entity_state() {
     }
 
     impl Render for View {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             cx.canvas(|view, paint| {
                 paint.draw_text(rect(0, 0, 20, 10), text(view.value));
 
@@ -339,7 +339,7 @@ fn canvas_paint_returns_first_backend_error_and_stops_drawing() {
     }
 
     impl Render for View {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             cx.canvas(|view, paint| {
                 for step in 0..4 {
                     match (view.first + step) % 4 {
@@ -566,7 +566,7 @@ fn canvas_routes_prelaid_out_text_runs_to_run_painter() {
     struct View;
 
     impl Render for View {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             cx.canvas(|_, paint| {
                 paint.draw_text_run(rect(3, 4, 20, 12), text("reader run").font_size(px(17)));
             })

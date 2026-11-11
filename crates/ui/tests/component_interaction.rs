@@ -58,7 +58,7 @@ impl App {
 }
 
 impl Render for App {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let first_activated = cx.listener(Self::first_activated);
         let second_activated = cx.listener(Self::second_activated);
 

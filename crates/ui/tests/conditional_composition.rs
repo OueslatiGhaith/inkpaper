@@ -10,7 +10,7 @@ struct ConditionalChildren {
 }
 
 impl Render for ConditionalChildren {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .when(self.highlighted, |root| root.bg(Color::rgb(40, 50, 70)))
             .w_full()
@@ -82,7 +82,7 @@ struct OptionalContent {
 }
 
 impl Render for OptionalContent {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .child("Status")
             .when_some(self.message, |root, message| root.child(message))
@@ -144,7 +144,7 @@ impl InteractiveConditional {
 }
 
 impl Render for InteractiveConditional {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let activated = cx.listener(Self::activated);
 
         div().child(

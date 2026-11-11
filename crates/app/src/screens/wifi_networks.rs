@@ -45,11 +45,11 @@ impl WifiMenuItem {
 }
 
 /// A network row on the page shown.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NetworkRow {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NetworkRow<'a> {
     /// its index among the networks found
     index: usize,
-    ssid: String,
+    ssid: &'a str,
     /// Connected, Saved, Password or Open
     value: &'static str,
     /// saved networks have a menu
@@ -74,9 +74,9 @@ struct MenuState {
 /// Networks around the device, like crosspoint's WiFi selection. Tapping a
 /// network connects or disconnects it; holding a saved one opens its menu.
 #[component]
-pub(crate) struct WifiNetworksScreen {
+pub(crate) struct WifiNetworksScreen<'a> {
     /// the networks on the page shown
-    rows: Vec<NetworkRow>,
+    rows: Vec<NetworkRow<'a>>,
     /// whether the scan found none
     empty: bool,
     menu: Option<MenuState>,
@@ -93,7 +93,7 @@ pub(crate) struct WifiNetworksScreen {
     on_scan: Listener<ActivateEvent>,
 }
 
-impl RenderOnce for WifiNetworksScreen {
+impl RenderOnce for WifiNetworksScreen<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let status = match self.scan {
             WifiScanStatus::Idle | WifiScanStatus::Scanning => "Scanning...",
@@ -191,14 +191,14 @@ impl RenderOnce for WifiNetworksScreen {
 
 /// One page of the networks.
 #[component]
-struct NetworkList {
-    rows: Vec<NetworkRow>,
+struct NetworkList<'a> {
+    rows: Vec<NetworkRow<'a>>,
     on_network: Listener<ActivateEvent>,
     on_hold_network: Listener<LongPressEvent>,
     revision: u64,
 }
 
-impl RenderOnce for NetworkList {
+impl RenderOnce for NetworkList<'_> {
     fn render(self, _: &AppContext<'_>) -> impl IntoElement {
         let (on_network, on_hold_network) = (self.on_network, self.on_hold_network);
 
@@ -320,7 +320,7 @@ impl WifiNetworksView {
             return;
         };
 
-        let ssid = self.app.read(cx, |app| {
+        let ssid = self.app.read_with(cx, |app| {
             let network = app.wifi.networks().get(index)?;
 
             app.wifi
@@ -350,61 +350,50 @@ impl WifiNetworksView {
 }
 
 impl Render for WifiNetworksView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let pager = self.pager;
-        let menu = self.menu.as_ref();
+        let app = self.app.read(cx);
+        let networks = app.wifi.networks();
+        let saved = app.wifi.saved();
+        let connected = saved.connected().map(|network| network.ssid());
+        let page = pager.page(networks.len(), ROWS_PER_PAGE);
 
-        let (rows, network_count, menu, scan, revision, battery) = self.app.read(cx, |app| {
-            let networks = app.wifi.networks();
-            let saved = app.wifi.saved();
-            let connected = saved.connected().map(|network| network.ssid());
-            let page = pager.page(networks.len(), ROWS_PER_PAGE);
+        let rows = networks
+            .iter()
+            .enumerate()
+            .skip(page * ROWS_PER_PAGE)
+            .take(ROWS_PER_PAGE)
+            .map(|(index, network)| {
+                let known = saved.find(network.ssid()).is_some();
 
-            let rows = networks
-                .iter()
-                .enumerate()
-                .skip(page * ROWS_PER_PAGE)
-                .take(ROWS_PER_PAGE)
-                .map(|(index, network)| {
-                    let known = saved.find(network.ssid()).is_some();
+                let value = if connected == Some(network.ssid()) {
+                    "Connected"
+                } else if known {
+                    "Saved"
+                } else if network.secured() {
+                    "Password"
+                } else {
+                    "Open"
+                };
 
-                    let value = if connected == Some(network.ssid()) {
-                        "Connected"
-                    } else if known {
-                        "Saved"
-                    } else if network.secured() {
-                        "Password"
-                    } else {
-                        "Open"
-                    };
+                NetworkRow {
+                    index,
+                    ssid: network.ssid(),
+                    value,
+                    known,
+                }
+            })
+            .collect::<Vec<_>>();
 
-                    NetworkRow {
-                        index,
-                        ssid: String::from(network.ssid()),
-                        value,
-                        known,
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            let menu = menu.map(|menu| MenuState {
-                top: menu.top,
-                connected: connected == Some(menu.ssid.as_str()),
-                auto_connect: saved
-                    .find(&menu.ssid)
-                    .is_some_and(|network| network.auto_connect()),
-            });
-
-            (
-                rows,
-                networks.len(),
-                menu,
-                app.wifi.scan_status(),
-                app.wifi.revision(),
-                app.battery_indicator,
-            )
+        let menu = self.menu.as_ref().map(|menu| MenuState {
+            top: menu.top,
+            connected: connected == Some(menu.ssid.as_str()),
+            auto_connect: saved
+                .find(&menu.ssid)
+                .is_some_and(|network| network.auto_connect()),
         });
 
+        let network_count = networks.len();
         self.network_count = network_count;
 
         WifiNetworksScreen::from(WifiNetworksScreenProps {
@@ -415,11 +404,11 @@ impl Render for WifiNetworksView {
             on_hold_network: cx.listener(Self::long_press_network),
             on_menu_item: cx.listener(Self::activate_menu_item),
             on_dismiss_menu: cx.listener(Self::activate_dismiss_menu),
-            scan,
-            revision,
-            page: pager.page(network_count, ROWS_PER_PAGE),
+            scan: app.wifi.scan_status(),
+            revision: app.wifi.revision(),
+            page,
             page_count: Pager::page_count(network_count, ROWS_PER_PAGE),
-            battery,
+            battery: app.battery_indicator,
             on_back: cx.listener(Self::activate_back),
             on_scan: cx.listener(Self::activate_scan),
         })
@@ -475,7 +464,7 @@ impl ScreenInput for WifiNetworksRoute {
     ) {
         let view = app.wifi_networks_view;
 
-        if view.read(cx, WifiNetworksView::menu_open) {
+        if view.read_with(cx, WifiNetworksView::menu_open) {
             return;
         }
 
@@ -492,7 +481,8 @@ impl ScreenInput for WifiNetworksRoute {
         _position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> bool {
-        app.wifi_networks_view.read(cx, WifiNetworksView::menu_open)
+        app.wifi_networks_view
+            .read_with(cx, WifiNetworksView::menu_open)
     }
 }
 

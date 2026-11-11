@@ -124,8 +124,8 @@ impl FrontlightPanel {
 }
 
 impl Render for FrontlightPanel {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
-        let setting = self.frontlight.read(cx, |frontlight| frontlight.setting());
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let setting = self.frontlight.read(cx).setting();
 
         let brightness_label = format!("Brightness  {}%", setting.brightness());
         let warmth_label = format!("Warmth  {}%", setting.warmth());

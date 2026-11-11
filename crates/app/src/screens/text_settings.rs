@@ -338,7 +338,7 @@ impl TextSettingsView {
         }
 
         let tab = self.tab;
-        let (draft, row) = self.app.read(cx, |app| {
+        let (draft, row) = self.app.read_with(cx, |app| {
             let state = &app.text_settings;
 
             (state.draft(), state.rows(tab).into_iter().nth(index))
@@ -371,7 +371,7 @@ impl TextSettingsView {
         };
         cx.notify();
 
-        let draft = self.app.read(cx, |app| app.text_settings.draft());
+        let draft = self.app.read_with(cx, |app| app.text_settings.draft());
         self.change(draft, setting.choose(draft, index), cx);
     }
 
@@ -387,46 +387,33 @@ impl TextSettingsView {
 }
 
 impl Render for TextSettingsView {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let tab = self.tab;
-        let (preview, preview_for, preview_family) = (
-            &mut self.preview,
-            &mut self.preview_for,
-            &mut self.preview_family,
-        );
+        let app = self.app.read(cx);
+        let state = &app.text_settings;
+        let draft = state.draft();
 
-        let (draft, font_name, rows, battery) = self.app.read(cx, |app| {
-            let state = &app.text_settings;
-            let draft = state.draft();
+        // lay the preview out again when the settings or the card font change
+        let key = (draft, card_for(draft.font(), state.card_font()).is_some());
+        if self.preview_for != Some(key) {
+            self.preview = layout_preview(draft, state.card_font());
+            self.preview_for = Some(key);
+            self.preview_family = reader_family(draft.font(), state.card_font());
+        }
 
-            // lay the preview out again when the settings or the card font change
-            let key = (draft, card_for(draft.font(), state.card_font()).is_some());
-            if *preview_for != Some(key) {
-                *preview = layout_preview(draft, state.card_font());
-                *preview_for = Some(key);
-                *preview_family = reader_family(draft.font(), state.card_font());
-            }
-
-            (
-                draft,
-                state.font_name(draft.font()),
-                state.rows(tab),
-                app.battery_indicator,
-            )
-        });
-
+        let rows = state.rows(tab);
         self.row_count = rows.len();
 
         TextSettingsScreen::from(TextSettingsScreenProps {
             tab,
             text: draft,
-            font_name,
+            font_name: state.font_name(draft.font()),
             page: self.pager.page(rows.len(), ROWS_PER_PAGE),
             page_count: Pager::page_count(rows.len(), ROWS_PER_PAGE),
             rows,
             picker: self.picker,
             preview: cx.canvas(|view: &Self, paint| view.paint_preview(paint)),
-            battery,
+            battery: app.battery_indicator,
             on_back: cx.listener(Self::activate_back),
             on_tab: cx.listener(Self::activate_tab),
             on_row: cx.listener(Self::activate_row),
@@ -486,7 +473,7 @@ impl ScreenInput for TextSettingsRoute {
     ) {
         let view = app.text_settings_view;
 
-        if view.read(cx, TextSettingsView::picker_open) {
+        if view.read_with(cx, TextSettingsView::picker_open) {
             return;
         }
 

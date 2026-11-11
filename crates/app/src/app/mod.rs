@@ -226,11 +226,11 @@ impl InkPaperApp {
 }
 
 impl Render for InkPaperApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let control_center_open = self.control_center.is_open();
         // read only while shown, so the app renders again for them only then
         let (battery, clock) = if control_center_open {
-            let battery = self.battery.read(cx, |battery| battery.get());
+            let battery = self.battery.read(cx).get();
 
             (battery, self.local_clock(cx))
         } else {

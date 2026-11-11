@@ -45,7 +45,7 @@ where
 struct App;
 
 impl Render for App {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .w_full()
             .h_full()
@@ -84,7 +84,7 @@ fn component_slot_accepts_render_once_content() {
     struct BadgeApp;
 
     impl Render for BadgeApp {
-        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
             div()
                 .w_full()
                 .h_full()
@@ -161,7 +161,7 @@ fn component_can_have_multiple_named_typed_slots() {
     struct RowApp;
 
     impl Render for RowApp {
-        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
             div().w_full().h_full().child(
                 SplitRow::new()
                     .leading("Wi-Fi")
@@ -185,7 +185,7 @@ fn named_slots_can_be_filled_in_either_order() {
     struct ReverseSlotApp;
 
     impl Render for ReverseSlotApp {
-        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
             div()
                 .w_full()
                 .h_full()

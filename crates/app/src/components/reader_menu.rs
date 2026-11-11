@@ -249,7 +249,10 @@ impl ReaderDrawer {
 
     /// With one link it follows it, like crosspoint, and with several it lists them.
     fn activate_links(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        match self.app.read(cx, |app| app.reader.page_link_labels().len()) {
+        match self
+            .app
+            .read_with(cx, |app| app.reader.page_link_labels().len())
+        {
             0 => {}
             1 => cx.emit(DrawerEvent::FollowLink(0)),
             _ => self.open_picker(DrawerPicker::Links, cx),
@@ -276,23 +279,17 @@ impl ReaderDrawer {
 }
 
 impl Render for ReaderDrawer {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let picker = self.picker;
-        let (text, font_name, has_links, link_labels) = self.app.read(cx, |app| {
-            let links = app.reader.page_link_labels();
-
-            (
-                app.reader.menu_text_settings(),
-                app.reader_font_name(),
-                !links.is_empty(),
-                (picker == Some(DrawerPicker::Links)).then_some(links),
-            )
-        });
+        let app = self.app.read(cx);
+        let text = app.reader.menu_text_settings();
+        let links = app.reader.page_link_labels();
+        let has_links = !links.is_empty();
 
         let menu = ReaderMenu::from(ReaderMenuProps {
             tab: self.tab,
             text,
-            font_name,
+            font_name: app.reader_font_name(),
             on_close: cx.listener(Self::activate_close),
             on_text_tab: cx.listener(Self::activate_text_tab),
             on_more_tab: cx.listener(Self::activate_more_tab),
@@ -312,7 +309,7 @@ impl Render for ReaderDrawer {
             })),
             Some(DrawerPicker::Links) => Some(OptionPicker::from(OptionPickerProps {
                 title: "Links and footnotes",
-                options: link_labels.unwrap_or_default(),
+                options: links,
                 selected: None,
                 on_option: cx.listener(Self::activate_option),
                 on_dismiss: cx.listener(Self::activate_dismiss_picker),

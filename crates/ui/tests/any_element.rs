@@ -9,7 +9,7 @@ struct Static {
 }
 
 impl Render for Static {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         let content = if self.detail {
             Either::Left(div().child("Title").child("Detail"))
         } else {
@@ -25,7 +25,7 @@ struct Erased {
 }
 
 impl Render for Erased {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         let content = if self.detail {
             div().child("Title").child("Detail").into_any_element()
         } else {

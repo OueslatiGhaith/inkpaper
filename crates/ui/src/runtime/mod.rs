@@ -12,7 +12,7 @@ use crate::{
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     emitter::{self, EventTable},
-    entity::{EntityArena, EntityStore, create_entity},
+    entity::{EntityArena, EntityStore, LeaseTable, create_entity},
     global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
     pool::{MemoryStats, Pool},
@@ -94,6 +94,8 @@ pub struct Runtime<RESOURCES = ()> {
     pending_scroll_into_view: Option<ElementStateId>,
     /// subscriptions, and the events emitted during the runtime call running now
     events: EventTable,
+    /// the entities borrowed by references that contexts handed out
+    leases: LeaseTable,
     /// how many runtime calls that run user code are running, nested. Events are
     /// delivered when the outermost returns
     call_depth: Cell<u32>,
@@ -148,6 +150,7 @@ where
             focused: None,
             pending_scroll_into_view: None,
             events: EventTable::new_in(memory),
+            leases: LeaseTable::new_in(memory),
             call_depth: Cell::new(0),
             pool,
         }
@@ -211,6 +214,7 @@ impl<RESOURCES> Runtime<RESOURCES> {
         )
         .with_dependencies(&self.dependencies)
         .with_events(&self.events)
+        .with_leases(&self.leases)
     }
 
     /// runs `call`, which runs user code, then delivers the events it emitted unless
@@ -292,7 +296,8 @@ impl<RESOURCES> Runtime<RESOURCES> {
             &self.all_dirty,
         )
         .with_dependencies(&self.dependencies)
-        .with_events(&self.events);
+        .with_events(&self.events)
+        .with_leases(&self.leases);
         let result = self
             .frame
             .rerender(root, runtime)
@@ -392,7 +397,8 @@ impl<RESOURCES> Runtime<RESOURCES> {
             &self.all_dirty,
         )
         .with_dependencies(&self.dependencies)
-        .with_events(&self.events);
+        .with_events(&self.events)
+        .with_leases(&self.leases);
         let root_node = self.frame.mount_and_expand(root, runtime)?;
 
         self.frame
@@ -419,6 +425,12 @@ impl<RESOURCES> Runtime<RESOURCES> {
 
     pub fn frame_text_bytes_used(&self) -> usize {
         self.frame.text_bytes_used()
+    }
+
+    /// how many entity borrows contexts hold for the references they handed out
+    #[cfg(test)]
+    pub(crate) fn lease_count(&self) -> usize {
+        self.leases.len()
     }
 
     /// returns spare frame capacity to the pool while preserving the current frame.
@@ -1358,7 +1370,7 @@ mod tests {
     impl Global for Theme {}
 
     impl Render for Counter {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             if self.value < 0 {
                 // a render that notifies keeps its entity dirty for the next frame
                 cx.notify();

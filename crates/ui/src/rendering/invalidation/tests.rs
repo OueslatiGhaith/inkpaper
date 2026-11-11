@@ -29,7 +29,7 @@ impl PaintFocusApp {
 }
 
 impl Render for PaintFocusApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .child(
                 div()
@@ -93,7 +93,7 @@ impl LayoutFocusApp {
 }
 
 impl Render for LayoutFocusApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .flex()
             .w(px(200))
@@ -160,7 +160,7 @@ impl PaintPressApp {
 }
 
 impl Render for PaintPressApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().w_full().h_full().child(
             div()
                 .id("button")
@@ -218,7 +218,7 @@ impl LayoutPressApp {
 }
 
 impl Render for LayoutPressApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().w_full().h_full().child(
             div()
                 .id("button")
@@ -252,7 +252,7 @@ impl NoVisualFocusApp {
 }
 
 impl Render for NoVisualFocusApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(
             div()
                 .id("button")
@@ -291,7 +291,7 @@ impl NotifyApp {
 }
 
 impl Render for NotifyApp {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div().child(
             div()
                 .id("button")
@@ -349,7 +349,7 @@ fn focused_text_color_change_requires_paint_only() {
     }
 
     impl Render for App {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             div().child(
                 div()
                     .id("button")
@@ -382,7 +382,7 @@ fn focused_font_weight_change_requires_layout() {
     }
 
     impl Render for App {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             div().child(
                 div()
                     .id("button")
@@ -415,7 +415,7 @@ fn focused_text_alignment_change_requires_paint_only() {
     }
 
     impl Render for App {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             div().child(
                 div()
                     .id("button")
@@ -448,7 +448,7 @@ fn focused_text_wrap_change_requires_layout() {
     }
 
     impl Render for App {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             div().child(
                 div()
                     .id("button")
@@ -693,7 +693,7 @@ fn clip_change_keeps_previous_overflow_in_damage() {
     }
 
     impl Render for App {
-        fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
             div().w(px(100)).h(px(100)).child(
                 div()
                     .id("clip-target")

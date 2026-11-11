@@ -33,7 +33,7 @@ impl Label {
 }
 
 impl Render for Label {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.renders += 1;
 
         let capture = self.capture.clone();
@@ -84,7 +84,7 @@ struct Shell {
 }
 
 impl Render for Shell {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.renders += 1;
 
         if self.read_theme {
@@ -92,7 +92,7 @@ impl Render for Shell {
         }
         let mirrored = self
             .mirror_first
-            .then(|| self.first.read(cx, |label| label.text));
+            .then(|| self.first.read_with(cx, |label| label.text));
 
         if self.touch_first {
             self.first.update(cx, |label, cx| {
@@ -370,7 +370,7 @@ struct Busy {
 }
 
 impl Render for Busy {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.renders += 1;
 
         for _ in 0..3 {
@@ -389,7 +389,7 @@ struct BusyShell {
 }
 
 impl Render for BusyShell {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         self.renders += 1;
 
         div().child(self.busy).children((0..64).map(|_| div()))
@@ -549,7 +549,7 @@ struct Titled {
 }
 
 impl Render for Titled {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         div().id("titled").children(self.caption)
     }
 }
@@ -560,10 +560,10 @@ struct Caption {
 }
 
 impl Render for Caption {
-    fn render<'a>(&'a mut self, cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.renders += 1;
 
-        div().child(self.parent.read(cx, |parent| parent.title))
+        div().child(self.parent.read_with(cx, |parent| parent.title))
     }
 }
 
@@ -1045,7 +1045,7 @@ fn partial_rebuilds_reclaim_svgs_and_canvases() {
     struct Media;
 
     impl Render for Media {
-        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
             div()
                 .child(svg(ICON))
                 .child(canvas(draw).size(Size::new(px(4), px(4))))
@@ -1058,7 +1058,7 @@ fn partial_rebuilds_reclaim_svgs_and_canvases() {
     }
 
     impl Render for Screen {
-        fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+        fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
             div().child(svg(ICON)).child(self.media)
         }
     }

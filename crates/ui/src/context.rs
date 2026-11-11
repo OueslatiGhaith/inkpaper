@@ -1,11 +1,11 @@
 use core::any::TypeId;
 
 use crate::{
-    Canvas, Entity, EntityAllocError, EntityId, EventEmitter, Listener, OutOfMemory, PaintCx,
-    RuntimeCx,
+    BorrowKind, Canvas, Entity, EntityAllocError, EntityId, EventEmitter, Listener, OutOfMemory,
+    PaintCx, RuntimeCx,
     callback::{CallbackAllocError, register_canvas_callback, register_listener},
     emitter::{self, Handler},
-    entity::create_entity,
+    entity::{LeaseOwner, create_entity},
     global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
     runtime::{DependencyStore, Source},
 };
@@ -13,11 +13,18 @@ use crate::{
 pub struct Context<'a, T> {
     pub(crate) entity: Entity<T>,
     pub(crate) runtime: RuntimeCx<'a>,
+    /// the leases of the references [`Entity::read`] handed out through this context.
+    /// They are released when it drops
+    pub(crate) lease_owner: LeaseOwner,
 }
 
 impl<'a, T> Context<'a, T> {
     pub(crate) fn new_in(entity: Entity<T>, runtime: RuntimeCx<'a>) -> Self {
-        Self { entity, runtime }
+        Self {
+            entity,
+            runtime,
+            lease_owner: runtime.leases.next_owner(),
+        }
     }
 
     pub fn entity(&self) -> Entity<T> {
@@ -29,7 +36,7 @@ impl<'a, T> Context<'a, T> {
     }
 
     /// marks this entity as changed, so it renders again
-    pub fn notify(&mut self) {
+    pub fn notify(&self) {
         self.runtime.notify(self.entity.entity_id());
     }
 
@@ -41,7 +48,7 @@ impl<'a, T> Context<'a, T> {
     /// when every entity id is taken or the pool has no room. See [`Self::try_new`]
     #[allow(clippy::new_ret_no_self)]
     #[track_caller]
-    pub fn new<U>(&mut self, build: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U>
+    pub fn new<U>(&self, build: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U>
     where
         U: 'static,
     {
@@ -52,7 +59,7 @@ impl<'a, T> Context<'a, T> {
     }
 
     pub fn try_new<U>(
-        &mut self,
+        &self,
         build: impl FnOnce(&mut Context<'_, U>) -> U,
     ) -> Result<Entity<U>, EntityAllocError>
     where
@@ -96,7 +103,7 @@ impl<'a, T> Context<'a, T> {
 }
 
 impl<T: 'static> Context<'_, T> {
-    pub fn try_listener<E, F>(&mut self, callback: F) -> Result<Listener<E>, CallbackAllocError>
+    pub fn try_listener<E, F>(&self, callback: F) -> Result<Listener<E>, CallbackAllocError>
     where
         E: 'static,
         F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
@@ -106,7 +113,7 @@ impl<T: 'static> Context<'_, T> {
         register_listener(self.runtime.callbacks, owner, self.entity, callback)
     }
 
-    pub fn listener<E, F>(&mut self, callback: F) -> Listener<E>
+    pub fn listener<E, F>(&self, callback: F) -> Listener<E>
     where
         E: 'static,
         F: Fn(&mut T, &E, &mut Context<'_, T>) + 'static,
@@ -115,7 +122,7 @@ impl<T: 'static> Context<'_, T> {
             .unwrap_or_else(|error| panic!("could not allocate listener: {error:?}"))
     }
 
-    pub fn try_canvas<F>(&mut self, callback: F) -> Result<Canvas, CallbackAllocError>
+    pub fn try_canvas<F>(&self, callback: F) -> Result<Canvas, CallbackAllocError>
     where
         F: Fn(&T, &mut PaintCx<'_>) + 'static,
     {
@@ -129,7 +136,7 @@ impl<T: 'static> Context<'_, T> {
         Ok(Canvas::from_entity_callback(callback))
     }
 
-    pub fn canvas<F>(&mut self, callback: F) -> Canvas
+    pub fn canvas<F>(&self, callback: F) -> Canvas
     where
         F: Fn(&T, &mut PaintCx<'_>) + 'static,
     {
@@ -145,7 +152,7 @@ impl<T: 'static> Context<'_, T> {
     ///
     /// when the pool has no room for the event. See [`Self::try_emit`]
     #[track_caller]
-    pub fn emit<E>(&mut self, event: E)
+    pub fn emit<E>(&self, event: E)
     where
         T: EventEmitter<E>,
         E: Copy + 'static,
@@ -155,7 +162,7 @@ impl<T: 'static> Context<'_, T> {
         }
     }
 
-    pub fn try_emit<E>(&mut self, event: E) -> Result<(), OutOfMemory>
+    pub fn try_emit<E>(&self, event: E) -> Result<(), OutOfMemory>
     where
         T: EventEmitter<E>,
         E: Copy + 'static,
@@ -170,7 +177,7 @@ impl<T: 'static> Context<'_, T> {
     ///
     /// when the pool has no room for the subscription. See [`Self::try_subscribe`]
     #[track_caller]
-    pub fn subscribe<U, E>(&mut self, emitter: Entity<U>, handler: Handler<T, U, E>)
+    pub fn subscribe<U, E>(&self, emitter: Entity<U>, handler: Handler<T, U, E>)
     where
         U: EventEmitter<E>,
         E: 'static,
@@ -181,7 +188,7 @@ impl<T: 'static> Context<'_, T> {
     }
 
     pub fn try_subscribe<U, E>(
-        &mut self,
+        &self,
         emitter: Entity<U>,
         handler: Handler<T, U, E>,
     ) -> Result<(), OutOfMemory>
@@ -190,6 +197,18 @@ impl<T: 'static> Context<'_, T> {
         E: 'static,
     {
         emitter::subscribe(self.runtime.events, self.entity, emitter, handler)
+    }
+}
+
+impl<T> Drop for Context<'_, T> {
+    fn drop(&mut self) {
+        let entities = self.runtime.entities;
+
+        self.runtime
+            .leases
+            .release_owner(self.lease_owner, &mut |entity| {
+                entities.release(entity, BorrowKind::Shared);
+            });
     }
 }
 
@@ -265,7 +284,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -277,7 +296,7 @@ mod tests {
             cx.notify();
         });
 
-        assert_eq!(counter.read(&cx, |counter| counter.value), 2);
+        assert_eq!(counter.read_with(&cx, |counter| counter.value), 2);
         assert!(arena.is_dirty(counter.entity_id()));
         assert!(!arena.is_dirty(root.entity_id()));
     }
@@ -290,7 +309,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -312,13 +331,13 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
 
         cx.new(|cx| {
-            cx.entity().read(cx, |_| ());
+            cx.entity().read_with(cx, |_| ());
 
             Counter { value: 0 }
         });
@@ -340,7 +359,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -350,9 +369,9 @@ mod tests {
             Parent { child }
         });
 
-        let child = parent.read(&cx, |parent| parent.child);
+        let child = parent.read_with(&cx, |parent| parent.child);
 
-        assert_eq!(child.read(&cx, |child| child.value), 123);
+        assert_eq!(child.read_with(&cx, |child| child.value), 123);
     }
 
     #[test]
@@ -371,7 +390,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -384,9 +403,9 @@ mod tests {
             Parent { child }
         });
 
-        let child = parent.read(&cx, |p| p.child);
+        let child = parent.read_with(&cx, |p| p.child);
 
-        let referenced_parent = child.read(&cx, |c| c.parent);
+        let referenced_parent = child.read_with(&cx, |c| c.parent);
 
         assert_eq!(referenced_parent, parent);
     }
@@ -399,7 +418,7 @@ mod tests {
         let root = arena.insert(Root).unwrap();
         let all_dirty = Cell::new(false);
 
-        let mut cx = Context::new_in(
+        let cx = Context::new_in(
             root,
             RuntimeCx::new(&arena, &globals, &callbacks, &all_dirty),
         );
@@ -408,7 +427,7 @@ mod tests {
             let me = cx.entity();
 
             assert!(matches!(
-                me.try_read(cx, |_| ()),
+                me.try_read_with(cx, |_| ()),
                 Err(EntityAccessError::NotReady),
             ));
 

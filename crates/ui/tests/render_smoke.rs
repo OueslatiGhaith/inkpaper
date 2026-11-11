@@ -15,7 +15,7 @@ const DISPLAY_HEIGHT: u32 = 64;
 struct App;
 
 impl Render for App {
-    fn render<'a>(&'a mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .w_full()
             .h_full()

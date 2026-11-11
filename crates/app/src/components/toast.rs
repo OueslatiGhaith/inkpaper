@@ -67,7 +67,7 @@ impl ToastLayer {
 }
 
 impl Render for ToastLayer {
-    fn render<'a>(&'a mut self, _: &mut Context<'_, Self>) -> impl IntoElement + 'a {
+    fn render(&mut self, _: &mut Context<'_, Self>) -> impl IntoElement {
         let message = self.active.map(|toast| toast.message);
 
         // crosspoint's Lyra popup: a black box a sixth of the way down, its
