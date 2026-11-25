@@ -8,7 +8,6 @@ use super::{
     spec::{ArgumentKind, UtilityReceiver, UtilitySpec, utility_specs},
 };
 
-mod color;
 mod emit;
 
 use emit::{emit_argument_utility, emit_no_argument_utility};

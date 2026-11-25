@@ -5,7 +5,7 @@ use syn::{Expr, Ident};
 
 use crate::rsx::spec::{ArgumentKind, UtilityReceiver, UtilitySpec};
 
-use super::{ClassValue, color::oklch_to_srgb, parse_class_value};
+use super::{ClassValue, parse_class_value};
 
 pub(super) fn emit_no_argument_utility(
     receiver: TokenStream,
@@ -225,11 +225,9 @@ fn emit_tailwind_value(
             emit_pixel_utility(receiver, spec, pixels, span)
         }
         Some(ValueKind::Color) => {
-            let value = color::resolve(value).ok_or_else(|| {
+            let rgb = color::resolve(value).ok_or_else(|| {
                 syn::Error::new(span, format!("unknown color `{class_name}-{value}`"))
             })?;
-
-            let rgb = oklch_to_srgb(value);
 
             Ok(emit_color_utility(receiver, spec, rgb, span))
         }

@@ -1,10 +1,3 @@
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Oklch {
-    pub lightness: f64,
-    pub chroma: f64,
-    pub hue: f64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgb {
     pub red: u8,
@@ -12,11 +5,145 @@ pub struct Rgb {
     pub blue: u8,
 }
 
-const fn oklch(lightness_percent: f64, chroma: f64, hue: f64) -> Oklch {
-    Oklch {
-        lightness: lightness_percent / 100.0,
-        chroma,
-        hue,
+const fn rgb(red: u8, green: u8, blue: u8) -> Rgb {
+    Rgb { red, green, blue }
+}
+
+const fn const_sin_cos_deg(degrees: f64) -> (f64, f64) {
+    let mut deg = degrees;
+    while deg < 0.0 {
+        deg += 360.0;
+    }
+    while deg >= 360.0 {
+        deg -= 360.0;
+    }
+
+    let (angle_deg, sin_sign, cos_sign) = if deg <= 90.0 {
+        (deg, 1.0, 1.0)
+    } else if deg <= 180.0 {
+        (180.0 - deg, 1.0, -1.0)
+    } else if deg <= 270.0 {
+        (deg - 180.0, -1.0, -1.0)
+    } else {
+        (360.0 - deg, -1.0, 1.0)
+    };
+
+    let x = angle_deg * (core::f64::consts::PI / 180.0);
+    let x2 = x * x;
+
+    let mut sin_sum = x;
+    let mut sin_term = x;
+    let mut k = 1u32;
+    while k <= 10 {
+        sin_term = -sin_term * x2 / ((2 * k) as f64 * (2 * k + 1) as f64);
+        sin_sum += sin_term;
+        k += 1;
+    }
+
+    let mut cos_sum = 1.0;
+    let mut cos_term = 1.0;
+    let mut k = 1u32;
+    while k <= 10 {
+        cos_term = -cos_term * x2 / ((2 * k - 1) as f64 * (2 * k) as f64);
+        cos_sum += cos_term;
+        k += 1;
+    }
+
+    (sin_sign * sin_sum, cos_sign * cos_sum)
+}
+
+const fn const_ln(mut x: f64) -> f64 {
+    let mut k = 0i32;
+    while x > core::f64::consts::SQRT_2 {
+        x *= 0.5;
+        k += 1;
+    }
+    while x < core::f64::consts::FRAC_1_SQRT_2 {
+        x *= 2.0;
+        k -= 1;
+    }
+
+    let t = (x - 1.0) / (x + 1.0);
+    let t2 = t * t;
+    let mut power = t;
+    let mut sum = 0.0;
+    let mut n = 1u32;
+    while n <= 21 {
+        sum += power / n as f64;
+        power *= t2;
+        n += 2;
+    }
+
+    2.0 * sum + k as f64 * core::f64::consts::LN_2
+}
+
+const fn const_exp(mut x: f64) -> f64 {
+    let mut halvings = 0u32;
+    while x < -0.5 || x > 0.5 {
+        x *= 0.5;
+        halvings += 1;
+    }
+
+    let mut sum = 1.0;
+    let mut term = 1.0;
+    let mut k = 1u32;
+    while k <= 14 {
+        term = term * x / k as f64;
+        sum += term;
+        k += 1;
+    }
+
+    let mut i = 0;
+    while i < halvings {
+        sum *= sum;
+        i += 1;
+    }
+
+    sum
+}
+
+const fn linear_to_srgb_channel(value: f64) -> u8 {
+    let srgb = if value <= 0.003_130_8 {
+        12.92 * value
+    } else {
+        1.055 * const_exp(const_ln(value) / 2.4) - 0.055
+    };
+
+    let clamped = if srgb <= 0.0 {
+        0.0
+    } else if srgb >= 1.0 {
+        1.0
+    } else {
+        srgb
+    };
+
+    (clamped * 255.0 + 0.5) as u8
+}
+
+/// Converts a Tailwind v4 OKLCH tuple `(lightness_percent, chroma, hue_deg)` to sRGB at compile time.
+pub const fn oklch_to_rgb(lightness_percent: f64, chroma: f64, hue: f64) -> Rgb {
+    let lightness = lightness_percent / 100.0;
+    let (sin_h, cos_h) = const_sin_cos_deg(hue);
+
+    let a = chroma * cos_h;
+    let b = chroma * sin_h;
+
+    let l_ = lightness + 0.396_337_777_4 * a + 0.215_803_757_3 * b;
+    let m_ = lightness - 0.105_561_345_8 * a - 0.063_854_172_8 * b;
+    let s_ = lightness - 0.089_484_177_5 * a - 1.291_485_548_0 * b;
+
+    let l = l_ * l_ * l_;
+    let m = m_ * m_ * m_;
+    let s = s_ * s_ * s_;
+
+    let red_linear = 4.076_741_662_1 * l - 3.307_711_591_3 * m + 0.230_969_929_2 * s;
+    let green_linear = -1.268_438_004_6 * l + 2.609_757_401_1 * m - 0.341_319_396_5 * s;
+    let blue_linear = -0.004_196_086_3 * l - 0.703_418_614_7 * m + 1.707_614_701_0 * s;
+
+    Rgb {
+        red: linear_to_srgb_channel(red_linear),
+        green: linear_to_srgb_channel(green_linear),
+        blue: linear_to_srgb_channel(blue_linear),
     }
 }
 
@@ -29,12 +156,12 @@ macro_rules! define_palettes {
         ),+ $(,)?
     ) => {
         $(
-            const $name: [Oklch; 11] = [
-                $(oklch($lightness, $chroma, $hue)),+
+            const $name: [Rgb; 11] = [
+                $(oklch_to_rgb($lightness, $chroma, $hue)),+
             ];
         )+
 
-        fn palette(family: &str) -> Option<&'static [Oklch; 11]> {
+        fn palette(family: &str) -> Option<&'static [Rgb; 11]> {
             match family {
                 $(
                     $family => Some(&$name),
@@ -411,10 +538,10 @@ define_palettes! {
     ],
 }
 
-pub fn resolve(value: &str) -> Option<Oklch> {
+pub fn resolve(value: &str) -> Option<Rgb> {
     match value {
-        "black" => return Some(oklch(0.0, 0.0, 0.0)),
-        "white" => return Some(oklch(100.0, 0.0, 0.0)),
+        "black" => return Some(rgb(0, 0, 0)),
+        "white" => return Some(rgb(255, 255, 255)),
         _ => {}
     }
 
@@ -486,25 +613,74 @@ fn hex_digit(value: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Oklch, Rgb, parse_hex, resolve};
+    use super::{Rgb, oklch_to_rgb, parse_hex, resolve};
+
+    fn std_oklch_to_rgb(lightness_percent: f64, chroma: f64, hue: f64) -> Rgb {
+        let lightness = lightness_percent / 100.0;
+        let hue = hue.to_radians();
+        let a = chroma * hue.cos();
+        let b = chroma * hue.sin();
+
+        let l_ = lightness + 0.396_337_777_4 * a + 0.215_803_757_3 * b;
+        let m_ = lightness - 0.105_561_345_8 * a - 0.063_854_172_8 * b;
+        let s_ = lightness - 0.089_484_177_5 * a - 1.291_485_548_0 * b;
+
+        let l = l_ * l_ * l_;
+        let m = m_ * m_ * m_;
+        let s = s_ * s_ * s_;
+
+        let channel = |v: f64| {
+            let srgb = if v <= 0.003_130_8 {
+                12.92 * v
+            } else {
+                1.055 * v.powf(1.0 / 2.4) - 0.055
+            };
+            (srgb.clamp(0.0, 1.0) * 255.0).round() as u8
+        };
+
+        Rgb {
+            red: channel(4.076_741_662_1 * l - 3.307_711_591_3 * m + 0.230_969_929_2 * s),
+            green: channel(-1.268_438_004_6 * l + 2.609_757_401_1 * m - 0.341_319_396_5 * s),
+            blue: channel(-0.004_196_086_3 * l - 0.703_418_614_7 * m + 1.707_614_701_0 * s),
+        }
+    }
+
+    #[test]
+    fn const_oklch_matches_std_float_conversion() {
+        for &(l, c, h) in &[
+            (97.1, 0.013, 17.38),
+            (63.7, 0.237, 25.331),
+            (79.5, 0.184, 86.047),
+            (72.3, 0.219, 149.579),
+            (71.5, 0.143, 215.221),
+            (54.6, 0.245, 262.881),
+            (54.1, 0.281, 293.009),
+            (59.2, 0.249, 0.584),
+            (55.2, 0.016, 285.938),
+            (0.0, 0.0, 0.0),
+            (100.0, 0.0, 0.0),
+        ] {
+            assert_eq!(oklch_to_rgb(l, c, h), std_oklch_to_rgb(l, c, h));
+        }
+    }
 
     #[test]
     fn resolves_tailwind_palette_colors() {
         assert_eq!(
             resolve("red-500"),
-            Some(Oklch {
-                lightness: 0.637,
-                chroma: 0.237,
-                hue: 25.331,
+            Some(Rgb {
+                red: 251,
+                green: 44,
+                blue: 54,
             })
         );
 
         assert_eq!(
             resolve("zinc-500"),
-            Some(Oklch {
-                lightness: 0.552,
-                chroma: 0.016,
-                hue: 285.938,
+            Some(Rgb {
+                red: 113,
+                green: 113,
+                blue: 123,
             })
         );
 
@@ -518,19 +694,19 @@ mod tests {
     fn resolves_black_and_white() {
         assert_eq!(
             resolve("black"),
-            Some(Oklch {
-                lightness: 0.0,
-                chroma: 0.0,
-                hue: 0.0,
+            Some(Rgb {
+                red: 0,
+                green: 0,
+                blue: 0,
             })
         );
 
         assert_eq!(
             resolve("white"),
-            Some(Oklch {
-                lightness: 1.0,
-                chroma: 0.0,
-                hue: 0.0,
+            Some(Rgb {
+                red: 255,
+                green: 255,
+                blue: 255,
             })
         );
     }

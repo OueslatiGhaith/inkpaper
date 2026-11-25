@@ -2,3 +2,6 @@
 name = "inkpaper-ui-style-schema"
 version = "0.1.0"
 edition = "2024"
+
+[features]
+tailwind = []

@@ -2,6 +2,7 @@
 
 pub mod image;
 pub mod svg;
+#[cfg(feature = "tailwind")]
 pub mod tailwind;
 
 #[macro_export]
