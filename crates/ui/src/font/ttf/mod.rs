@@ -115,7 +115,7 @@ impl FontFace for TtfFont<'_> {
         }
     }
 
-    fn prepare_with_properties(&self, properties: FontProperties) -> PreparedFontSource<'_> {
+    fn prepare(&self, properties: FontProperties) -> PreparedFontSource<'_> {
         match self.face_with_properties(properties) {
             Ok(face) => PreparedFontSource::from_ttf(PreparedTtfFont::new(face)),
             Err(_) => PreparedFontSource::unprepared(),
@@ -129,160 +129,7 @@ impl FontFace for TtfFont<'_> {
         Some(GlyphId::new(glyph.0))
     }
 
-    fn metrics(&self, size_px: u16) -> FontMetrics {
-        let Ok(face) = self.face() else {
-            return FontMetrics::default();
-        };
-
-        let Some(scale) = font_scale(&face, size_px) else {
-            return FontMetrics::default();
-        };
-
-        FontMetrics::new(
-            positive_scaled_units(i32::from(face.ascender()), scale),
-            positive_scaled_units(i32::from(face.descender()).saturating_neg(), scale),
-            positive_scaled_units(i32::from(face.line_gap()), scale),
-        )
-    }
-
-    fn glyph_advance(&self, glyph: GlyphId, size_px: u16) -> Option<Pixels> {
-        let face = self.face().ok()?;
-
-        glyph_advance_for_face(&face, to_ttf_glyph(glyph), size_px)
-    }
-
-    fn glyph_metrics(&self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics> {
-        let face = self.face().ok()?;
-
-        glyph_metrics_for_face(&face, to_ttf_glyph(glyph), size_px)
-    }
-
-    fn kerning(&self, left: GlyphId, right: GlyphId, size_px: u16) -> Pixels {
-        let Ok(face) = self.face() else { return px(0) };
-
-        let left = to_ttf_glyph(left);
-        let right = to_ttf_glyph(right);
-
-        if let Some(adjustment) = gpos_kerning_for_face(&face, left, right, size_px) {
-            return adjustment;
-        }
-
-        legacy_kerning_for_face(&face, left, right, size_px).unwrap_or(px(0))
-    }
-
-    fn single_substitution(&self, feature: OpenTypeFeature, glyph: GlyphId) -> Option<GlyphId> {
-        let face = self.face().ok()?;
-
-        let substituted = gsub_single_substitution_for_face(&face, feature, to_ttf_glyph(glyph))?;
-
-        Some(GlyphId::new(substituted.0))
-    }
-
-    fn ligature_substitution(
-        &self,
-        feature: OpenTypeFeature,
-        first: GlyphId,
-        second: GlyphId,
-    ) -> Option<GlyphId> {
-        let face = self.face().ok()?;
-
-        let substituted =
-            gsub_pair_ligature_for_face(&face, feature, to_ttf_glyph(first), to_ttf_glyph(second))?;
-
-        Some(GlyphId::new(substituted.0))
-    }
-
-    fn cursive_attachment(
-        &self,
-        visual_left: GlyphId,
-        visual_right: GlyphId,
-        size_px: u16,
-        right_to_left: bool,
-    ) -> Option<CursiveAttachment> {
-        let face = self.face().ok()?;
-
-        gpos_cursive_attachment_for_face(
-            &face,
-            to_ttf_glyph(visual_left),
-            to_ttf_glyph(visual_right),
-            size_px,
-            right_to_left,
-        )
-    }
-
-    fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, size_px: u16) -> Option<Offset> {
-        let face = self.face().ok()?;
-
-        mark_to_base_offset_for_face(&face, to_ttf_glyph(base), to_ttf_glyph(mark), size_px)
-    }
-
-    fn mark_to_ligature_offset(
-        &self,
-        ligature: GlyphId,
-        component: u16,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        let face = self.face().ok()?;
-
-        mark_to_ligature_offset_for_face(
-            &face,
-            to_ttf_glyph(ligature),
-            component,
-            to_ttf_glyph(mark),
-            size_px,
-        )
-    }
-
-    fn mark_to_mark_offset(
-        &self,
-        base_mark: GlyphId,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        let face = self.face().ok()?;
-
-        mark_to_mark_offset_for_face(&face, to_ttf_glyph(base_mark), to_ttf_glyph(mark), size_px)
-    }
-
-    fn rasterize(
-        &self,
-        glyph: GlyphId,
-        size_px: u16,
-        coverage: &mut [u8],
-    ) -> Result<(), FontRasterError> {
-        let face = self.face().map_err(|_| FontRasterError::InvalidFont)?;
-
-        rasterize_face(&face, glyph, size_px, coverage)
-    }
-
-    fn rasterize_with_properties(
-        &self,
-        properties: FontProperties,
-        glyph: GlyphId,
-        size_px: u16,
-        coverage: &mut [u8],
-    ) -> Result<(), FontRasterError> {
-        let face = self
-            .face_with_properties(properties)
-            .map_err(|_| FontRasterError::InvalidFont)?;
-
-        rasterize_face(&face, glyph, size_px, coverage)
-    }
-
-    fn glyph_id_with_properties(
-        &self,
-        properties: FontProperties,
-        character: char,
-    ) -> Option<GlyphId> {
-        let face = self.face_with_properties(properties).ok()?;
-
-        let glyph = face.glyph_index(character)?;
-
-        Some(GlyphId::new(glyph.0))
-    }
-
-    fn metrics_with_properties(&self, properties: FontProperties, size_px: u16) -> FontMetrics {
+    fn metrics(&self, properties: FontProperties, size_px: u16) -> FontMetrics {
         let Ok(face) = self.face_with_properties(properties) else {
             return FontMetrics::default();
         };
@@ -298,7 +145,7 @@ impl FontFace for TtfFont<'_> {
         )
     }
 
-    fn glyph_advance_with_properties(
+    fn glyph_advance(
         &self,
         properties: FontProperties,
         glyph: GlyphId,
@@ -309,7 +156,7 @@ impl FontFace for TtfFont<'_> {
         glyph_advance_for_face(&face, to_ttf_glyph(glyph), size_px)
     }
 
-    fn glyph_id_and_advance_with_properties(
+    fn glyph_id_and_advance(
         &self,
         properties: FontProperties,
         character: char,
@@ -322,7 +169,7 @@ impl FontFace for TtfFont<'_> {
         Some((GlyphId::new(glyph.0), advance))
     }
 
-    fn glyph_metrics_with_properties(
+    fn glyph_metrics(
         &self,
         properties: FontProperties,
         glyph: GlyphId,
@@ -333,7 +180,7 @@ impl FontFace for TtfFont<'_> {
         glyph_metrics_for_face(&face, to_ttf_glyph(glyph), size_px)
     }
 
-    fn kerning_with_properties(
+    fn kerning(
         &self,
         properties: FontProperties,
         left: GlyphId,
@@ -354,7 +201,7 @@ impl FontFace for TtfFont<'_> {
         legacy_kerning_for_face(&face, left, right, size_px).unwrap_or(px(0))
     }
 
-    fn single_substitution_with_properties(
+    fn single_substitution(
         &self,
         properties: FontProperties,
         feature: OpenTypeFeature,
@@ -367,7 +214,7 @@ impl FontFace for TtfFont<'_> {
         Some(GlyphId::new(substituted.0))
     }
 
-    fn ligature_substitution_with_properties(
+    fn ligature_substitution(
         &self,
         properties: FontProperties,
         feature: OpenTypeFeature,
@@ -382,7 +229,7 @@ impl FontFace for TtfFont<'_> {
         Some(GlyphId::new(substituted.0))
     }
 
-    fn cursive_attachment_with_properties(
+    fn cursive_attachment(
         &self,
         properties: FontProperties,
         visual_left: GlyphId,
@@ -401,7 +248,7 @@ impl FontFace for TtfFont<'_> {
         )
     }
 
-    fn pair_positioning_with_properties(
+    fn pair_positioning(
         &self,
         properties: FontProperties,
         visual_left: GlyphId,
@@ -416,7 +263,7 @@ impl FontFace for TtfFont<'_> {
         pair_positioning_for_face(&face, visual_left, visual_right, size_px, right_to_left)
     }
 
-    fn mark_to_base_offset_with_properties(
+    fn mark_to_base_offset(
         &self,
         properties: FontProperties,
         base: GlyphId,
@@ -428,7 +275,7 @@ impl FontFace for TtfFont<'_> {
         mark_to_base_offset_for_face(&face, to_ttf_glyph(base), to_ttf_glyph(mark), size_px)
     }
 
-    fn mark_to_ligature_offset_with_properties(
+    fn mark_to_ligature_offset(
         &self,
         properties: FontProperties,
         ligature: GlyphId,
@@ -447,7 +294,7 @@ impl FontFace for TtfFont<'_> {
         )
     }
 
-    fn mark_to_mark_offset_with_properties(
+    fn mark_to_mark_offset(
         &self,
         properties: FontProperties,
         base_mark: GlyphId,
@@ -457,6 +304,20 @@ impl FontFace for TtfFont<'_> {
         let face = self.face_with_properties(properties).ok()?;
 
         mark_to_mark_offset_for_face(&face, to_ttf_glyph(base_mark), to_ttf_glyph(mark), size_px)
+    }
+
+    fn rasterize(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
+        let face = self
+            .face_with_properties(properties)
+            .map_err(|_| FontRasterError::InvalidFont)?;
+
+        rasterize_face(&face, glyph, size_px, coverage)
     }
 }
 

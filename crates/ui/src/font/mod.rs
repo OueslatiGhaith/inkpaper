@@ -426,44 +426,71 @@ pub trait FontFace {
         FontStyle::Normal
     }
 
-    fn prepare_with_properties(&self, _properties: FontProperties) -> PreparedFontSource<'_> {
+    fn prepare(&self, _properties: FontProperties) -> PreparedFontSource<'_> {
         PreparedFontSource::unprepared()
     }
 
     /// resolve one unicode scalar value to a font-local glyph.
     fn glyph_id(&self, character: char) -> Option<GlyphId>;
 
-    fn metrics(&self, size_px: u16) -> FontMetrics;
+    fn metrics(&self, properties: FontProperties, size_px: u16) -> FontMetrics;
 
     /// return only the horizontal advance
     ///
     /// the default is convenient for bitmap fonts. Scalable fonts should override this
-    /// because advnace lookup is substaintially cheaper than calculating the glyph's
+    /// because advance lookup is substantially cheaper than calculating the glyph's
     /// raster bounds
-    fn glyph_advance(&self, glyph: GlyphId, size_px: u16) -> Option<Pixels> {
-        self.glyph_metrics(glyph, size_px)
+    fn glyph_advance(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+    ) -> Option<Pixels> {
+        self.glyph_metrics(properties, glyph, size_px)
             .map(|metrics| metrics.advance)
     }
 
-    fn glyph_id_and_advance(&self, character: char, size_px: u16) -> Option<(GlyphId, Pixels)> {
+    fn glyph_id_and_advance(
+        &self,
+        properties: FontProperties,
+        character: char,
+        size_px: u16,
+    ) -> Option<(GlyphId, Pixels)> {
         let glyph = self.glyph_id(character)?;
-        let advance = self.glyph_advance(glyph, size_px)?;
+        let advance = self.glyph_advance(properties, glyph, size_px)?;
 
         Some((glyph, advance))
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics>;
+    fn glyph_metrics(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+    ) -> Option<GlyphMetrics>;
 
-    fn kerning(&self, _left: GlyphId, _right: GlyphId, _size_px: u16) -> Pixels {
+    fn kerning(
+        &self,
+        _properties: FontProperties,
+        _left: GlyphId,
+        _right: GlyphId,
+        _size_px: u16,
+    ) -> Pixels {
         px(0)
     }
 
-    fn single_substitution(&self, _feature: OpenTypeFeature, _glyph: GlyphId) -> Option<GlyphId> {
+    fn single_substitution(
+        &self,
+        _properties: FontProperties,
+        _feature: OpenTypeFeature,
+        _glyph: GlyphId,
+    ) -> Option<GlyphId> {
         None
     }
 
     fn ligature_substitution(
         &self,
+        _properties: FontProperties,
         _feature: OpenTypeFeature,
         _first: GlyphId,
         _second: GlyphId,
@@ -473,6 +500,7 @@ pub trait FontFace {
 
     fn cursive_attachment(
         &self,
+        _properties: FontProperties,
         _visual_left: GlyphId,
         _visual_right: GlyphId,
         _size_px: u16,
@@ -483,14 +511,18 @@ pub trait FontFace {
 
     fn pair_positioning(
         &self,
+        properties: FontProperties,
         visual_left: GlyphId,
         visual_right: GlyphId,
         size_px: u16,
         right_to_left: bool,
     ) -> PairPositioning {
-        match self.cursive_attachment(visual_left, visual_right, size_px, right_to_left) {
+        match self.cursive_attachment(properties, visual_left, visual_right, size_px, right_to_left)
+        {
             Some(attachment) => PairPositioning::Cursive(attachment),
-            None => PairPositioning::Kerning(self.kerning(visual_left, visual_right, size_px)),
+            None => {
+                PairPositioning::Kerning(self.kerning(properties, visual_left, visual_right, size_px))
+            }
         }
     }
 
@@ -501,7 +533,13 @@ pub trait FontFace {
     /// its anchor in the usual OpenType Y-up coodinate system.
     ///
     /// fonts without attachement metadata simply return `None`
-    fn mark_to_base_offset(&self, _base: GlyphId, _mark: GlyphId, _size_px: u16) -> Option<Offset> {
+    fn mark_to_base_offset(
+        &self,
+        _properties: FontProperties,
+        _base: GlyphId,
+        _mark: GlyphId,
+        _size_px: u16,
+    ) -> Option<Offset> {
         None
     }
 
@@ -511,6 +549,7 @@ pub trait FontFace {
     /// `component` is zero-based and follows the ligature's logical component order
     fn mark_to_ligature_offset(
         &self,
+        _properties: FontProperties,
         _ligature: GlyphId,
         _component: u16,
         _mark: GlyphId,
@@ -525,6 +564,7 @@ pub trait FontFace {
     /// this is the font-independent interface used for OpenType mark-to-mark attachement
     fn mark_to_mark_offset(
         &self,
+        _properties: FontProperties,
         _base_mark: GlyphId,
         _mark: GlyphId,
         _size_px: u16,
@@ -536,7 +576,7 @@ pub trait FontFace {
     ///
     /// coverage layout:
     /// ```txt
-    ///     width * heigh bytes
+    ///     width * height bytes
     ///     row-major
     ///
     ///     0 = no coverage
@@ -544,158 +584,11 @@ pub trait FontFace {
     /// ```
     fn rasterize(
         &self,
+        properties: FontProperties,
         glyph: GlyphId,
         size_px: u16,
         coverage: &mut [u8],
     ) -> Result<(), FontRasterError>;
-
-    fn glyph_id_with_properties(
-        &self,
-        _properties: FontProperties,
-        character: char,
-    ) -> Option<GlyphId> {
-        self.glyph_id(character)
-    }
-
-    fn metrics_with_properties(&self, _properties: FontProperties, size_px: u16) -> FontMetrics {
-        self.metrics(size_px)
-    }
-
-    fn glyph_advance_with_properties(
-        &self,
-        _properties: FontProperties,
-        glyph: GlyphId,
-        size_px: u16,
-    ) -> Option<Pixels> {
-        self.glyph_advance(glyph, size_px)
-    }
-
-    fn glyph_id_and_advance_with_properties(
-        &self,
-        properties: FontProperties,
-        character: char,
-        size_px: u16,
-    ) -> Option<(GlyphId, Pixels)> {
-        let glyph = self.glyph_id_with_properties(properties, character)?;
-        let advance = self.glyph_advance_with_properties(properties, glyph, size_px)?;
-
-        Some((glyph, advance))
-    }
-
-    fn glyph_metrics_with_properties(
-        &self,
-        _properties: FontProperties,
-        glyph: GlyphId,
-        size_px: u16,
-    ) -> Option<GlyphMetrics> {
-        self.glyph_metrics(glyph, size_px)
-    }
-
-    fn kerning_with_properties(
-        &self,
-        _properties: FontProperties,
-        left: GlyphId,
-        right: GlyphId,
-        size_px: u16,
-    ) -> Pixels {
-        self.kerning(left, right, size_px)
-    }
-
-    fn single_substitution_with_properties(
-        &self,
-        _properties: FontProperties,
-        feature: OpenTypeFeature,
-        glyph: GlyphId,
-    ) -> Option<GlyphId> {
-        self.single_substitution(feature, glyph)
-    }
-
-    fn ligature_substitution_with_properties(
-        &self,
-        _properties: FontProperties,
-        feature: OpenTypeFeature,
-        first: GlyphId,
-        second: GlyphId,
-    ) -> Option<GlyphId> {
-        self.ligature_substitution(feature, first, second)
-    }
-
-    fn cursive_attachment_with_properties(
-        &self,
-        _properties: FontProperties,
-        visual_left: GlyphId,
-        visual_right: GlyphId,
-        size_px: u16,
-        right_to_left: bool,
-    ) -> Option<CursiveAttachment> {
-        self.cursive_attachment(visual_left, visual_right, size_px, right_to_left)
-    }
-
-    fn pair_positioning_with_properties(
-        &self,
-        properties: FontProperties,
-        visual_left: GlyphId,
-        visual_right: GlyphId,
-        size_px: u16,
-        right_to_left: bool,
-    ) -> PairPositioning {
-        match self.cursive_attachment_with_properties(
-            properties,
-            visual_left,
-            visual_right,
-            size_px,
-            right_to_left,
-        ) {
-            Some(attachment) => PairPositioning::Cursive(attachment),
-            None => PairPositioning::Kerning(self.kerning_with_properties(
-                properties,
-                visual_left,
-                visual_right,
-                size_px,
-            )),
-        }
-    }
-
-    fn mark_to_base_offset_with_properties(
-        &self,
-        _properties: FontProperties,
-        base: GlyphId,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.mark_to_base_offset(base, mark, size_px)
-    }
-
-    fn mark_to_ligature_offset_with_properties(
-        &self,
-        _properties: FontProperties,
-        ligature: GlyphId,
-        component: u16,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.mark_to_ligature_offset(ligature, component, mark, size_px)
-    }
-
-    fn mark_to_mark_offset_with_properties(
-        &self,
-        _properties: FontProperties,
-        base_mark: GlyphId,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.mark_to_mark_offset(base_mark, mark, size_px)
-    }
-
-    fn rasterize_with_properties(
-        &self,
-        _properties: FontProperties,
-        glyph: GlyphId,
-        size_px: u16,
-        coverage: &mut [u8],
-    ) -> Result<(), FontRasterError> {
-        self.rasterize(glyph, size_px, coverage)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -730,38 +623,33 @@ impl<'font> ResolvedFont<'font> {
     }
 
     pub fn glyph_id(self, character: char) -> Option<GlyphId> {
-        self.face
-            .glyph_id_with_properties(self.properties(), character)
+        self.face.glyph_id(character)
     }
 
     pub fn metrics(self, size_px: u16) -> FontMetrics {
-        self.face
-            .metrics_with_properties(self.properties(), size_px)
+        self.face.metrics(self.properties(), size_px)
     }
 
     pub fn glyph_advance(self, glyph: GlyphId, size_px: u16) -> Option<Pixels> {
-        self.face
-            .glyph_advance_with_properties(self.properties(), glyph, size_px)
+        self.face.glyph_advance(self.properties(), glyph, size_px)
     }
 
     pub fn glyph_id_and_advance(self, character: char, size_px: u16) -> Option<(GlyphId, Pixels)> {
         self.face
-            .glyph_id_and_advance_with_properties(self.properties(), character, size_px)
+            .glyph_id_and_advance(self.properties(), character, size_px)
     }
 
     pub fn glyph_metrics(self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics> {
-        self.face
-            .glyph_metrics_with_properties(self.properties(), glyph, size_px)
+        self.face.glyph_metrics(self.properties(), glyph, size_px)
     }
 
     pub fn kerning(self, left: GlyphId, right: GlyphId, size_px: u16) -> Pixels {
-        self.face
-            .kerning_with_properties(self.properties(), left, right, size_px)
+        self.face.kerning(self.properties(), left, right, size_px)
     }
 
     pub fn single_substitution(self, feature: OpenTypeFeature, glyph: GlyphId) -> Option<GlyphId> {
         self.face
-            .single_substitution_with_properties(self.properties(), feature, glyph)
+            .single_substitution(self.properties(), feature, glyph)
     }
 
     pub fn ligature_substitution(
@@ -771,7 +659,7 @@ impl<'font> ResolvedFont<'font> {
         second: GlyphId,
     ) -> Option<GlyphId> {
         self.face
-            .ligature_substitution_with_properties(self.properties(), feature, first, second)
+            .ligature_substitution(self.properties(), feature, first, second)
     }
 
     pub fn cursive_attachment(
@@ -781,7 +669,7 @@ impl<'font> ResolvedFont<'font> {
         size_px: u16,
         right_to_left: bool,
     ) -> Option<CursiveAttachment> {
-        self.face.cursive_attachment_with_properties(
+        self.face.cursive_attachment(
             self.properties(),
             visual_left,
             visual_right,
@@ -797,7 +685,7 @@ impl<'font> ResolvedFont<'font> {
         size_px: u16,
         right_to_left: bool,
     ) -> PairPositioning {
-        self.face.pair_positioning_with_properties(
+        self.face.pair_positioning(
             self.properties(),
             visual_left,
             visual_right,
@@ -808,7 +696,7 @@ impl<'font> ResolvedFont<'font> {
 
     pub fn mark_to_base_offset(self, base: GlyphId, mark: GlyphId, size_px: u16) -> Option<Offset> {
         self.face
-            .mark_to_base_offset_with_properties(self.properties(), base, mark, size_px)
+            .mark_to_base_offset(self.properties(), base, mark, size_px)
     }
 
     pub fn mark_to_ligature_offset(
@@ -818,13 +706,8 @@ impl<'font> ResolvedFont<'font> {
         mark: GlyphId,
         size_px: u16,
     ) -> Option<Offset> {
-        self.face.mark_to_ligature_offset_with_properties(
-            self.properties(),
-            ligature,
-            component,
-            mark,
-            size_px,
-        )
+        self.face
+            .mark_to_ligature_offset(self.properties(), ligature, component, mark, size_px)
     }
 
     pub fn mark_to_mark_offset(
@@ -834,7 +717,7 @@ impl<'font> ResolvedFont<'font> {
         size_px: u16,
     ) -> Option<Offset> {
         self.face
-            .mark_to_mark_offset_with_properties(self.properties(), base_mark, mark, size_px)
+            .mark_to_mark_offset(self.properties(), base_mark, mark, size_px)
     }
 
     pub fn rasterize(
@@ -844,11 +727,11 @@ impl<'font> ResolvedFont<'font> {
         coverage: &mut [u8],
     ) -> Result<(), FontRasterError> {
         self.face
-            .rasterize_with_properties(self.properties(), glyph, size_px, coverage)
+            .rasterize(self.properties(), glyph, size_px, coverage)
     }
 
     pub(crate) fn prepare(self) -> PreparedFont<'font> {
-        let source = self.face.prepare_with_properties(self.properties());
+        let source = self.face.prepare(self.properties());
 
         PreparedFont {
             resolved: self,

@@ -10,7 +10,9 @@ use embedded_graphics::{
     primitives::Rectangle as EgRectangle,
 };
 
-use crate::{FontFace, FontMetrics, FontRasterError, GlyphId, GlyphMetrics, Pixels, px};
+use crate::{
+    FontFace, FontMetrics, FontProperties, FontRasterError, GlyphId, GlyphMetrics, Pixels, px,
+};
 
 type CharacterSupport = fn(char) -> bool;
 
@@ -96,7 +98,7 @@ impl FontFace for MonoFontFace<'_> {
         Some(glyph)
     }
 
-    fn metrics(&self, _: u16) -> FontMetrics {
+    fn metrics(&self, _: FontProperties, _: u16) -> FontMetrics {
         let height = pixels_from_u32(self.font.character_size.height);
         let baseline = self.font.baseline.min(self.font.character_size.height);
         let ascent = pixels_from_u32(baseline);
@@ -105,7 +107,7 @@ impl FontFace for MonoFontFace<'_> {
         FontMetrics::new(ascent, descent, Pixels::ZERO)
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(&self, _: FontProperties, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
         self.glyph_origin(glyph)?;
 
         let width = u16::try_from(self.font.character_size.width).ok()?;
@@ -121,7 +123,7 @@ impl FontFace for MonoFontFace<'_> {
         ))
     }
 
-    fn kerning(&self, _: GlyphId, _: GlyphId, _: u16) -> Pixels {
+    fn kerning(&self, _: FontProperties, _: GlyphId, _: GlyphId, _: u16) -> Pixels {
         // embedded-graphics models character spacing separately from the glyph width.
         // treating it as pair adjustment gives our generic text engine exactly:
         //      n * glyph_width + (n - 1) * spacing
@@ -131,12 +133,13 @@ impl FontFace for MonoFontFace<'_> {
 
     fn rasterize(
         &self,
+        properties: FontProperties,
         glyph: GlyphId,
         _: u16,
         coverage: &mut [u8],
     ) -> Result<(), FontRasterError> {
         let metrics = self
-            .glyph_metrics(glyph, 0)
+            .glyph_metrics(properties, glyph, 0)
             .ok_or(FontRasterError::InvalidGlyph)?;
         let required = metrics
             .coverage_bytes()
@@ -236,23 +239,31 @@ mod tests {
     fn mono_font_face_preserves_native_metrics() {
         let font = MonoFontFace::new(&FONT_6X10);
         let glyph = font.glyph_id('A').unwrap();
-        let metrics = font.glyph_metrics(glyph, 0).unwrap();
+        let metrics = font
+            .glyph_metrics(FontProperties::NORMAL, glyph, 0)
+            .unwrap();
 
         assert_eq!(metrics.width, 6,);
         assert_eq!(metrics.height, 10,);
         assert_eq!(metrics.advance, px(6),);
-        assert_eq!(font.metrics(0).line_height(), px(10),);
+        assert_eq!(
+            font.metrics(FontProperties::NORMAL, 0).line_height(),
+            px(10),
+        );
     }
 
     #[test]
     fn mono_font_face_rasterizes_into_caller_buffer() {
         let font = MonoFontFace::new(&FONT_6X10);
         let glyph = font.glyph_id('A').unwrap();
-        let metrics = font.glyph_metrics(glyph, 0).unwrap();
+        let metrics = font
+            .glyph_metrics(FontProperties::NORMAL, glyph, 0)
+            .unwrap();
         let required = metrics.coverage_bytes().unwrap();
         let mut coverage = [0u8; 128];
 
-        font.rasterize(glyph, 0, &mut coverage[..required]).unwrap();
+        font.rasterize(FontProperties::NORMAL, glyph, 0, &mut coverage[..required])
+            .unwrap();
 
         assert!(coverage[..required].iter().any(|value| { *value == 255 },),);
         assert!(coverage[..required].iter().any(|value| { *value == 0 },),);

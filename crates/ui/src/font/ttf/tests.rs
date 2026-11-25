@@ -147,13 +147,10 @@ mod hinting {
 
     fn rasterize(font: &dyn FontFace, character: char, size: u16) -> (usize, Vec<u8>) {
         let glyph = font.glyph_id(character).unwrap();
-        let metrics = font
-            .glyph_metrics_with_properties(NORMAL, glyph, size)
-            .unwrap();
+        let metrics = font.glyph_metrics(NORMAL, glyph, size).unwrap();
         let mut coverage = vec![0; metrics.coverage_bytes().unwrap()];
 
-        font.rasterize_with_properties(NORMAL, glyph, size, &mut coverage)
-            .unwrap();
+        font.rasterize(NORMAL, glyph, size, &mut coverage).unwrap();
 
         (usize::from(metrics.width), coverage)
     }
@@ -184,13 +181,8 @@ mod hinting {
                 let glyph = INTER.glyph_id(character).unwrap();
 
                 assert_eq!(
-                    font.glyph_metrics_with_properties(NORMAL, glyph, size)
-                        .unwrap()
-                        .advance,
-                    INTER
-                        .glyph_metrics_with_properties(NORMAL, glyph, size)
-                        .unwrap()
-                        .advance,
+                    font.glyph_metrics(NORMAL, glyph, size).unwrap().advance,
+                    INTER.glyph_metrics(NORMAL, glyph, size).unwrap().advance,
                 );
             }
         }
@@ -202,7 +194,7 @@ mod hinting {
 
         for size in SIZES {
             let x_height = -font
-                .glyph_metrics_with_properties(NORMAL, font.glyph_id('x').unwrap(), size)
+                .glyph_metrics(NORMAL, font.glyph_id('x').unwrap(), size)
                 .unwrap()
                 .bearing_y
                 .get();
@@ -212,7 +204,7 @@ mod hinting {
                 .flat_map(|character| {
                     let glyph = font.glyph_id(character).unwrap();
                     let top = font
-                        .glyph_metrics_with_properties(NORMAL, glyph, size)
+                        .glyph_metrics(NORMAL, glyph, size)
                         .unwrap()
                         .bearing_y
                         .get();
@@ -246,7 +238,9 @@ mod hinting {
 mod owned {
     use alloc::vec::Vec;
 
-    use crate::{FontData, FontFace, FontStyle, OwnedTtfFont, TtfFont, TtfFontError};
+    use crate::{
+        FontData, FontFace, FontProperties, FontStyle, OwnedTtfFont, TtfFont, TtfFontError,
+    };
 
     const ITALIC: &[u8] = include_bytes!("../../../../app/assets/fonts/Libron-Italic.ttf");
 
@@ -260,10 +254,13 @@ mod owned {
         assert_eq!(owned.glyph_id('g'), Some(glyph));
         assert_eq!(owned.style(), FontStyle::Italic);
         assert_eq!(owned.weight_range(), borrowed.weight_range());
-        assert_eq!(owned.metrics(20), borrowed.metrics(20));
         assert_eq!(
-            owned.glyph_metrics(glyph, 20),
-            borrowed.glyph_metrics(glyph, 20)
+            owned.metrics(FontProperties::NORMAL, 20),
+            borrowed.metrics(FontProperties::NORMAL, 20)
+        );
+        assert_eq!(
+            owned.glyph_metrics(FontProperties::NORMAL, glyph, 20),
+            borrowed.glyph_metrics(FontProperties::NORMAL, glyph, 20)
         );
     }
 

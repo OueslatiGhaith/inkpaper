@@ -72,7 +72,7 @@ struct Instances {
 
 /// the unhinted font the advances come from, with its weight already set
 struct CachedFace<'a> {
-    weight: Option<FontWeight>,
+    weight: FontWeight,
     face: Face<'a>,
 }
 
@@ -90,8 +90,7 @@ struct CachedOutline {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct InstanceKey {
     size_px: u16,
-    /// `None` is the font's default instance
-    weight: Option<FontWeight>,
+    weight: FontWeight,
 }
 
 impl<'a> HintedTtfFont<'a> {
@@ -191,16 +190,12 @@ impl<'a> HintedTtfFont<'a> {
 }
 
 impl<'a> HintingState<'a> {
-    fn face(&mut self, font: &TtfFont<'a>, weight: Option<FontWeight>) -> Option<&Face<'a>> {
+    fn face(&mut self, font: &TtfFont<'a>, weight: FontWeight) -> Option<&Face<'a>> {
         if let Some(index) = self.faces.iter().position(|cached| cached.weight == weight) {
             let cached = self.faces.remove(index);
             self.faces.push(cached);
         } else {
-            let face = match weight {
-                Some(weight) => font.face_with_properties(FontProperties::new(weight)),
-                None => font.face(),
-            }
-            .ok()?;
+            let face = font.face_with_properties(FontProperties::new(weight)).ok()?;
 
             if self.faces.len() == CACHED_FACES {
                 self.faces.remove(0);
@@ -257,11 +252,7 @@ impl Instances {
 
 /// opens the font only for a new instance, which is rare
 #[cfg(feature = "variable-fonts")]
-fn location(font: &TtfFont<'_>, weight: Option<FontWeight>) -> Result<Location, FontRasterError> {
-    let Some(weight) = weight else {
-        return Ok(Location::default());
-    };
-
+fn location(font: &TtfFont<'_>, weight: FontWeight) -> Result<Location, FontRasterError> {
     let font = FontRef::from_index(font.data().bytes(), font.face_index())
         .map_err(|_| FontRasterError::InvalidFont)?;
 
@@ -269,7 +260,7 @@ fn location(font: &TtfFont<'_>, weight: Option<FontWeight>) -> Result<Location, 
 }
 
 #[cfg(not(feature = "variable-fonts"))]
-fn location(_font: &TtfFont<'_>, _weight: Option<FontWeight>) -> Result<Location, FontRasterError> {
+fn location(_font: &TtfFont<'_>, _weight: FontWeight) -> Result<Location, FontRasterError> {
     Ok(Location::default())
 }
 
@@ -446,17 +437,10 @@ impl HintedOutline {
     }
 }
 
-fn default_instance(size_px: u16) -> InstanceKey {
-    InstanceKey {
-        size_px,
-        weight: None,
-    }
-}
-
 fn instance_with(properties: FontProperties, size_px: u16) -> InstanceKey {
     InstanceKey {
         size_px,
-        weight: Some(properties.weight()),
+        weight: properties.weight(),
     }
 }
 
@@ -469,130 +453,38 @@ impl FontFace for HintedTtfFont<'_> {
         self.font.style()
     }
 
-    fn prepare_with_properties(&self, properties: FontProperties) -> PreparedFontSource<'_> {
-        self.font.prepare_with_properties(properties)
+    fn prepare(&self, properties: FontProperties) -> PreparedFontSource<'_> {
+        self.font.prepare(properties)
     }
 
     fn glyph_id(&self, character: char) -> Option<GlyphId> {
         self.font.glyph_id(character)
     }
 
-    fn metrics(&self, size_px: u16) -> FontMetrics {
-        self.font.metrics(size_px)
+    fn metrics(&self, properties: FontProperties, size_px: u16) -> FontMetrics {
+        self.font.metrics(properties, size_px)
     }
 
-    fn glyph_advance(&self, glyph: GlyphId, size_px: u16) -> Option<Pixels> {
-        self.font.glyph_advance(glyph, size_px)
-    }
-
-    fn glyph_metrics(&self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics> {
-        self.glyph_metrics_at(default_instance(size_px), glyph)
-    }
-
-    fn kerning(&self, left: GlyphId, right: GlyphId, size_px: u16) -> Pixels {
-        self.font.kerning(left, right, size_px)
-    }
-
-    fn single_substitution(&self, feature: OpenTypeFeature, glyph: GlyphId) -> Option<GlyphId> {
-        self.font.single_substitution(feature, glyph)
-    }
-
-    fn ligature_substitution(
-        &self,
-        feature: OpenTypeFeature,
-        first: GlyphId,
-        second: GlyphId,
-    ) -> Option<GlyphId> {
-        self.font.ligature_substitution(feature, first, second)
-    }
-
-    fn cursive_attachment(
-        &self,
-        visual_left: GlyphId,
-        visual_right: GlyphId,
-        size_px: u16,
-        right_to_left: bool,
-    ) -> Option<CursiveAttachment> {
-        self.font
-            .cursive_attachment(visual_left, visual_right, size_px, right_to_left)
-    }
-
-    fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, size_px: u16) -> Option<Offset> {
-        self.font.mark_to_base_offset(base, mark, size_px)
-    }
-
-    fn mark_to_ligature_offset(
-        &self,
-        ligature: GlyphId,
-        component: u16,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.font
-            .mark_to_ligature_offset(ligature, component, mark, size_px)
-    }
-
-    fn mark_to_mark_offset(
-        &self,
-        base_mark: GlyphId,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.font.mark_to_mark_offset(base_mark, mark, size_px)
-    }
-
-    fn rasterize(
-        &self,
-        glyph: GlyphId,
-        size_px: u16,
-        coverage: &mut [u8],
-    ) -> Result<(), FontRasterError> {
-        self.rasterize_at(default_instance(size_px), glyph, coverage)
-    }
-
-    fn rasterize_with_properties(
-        &self,
-        properties: FontProperties,
-        glyph: GlyphId,
-        size_px: u16,
-        coverage: &mut [u8],
-    ) -> Result<(), FontRasterError> {
-        self.rasterize_at(instance_with(properties, size_px), glyph, coverage)
-    }
-
-    fn glyph_id_with_properties(
-        &self,
-        properties: FontProperties,
-        character: char,
-    ) -> Option<GlyphId> {
-        self.font.glyph_id_with_properties(properties, character)
-    }
-
-    fn metrics_with_properties(&self, properties: FontProperties, size_px: u16) -> FontMetrics {
-        self.font.metrics_with_properties(properties, size_px)
-    }
-
-    fn glyph_advance_with_properties(
+    fn glyph_advance(
         &self,
         properties: FontProperties,
         glyph: GlyphId,
         size_px: u16,
     ) -> Option<Pixels> {
-        self.font
-            .glyph_advance_with_properties(properties, glyph, size_px)
+        self.font.glyph_advance(properties, glyph, size_px)
     }
 
-    fn glyph_id_and_advance_with_properties(
+    fn glyph_id_and_advance(
         &self,
         properties: FontProperties,
         character: char,
         size_px: u16,
     ) -> Option<(GlyphId, Pixels)> {
         self.font
-            .glyph_id_and_advance_with_properties(properties, character, size_px)
+            .glyph_id_and_advance(properties, character, size_px)
     }
 
-    fn glyph_metrics_with_properties(
+    fn glyph_metrics(
         &self,
         properties: FontProperties,
         glyph: GlyphId,
@@ -601,28 +493,26 @@ impl FontFace for HintedTtfFont<'_> {
         self.glyph_metrics_at(instance_with(properties, size_px), glyph)
     }
 
-    fn kerning_with_properties(
+    fn kerning(
         &self,
         properties: FontProperties,
         left: GlyphId,
         right: GlyphId,
         size_px: u16,
     ) -> Pixels {
-        self.font
-            .kerning_with_properties(properties, left, right, size_px)
+        self.font.kerning(properties, left, right, size_px)
     }
 
-    fn single_substitution_with_properties(
+    fn single_substitution(
         &self,
         properties: FontProperties,
         feature: OpenTypeFeature,
         glyph: GlyphId,
     ) -> Option<GlyphId> {
-        self.font
-            .single_substitution_with_properties(properties, feature, glyph)
+        self.font.single_substitution(properties, feature, glyph)
     }
 
-    fn ligature_substitution_with_properties(
+    fn ligature_substitution(
         &self,
         properties: FontProperties,
         feature: OpenTypeFeature,
@@ -630,10 +520,10 @@ impl FontFace for HintedTtfFont<'_> {
         second: GlyphId,
     ) -> Option<GlyphId> {
         self.font
-            .ligature_substitution_with_properties(properties, feature, first, second)
+            .ligature_substitution(properties, feature, first, second)
     }
 
-    fn cursive_attachment_with_properties(
+    fn cursive_attachment(
         &self,
         properties: FontProperties,
         visual_left: GlyphId,
@@ -641,16 +531,11 @@ impl FontFace for HintedTtfFont<'_> {
         size_px: u16,
         right_to_left: bool,
     ) -> Option<CursiveAttachment> {
-        self.font.cursive_attachment_with_properties(
-            properties,
-            visual_left,
-            visual_right,
-            size_px,
-            right_to_left,
-        )
+        self.font
+            .cursive_attachment(properties, visual_left, visual_right, size_px, right_to_left)
     }
 
-    fn pair_positioning_with_properties(
+    fn pair_positioning(
         &self,
         properties: FontProperties,
         visual_left: GlyphId,
@@ -658,16 +543,11 @@ impl FontFace for HintedTtfFont<'_> {
         size_px: u16,
         right_to_left: bool,
     ) -> PairPositioning {
-        self.font.pair_positioning_with_properties(
-            properties,
-            visual_left,
-            visual_right,
-            size_px,
-            right_to_left,
-        )
+        self.font
+            .pair_positioning(properties, visual_left, visual_right, size_px, right_to_left)
     }
 
-    fn mark_to_base_offset_with_properties(
+    fn mark_to_base_offset(
         &self,
         properties: FontProperties,
         base: GlyphId,
@@ -675,10 +555,10 @@ impl FontFace for HintedTtfFont<'_> {
         size_px: u16,
     ) -> Option<Offset> {
         self.font
-            .mark_to_base_offset_with_properties(properties, base, mark, size_px)
+            .mark_to_base_offset(properties, base, mark, size_px)
     }
 
-    fn mark_to_ligature_offset_with_properties(
+    fn mark_to_ligature_offset(
         &self,
         properties: FontProperties,
         ligature: GlyphId,
@@ -687,10 +567,10 @@ impl FontFace for HintedTtfFont<'_> {
         size_px: u16,
     ) -> Option<Offset> {
         self.font
-            .mark_to_ligature_offset_with_properties(properties, ligature, component, mark, size_px)
+            .mark_to_ligature_offset(properties, ligature, component, mark, size_px)
     }
 
-    fn mark_to_mark_offset_with_properties(
+    fn mark_to_mark_offset(
         &self,
         properties: FontProperties,
         base_mark: GlyphId,
@@ -698,6 +578,16 @@ impl FontFace for HintedTtfFont<'_> {
         size_px: u16,
     ) -> Option<Offset> {
         self.font
-            .mark_to_mark_offset_with_properties(properties, base_mark, mark, size_px)
+            .mark_to_mark_offset(properties, base_mark, mark, size_px)
+    }
+
+    fn rasterize(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
+        self.rasterize_at(instance_with(properties, size_px), glyph, coverage)
     }
 }

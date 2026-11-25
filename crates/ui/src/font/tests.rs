@@ -12,16 +12,22 @@ impl FontFace for TestFont {
         u16::try_from(value).ok().map(GlyphId::new)
     }
 
-    fn metrics(&self, size_px: u16) -> FontMetrics {
+    fn metrics(&self, _properties: FontProperties, size_px: u16) -> FontMetrics {
         FontMetrics::new(px(i32::from(size_px)), px(0), px(0))
     }
 
-    fn glyph_metrics(&self, _glyph: GlyphId, _size_px: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(
+        &self,
+        _properties: FontProperties,
+        _glyph: GlyphId,
+        _size_px: u16,
+    ) -> Option<GlyphMetrics> {
         Some(GlyphMetrics::new(2, 2, px(0), px(-2), px(3)))
     }
 
     fn rasterize(
         &self,
+        _properties: FontProperties,
         _glyph: GlyphId,
         _size_px: u16,
         coverage: &mut [u8],
@@ -185,21 +191,27 @@ impl FontFace for ItalicTestFont {
         self.0.glyph_id(character)
     }
 
-    fn metrics(&self, size_px: u16) -> FontMetrics {
-        self.0.metrics(size_px)
+    fn metrics(&self, properties: FontProperties, size_px: u16) -> FontMetrics {
+        self.0.metrics(properties, size_px)
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics> {
-        self.0.glyph_metrics(glyph, size_px)
+    fn glyph_metrics(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+    ) -> Option<GlyphMetrics> {
+        self.0.glyph_metrics(properties, glyph, size_px)
     }
 
     fn rasterize(
         &self,
+        properties: FontProperties,
         glyph: GlyphId,
         size_px: u16,
         coverage: &mut [u8],
     ) -> Result<(), FontRasterError> {
-        self.0.rasterize(glyph, size_px, coverage)
+        self.0.rasterize(properties, glyph, size_px, coverage)
     }
 }
 
@@ -279,30 +291,20 @@ impl FontFace for VariableTestFont {
         u16::try_from(value).ok().map(GlyphId::new)
     }
 
-    fn metrics(&self, size_px: u16) -> FontMetrics {
+    fn metrics(&self, _properties: FontProperties, size_px: u16) -> FontMetrics {
         FontMetrics::new(px(i32::from(size_px)), px(0), px(0))
     }
 
-    fn glyph_metrics(&self, _glyph: GlyphId, _size_px: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(
+        &self,
+        _properties: FontProperties,
+        _glyph: GlyphId,
+        _size_px: u16,
+    ) -> Option<GlyphMetrics> {
         Some(GlyphMetrics::new(2, 2, px(0), px(-2), px(3)))
     }
 
     fn rasterize(
-        &self,
-        _glyph: GlyphId,
-        _size_px: u16,
-        coverage: &mut [u8],
-    ) -> Result<(), FontRasterError> {
-        if coverage.len() < 4 {
-            return Err(FontRasterError::BufferTooSmall);
-        }
-
-        coverage[..4].fill(100);
-
-        Ok(())
-    }
-
-    fn rasterize_with_properties(
         &self,
         properties: FontProperties,
         _glyph: GlyphId,

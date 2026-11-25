@@ -58,12 +58,12 @@ fn rasterize_all(font: &dyn FontFace, glyphs: &[GlyphId], size: u16, coverage: &
 
     for glyph in glyphs {
         let metrics = font
-            .glyph_metrics_with_properties(properties, *glyph, size)
+            .glyph_metrics(properties, *glyph, size)
             .expect("glyph has metrics");
 
         coverage.resize(metrics.coverage_bytes().expect("glyph fits"), 0);
 
-        font.rasterize_with_properties(properties, *glyph, size, coverage)
+        font.rasterize(properties, *glyph, size, coverage)
             .expect("glyph rasterizes");
 
         black_box(&coverage);
