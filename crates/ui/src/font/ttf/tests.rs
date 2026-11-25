@@ -1,9 +1,10 @@
-use ttf_parser::{
-    GlyphId as TtfGlyphId, gsub::SubstitutionSubtable, opentype_layout::LookupSubtable,
+use skrifa::{
+    GlyphId16,
+    raw::{FontData as RawFontData, FontRead, tables::gsub::MultipleSubstFormat1},
 };
 
 use super::{
-    gsub::apply_single_output_substitution,
+    gsub::apply_multiple_single_output,
     raster::{
         Intersection, MAX_CURVE_STEPS, RasterPoint, SUPERSAMPLE_Y, ScanlineBuilder,
         accumulate_scanline, curve_steps, normalize_coverage,
@@ -101,26 +102,20 @@ const MULTI_OUTPUT_MULTIPLE_SUBSTITUTION: &[u8] = &[
 
 #[test]
 fn single_output_multiple_substitution_is_accepted() {
-    let substitution = <SubstitutionSubtable<'static> as LookupSubtable<'static>>::parse(
-        SINGLE_OUTPUT_MULTIPLE_SUBSTITUTION,
-        2,
-    )
-    .unwrap();
+    let substitution =
+        MultipleSubstFormat1::read(RawFontData::new(SINGLE_OUTPUT_MULTIPLE_SUBSTITUTION)).unwrap();
 
-    let result = apply_single_output_substitution(substitution, TtfGlyphId(5));
+    let result = apply_multiple_single_output(&substitution, GlyphId16::new(5));
 
-    assert_eq!(result, Some(TtfGlyphId(9)),);
+    assert_eq!(result, Some(GlyphId16::new(9)));
 }
 
 #[test]
 fn multi_output_multiple_substitution_is_rejected() {
-    let substitution = <SubstitutionSubtable<'static> as LookupSubtable<'static>>::parse(
-        MULTI_OUTPUT_MULTIPLE_SUBSTITUTION,
-        2,
-    )
-    .unwrap();
+    let substitution =
+        MultipleSubstFormat1::read(RawFontData::new(MULTI_OUTPUT_MULTIPLE_SUBSTITUTION)).unwrap();
 
-    let result = apply_single_output_substitution(substitution, TtfGlyphId(5));
+    let result = apply_multiple_single_output(&substitution, GlyphId16::new(5));
 
     assert_eq!(result, None);
 }
@@ -270,5 +265,39 @@ mod owned {
             OwnedTtfFont::parse(Vec::from(&b"not a font"[..]), 0).err(),
             Some(TtfFontError::InvalidFont)
         );
+    }
+
+    #[cfg(feature = "hinting")]
+    #[test]
+    fn hinted_owned_font_matches_hinted_borrowed_font() {
+        use alloc::vec;
+
+        use crate::{HintedOwnedTtfFont, HintedTtfFont};
+
+        let borrowed = HintedTtfFont::new(TtfFont::from_data(FontData::new(ITALIC), 0));
+        let owned = HintedOwnedTtfFont::parse(Vec::from(ITALIC), 0).unwrap();
+
+        let glyph = borrowed.glyph_id('g').unwrap();
+        let borrowed_metrics = borrowed
+            .glyph_metrics(FontProperties::NORMAL, glyph, 20)
+            .unwrap();
+        let owned_metrics = owned
+            .glyph_metrics(FontProperties::NORMAL, glyph, 20)
+            .unwrap();
+
+        assert_eq!(owned_metrics, borrowed_metrics);
+
+        let bytes = owned_metrics.coverage_bytes().unwrap();
+        let mut borrowed_cov = vec![0u8; bytes];
+        let mut owned_cov = vec![0u8; bytes];
+
+        borrowed
+            .rasterize(FontProperties::NORMAL, glyph, 20, &mut borrowed_cov)
+            .unwrap();
+        owned
+            .rasterize(FontProperties::NORMAL, glyph, 20, &mut owned_cov)
+            .unwrap();
+
+        assert_eq!(owned_cov, borrowed_cov);
     }
 }

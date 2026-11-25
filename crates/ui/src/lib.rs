@@ -11,7 +11,7 @@
 #[cfg(test)]
 extern crate std;
 
-#[cfg(any(test, feature = "alloc", feature = "hinting"))]
+#[cfg(any(test, feature = "alloc", feature = "ttf"))]
 extern crate alloc;
 
 #[cfg(feature = "embedded-graphics")]

@@ -4,6 +4,8 @@ use crate::{
     PreparedFontSource,
 };
 
+#[cfg(feature = "hinting")]
+use super::HintedOwnedTtfFont;
 use super::{PreparedTtfFont, TtfFont, TtfFontError};
 
 /// A [`TtfFont`] that keeps its bytes, like a font read from a file, so it
@@ -27,15 +29,23 @@ impl<D: AsRef<[u8]>> OwnedTtfFont<D> {
         &self.data
     }
 
-    fn font(&self) -> TtfFont<'_> {
+    #[cfg(feature = "hinting")]
+    pub fn into_hinted(self) -> HintedOwnedTtfFont<D> {
+        HintedOwnedTtfFont::new(self)
+    }
+
+    pub(super) fn font(&self) -> TtfFont<'_> {
         TtfFont::from_data(FontData::new(self.data.as_ref()), self.face_index)
     }
 }
 
 impl<D: AsRef<[u8]>> FontFace for OwnedTtfFont<D> {
     fn prepare(&self, properties: FontProperties) -> PreparedFontSource<'_> {
-        match self.font().face_with_properties(properties) {
-            Ok(face) => PreparedFontSource::from_ttf(PreparedTtfFont::new(face)),
+        match self.font().font_ref() {
+            Ok(font) => {
+                let location = TtfFont::location_for(&font, properties);
+                PreparedFontSource::from_ttf(PreparedTtfFont::new(font, location))
+            }
             Err(_) => PreparedFontSource::unprepared(),
         }
     }

@@ -120,7 +120,12 @@ fn font_file_stem(name: &str) -> Option<&str> {
 
 /// A card font's face. Its bytes are shared, so the screen's registry and the
 /// reader's measuring use one copy.
+#[cfg(not(feature = "hinting"))]
 pub(crate) type CardFace = OwnedTtfFont<Rc<[u8]>>;
+
+/// A card font's face with autohinting enabled to match the built-in faces.
+#[cfg(feature = "hinting")]
+pub(crate) type CardFace = inkpaper_ui::HintedOwnedTtfFont<Rc<[u8]>>;
 
 /// A card family read into memory: up to a regular, bold, italic and bold
 /// italic face.
@@ -240,7 +245,7 @@ pub(crate) async fn load_card_font<P: AppPlatform>(
             continue;
         };
 
-        if let Ok(face) = OwnedTtfFont::parse(Rc::from(bytes), 0) {
+        if let Ok(face) = CardFace::parse(Rc::from(bytes), 0) {
             faces.push(face);
         }
     }

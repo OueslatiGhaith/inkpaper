@@ -1,5 +1,6 @@
+use skrifa::outline::OutlinePen;
+
 use crate::float::{ceil_i32, ceil_usize, floor_i32};
-use ttf_parser::OutlineBuilder;
 
 const SUPERSAMPLE_X: usize = 4;
 pub(super) const SUPERSAMPLE_Y: usize = 4;
@@ -134,7 +135,7 @@ impl ScanlineBuilder {
     }
 }
 
-impl OutlineBuilder for ScanlineBuilder {
+impl OutlinePen for ScanlineBuilder {
     fn move_to(&mut self, x: f32, y: f32) {
         let point = self.transform(x, y);
 
@@ -278,7 +279,7 @@ impl EdgeBuilder {
 }
 
 #[cfg(feature = "hinting")]
-impl OutlineBuilder for EdgeBuilder {
+impl OutlinePen for EdgeBuilder {
     fn move_to(&mut self, x: f32, y: f32) {
         let point = self.transform(x, y);
 
