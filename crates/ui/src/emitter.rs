@@ -61,44 +61,11 @@ pub(crate) struct PendingEvent {
     payload: EventPayload,
 }
 
-/// the runtime's subscriptions and the events waiting for delivery
-pub(crate) trait EventStore {
-    fn subscribe(&self, subscription: Subscription) -> Result<(), OutOfMemory>;
-
-    fn push(&self, event: PendingEvent) -> Result<(), OutOfMemory>;
-
-    /// takes the event emitted first
-    fn pop(&self) -> Option<PendingEvent>;
-
-    fn subscription(&self, index: usize) -> Option<Subscription>;
-}
-
-/// holds nothing, for contexts outside a runtime. Every subscription and event fails
-pub(crate) struct NoEvents;
-
-/// the error for a `T` that [`NoEvents`] has no room for
+/// the error for a `T` when a context has no event table
 fn no_room<T>() -> OutOfMemory {
     OutOfMemory {
         table: Table::Events,
         requested: mem::size_of::<T>(),
-    }
-}
-
-impl EventStore for NoEvents {
-    fn subscribe(&self, _: Subscription) -> Result<(), OutOfMemory> {
-        Err(no_room::<Subscription>())
-    }
-
-    fn push(&self, _: PendingEvent) -> Result<(), OutOfMemory> {
-        Err(no_room::<PendingEvent>())
-    }
-
-    fn pop(&self) -> Option<PendingEvent> {
-        None
-    }
-
-    fn subscription(&self, _: usize) -> Option<Subscription> {
-        None
     }
 }
 
@@ -114,9 +81,7 @@ impl EventTable {
             pending: RefCell::new(PoolVec::new_in(pool, Table::Events)),
         }
     }
-}
 
-impl EventTable {
     /// forgets the subscriptions of a released entity, as subscriber or emitter
     pub(crate) fn forget(&self, entity: EntityId) {
         let mut subscriptions = self.subscriptions.borrow_mut();
@@ -138,18 +103,17 @@ impl EventTable {
     pub(crate) fn subscription_count(&self) -> usize {
         self.subscriptions.borrow().len()
     }
-}
 
-impl EventStore for EventTable {
-    fn subscribe(&self, subscription: Subscription) -> Result<(), OutOfMemory> {
+    pub(crate) fn subscribe(&self, subscription: Subscription) -> Result<(), OutOfMemory> {
         self.subscriptions.borrow_mut().try_push(subscription)
     }
 
-    fn push(&self, event: PendingEvent) -> Result<(), OutOfMemory> {
+    pub(crate) fn push(&self, event: PendingEvent) -> Result<(), OutOfMemory> {
         self.pending.borrow_mut().try_push(event)
     }
 
-    fn pop(&self) -> Option<PendingEvent> {
+    /// takes the event emitted first
+    pub(crate) fn pop(&self) -> Option<PendingEvent> {
         let mut pending = self.pending.borrow_mut();
         let first = *pending.first()?;
 
@@ -160,14 +124,14 @@ impl EventStore for EventTable {
         Some(first)
     }
 
-    fn subscription(&self, index: usize) -> Option<Subscription> {
+    pub(crate) fn subscription(&self, index: usize) -> Option<Subscription> {
         self.subscriptions.borrow().get(index).copied()
     }
 }
 
 /// queues `event` from `emitter`
 pub(crate) fn emit<E>(
-    events: &dyn EventStore,
+    events: Option<&EventTable>,
     emitter: EntityId,
     event: E,
 ) -> Result<(), OutOfMemory>
@@ -182,6 +146,10 @@ where
         assert!(mem::align_of::<E>() <= EVENT_ALIGN);
     }
 
+    let Some(events) = events else {
+        return Err(no_room::<PendingEvent>());
+    };
+
     let mut payload = EventPayload([MaybeUninit::uninit(); EVENT_BYTES]);
     // SAFETY: the payload is large and aligned enough for `E`, checked above
     unsafe { payload.0.as_mut_ptr().cast::<E>().write(event) };
@@ -195,7 +163,7 @@ where
 
 /// subscribes `subscriber` to the `E` events of `emitter`
 pub(crate) fn subscribe<T, U, E>(
-    events: &dyn EventStore,
+    events: Option<&EventTable>,
     subscriber: Entity<T>,
     emitter: Entity<U>,
     handler: Handler<T, U, E>,
@@ -205,6 +173,10 @@ where
     U: 'static,
     E: 'static,
 {
+    let Some(events) = events else {
+        return Err(no_room::<Subscription>());
+    };
+
     events.subscribe(Subscription {
         subscriber: subscriber.entity_id(),
         emitter: emitter.entity_id(),
@@ -222,7 +194,7 @@ where
 ///
 /// when a subscriber is borrowed, which only happens when this runs inside another
 /// runtime call
-pub(crate) fn deliver(events: &dyn EventStore, runtime: RuntimeCx<'_>) {
+pub(crate) fn deliver(events: &EventTable, runtime: RuntimeCx<'_>) {
     while let Some(event) = events.pop() {
         let mut index = 0;
 

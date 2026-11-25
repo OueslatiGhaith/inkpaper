@@ -37,15 +37,6 @@ pub enum GlobalSetError {
     BorrowConflict,
 }
 
-pub trait GlobalStore {
-    fn acquire(
-        &self,
-        type_id: TypeId,
-        kind: BorrowKind,
-    ) -> Result<(usize, NonNull<u8>), GlobalAccessError>;
-    fn release(&self, slot: usize, kind: BorrowKind);
-}
-
 impl From<ReserveError> for GlobalSetError {
     fn from(error: ReserveError) -> Self {
         match error {
@@ -114,10 +105,8 @@ impl GlobalArena {
     fn index_of(&self, type_id: TypeId) -> Option<usize> {
         self.slots.position(|slot_type| *slot_type == type_id)
     }
-}
 
-impl GlobalStore for GlobalArena {
-    fn acquire(
+    pub(crate) fn acquire(
         &self,
         type_id: TypeId,
         kind: BorrowKind,
@@ -133,7 +122,7 @@ impl GlobalStore for GlobalArena {
         Ok((slot, ptr))
     }
 
-    fn release(&self, slot: usize, kind: BorrowKind) {
+    pub(crate) fn release(&self, slot: usize, kind: BorrowKind) {
         self.slots.release(slot, kind);
     }
 }
@@ -143,7 +132,7 @@ unsafe fn drop_global<G>(ptr: *mut u8) {
 }
 
 struct RawGlobalBorrow<'a> {
-    store: &'a dyn GlobalStore,
+    store: &'a GlobalArena,
     slot: usize,
     ptr: NonNull<u8>,
     kind: BorrowKind,
@@ -151,7 +140,7 @@ struct RawGlobalBorrow<'a> {
 
 impl<'a> RawGlobalBorrow<'a> {
     fn acquire(
-        store: &'a dyn GlobalStore,
+        store: &'a GlobalArena,
         type_id: TypeId,
         kind: BorrowKind,
     ) -> Result<Self, GlobalAccessError> {
@@ -188,7 +177,7 @@ impl<'a, G> GlobalRef<'a, G>
 where
     G: Global,
 {
-    pub(crate) fn acquire(store: &'a dyn GlobalStore) -> Result<Self, GlobalAccessError> {
+    pub(crate) fn acquire(store: &'a GlobalArena) -> Result<Self, GlobalAccessError> {
         Ok(Self {
             borrow: RawGlobalBorrow::acquire(store, TypeId::of::<G>(), BorrowKind::Shared)?,
             _marker: PhantomData,

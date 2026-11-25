@@ -22,7 +22,6 @@ mod alloc_tests;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use mount::FrameStore;
 pub use mount::MountCx;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

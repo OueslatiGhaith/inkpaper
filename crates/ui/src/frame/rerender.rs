@@ -7,7 +7,7 @@
 //! mounted apart from its parent's, so swapping subtrees at entity nodes keeps the
 //! sibling order that paint relies on.
 
-use super::{FrameArena, FrameStore, MountError, NodeId, NodeKind};
+use super::{FrameArena, MountError, NodeId, NodeKind};
 
 use crate::{
     DamageRegion, EntityId, RuntimeCx, count_metric,
@@ -90,7 +90,9 @@ impl FrameArena {
             self.detached_entities
                 .truncate(self.detached_entities.len() - 1);
             self.stale_entities.push(entity)?;
-            runtime.dependencies.forget(entity);
+            if let Some(dependencies) = runtime.dependencies {
+                dependencies.forget(entity);
+            }
             self.detach_content(node)?;
         }
 
@@ -201,7 +203,9 @@ impl FrameArena {
         // a notify while rendering keeps the entity dirty for the next frame
         runtime.entities.mark_rendered(entity);
         // the render records what it reads again
-        runtime.dependencies.forget(entity);
+        if let Some(dependencies) = runtime.dependencies {
+            dependencies.forget(entity);
+        }
         self.stale_entities.push(entity)?;
 
         count_metric!(self, entity_render_calls);

@@ -3,7 +3,7 @@ use core::{alloc::Layout, any::TypeId, cell::Cell, ptr::NonNull};
 use crate::{
     BorrowKind, Context, Entity, EntityAccessError, EntityId, Listener, PaintCx, RuntimeCx,
     callback::CallbackId,
-    entity::{EntityStore, RawEntityBorrow},
+    entity::{EntityArena, RawEntityBorrow},
     pool::{OutOfMemory, PoolRef, Table},
     slot_table::{ReserveError, SlotTable},
 };
@@ -52,7 +52,7 @@ type CanvasInvokeFn = unsafe fn(
     closure: *const u8,
     target: EntityId,
     paint: &mut PaintCx<'_>,
-    entities: &dyn EntityStore,
+    entities: &EntityArena,
 ) -> Result<(), CanvasInvokeError>;
 
 #[derive(Clone, Copy)]
@@ -82,33 +82,9 @@ struct CallbackMeta {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallbackMark(u32);
 
-pub struct RawCallbackReservation {
+pub(crate) struct RawCallbackReservation {
     pub(crate) id: CallbackId,
     pub(crate) ptr: NonNull<u8>,
-}
-
-/// # Safety
-///
-/// the reserved storage for `callback` must contain a valid initialized
-/// callback of the type registered during `reserve`.
-pub unsafe trait CallbackStore {
-    fn reserve(
-        &self,
-        layout: Layout,
-        owner: EntityId,
-        target: EntityId,
-        kind: CallbackKind,
-        drop_fn: unsafe fn(*mut u8),
-    ) -> Result<RawCallbackReservation, CallbackAllocError>;
-
-    unsafe fn commit(&self, callback: CallbackId);
-
-    fn invoke_canvas(
-        &self,
-        callback: CallbackId,
-        paint: &mut PaintCx<'_>,
-        entities: &dyn EntityStore,
-    ) -> Result<(), CanvasInvokeError>;
 }
 
 impl From<ReserveError> for CallbackAllocError {
@@ -242,13 +218,8 @@ impl CallbackArena {
         self.slots
             .remove_where(|meta| meta.generation < mark.0 && meta.owner == owner)
     }
-}
 
-// SAFETY: reservations fit the registered closure. Only committed closures are
-// callable. Both invocation paths validate generation and kind and use the registered
-// trampoline, which enforces the target entity's borrow rules
-unsafe impl CallbackStore for CallbackArena {
-    fn reserve(
+    pub(crate) fn reserve(
         &self,
         layout: Layout,
         owner: EntityId,
@@ -271,18 +242,22 @@ unsafe impl CallbackStore for CallbackArena {
         })
     }
 
-    unsafe fn commit(&self, callback: CallbackId) {
+    /// # Safety
+    ///
+    /// the reserved storage for `callback` must contain a valid initialized
+    /// callback of the type registered during `reserve`.
+    pub(crate) unsafe fn commit(&self, callback: CallbackId) {
         debug_assert_eq!(callback.generation(), self.generation.get());
 
         // SAFETY: the caller initialized the reserved closure
         unsafe { self.slots.commit(callback.slot()) };
     }
 
-    fn invoke_canvas(
+    pub(crate) fn invoke_canvas(
         &self,
         callback: CallbackId,
         paint: &mut PaintCx<'_>,
-        entities: &dyn EntityStore,
+        entities: &EntityArena,
     ) -> Result<(), CanvasInvokeError> {
         let (meta, closure) = self
             .lookup(callback)
@@ -335,7 +310,7 @@ unsafe fn invoke_canvas_callback<T, F>(
     closure: *const u8,
     target: EntityId,
     paint: &mut PaintCx<'_>,
-    entities: &dyn EntityStore,
+    entities: &EntityArena,
 ) -> Result<(), CanvasInvokeError>
 where
     T: 'static,
@@ -353,7 +328,7 @@ where
 
 /// registers a listener on `entity`, released when `owner` renders again
 pub(crate) fn register_listener<T, E, F>(
-    store: &dyn CallbackStore,
+    store: &CallbackArena,
     owner: EntityId,
     entity: Entity<T>,
     callback: F,
@@ -382,7 +357,7 @@ where
 
 /// registers a canvas callback on `entity`, released when `owner` renders again
 pub(crate) fn register_canvas_callback<T, F>(
-    store: &dyn CallbackStore,
+    store: &CallbackArena,
     owner: EntityId,
     entity: Entity<T>,
     callback: F,

@@ -5,7 +5,7 @@ mod arena;
 #[cfg(test)]
 pub(crate) use arena::CanvasInvokeError;
 pub use arena::{CallbackAllocError, ListenerInvokeError};
-pub(crate) use arena::{CallbackArena, CallbackStore, register_canvas_callback, register_listener};
+pub(crate) use arena::{CallbackArena, register_canvas_callback, register_listener};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CallbackId {

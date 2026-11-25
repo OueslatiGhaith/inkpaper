@@ -15,7 +15,7 @@ use crate::{
 
 /// which [`Context`](crate::Context) holds a lease
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct LeaseOwner(u32);
+pub(crate) struct LeaseOwner(pub(crate) u32);
 
 #[derive(Debug, Clone, Copy)]
 struct Lease {
@@ -23,40 +23,12 @@ struct Lease {
     entity: EntityId,
 }
 
-/// the leases of every live context
-pub(crate) trait LeaseStore {
-    /// an owner no live context uses
-    fn next_owner(&self) -> LeaseOwner;
-
-    /// whether `owner` holds a lease on `entity`
-    fn holds(&self, owner: LeaseOwner, entity: EntityId) -> bool;
-
-    fn push(&self, owner: LeaseOwner, entity: EntityId) -> Result<(), OutOfMemory>;
-
-    /// removes the leases of `owner`, handing each entity to `release`
-    fn release_owner(&self, owner: LeaseOwner, release: &mut dyn FnMut(EntityId));
-}
-
-/// holds nothing, for contexts outside a runtime. Every lease fails
-pub(crate) struct NoLeases;
-
-impl LeaseStore for NoLeases {
-    fn next_owner(&self) -> LeaseOwner {
-        LeaseOwner(0)
+/// the error for a lease when a context has no lease table
+pub(crate) fn no_lease_room() -> OutOfMemory {
+    OutOfMemory {
+        table: Table::Entities,
+        requested: core::mem::size_of::<Lease>(),
     }
-
-    fn holds(&self, _: LeaseOwner, _: EntityId) -> bool {
-        false
-    }
-
-    fn push(&self, _: LeaseOwner, _: EntityId) -> Result<(), OutOfMemory> {
-        Err(OutOfMemory {
-            table: Table::Entities,
-            requested: core::mem::size_of::<Lease>(),
-        })
-    }
-
-    fn release_owner(&self, _: LeaseOwner, _: &mut dyn FnMut(EntityId)) {}
 }
 
 /// the runtime's leases. They count as entity memory
@@ -79,28 +51,29 @@ impl LeaseTable {
     pub(crate) fn len(&self) -> usize {
         self.leases.borrow().len()
     }
-}
 
-impl LeaseStore for LeaseTable {
-    fn next_owner(&self) -> LeaseOwner {
+    /// an owner no live context uses
+    pub(crate) fn next_owner(&self) -> LeaseOwner {
         let owner = self.next_owner.get();
         self.next_owner.set(owner.wrapping_add(1));
 
         LeaseOwner(owner)
     }
 
-    fn holds(&self, owner: LeaseOwner, entity: EntityId) -> bool {
+    /// whether `owner` holds a lease on `entity`
+    pub(crate) fn holds(&self, owner: LeaseOwner, entity: EntityId) -> bool {
         self.leases
             .borrow()
             .iter()
             .any(|lease| lease.owner == owner && lease.entity == entity)
     }
 
-    fn push(&self, owner: LeaseOwner, entity: EntityId) -> Result<(), OutOfMemory> {
+    pub(crate) fn push(&self, owner: LeaseOwner, entity: EntityId) -> Result<(), OutOfMemory> {
         self.leases.borrow_mut().try_push(Lease { owner, entity })
     }
 
-    fn release_owner(&self, owner: LeaseOwner, release: &mut dyn FnMut(EntityId)) {
+    /// removes the leases of `owner`, handing each entity to `release`
+    pub(crate) fn release_owner(&self, owner: LeaseOwner, mut release: impl FnMut(EntityId)) {
         let mut leases = self.leases.borrow_mut();
         let mut index = 0;
 

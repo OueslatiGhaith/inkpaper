@@ -1,8 +1,8 @@
 use crate::{
     Axis, CanvasPainter, Color, DamageRegion, FrameArena, GlyphBitmap, GlyphCacheError,
     ImageColorMode, ImagePaint, ImageSource, NodeId, NodeKind, Offset, Pixels, Point, Position,
-    Rect, ResolvedTextStyle, ShapeError, callback::CallbackStore, count_metric,
-    entity::EntityStore, flow_axis, visual::VisualNode,
+    Rect, ResolvedTextStyle, ShapeError, callback::CallbackArena, count_metric,
+    entity::EntityArena, flow_axis, visual::VisualNode,
 };
 
 mod canvas;
@@ -208,8 +208,8 @@ impl PaintResources for () {
 
 #[derive(Clone, Copy)]
 struct PaintRuntime<'a> {
-    entities: &'a dyn EntityStore,
-    callbacks: &'a dyn CallbackStore,
+    entities: &'a EntityArena,
+    callbacks: &'a CallbackArena,
 }
 
 impl FrameArena {
@@ -643,8 +643,8 @@ impl FrameArena {
     pub(crate) fn paint_with_runtime<R, P>(
         &self,
         root: NodeId,
-        entities: &dyn EntityStore,
-        callbacks: &dyn CallbackStore,
+        entities: &EntityArena,
+        callbacks: &CallbackArena,
         resources: &mut R,
         painter: &mut P,
     ) -> Result<PaintReport, PaintError<P::Error>>
@@ -669,8 +669,8 @@ impl FrameArena {
     pub(crate) fn paint_with_runtime_and_damage<R, P>(
         &self,
         root: NodeId,
-        entities: &dyn EntityStore,
-        callbacks: &dyn CallbackStore,
+        entities: &EntityArena,
+        callbacks: &CallbackArena,
         resources: &mut R,
         damage: DamageRegion,
         painter: &mut P,
