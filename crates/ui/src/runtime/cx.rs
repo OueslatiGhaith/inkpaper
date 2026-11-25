@@ -1,40 +1,40 @@
 use core::{any::TypeId, cell::Cell};
 
-use super::dependencies::{DependencyStore, NoDependencies, Source};
+use super::dependencies::{Dependencies, Source};
 use crate::{
     EntityId, ReleaseError,
-    callback::CallbackStore,
-    emitter::{EventStore, NoEvents},
-    entity::{EntityStore, LeaseStore, NoLeases, NoReleases, ReleaseStore},
-    global::GlobalStore,
+    callback::CallbackArena,
+    emitter::EventTable,
+    entity::{EntityArena, LeaseTable, ReleaseQueue, no_release_room},
+    global::GlobalArena,
 };
 
 /// the runtime tables that rendering, listeners and entity updates reach through a
 /// [`Context`](crate::Context)
 #[derive(Clone, Copy)]
 pub struct RuntimeCx<'a> {
-    pub(crate) entities: &'a dyn EntityStore,
-    pub(crate) globals: &'a dyn GlobalStore,
-    pub(crate) callbacks: &'a dyn CallbackStore,
+    pub(crate) entities: &'a EntityArena,
+    pub(crate) globals: &'a GlobalArena,
+    pub(crate) callbacks: &'a CallbackArena,
     /// set when every entity needs to render again, such as after the root changed
     pub(crate) all_dirty: &'a Cell<bool>,
     /// what each entity read while rendering
-    pub(crate) dependencies: &'a dyn DependencyStore,
+    pub(crate) dependencies: Option<&'a Dependencies>,
     /// subscriptions, and the events waiting for delivery
-    pub(crate) events: &'a dyn EventStore,
+    pub(crate) events: Option<&'a EventTable>,
     /// the entities borrowed by the references contexts handed out
-    pub(crate) leases: &'a dyn LeaseStore,
+    pub(crate) leases: Option<&'a LeaseTable>,
     /// the entities released and waiting to be dropped
-    pub(crate) releases: &'a dyn ReleaseStore,
+    pub(crate) releases: Option<&'a ReleaseQueue>,
     /// the entity being rendered, which owns the callbacks registered meanwhile
     pub(crate) rendering: Option<EntityId>,
 }
 
 impl<'a> RuntimeCx<'a> {
     pub(crate) fn new(
-        entities: &'a dyn EntityStore,
-        globals: &'a dyn GlobalStore,
-        callbacks: &'a dyn CallbackStore,
+        entities: &'a EntityArena,
+        globals: &'a GlobalArena,
+        callbacks: &'a CallbackArena,
         all_dirty: &'a Cell<bool>,
     ) -> Self {
         Self {
@@ -42,24 +42,33 @@ impl<'a> RuntimeCx<'a> {
             globals,
             callbacks,
             all_dirty,
-            dependencies: &NoDependencies,
-            events: &NoEvents,
-            leases: &NoLeases,
-            releases: &NoReleases,
+            dependencies: None,
+            events: None,
+            leases: None,
+            releases: None,
             rendering: None,
         }
     }
 
-    pub(crate) fn with_events(self, events: &'a dyn EventStore) -> Self {
-        Self { events, ..self }
+    pub(crate) fn with_events(self, events: &'a EventTable) -> Self {
+        Self {
+            events: Some(events),
+            ..self
+        }
     }
 
-    pub(crate) fn with_leases(self, leases: &'a dyn LeaseStore) -> Self {
-        Self { leases, ..self }
+    pub(crate) fn with_leases(self, leases: &'a LeaseTable) -> Self {
+        Self {
+            leases: Some(leases),
+            ..self
+        }
     }
 
-    pub(crate) fn with_releases(self, releases: &'a dyn ReleaseStore) -> Self {
-        Self { releases, ..self }
+    pub(crate) fn with_releases(self, releases: &'a ReleaseQueue) -> Self {
+        Self {
+            releases: Some(releases),
+            ..self
+        }
     }
 
     /// queues `entity` to be dropped once nothing borrows it and it isn't mounted
@@ -68,12 +77,15 @@ impl<'a> RuntimeCx<'a> {
             return Err(ReleaseError::InvalidEntity);
         }
 
-        self.releases.push(entity)
+        let Some(releases) = self.releases else {
+            return Err(no_release_room());
+        };
+        releases.push(entity)
     }
 
-    pub(crate) fn with_dependencies(self, dependencies: &'a dyn DependencyStore) -> Self {
+    pub(crate) fn with_dependencies(self, dependencies: &'a Dependencies) -> Self {
         Self {
-            dependencies,
+            dependencies: Some(dependencies),
             ..self
         }
     }
@@ -93,8 +105,8 @@ impl<'a> RuntimeCx<'a> {
 
     /// records that the entity being rendered, if any, read `source`
     pub(crate) fn record_read(self, source: Source) {
-        if let Some(reader) = self.rendering {
-            self.dependencies.record(reader, source);
+        if let (Some(reader), Some(dependencies)) = (self.rendering, self.dependencies) {
+            dependencies.record(reader, source);
         }
     }
 
@@ -110,12 +122,15 @@ impl<'a> RuntimeCx<'a> {
     }
 
     fn mark_readers(self, source: Source) {
-        if self.dependencies.is_incomplete() {
+        let Some(dependencies) = self.dependencies else {
+            return;
+        };
+        if dependencies.is_incomplete() {
             self.all_dirty.set(true);
             return;
         }
 
-        self.dependencies.for_each_reader(source, &mut |reader| {
+        dependencies.for_each_reader(source, |reader| {
             // a render that changes what it read already sees the change
             if Some(reader) != self.rendering {
                 self.entities.mark_dirty(reader);

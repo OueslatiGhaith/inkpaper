@@ -23,40 +23,6 @@ pub struct Dependency {
 
 /// the entities and globals each entity read during its last render, so a change
 /// renders again only the entities that read it
-pub trait DependencyStore {
-    /// records that `reader`'s render read `source`
-    fn record(&self, reader: EntityId, source: Source);
-
-    /// forgets what `reader` read, before it renders again or after it leaves the frame
-    fn forget(&self, reader: EntityId);
-
-    /// calls `f` with every entity that read `source`
-    fn for_each_reader(&self, source: Source, f: &mut dyn FnMut(EntityId));
-
-    /// whether a read could not be recorded for lack of space. Until the next full
-    /// rebuild clears the table, a change must render every entity
-    fn is_incomplete(&self) -> bool;
-
-    fn clear(&self);
-}
-
-/// records nothing, for contexts outside a runtime
-pub(crate) struct NoDependencies;
-
-impl DependencyStore for NoDependencies {
-    fn record(&self, _: EntityId, _: Source) {}
-
-    fn forget(&self, _: EntityId) {}
-
-    fn for_each_reader(&self, _: Source, _: &mut dyn FnMut(EntityId)) {}
-
-    fn is_incomplete(&self) -> bool {
-        false
-    }
-
-    fn clear(&self) {}
-}
-
 pub(crate) struct Dependencies {
     edges: RefCell<PoolVec<Dependency>>,
     incomplete: Cell<bool>,
@@ -69,9 +35,7 @@ impl Dependencies {
             incomplete: Cell::new(false),
         }
     }
-}
 
-impl Dependencies {
     /// forgets every read of `source`, once it no longer exists
     pub(crate) fn forget_source(&self, source: Source) {
         let mut edges = self.edges.borrow_mut();
@@ -91,10 +55,9 @@ impl Dependencies {
     pub(crate) fn len(&self) -> usize {
         self.edges.borrow().len()
     }
-}
 
-impl DependencyStore for Dependencies {
-    fn record(&self, reader: EntityId, source: Source) {
+    /// records that `reader`'s render read `source`
+    pub(crate) fn record(&self, reader: EntityId, source: Source) {
         if source == Source::Entity(reader) {
             return;
         }
@@ -110,7 +73,8 @@ impl DependencyStore for Dependencies {
         }
     }
 
-    fn forget(&self, reader: EntityId) {
+    /// forgets what `reader` read, before it renders again or after it leaves the frame
+    pub(crate) fn forget(&self, reader: EntityId) {
         let mut edges = self.edges.borrow_mut();
         let mut kept = 0;
 
@@ -124,7 +88,8 @@ impl DependencyStore for Dependencies {
         edges.truncate(kept);
     }
 
-    fn for_each_reader(&self, source: Source, f: &mut dyn FnMut(EntityId)) {
+    /// calls `f` with every entity that read `source`
+    pub(crate) fn for_each_reader(&self, source: Source, mut f: impl FnMut(EntityId)) {
         for dependency in self.edges.borrow().iter() {
             if dependency.source == source {
                 f(dependency.reader);
@@ -132,11 +97,13 @@ impl DependencyStore for Dependencies {
         }
     }
 
-    fn is_incomplete(&self) -> bool {
+    /// whether a read could not be recorded for lack of space. Until the next full
+    /// rebuild clears the table, a change must render every entity
+    pub(crate) fn is_incomplete(&self) -> bool {
         self.incomplete.get()
     }
 
-    fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.edges.borrow_mut().clear();
         self.incomplete.set(false);
     }
@@ -151,9 +118,9 @@ mod tests {
         EntityId::new(slot, 0)
     }
 
-    fn readers(dependencies: &dyn DependencyStore, source: Source) -> heapless::Vec<EntityId, 8> {
+    fn readers(dependencies: &Dependencies, source: Source) -> heapless::Vec<EntityId, 8> {
         let mut readers = heapless::Vec::new();
-        dependencies.for_each_reader(source, &mut |reader| readers.push(reader).unwrap());
+        dependencies.for_each_reader(source, |reader| readers.push(reader).unwrap());
         readers
     }
 

@@ -250,12 +250,6 @@ impl Render for InkPaperApp {
             (None, None)
         };
 
-        let reader_title = if self.screen() == Screen::Reader {
-            Some(self.reader.title())
-        } else {
-            None
-        };
-
         rsx! {
             <div class="relative w-[480px] h-[800px] bg-white">
                 {#if self.sleeping}
@@ -268,7 +262,7 @@ impl Render for InkPaperApp {
                     <ControlCenter
                         battery={battery}
                         clock={clock}
-                        reader_title={reader_title}
+                        reader_title={(self.screen() == Screen::Reader).then(|| self.reader.title())}
                         panel={self.frontlight_panel}
                     />
                 {/if}

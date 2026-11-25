@@ -388,9 +388,7 @@ fn canvas_paint_returns_first_backend_error_and_stops_drawing() {
 #[test]
 fn canvas_paint_callbacks_validate_kind_borrow_and_generation_and_drop_captures() {
     use crate::callback::CanvasInvokeError;
-    use crate::callback::{
-        CallbackArena, CallbackStore, register_canvas_callback, register_listener,
-    };
+    use crate::callback::{CallbackArena, register_canvas_callback, register_listener};
     use crate::{BorrowKind, entity::RawEntityBorrow};
     use core::any::TypeId;
 

@@ -10,13 +10,9 @@ use syn::{
     spanned::Spanned,
 };
 
-use crate::rsx::element::expand_keyed_child;
-
 use super::{
     RsxNode,
-    element::{
-        expand_child, expand_children_group, expand_children_group_into, expand_children_into,
-    },
+    element::{expand_mount_children, expand_mount_keyed_child, expand_mount_node},
 };
 
 mod kw {
@@ -115,36 +111,29 @@ impl ToTokens for ControlFlow {
     }
 }
 
-pub(super) fn expand_control_flow(control_flow: &ControlFlow) -> syn::Result<TokenStream> {
+pub(super) fn expand_mount_control_flow(
+    control_flow: &ControlFlow,
+    cx: &Ident,
+) -> syn::Result<TokenStream> {
     match control_flow {
-        ControlFlow::If(block) => expand_if(block),
+        ControlFlow::If(block) => expand_mount_if(block, cx),
         ControlFlow::Each(block) => Err(syn::Error::new(
             block.iterable.span(),
             "root `{#each}` is not supported because rsx! must produce exactly one root element",
         )),
-        ControlFlow::Match(block) => expand_match(block),
+        ControlFlow::Match(block) => expand_mount_match(block, cx),
     }
 }
 
-pub(super) fn expand_control_flow_into(
-    parent: TokenStream,
+pub(super) fn expand_mount_control_flow_child(
     control_flow: &ControlFlow,
+    parent: &Ident,
+    cx: &Ident,
 ) -> syn::Result<TokenStream> {
     match control_flow {
-        ControlFlow::If(block) => expand_if_into(parent, block),
-        ControlFlow::Each(block) => expand_each_into(parent, block),
-        ControlFlow::Match(block) => expand_match_into(parent, block),
-    }
-}
-
-pub(super) fn expand_control_flow_group_into(
-    group: TokenStream,
-    control_flow: &ControlFlow,
-) -> syn::Result<TokenStream> {
-    match control_flow {
-        ControlFlow::If(block) => expand_if_group_into(group, block),
-        ControlFlow::Each(block) => expand_each_group_into(group, block),
-        ControlFlow::Match(block) => expand_match_group_into(group, block),
+        ControlFlow::If(block) => expand_mount_if_child(block, parent, cx),
+        ControlFlow::Each(block) => expand_mount_each_child(block, parent, cx),
+        ControlFlow::Match(block) => expand_mount_match_child(block, parent, cx),
     }
 }
 
@@ -218,7 +207,7 @@ fn parse_each_block(parser: &mut RecoverableContext, input: ParseStream) -> Opti
     })
 }
 
-fn expand_if(block: &IfBlock) -> syn::Result<TokenStream> {
+fn expand_mount_if(block: &IfBlock, cx: &Ident) -> syn::Result<TokenStream> {
     let else_branch = block.else_branch.as_ref().ok_or_else(|| {
         syn::Error::new(
             block.condition.span(),
@@ -226,124 +215,65 @@ fn expand_if(block: &IfBlock) -> syn::Result<TokenStream> {
         )
     })?;
 
-    let mut fallback = expand_root_branch(else_branch, block.condition.span(), "`{:else}`")?;
+    let condition = &block.condition;
+    let then_branch = expand_mount_root_branch(&block.then_branch, condition.span(), "`{#if ...}`", cx)?;
 
-    for branch in block.else_ifs.iter().rev() {
-        let condition = &branch.condition;
-        let body = expand_root_branch(&branch.body, condition.span(), "`{:else if ...}`")?;
-
-        fallback = quote! {
-            if #condition {
-                ::inkpaper_ui::Either::Left(#body)
-            } else {
-                ::inkpaper_ui::Either::Right(#fallback)
-            }
-        };
+    let mut else_ifs = TokenStream::new();
+    for branch in &block.else_ifs {
+        let cond = &branch.condition;
+        let body = expand_mount_root_branch(&branch.body, cond.span(), "`{:else if ...}`", cx)?;
+        else_ifs.extend(quote! { else if #cond { #body } });
     }
 
-    let condition = &block.condition;
-    let then_branch = expand_root_branch(&block.then_branch, condition.span(), "`{#if ...}`")?;
+    let else_body = expand_mount_root_branch(else_branch, block.condition.span(), "`{:else}`", cx)?;
 
     Ok(quote! {
         if #condition {
-            ::inkpaper_ui::Either::Left(#then_branch)
-        } else {
-            ::inkpaper_ui::Either::Right(#fallback)
+            #then_branch
+        } #else_ifs else {
+            #else_body
         }
     })
 }
 
-fn expand_if_into(parent: TokenStream, block: &IfBlock) -> syn::Result<TokenStream> {
-    let parent_ident = Ident::new("__inkpaper_rsx_parent", Span::mixed_site());
-    let parent_ref = quote! { #parent_ident };
+fn expand_mount_if_child(
+    block: &IfBlock,
+    parent: &Ident,
+    cx: &Ident,
+) -> syn::Result<TokenStream> {
+    let condition = &block.condition;
+    let then_branch = expand_mount_children(&block.then_branch, parent, cx)?;
 
-    let mut fallback = match &block.else_branch {
-        Some(else_branch) => expand_children_into(parent_ref.clone(), else_branch)?,
-        None => parent_ref.clone(),
-    };
-
-    for branch in block.else_ifs.iter().rev() {
-        let condition = &branch.condition;
-        let body = expand_children_into(parent_ref.clone(), &branch.body)?;
-
-        fallback = quote! {
-            if #condition {
-                ::inkpaper_ui::Either::Left(#body)
-            } else {
-                ::inkpaper_ui::Either::Right(#fallback)
-            }
-        };
+    let mut else_ifs = TokenStream::new();
+    for branch in &block.else_ifs {
+        let cond = &branch.condition;
+        let body = expand_mount_children(&branch.body, parent, cx)?;
+        else_ifs.extend(quote! { else if #cond { #body } });
     }
 
-    let condition = &block.condition;
-    let then_branch = expand_children_into(parent_ref, &block.then_branch)?;
-
-    Ok(quote! {
-        {
-            let #parent_ident = #parent;
-
-            if #condition {
-                ::inkpaper_ui::Either::Left(#then_branch)
-            } else {
-                ::inkpaper_ui::Either::Right(#fallback)
-            }
+    let else_clause = match &block.else_branch {
+        Some(else_branch) => {
+            let body = expand_mount_children(else_branch, parent, cx)?;
+            quote! { else { #body } }
         }
-    })
-}
-
-fn expand_if_group_into(group: TokenStream, block: &IfBlock) -> syn::Result<TokenStream> {
-    let group_ident = Ident::new("__inkpaper_rsx_children", Span::mixed_site());
-    let group_ref = quote! { #group_ident };
-
-    let mut fallback = match &block.else_branch {
-        Some(else_branch) => expand_children_group_into(group_ref.clone(), else_branch)?,
-        None => group_ref.clone(),
+        None => TokenStream::new(),
     };
 
-    for branch in block.else_ifs.iter().rev() {
-        let condition = &branch.condition;
-        let body = expand_children_group_into(group_ref.clone(), &branch.body)?;
-
-        fallback = quote! {
-            if #condition {
-                ::inkpaper_ui::Either::Left(#body)
-            } else {
-                ::inkpaper_ui::Either::Right(#fallback)
-            }
-        };
-    }
-
-    let condition = &block.condition;
-    let then_branch = expand_children_group_into(group_ref, &block.then_branch)?;
-
     Ok(quote! {
-        {
-            let #group_ident = #group;
-
-            if #condition {
-                ::inkpaper_ui::Either::Left(#then_branch)
-            } else {
-                ::inkpaper_ui::Either::Right(#fallback)
-            }
-        }
+        if #condition {
+            #then_branch
+        } #else_ifs #else_clause
     })
 }
 
-fn expand_each_into(parent: TokenStream, block: &EachBlock) -> syn::Result<TokenStream> {
-    let children = expand_each_group_into(quote! { ::inkpaper_ui::NoChildren }, block)?;
-
-    Ok(quote! { ::inkpaper_ui::ParentElementChildrenExt::child_sequence(#parent, #children) })
-}
-
-fn expand_each_group_into(group: TokenStream, block: &EachBlock) -> syn::Result<TokenStream> {
+fn expand_mount_each_child(
+    block: &EachBlock,
+    parent: &Ident,
+    cx: &Ident,
+) -> syn::Result<TokenStream> {
     let body = match &block.key {
-        Some(key) => expand_keyed_each_body(&block.body, key)?,
-        None => expand_children_group(&block.body)?,
-    };
-
-    let fallback = match &block.else_branch {
-        Some(else_branch) => expand_children_group(else_branch)?,
-        None => quote! { ::inkpaper_ui::NoChildren },
+        Some(key) => expand_mount_keyed_each_body(&block.body, key, parent, cx)?,
+        None => expand_mount_children(&block.body, parent, cx)?,
     };
 
     let iterable = &block.iterable;
@@ -361,38 +291,49 @@ fn expand_each_group_into(group: TokenStream, block: &EachBlock) -> syn::Result<
         None => (quote! { #iterable }, quote! { #pattern }),
     };
 
-    Ok(quote! {
-        ::inkpaper_ui::ChildrenExt::each(
-            #group,
-            #items,
-            |#binding| {
+    match &block.else_branch {
+        Some(else_branch) => {
+            let fallback = expand_mount_children(else_branch, parent, cx)?;
+            let empty = Ident::new("__inkpaper_rsx_empty", Span::mixed_site());
+
+            Ok(quote! {
+                {
+                    let mut #empty = true;
+                    for #binding in #items {
+                        #empty = false;
+                        #body
+                    }
+                    if #empty {
+                        #fallback
+                    }
+                }
+            })
+        }
+        None => Ok(quote! {
+            for #binding in #items {
                 #body
-            },
-            || {
-                #fallback
-            },
-        )
-    })
+            }
+        }),
+    }
 }
 
-fn expand_keyed_each_body(body: &[RsxNode], key: &Expr) -> syn::Result<TokenStream> {
-    let child = match body {
-        [] => {
-            return Err(syn::Error::new(
-                key.span(),
-                "keyed `{#each}` requires one root element",
-            ));
-        }
-        [child] => expand_keyed_child(child, key)?,
-        [_, second, ..] => {
-            return Err(syn::Error::new_spanned(
-                second,
-                "keyed `{#each}` requires exactly one root element",
-            ));
-        }
-    };
-
-    Ok(quote! { ::inkpaper_ui::ChildrenExt::child(::inkpaper_ui::NoChildren, #child) })
+fn expand_mount_keyed_each_body(
+    body: &[RsxNode],
+    key: &Expr,
+    parent: &Ident,
+    cx: &Ident,
+) -> syn::Result<TokenStream> {
+    match body {
+        [] => Err(syn::Error::new(
+            key.span(),
+            "keyed `{#each}` requires one root element",
+        )),
+        [child] => expand_mount_keyed_child(child, key, parent, cx),
+        [_, second, ..] => Err(syn::Error::new_spanned(
+            second,
+            "keyed `{#each}` requires exactly one root element",
+        )),
+    }
 }
 
 fn parse_match_block(parser: &mut RecoverableContext, input: ParseStream) -> Option<MatchBlock> {
@@ -438,109 +379,62 @@ fn parse_match_block(parser: &mut RecoverableContext, input: ParseStream) -> Opt
     Some(MatchBlock { scrutinee, arms })
 }
 
-fn expand_match(block: &MatchBlock) -> syn::Result<TokenStream> {
-    let bodies = block
-        .arms
-        .iter()
-        .map(|arm| expand_root_branch(&arm.body, arm.pattern.span(), "`{:case ...}`"))
-        .collect::<syn::Result<Vec<_>>>()?;
+fn expand_mount_match(block: &MatchBlock, cx: &Ident) -> syn::Result<TokenStream> {
+    let mut arms = TokenStream::new();
 
-    Ok(expand_match_arms(block, bodies))
-}
+    for arm in &block.arms {
+        let pattern = &arm.pattern;
+        let guard = arm.guard.as_ref().map(|guard| quote! { if #guard });
+        let body = expand_mount_root_branch(&arm.body, arm.pattern.span(), "`{:case ...}`", cx)?;
 
-fn expand_match_into(parent: TokenStream, block: &MatchBlock) -> syn::Result<TokenStream> {
-    let parent_ident = Ident::new("__inkpaper_rsx_parent", Span::mixed_site());
-    let parent_ref = quote! { #parent_ident };
-
-    let bodies = block
-        .arms
-        .iter()
-        .map(|arm| expand_children_into(parent_ref.clone(), &arm.body))
-        .collect::<syn::Result<Vec<_>>>()?;
-
-    let arms = expand_match_arms(block, bodies);
-
-    Ok(quote! {
-        {
-            let #parent_ident = #parent;
-
-            #arms
-        }
-    })
-}
-
-fn expand_match_group_into(group: TokenStream, block: &MatchBlock) -> syn::Result<TokenStream> {
-    let group_ident = Ident::new("__inkpaper_rsx_children", Span::mixed_site());
-    let group_ref = quote! { #group_ident };
-
-    let bodies = block
-        .arms
-        .iter()
-        .map(|arm| expand_children_group_into(group_ref.clone(), &arm.body))
-        .collect::<syn::Result<Vec<_>>>()?;
-
-    let arms = expand_match_arms(block, bodies);
-
-    Ok(quote! {
-        {
-            let #group_ident = #group;
-
-            #arms
-        }
-    })
-}
-
-/// a Rust `match` whose arms are wrapped in nested `Either`s, so every arm has one type.
-/// The nesting is a balanced tree, keeping it log2 of the arm count deep
-fn expand_match_arms(block: &MatchBlock, bodies: Vec<TokenStream>) -> TokenStream {
-    let count = bodies.len();
-
-    let arms = block
-        .arms
-        .iter()
-        .zip(bodies)
-        .enumerate()
-        .map(|(index, (arm, body))| {
-            let pattern = &arm.pattern;
-            let guard = arm.guard.as_ref().map(|guard| quote! { if #guard });
-            let body = wrap_either(body, index, count);
-
-            quote! { #pattern #guard => #body, }
-        });
+        arms.extend(quote! { #pattern #guard => #body, });
+    }
 
     let scrutinee = &block.scrutinee;
 
-    quote! {
+    Ok(quote! {
         match #scrutinee {
-            #(#arms)*
+            #arms
         }
-    }
+    })
 }
 
-/// wraps the body of arm `index` of `count` in the `Either` path that leads to it
-fn wrap_either(body: TokenStream, index: usize, count: usize) -> TokenStream {
-    if count <= 1 {
-        return body;
+fn expand_mount_match_child(
+    block: &MatchBlock,
+    parent: &Ident,
+    cx: &Ident,
+) -> syn::Result<TokenStream> {
+    let mut arms = TokenStream::new();
+
+    for arm in &block.arms {
+        let pattern = &arm.pattern;
+        let guard = arm.guard.as_ref().map(|guard| quote! { if #guard });
+        let body = expand_mount_children(&arm.body, parent, cx)?;
+
+        arms.extend(quote! { #pattern #guard => { #body } });
     }
 
-    let left = count.div_ceil(2);
+    let scrutinee = &block.scrutinee;
 
-    if index < left {
-        let inner = wrap_either(body, index, left);
-        quote! { ::inkpaper_ui::Either::Left(#inner) }
-    } else {
-        let inner = wrap_either(body, index - left, count - left);
-        quote! { ::inkpaper_ui::Either::Right(#inner) }
-    }
+    Ok(quote! {
+        match #scrutinee {
+            #arms
+        }
+    })
 }
 
-fn expand_root_branch(body: &[RsxNode], span: Span, branch_name: &str) -> syn::Result<TokenStream> {
+fn expand_mount_root_branch(
+    body: &[RsxNode],
+    span: Span,
+    branch_name: &str,
+    cx: &Ident,
+) -> syn::Result<TokenStream> {
     match body {
         [] => Err(syn::Error::new(
             span,
             format!("{branch_name} requires a renderable root element"),
         )),
-        [child] => expand_child(child),
+        [child] => expand_mount_node(child, cx),
         [_, second, ..] => Err(syn::Error::new_spanned(
             second,
             format!(

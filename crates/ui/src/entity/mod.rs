@@ -10,13 +10,13 @@ mod release_tests;
 
 pub(crate) use arena::EntityArena;
 pub use arena::{EntityAccessError, EntityAllocError};
-pub(crate) use lease::{LeaseOwner, LeaseStore, LeaseTable, NoLeases};
+pub(crate) use lease::{LeaseOwner, LeaseTable, no_lease_room};
 pub use release::ReleaseError;
-pub(crate) use release::{NoReleases, ReleaseQueue, ReleaseStore};
+pub(crate) use release::{ReleaseQueue, no_release_room};
 
 #[cfg(test)]
 pub(crate) use store::drop_value;
-pub(crate) use store::{EntityStore, RawEntityBorrow, RawEntityReservation, create_entity};
+pub(crate) use store::{RawEntityBorrow, RawEntityReservation, create_entity};
 
 use core::{any::TypeId, marker::PhantomData};
 
@@ -99,9 +99,14 @@ impl<T: 'static> Entity<T> {
 
         // one lease per context and entity keeps the entity borrowed. A second read
         // through the same context gives its borrow back at once
-        if cx.runtime.leases.holds(cx.lease_owner, self.id) {
+        let Some(leases) = cx.runtime.leases else {
             entities.release(self.id, BorrowKind::Shared);
-        } else if let Err(error) = cx.runtime.leases.push(cx.lease_owner, self.id) {
+            return Err(EntityAccessError::OutOfMemory(no_lease_room()));
+        };
+
+        if leases.holds(cx.lease_owner, self.id) {
+            entities.release(self.id, BorrowKind::Shared);
+        } else if let Err(error) = leases.push(cx.lease_owner, self.id) {
             entities.release(self.id, BorrowKind::Shared);
 
             return Err(EntityAccessError::OutOfMemory(error));

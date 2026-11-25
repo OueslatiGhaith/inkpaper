@@ -7,7 +7,7 @@ use crate::{
 
 #[cfg(test)]
 use super::{Entity, RawEntityBorrow, drop_value};
-use super::{EntityId, EntityStore, RawEntityReservation};
+use super::{EntityId, RawEntityReservation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityAllocError {
@@ -149,10 +149,8 @@ impl EntityArena {
     }
 }
 
-// SAFETY: values never move, type and state checks precede access, and every returned
-// pointer has a tracked borrow. Reservations become accessible only through commit
-unsafe impl EntityStore for EntityArena {
-    fn reserve(
+impl EntityArena {
+    pub(crate) fn reserve(
         &self,
         layout: Layout,
         type_id: TypeId,
@@ -183,20 +181,24 @@ unsafe impl EntityStore for EntityArena {
         })
     }
 
-    unsafe fn commit(&self, entity: EntityId) {
+    /// # Safety
+    ///
+    /// the reserved storage for this entity must contain a valid initialized value
+    /// of the type registered during `reserve`
+    pub(crate) unsafe fn commit(&self, entity: EntityId) {
         debug_assert!(self.meta(entity).is_some());
 
         // SAFETY: the caller initialized the reserved value
         unsafe { self.slots.commit(entity.slot()) };
     }
 
-    fn abandon(&self, entity: EntityId) {
+    pub(crate) fn abandon(&self, entity: EntityId) {
         if self.meta(entity).is_some() {
             self.slots.abandon(entity.slot());
         }
     }
 
-    fn borrow(
+    pub(crate) fn borrow(
         &self,
         entity: EntityId,
         type_id: TypeId,
@@ -225,15 +227,18 @@ unsafe impl EntityStore for EntityArena {
         Ok(ptr)
     }
 
-    fn release(&self, entity: EntityId, kind: BorrowKind) {
+    pub(crate) fn release(&self, entity: EntityId, kind: BorrowKind) {
         self.slots.release(usize::from(entity.slot()), kind);
     }
 
-    fn contains(&self, entity: EntityId) -> bool {
+    /// whether `entity` still names a value, committed or being built
+    pub(crate) fn contains(&self, entity: EntityId) -> bool {
         self.meta(entity).is_some()
     }
 
-    fn remove(&self, entity: EntityId) -> Result<(), EntityAccessError> {
+    /// drops the entity's value and frees its slot for reuse. Its id, and every copy
+    /// of it, no longer reaches anything. Fails while the entity is borrowed
+    pub(crate) fn remove(&self, entity: EntityId) -> Result<(), EntityAccessError> {
         if self.meta(entity).is_none() {
             return Err(EntityAccessError::InvalidEntity);
         }
@@ -255,49 +260,59 @@ unsafe impl EntityStore for EntityArena {
         Ok(())
     }
 
-    fn mark_dirty(&self, entity: EntityId) {
+    /// records that the entity changed and needs to render again. Ignores invalid ids
+    pub(crate) fn mark_dirty(&self, entity: EntityId) {
         self.update_meta(entity, |meta| meta.dirty = true);
     }
 
+    /// whether the entity was notified since the invalidation was last taken
     #[cfg(test)]
-    fn is_dirty(&self, entity: EntityId) -> bool {
+    pub(crate) fn is_dirty(&self, entity: EntityId) -> bool {
         self.meta(entity).is_some_and(|meta| meta.dirty)
     }
 
-    fn has_dirty(&self) -> bool {
+    /// whether any entity is dirty
+    pub(crate) fn has_dirty(&self) -> bool {
         self.slots.position(|meta| meta.dirty).is_some()
     }
 
-    fn take_dirty(&self) {
+    /// moves the dirty entities to pending. They render in the next rebuild, but no
+    /// longer count as a new invalidation
+    pub(crate) fn take_dirty(&self) {
         self.slots.for_each_meta_mut(|meta| {
             meta.pending |= meta.dirty;
             meta.dirty = false;
         });
     }
 
-    fn needs_render(&self, entity: EntityId) -> bool {
+    /// whether the entity is dirty or pending, so a rebuild must render it again
+    pub(crate) fn needs_render(&self, entity: EntityId) -> bool {
         self.meta(entity)
             .is_some_and(|meta| meta.dirty || meta.pending)
     }
 
-    fn has_pending_render(&self) -> bool {
+    /// whether any entity is dirty or pending
+    pub(crate) fn has_pending_render(&self) -> bool {
         self.slots
             .position(|meta| meta.dirty || meta.pending)
             .is_some()
     }
 
-    fn mark_rendered(&self, entity: EntityId) {
+    /// clears the entity's dirty and pending state, just before it renders
+    pub(crate) fn mark_rendered(&self, entity: EntityId) {
         self.update_meta(entity, |meta| {
             meta.dirty = false;
             meta.pending = false;
         });
     }
 
-    fn clear_pending(&self) {
+    /// forgets pending entities that a rebuild didn't render, because they aren't mounted
+    pub(crate) fn clear_pending(&self) {
         self.slots.for_each_meta_mut(|meta| meta.pending = false);
     }
 
-    fn clear_dirty(&self) {
+    /// clears every dirty and pending entity
+    pub(crate) fn clear_dirty(&self) {
         self.slots.for_each_meta_mut(|meta| {
             meta.dirty = false;
             meta.pending = false;

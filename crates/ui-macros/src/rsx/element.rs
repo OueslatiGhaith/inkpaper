@@ -1,7 +1,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use rstml::node::{Node, NodeBlock};
-use syn::{Expr, Stmt};
+use syn::{Expr, Ident, Stmt};
 
 use crate::rsx::{
     RsxElement, RsxNode,
@@ -10,7 +10,7 @@ use crate::rsx::{
         parse_intrinsic_attributes, parse_svg_attributes,
     },
     class::{apply_interaction_classes, has_interaction_variants},
-    control_flow::{expand_control_flow, expand_control_flow_group_into, expand_control_flow_into},
+    control_flow::{expand_mount_control_flow, expand_mount_control_flow_child},
 };
 
 use super::{
@@ -19,42 +19,37 @@ use super::{
     component::{expand_component, is_component_tag},
 };
 
-pub(super) fn expand_element(element: &RsxElement) -> syn::Result<TokenStream> {
-    expand_element_with_implicit_id(element, None)
-}
-
-fn expand_element_with_implicit_id(
+/// expands an element to a `Result<NodeId, MountError>` expression mounting into `cx`
+pub(super) fn expand_mount_element(
     element: &RsxElement,
     implicit_id: Option<&Expr>,
+    cx: &Ident,
 ) -> syn::Result<TokenStream> {
     let name = element.name().to_string();
 
     match name.as_str() {
-        "div" => expand_div(element, implicit_id),
-        "text" => expand_text(element, implicit_id),
-        "image" => expand_image(element, implicit_id),
-        "svg" => expand_svg(element, implicit_id),
-
-        _ if is_component_tag(&name) => {
-            let children = if element.children().is_empty() {
-                None
-            } else {
-                Some(expand_children_group(element.children())?)
-            };
-
-            let expression = expand_component(element, children)?;
-
-            match implicit_id {
-                Some(id) => Ok(quote! {
-                    ::inkpaper_ui::IdentifiableElementExt::id(
-                        ::inkpaper_ui::IntoElement::into_element(#expression),
-                        #id,
-                    )
-                }),
-                None => Ok(expression),
-            }
+        "div" => expand_mount_div(element, implicit_id, cx),
+        "text" => {
+            let expr = expand_text(element, implicit_id)?;
+            Ok(quote! { ::inkpaper_ui::Element::mount(#expr, #cx) })
         }
-
+        "image" => {
+            let expr = expand_image(element, implicit_id)?;
+            Ok(quote! { ::inkpaper_ui::Element::mount(#expr, #cx) })
+        }
+        "svg" => {
+            let expr = expand_svg(element, implicit_id)?;
+            Ok(quote! { ::inkpaper_ui::Element::mount(#expr, #cx) })
+        }
+        _ if is_component_tag(&name) => {
+            let expr = expand_component_element(element, implicit_id)?;
+            Ok(quote! {
+                ::inkpaper_ui::Element::mount(
+                    ::inkpaper_ui::IntoElement::into_element(#expr),
+                    #cx,
+                )
+            })
+        }
         _ => Err(syn::Error::new_spanned(
             element,
             format!("unsupported rsx! element <{name}>"),
@@ -62,18 +57,119 @@ fn expand_element_with_implicit_id(
     }
 }
 
-fn expand_div(element: &RsxElement, implicit_id: Option<&Expr>) -> syn::Result<TokenStream> {
+fn expand_mount_element_as_child(
+    element: &RsxElement,
+    implicit_id: Option<&Expr>,
+    parent: &Ident,
+    cx: &Ident,
+) -> syn::Result<TokenStream> {
+    let name = element.name().to_string();
+
+    match name.as_str() {
+        "div" if element.children().is_empty() => {
+            let expr = expand_div_shell(element, implicit_id)?;
+            Ok(quote! { ::inkpaper_ui::mount_child(#parent, #expr, #cx)?; })
+        }
+        "div" => {
+            let mount = expand_mount_div(element, implicit_id, cx)?;
+            let child = Ident::new("__inkpaper_rsx_child", Span::mixed_site());
+            Ok(quote! {
+                {
+                    let #child = #mount?;
+                    ::inkpaper_ui::append_child(#parent, #child, #cx);
+                }
+            })
+        }
+        "text" => {
+            let expr = expand_text(element, implicit_id)?;
+            Ok(quote! { ::inkpaper_ui::mount_child(#parent, #expr, #cx)?; })
+        }
+        "image" => {
+            let expr = expand_image(element, implicit_id)?;
+            Ok(quote! { ::inkpaper_ui::mount_child(#parent, #expr, #cx)?; })
+        }
+        "svg" => {
+            let expr = expand_svg(element, implicit_id)?;
+            Ok(quote! { ::inkpaper_ui::mount_child(#parent, #expr, #cx)?; })
+        }
+        _ if is_component_tag(&name) => {
+            let expr = expand_component_element(element, implicit_id)?;
+            Ok(quote! { ::inkpaper_ui::mount_child(#parent, #expr, #cx)?; })
+        }
+        _ => Err(syn::Error::new_spanned(
+            element,
+            format!("unsupported rsx! element <{name}>"),
+        )),
+    }
+}
+
+fn expand_component_element(
+    element: &RsxElement,
+    implicit_id: Option<&Expr>,
+) -> syn::Result<TokenStream> {
+    let children = if element.children().is_empty() {
+        None
+    } else {
+        let child_parent = Ident::new("__inkpaper_rsx_parent", Span::mixed_site());
+        let child_cx = Ident::new("__inkpaper_rsx_cx", Span::mixed_site());
+        let stmts = expand_mount_children(element.children(), &child_parent, &child_cx)?;
+
+        Some(quote! {
+            ::inkpaper_ui::ChildrenFn::new(
+                |#child_parent: ::inkpaper_ui::NodeId, #child_cx: &mut ::inkpaper_ui::MountCx<'_>| -> ::core::result::Result<(), ::inkpaper_ui::MountError> {
+                    #stmts
+                    ::core::result::Result::Ok(())
+                }
+            )
+        })
+    };
+
+    let expression = expand_component(element, children)?;
+
+    match implicit_id {
+        Some(id) => Ok(quote! {
+            ::inkpaper_ui::IdentifiableElementExt::id(
+                ::inkpaper_ui::IntoElement::into_element(#expression),
+                #id,
+            )
+        }),
+        None => Ok(expression),
+    }
+}
+
+fn expand_div_shell(element: &RsxElement, implicit_id: Option<&Expr>) -> syn::Result<TokenStream> {
     let attributes = parse_intrinsic_attributes(element)?;
 
-    let expression = apply_intrinsic_attributes(
+    apply_intrinsic_attributes(
         quote! { ::inkpaper_ui::div() },
         attributes,
         ClassTarget::Div,
         implicit_id,
         element,
-    )?;
+    )
+}
 
-    expand_children_into(expression, element.children())
+fn expand_mount_div(
+    element: &RsxElement,
+    implicit_id: Option<&Expr>,
+    cx: &Ident,
+) -> syn::Result<TokenStream> {
+    let shell = expand_div_shell(element, implicit_id)?;
+
+    if element.children().is_empty() {
+        return Ok(quote! { ::inkpaper_ui::Element::mount(#shell, #cx) });
+    }
+
+    let parent = Ident::new("__inkpaper_rsx_parent", Span::mixed_site());
+    let children = expand_mount_children(element.children(), &parent, cx)?;
+
+    Ok(quote! {
+        {
+            let #parent = ::inkpaper_ui::Element::mount(#shell, #cx)?;
+            #children
+            ::core::result::Result::Ok::<::inkpaper_ui::NodeId, ::inkpaper_ui::MountError>(#parent)
+        }
+    })
 }
 
 fn expand_text(element: &RsxElement, implicit_id: Option<&Expr>) -> syn::Result<TokenStream> {
@@ -230,60 +326,61 @@ fn apply_intrinsic_attributes(
     Ok(expression)
 }
 
-pub(super) fn expand_children_group(children: &[RsxNode]) -> syn::Result<TokenStream> {
-    expand_children_group_into(quote! { ::inkpaper_ui::NoChildren }, children)
-}
-
-pub(super) fn expand_children_group_into(
-    mut group: TokenStream,
+/// expands child nodes to statements mounting each into `parent` via `cx`
+pub(super) fn expand_mount_children(
     children: &[RsxNode],
+    parent: &Ident,
+    cx: &Ident,
 ) -> syn::Result<TokenStream> {
+    let mut statements = TokenStream::new();
+
     for child in children {
-        group = expand_child_group_into(group, child)?;
+        statements.extend(expand_mount_child(child, parent, cx)?);
     }
 
-    Ok(group)
+    Ok(statements)
 }
 
-fn expand_child_group_into(group: TokenStream, node: &RsxNode) -> syn::Result<TokenStream> {
-    match node {
-        Node::Fragment(fragment) => expand_children_group_into(group, fragment.children()),
-        Node::Custom(control_flow) => expand_control_flow_group_into(group, control_flow),
-        _ => {
-            let child = expand_child(node)?;
-
-            Ok(quote! { ::inkpaper_ui::ChildrenExt::child(#group, #child) })
-        }
-    }
-}
-
-pub(super) fn expand_children_into(
-    mut parent: TokenStream,
-    children: &[RsxNode],
+fn expand_mount_child(
+    node: &RsxNode,
+    parent: &Ident,
+    cx: &Ident,
 ) -> syn::Result<TokenStream> {
-    for child in children {
-        parent = expand_child_into(parent, child)?;
-    }
-
-    Ok(parent)
-}
-
-fn expand_child_into(parent: TokenStream, node: &RsxNode) -> syn::Result<TokenStream> {
     match node {
-        Node::Fragment(fragment) => expand_children_into(parent, fragment.children()),
-        Node::Custom(control_flow) => expand_control_flow_into(parent, control_flow),
-        _ => {
-            let child = expand_child(node)?;
-            Ok(quote! { ::inkpaper_ui::ParentElement::child(#parent, #child) })
+        Node::Fragment(fragment) => expand_mount_children(fragment.children(), parent, cx),
+        Node::Custom(control_flow) => expand_mount_control_flow_child(control_flow, parent, cx),
+        Node::Element(element) => expand_mount_element_as_child(element, None, parent, cx),
+        Node::Block(block) => {
+            let expr = expand_block(block)?;
+            Ok(quote! { ::inkpaper_ui::mount_child(#parent, #expr, #cx)?; })
         }
+        Node::Text(_) => Err(syn::Error::new_spanned(
+            node,
+            "quoted text must be wrapped in a <text> element",
+        )),
+        Node::RawText(_) => Err(syn::Error::new_spanned(
+            node,
+            "bare text is not supported. Use <text>\"...\"</text>",
+        )),
+        _ => Err(syn::Error::new_spanned(node, "unsupported rsx! child")),
     }
 }
 
-pub(super) fn expand_child(node: &RsxNode) -> syn::Result<TokenStream> {
+/// expands a single root node (inside a root `{#if}` / `{#match}` branch) to a
+/// `Result<NodeId, MountError>` expression
+pub(super) fn expand_mount_node(node: &RsxNode, cx: &Ident) -> syn::Result<TokenStream> {
     match node {
-        Node::Element(element) => expand_element(element),
-        Node::Custom(control_flow) => expand_control_flow(control_flow),
-        Node::Block(block) => expand_block(block),
+        Node::Element(element) => expand_mount_element(element, None, cx),
+        Node::Custom(control_flow) => expand_mount_control_flow(control_flow, cx),
+        Node::Block(block) => {
+            let expr = expand_block(block)?;
+            Ok(quote! {
+                ::inkpaper_ui::Element::mount(
+                    ::inkpaper_ui::IntoElement::into_element(#expr),
+                    #cx,
+                )
+            })
+        }
         Node::Fragment(_) => Err(syn::Error::new_spanned(
             node,
             "fragment cannot be used as a standalone element",
@@ -300,17 +397,24 @@ pub(super) fn expand_child(node: &RsxNode) -> syn::Result<TokenStream> {
     }
 }
 
-pub(super) fn expand_keyed_child(node: &RsxNode, key: &Expr) -> syn::Result<TokenStream> {
+pub(super) fn expand_mount_keyed_child(
+    node: &RsxNode,
+    key: &Expr,
+    parent: &Ident,
+    cx: &Ident,
+) -> syn::Result<TokenStream> {
     match node {
-        Node::Element(element) => expand_element_with_implicit_id(element, Some(key)),
+        Node::Element(element) => expand_mount_element_as_child(element, Some(key), parent, cx),
         _ => {
-            let child = expand_child(node)?;
+            let mount = expand_mount_node(node, cx)?;
+            let child = Ident::new("__inkpaper_rsx_child", Span::mixed_site());
 
             Ok(quote! {
-                ::inkpaper_ui::IdentifiableElementExt::id(
-                    ::inkpaper_ui::IntoElement::into_element(#child),
-                    #key,
-                )
+                {
+                    let #child = #mount?;
+                    ::inkpaper_ui::identify_node(#child, #key, #cx)?;
+                    ::inkpaper_ui::append_child(#parent, #child, #cx);
+                }
             })
         }
     }

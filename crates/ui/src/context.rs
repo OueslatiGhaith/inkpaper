@@ -6,8 +6,8 @@ use crate::{
     callback::{CallbackAllocError, register_canvas_callback, register_listener},
     emitter::{self, Handler},
     entity::{LeaseOwner, create_entity},
-    global::{Global, GlobalAccessError, GlobalMut, GlobalRef, GlobalStore},
-    runtime::{DependencyStore, Source},
+    global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef},
+    runtime::{Dependencies, Source},
 };
 
 pub struct Context<'a, T> {
@@ -23,7 +23,9 @@ impl<'a, T> Context<'a, T> {
         Self {
             entity,
             runtime,
-            lease_owner: runtime.leases.next_owner(),
+            lease_owner: runtime
+                .leases
+                .map_or(LeaseOwner(0), |leases| leases.next_owner()),
         }
     }
 
@@ -225,28 +227,28 @@ impl<T> Drop for Context<'_, T> {
     fn drop(&mut self) {
         let entities = self.runtime.entities;
 
-        self.runtime
-            .leases
-            .release_owner(self.lease_owner, &mut |entity| {
+        if let Some(leases) = self.runtime.leases {
+            leases.release_owner(self.lease_owner, |entity| {
                 entities.release(entity, BorrowKind::Shared);
             });
+        }
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct AppContext<'a> {
-    globals: &'a dyn GlobalStore,
+    globals: &'a GlobalArena,
     /// records the global reads of the entity being rendered
-    dependencies: &'a dyn DependencyStore,
+    dependencies: Option<&'a Dependencies>,
     rendering: Option<EntityId>,
 }
 
 impl<'a> AppContext<'a> {
     #[cfg(test)]
-    pub(crate) const fn from_globals(globals: &'a dyn GlobalStore) -> Self {
+    pub(crate) const fn from_globals(globals: &'a GlobalArena) -> Self {
         Self {
             globals,
-            dependencies: &crate::runtime::NoDependencies,
+            dependencies: None,
             rendering: None,
         }
     }
@@ -263,9 +265,8 @@ impl<'a> AppContext<'a> {
     where
         G: Global,
     {
-        if let Some(reader) = self.rendering {
-            self.dependencies
-                .record(reader, Source::Global(TypeId::of::<G>()));
+        if let (Some(reader), Some(dependencies)) = (self.rendering, self.dependencies) {
+            dependencies.record(reader, Source::Global(TypeId::of::<G>()));
         }
 
         GlobalRef::acquire(self.globals)
@@ -289,7 +290,6 @@ mod tests {
     use core::cell::Cell;
 
     use super::*;
-    use crate::entity::EntityStore;
 
     struct Root;
 

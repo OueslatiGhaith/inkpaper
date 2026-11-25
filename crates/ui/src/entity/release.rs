@@ -23,22 +23,12 @@ pub enum ReleaseError {
     OutOfMemory(OutOfMemory),
 }
 
-/// the entities waiting to be dropped
-pub(crate) trait ReleaseStore {
-    /// queues `entity`, once
-    fn push(&self, entity: EntityId) -> Result<(), ReleaseError>;
-}
-
-/// holds nothing, for contexts outside a runtime. Every release fails
-pub(crate) struct NoReleases;
-
-impl ReleaseStore for NoReleases {
-    fn push(&self, _: EntityId) -> Result<(), ReleaseError> {
-        Err(ReleaseError::OutOfMemory(OutOfMemory {
-            table: Table::Entities,
-            requested: core::mem::size_of::<EntityId>(),
-        }))
-    }
+/// the error for a release when a context has no release queue
+pub(crate) fn no_release_room() -> ReleaseError {
+    ReleaseError::OutOfMemory(OutOfMemory {
+        table: Table::Entities,
+        requested: core::mem::size_of::<EntityId>(),
+    })
 }
 
 /// the runtime's queued releases. They count as entity memory
@@ -64,6 +54,20 @@ impl ReleaseQueue {
         self.pending.borrow().is_empty()
     }
 
+    /// queues `entity`, once
+    pub(crate) fn push(&self, entity: EntityId) -> Result<(), ReleaseError> {
+        if self.root.get() == Some(entity) {
+            return Err(ReleaseError::Root);
+        }
+
+        let mut pending = self.pending.borrow_mut();
+        if pending.contains(&entity) {
+            return Ok(());
+        }
+
+        pending.try_push(entity).map_err(ReleaseError::OutOfMemory)
+    }
+
     /// calls `drop` with each queued entity, and keeps those it returns false for
     pub(crate) fn drain(&self, mut drop: impl FnMut(EntityId) -> bool) {
         let mut index = 0;
@@ -83,20 +87,5 @@ impl ReleaseQueue {
                 index += 1;
             }
         }
-    }
-}
-
-impl ReleaseStore for ReleaseQueue {
-    fn push(&self, entity: EntityId) -> Result<(), ReleaseError> {
-        if self.root.get() == Some(entity) {
-            return Err(ReleaseError::Root);
-        }
-
-        let mut pending = self.pending.borrow_mut();
-        if pending.contains(&entity) {
-            return Ok(());
-        }
-
-        pending.try_push(entity).map_err(ReleaseError::OutOfMemory)
     }
 }

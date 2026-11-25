@@ -96,46 +96,6 @@ impl FrameArena {
     }
 }
 
-pub(crate) trait FrameStore {
-    fn push_div(&mut self, style: Style) -> Result<NodeId, MountError>;
-
-    fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError>;
-
-    fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError>;
-
-    fn push_svg(
-        &mut self,
-        source: SvgSource,
-        style: SvgStyle,
-        text_style: TextStyle,
-    ) -> Result<NodeId, MountError>;
-
-    fn push_canvas(&mut self, draw: CanvasDraw, style: CanvasStyle) -> Result<NodeId, MountError>;
-
-    fn push_entity(
-        &mut self,
-        entity: EntityId,
-        render: EntityRenderFn,
-    ) -> Result<NodeId, MountError>;
-
-    fn append_child(&mut self, parent: NodeId, child: NodeId);
-
-    fn identify(&mut self, node: NodeId, id: ElementId) -> Result<(), MountError>;
-
-    fn apply_interactivity(
-        &mut self,
-        node: NodeId,
-        interactivity: StatefulInteractivity,
-    ) -> Result<(), MountError>;
-
-    fn bind_event(
-        &mut self,
-        node: NodeId,
-        event_type: TypeId,
-        callback: CallbackId,
-    ) -> Result<(), MountError>;
-}
-
 /// the index of the next entry of a table that holds one entry per node of a kind, so
 /// it never outnumbers the nodes
 fn table_index(len: usize) -> Result<u16, MountError> {
@@ -153,10 +113,8 @@ impl FrameArena {
 
         Ok(index)
     }
-}
 
-impl FrameStore for FrameArena {
-    fn push_div(&mut self, style: Style) -> Result<NodeId, MountError> {
+    pub(crate) fn push_div(&mut self, style: Style) -> Result<NodeId, MountError> {
         let index = self.styles.len();
         let style_id = table_index(index)?;
         if style.text != TextStyle::DEFAULT {
@@ -164,11 +122,18 @@ impl FrameStore for FrameArena {
         }
         self.styles.push(style)?;
 
-        self.push_node(NodeKind::Div { style: style_id })
-            .inspect_err(|_| self.styles.truncate(index))
+        let node = self
+            .push_node(NodeKind::Div { style: style_id })
+            .inspect_err(|_| self.styles.truncate(index))?;
+
+        if style.has_non_monotonic_positioning() {
+            self.non_monotonic_positioned_divs += 1;
+        }
+
+        Ok(node)
     }
 
-    fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
+    pub(crate) fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
         let start = self.text.len();
         // past 4 GiB of text, the text table can't grow either
         let too_long = || {
@@ -195,7 +160,11 @@ impl FrameStore for FrameArena {
         })
     }
 
-    fn push_image(&mut self, source: ImageSource, style: ImageStyle) -> Result<NodeId, MountError> {
+    pub(crate) fn push_image(
+        &mut self,
+        source: ImageSource,
+        style: ImageStyle,
+    ) -> Result<NodeId, MountError> {
         let index = self.images.len();
         let image = table_index(index)?;
         self.images.push((source, style))?;
@@ -204,7 +173,7 @@ impl FrameStore for FrameArena {
             .inspect_err(|_| self.images.truncate(index))
     }
 
-    fn push_svg(
+    pub(crate) fn push_svg(
         &mut self,
         source: SvgSource,
         style: SvgStyle,
@@ -225,7 +194,11 @@ impl FrameStore for FrameArena {
         })
     }
 
-    fn push_canvas(&mut self, draw: CanvasDraw, style: CanvasStyle) -> Result<NodeId, MountError> {
+    pub(crate) fn push_canvas(
+        &mut self,
+        draw: CanvasDraw,
+        style: CanvasStyle,
+    ) -> Result<NodeId, MountError> {
         let index = self.canvases.len();
         let canvas = table_index(index)?;
         self.canvases.push((draw, style))?;
@@ -234,7 +207,7 @@ impl FrameStore for FrameArena {
             .inspect_err(|_| self.canvases.truncate(index))
     }
 
-    fn push_entity(
+    pub(crate) fn push_entity(
         &mut self,
         entity: EntityId,
         render: EntityRenderFn,
@@ -257,7 +230,7 @@ impl FrameStore for FrameArena {
         Ok(node)
     }
 
-    fn append_child(&mut self, parent: NodeId, child: NodeId) {
+    pub(crate) fn append_child(&mut self, parent: NodeId, child: NodeId) {
         let parent_idx = parent.index();
         let child_idx = child.index();
         // a child may be mounted before its parent, so an existing subtree can be
@@ -284,13 +257,13 @@ impl FrameStore for FrameArena {
         self.nodes[parent_idx].last_child = Some(child);
     }
 
-    fn identify(&mut self, node: NodeId, id: ElementId) -> Result<(), MountError> {
+    pub(crate) fn identify(&mut self, node: NodeId, id: ElementId) -> Result<(), MountError> {
         self.extras_or_insert(node)?.element_id = Some(id);
 
         Ok(())
     }
 
-    fn apply_interactivity(
+    pub(crate) fn apply_interactivity(
         &mut self,
         node: NodeId,
         interactivity: StatefulInteractivity,
@@ -313,7 +286,11 @@ impl FrameStore for FrameArena {
             match self.interaction(node).styles {
                 Some(index) => {
                     let (_, existing) = &mut self.interaction_styles[usize::from(index)];
+                    let was_positioned = existing.affects_positioning();
                     *existing = existing.merge(styles);
+                    if !was_positioned && existing.affects_positioning() {
+                        self.positioned_interaction_styles += 1;
+                    }
                 }
                 None => {
                     let index = u16::try_from(self.interaction_styles.len())
@@ -322,6 +299,9 @@ impl FrameStore for FrameArena {
                     self.reserve_text_style_change()?;
                     self.interaction_styles.push((node, styles))?;
                     self.extras_or_insert(node)?.interaction.styles = Some(index);
+                    if styles.affects_positioning() {
+                        self.positioned_interaction_styles += 1;
+                    }
                 }
             }
         }
@@ -337,24 +317,15 @@ impl FrameStore for FrameArena {
 
         Ok(())
     }
-
-    fn bind_event(
-        &mut self,
-        node: NodeId,
-        event_type: TypeId,
-        callback: CallbackId,
-    ) -> Result<(), MountError> {
-        FrameArena::bind_event(self, node, event_type, callback)
-    }
 }
 
 pub struct MountCx<'a> {
-    frame: &'a mut dyn FrameStore,
+    frame: &'a mut FrameArena,
     app: AppContext<'a>,
 }
 
 impl<'a> MountCx<'a> {
-    pub(crate) fn new(frame: &'a mut dyn FrameStore, app: AppContext<'a>) -> Self {
+    pub(crate) fn new(frame: &'a mut FrameArena, app: AppContext<'a>) -> Self {
         Self { frame, app }
     }
 

@@ -1,81 +1,12 @@
 use core::{alloc::Layout, any::TypeId, ptr::NonNull};
 
-use super::{Entity, EntityAccessError, EntityAllocError, EntityId};
+use super::{Entity, EntityAccessError, EntityAllocError, EntityArena, EntityId};
 
 use crate::{Context, RuntimeCx, slot_table::BorrowKind};
 
-pub struct RawEntityReservation {
+pub(crate) struct RawEntityReservation {
     pub(crate) id: EntityId,
     pub(crate) ptr: NonNull<u8>,
-}
-
-/// # Safety
-///
-/// a reservation must fit its layout, and values must not move once reserved. Only
-/// committed entities can be borrowed, `borrow` must check the registered type and that
-/// the id still names the value in its slot, `remove` must refuse borrowed entities, and every
-/// returned pointer must stay valid until the matching `release`, with shared and
-/// exclusive borrows tracked so they never overlap.
-pub unsafe trait EntityStore {
-    fn reserve(
-        &self,
-        layout: Layout,
-        type_id: TypeId,
-        drop_fn: unsafe fn(*mut u8),
-    ) -> Result<RawEntityReservation, EntityAllocError>;
-
-    /// # Safety
-    ///
-    /// the reserved storage for this entity must contain a valid initialized value
-    /// of the type registered during `reserve`
-    unsafe fn commit(&self, entity: EntityId);
-
-    fn abandon(&self, entity: EntityId);
-
-    fn borrow(
-        &self,
-        entity: EntityId,
-        type_id: TypeId,
-        kind: BorrowKind,
-    ) -> Result<NonNull<u8>, EntityAccessError>;
-
-    fn release(&self, entity: EntityId, kind: BorrowKind);
-
-    /// whether `entity` still names a value, committed or being built
-    fn contains(&self, entity: EntityId) -> bool;
-
-    /// drops the entity's value and frees its slot for reuse. Its id, and every copy
-    /// of it, no longer reaches anything. Fails while the entity is borrowed
-    fn remove(&self, entity: EntityId) -> Result<(), EntityAccessError>;
-
-    /// records that the entity changed and needs to render again. Ignores invalid ids
-    fn mark_dirty(&self, entity: EntityId);
-
-    /// whether the entity was notified since the invalidation was last taken
-    #[cfg(test)]
-    fn is_dirty(&self, entity: EntityId) -> bool;
-
-    /// whether any entity is dirty
-    fn has_dirty(&self) -> bool;
-
-    /// moves the dirty entities to pending. They render in the next rebuild, but no
-    /// longer count as a new invalidation
-    fn take_dirty(&self);
-
-    /// whether the entity is dirty or pending, so a rebuild must render it again
-    fn needs_render(&self, entity: EntityId) -> bool;
-
-    /// whether any entity is dirty or pending
-    fn has_pending_render(&self) -> bool;
-
-    /// clears the entity's dirty and pending state, just before it renders
-    fn mark_rendered(&self, entity: EntityId);
-
-    /// forgets pending entities that a rebuild didn't render, because they aren't mounted
-    fn clear_pending(&self);
-
-    /// clears every dirty and pending entity
-    fn clear_dirty(&self);
 }
 
 pub(crate) unsafe fn drop_value<T>(ptr: *mut u8) {
@@ -83,15 +14,15 @@ pub(crate) unsafe fn drop_value<T>(ptr: *mut u8) {
 }
 
 pub(crate) struct RawEntityBorrow<'a> {
-    store: &'a dyn EntityStore,
+    store: &'a EntityArena,
     entity: EntityId,
     ptr: NonNull<u8>,
     kind: BorrowKind,
 }
 
 impl<'a> RawEntityBorrow<'a> {
-    pub fn acquire(
-        store: &'a dyn EntityStore,
+    pub(crate) fn acquire(
+        store: &'a EntityArena,
         entity: EntityId,
         type_id: TypeId,
         kind: BorrowKind,
@@ -106,7 +37,7 @@ impl<'a> RawEntityBorrow<'a> {
         })
     }
 
-    pub fn ptr(&self) -> NonNull<u8> {
+    pub(crate) fn ptr(&self) -> NonNull<u8> {
         self.ptr
     }
 }
@@ -118,7 +49,7 @@ impl Drop for RawEntityBorrow<'_> {
 }
 
 struct ReservationGuard<'a> {
-    store: &'a dyn EntityStore,
+    store: &'a EntityArena,
     entity: EntityId,
     armed: bool,
 }

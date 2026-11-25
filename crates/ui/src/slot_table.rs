@@ -72,7 +72,8 @@ enum SlotState {
     Initializing,
     Live,
     Abandoned,
-    Removed,
+    /// linked into `SlotStorage::free_head`; `next` is the next removed slot in the list
+    Removed { next: Option<u16> },
 }
 
 /// why a slot has no live value
@@ -112,12 +113,18 @@ impl<M> Slot<M> {
     }
 }
 
+struct SlotStorage<M> {
+    slots: PoolVec<Slot<M>>,
+    /// head of the intrusive free-list of `SlotState::Removed` slots
+    free_head: Option<u16>,
+}
+
 /// type-erased values with per-slot metadata `M`, in the runtime's pool
 pub(crate) struct SlotTable<M> {
     pool: PoolRef,
     /// the table the values count under
     table: Table,
-    slots: RefCell<PoolVec<Slot<M>>>,
+    storage: RefCell<SlotStorage<M>>,
 }
 
 impl<M> SlotTable<M> {
@@ -125,7 +132,10 @@ impl<M> SlotTable<M> {
         Self {
             pool,
             table,
-            slots: RefCell::new(PoolVec::new_in(pool, table)),
+            storage: RefCell::new(SlotStorage {
+                slots: PoolVec::new_in(pool, table),
+                free_head: None,
+            }),
         }
     }
 
@@ -150,12 +160,12 @@ impl<M> SlotTable<M> {
 
 impl<M: Copy> SlotTable<M> {
     pub(crate) fn len(&self) -> usize {
-        self.slots.borrow().len()
+        self.storage.borrow().slots.len()
     }
 
     #[cfg(test)]
     pub(crate) fn capacity(&self) -> usize {
-        self.slots.borrow().capacity()
+        self.storage.borrow().slots.capacity()
     }
 
     /// the bytes the values and their slots take from the pool
@@ -172,14 +182,18 @@ impl<M: Copy> SlotTable<M> {
         meta: M,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<(u16, NonNull<u8>), ReserveError> {
-        let mut slots = self.slots.borrow_mut();
-        let slot = u16::try_from(slots.len()).map_err(|_| ReserveError::SlotsFull)?;
+        let mut storage = self.storage.borrow_mut();
+        let slot = u16::try_from(storage.slots.len()).map_err(|_| ReserveError::SlotsFull)?;
 
         // reserve the slot first, so a failed slot list doesn't leave a value behind
-        slots.try_reserve(1).map_err(ReserveError::OutOfMemory)?;
+        storage
+            .slots
+            .try_reserve(1)
+            .map_err(ReserveError::OutOfMemory)?;
         let ptr = self.allocate(layout)?;
 
-        slots
+        storage
+            .slots
             .try_push(Slot {
                 memory: Some(ptr),
                 layout,
@@ -214,18 +228,40 @@ impl<M: Copy> SlotTable<M> {
         meta: impl FnOnce(Option<M>) -> M,
         drop_fn: unsafe fn(*mut u8),
     ) -> Result<(u16, NonNull<u8>), ReserveError> {
-        let mut slots = self.slots.borrow_mut();
-        let Some(index) = (0..=u16::MAX)
-            .zip(slots.iter())
-            .find(|(_, slot)| slot.state == SlotState::Removed && reusable(&slot.meta))
-            .map(|(index, _)| index)
-        else {
-            drop(slots);
+        let mut storage = self.storage.borrow_mut();
+        let mut prev: Option<u16> = None;
+        let mut current = storage.free_head;
+        let found = loop {
+            let Some(index) = current else {
+                break None;
+            };
+            let slot = &storage.slots[usize::from(index)];
+            let SlotState::Removed { next } = slot.state else {
+                unreachable!("only removed slots are on the free list");
+            };
+            if reusable(&slot.meta) {
+                break Some((prev, index, next));
+            }
+            prev = Some(index);
+            current = next;
+        };
+
+        let Some((prev, index, next)) = found else {
+            drop(storage);
             return self.reserve(layout, meta(None), drop_fn);
         };
 
+        // allocate before unlinking so OOM leaves the free list intact
         let ptr = self.allocate(layout)?;
-        let slot = &mut slots[usize::from(index)];
+
+        match prev {
+            Some(prev_index) => {
+                storage.slots[usize::from(prev_index)].state = SlotState::Removed { next };
+            }
+            None => storage.free_head = next,
+        }
+
+        let slot = &mut storage.slots[usize::from(index)];
         slot.memory = Some(ptr);
         slot.layout = layout;
         slot.meta = meta(Some(slot.meta));
@@ -241,8 +277,8 @@ impl<M: Copy> SlotTable<M> {
     /// slot list, and the slot can't be reused until the destructor returns
     pub(crate) fn remove(&self, slot: usize) -> Result<(), RemoveError> {
         let (ptr, drop_fn) = {
-            let mut slots = self.slots.borrow_mut();
-            let slot = slots.get_mut(slot).ok_or(RemoveError::NotLive)?;
+            let mut storage = self.storage.borrow_mut();
+            let slot = storage.slots.get_mut(slot).ok_or(RemoveError::NotLive)?;
 
             if slot.state != SlotState::Live {
                 return Err(RemoveError::NotLive);
@@ -262,10 +298,12 @@ impl<M: Copy> SlotTable<M> {
         // `drop_fn`, and nothing borrows it
         unsafe { drop_fn(ptr.as_ptr()) };
 
-        let mut slots = self.slots.borrow_mut();
-        let slot = &mut slots[slot];
-        Self::release_memory(self.pool, self.table, slot);
-        slot.state = SlotState::Removed;
+        let mut storage = self.storage.borrow_mut();
+        let next = storage.free_head;
+        let entry = &mut storage.slots[slot];
+        Self::release_memory(self.pool, self.table, entry);
+        entry.state = SlotState::Removed { next };
+        storage.free_head = Some(u16::try_from(slot).expect("slot indices fit in u16"));
 
         Ok(())
     }
@@ -276,8 +314,8 @@ impl<M: Copy> SlotTable<M> {
     ///
     /// the slot's memory must hold a valid value matching its `drop_fn`
     pub(crate) unsafe fn commit(&self, slot: u16) {
-        let mut slots = self.slots.borrow_mut();
-        let slot = &mut slots[usize::from(slot)];
+        let mut storage = self.storage.borrow_mut();
+        let slot = &mut storage.slots[usize::from(slot)];
 
         debug_assert_eq!(slot.state, SlotState::Initializing);
         slot.state = SlotState::Live;
@@ -286,9 +324,9 @@ impl<M: Copy> SlotTable<M> {
     /// gives up a reserved slot whose value was never initialized. Its slot number stays
     /// taken, so handles to it remain invalid.
     pub(crate) fn abandon(&self, slot: u16) {
-        let mut slots = self.slots.borrow_mut();
+        let mut storage = self.storage.borrow_mut();
 
-        let Some(slot) = slots.get_mut(usize::from(slot)) else {
+        let Some(slot) = storage.slots.get_mut(usize::from(slot)) else {
             return;
         };
 
@@ -300,14 +338,14 @@ impl<M: Copy> SlotTable<M> {
 
     /// the metadata and address of a live value
     pub(crate) fn live(&self, slot: usize) -> Result<(M, NonNull<u8>), NotLive> {
-        let slots = self.slots.borrow();
-        let slot = slots.get(slot).ok_or(NotLive::Missing)?;
+        let storage = self.storage.borrow();
+        let slot = storage.slots.get(slot).ok_or(NotLive::Missing)?;
 
         match slot.state {
             SlotState::Live => Ok((slot.meta, slot.ptr())),
             SlotState::Initializing => Err(NotLive::Initializing),
             SlotState::Abandoned => Err(NotLive::Abandoned),
-            SlotState::Removed => Err(NotLive::Removed),
+            SlotState::Removed { .. } => Err(NotLive::Removed),
         }
     }
 
@@ -316,21 +354,28 @@ impl<M: Copy> SlotTable<M> {
     /// handles to them become invalid. Returns how many values were removed.
     pub(crate) fn remove_where(&mut self, mut predicate: impl FnMut(&M) -> bool) -> usize {
         let (pool, table) = (self.pool, self.table);
-        let slots = self.slots.get_mut();
+        let storage = self.storage.get_mut();
         let mut removed = 0;
 
-        for slot in slots.iter_mut().rev() {
+        for index in (0..storage.slots.len()).rev() {
+            let slot = &mut storage.slots[index];
             if slot.state != SlotState::Live || !predicate(&slot.meta) {
                 continue;
             }
 
-            // mark first, so an unwinding destructor can't lead to a second drop
-            slot.state = SlotState::Removed;
+            // mark Abandoned first, so an unwinding destructor can't lead to a second
+            // drop or leave an unfreed slot on the free list
+            slot.state = SlotState::Abandoned;
             removed += 1;
 
             // SAFETY: live slots hold an initialized value matching `drop_fn`
             unsafe { (slot.drop_fn)(slot.ptr().as_ptr()) };
             Self::release_memory(pool, table, slot);
+
+            slot.state = SlotState::Removed {
+                next: storage.free_head,
+            };
+            storage.free_head = Some(u16::try_from(index).expect("slot indices fit in u16"));
         }
 
         removed
@@ -343,8 +388,8 @@ impl<M: Copy> SlotTable<M> {
 
         for index in 0.. {
             let matches = {
-                let slots = self.slots.borrow();
-                let Some(slot) = slots.get(index) else {
+                let storage = self.storage.borrow();
+                let Some(slot) = storage.slots.get(index) else {
                     break;
                 };
 
@@ -362,46 +407,49 @@ impl<M: Copy> SlotTable<M> {
     /// how many slots hold a live value
     #[cfg(test)]
     pub(crate) fn live_count(&self) -> usize {
-        self.slots
+        self.storage
             .borrow()
+            .slots
             .iter()
             .filter(|slot| slot.state == SlotState::Live)
             .count()
     }
 
     pub(crate) fn position(&self, mut predicate: impl FnMut(&M) -> bool) -> Option<usize> {
-        self.slots
+        self.storage
             .borrow()
+            .slots
             .iter()
             .position(|slot| predicate(&slot.meta))
     }
 
     /// the metadata of an existing slot, whatever its state
     pub(crate) fn meta(&self, slot: usize) -> Option<M> {
-        self.slots.borrow().get(slot).map(|slot| slot.meta)
+        self.storage.borrow().slots.get(slot).map(|slot| slot.meta)
     }
 
     /// changes the metadata of an existing slot. `None` if the slot doesn't exist
     pub(crate) fn update_meta<R>(&self, slot: usize, f: impl FnOnce(&mut M) -> R) -> Option<R> {
-        self.slots
+        self.storage
             .borrow_mut()
+            .slots
             .get_mut(slot)
             .map(|slot| f(&mut slot.meta))
     }
 
     pub(crate) fn for_each_meta_mut(&self, mut f: impl FnMut(&mut M)) {
-        for slot in self.slots.borrow_mut().iter_mut() {
+        for slot in self.storage.borrow_mut().slots.iter_mut() {
             f(&mut slot.meta);
         }
     }
 
     pub(crate) fn is_borrowed(&self, slot: usize) -> bool {
-        self.slots.borrow()[slot].borrow != BorrowState::Free
+        self.storage.borrow().slots[slot].borrow != BorrowState::Free
     }
 
     pub(crate) fn acquire(&self, slot: usize, kind: BorrowKind) -> Result<(), BorrowConflict> {
-        let mut slots = self.slots.borrow_mut();
-        let slot = &mut slots[slot];
+        let mut storage = self.storage.borrow_mut();
+        let slot = &mut storage.slots[slot];
 
         slot.borrow = slot.borrow.acquire(kind).ok_or(BorrowConflict)?;
 
@@ -409,8 +457,8 @@ impl<M: Copy> SlotTable<M> {
     }
 
     pub(crate) fn release(&self, slot: usize, kind: BorrowKind) {
-        let mut slots = self.slots.borrow_mut();
-        let slot = &mut slots[slot];
+        let mut storage = self.storage.borrow_mut();
+        let slot = &mut storage.slots[slot];
 
         slot.borrow = slot.borrow.release(kind);
     }
@@ -418,7 +466,9 @@ impl<M: Copy> SlotTable<M> {
     /// drops every live value and empties the table, keeping the slot list's capacity
     pub(crate) fn clear(&mut self) {
         self.drop_values();
-        self.slots.get_mut().clear();
+        let storage = self.storage.get_mut();
+        storage.slots.clear();
+        storage.free_head = None;
     }
 }
 
@@ -426,9 +476,9 @@ impl<M> SlotTable<M> {
     /// drops every live value and returns each slot's memory to the pool
     fn drop_values(&mut self) {
         let (pool, table) = (self.pool, self.table);
-        let slots = self.slots.get_mut();
+        let storage = self.storage.get_mut();
 
-        for slot in slots.iter_mut().rev() {
+        for slot in storage.slots.iter_mut().rev() {
             if slot.state == SlotState::Live {
                 // mark first, so an unwinding destructor can't lead to a second drop
                 slot.state = SlotState::Abandoned;

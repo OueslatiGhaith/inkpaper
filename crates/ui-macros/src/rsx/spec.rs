@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use heck::ToKebabCase;
 use inkpaper_ui_style_schema::tailwind::ValueKind;
 
@@ -22,24 +24,45 @@ pub enum ArgumentKind {
 pub struct UtilitySpec {
     pub rust_name: &'static str,
     pub receiver: UtilityReceiver,
-    pub argument_types: Vec<&'static str>,
-    pub classname_override: Option<&'static str>,
+    pub argument_types: &'static [&'static str],
+    pub classname: String,
+    pub argument_kind: ArgumentKind,
     pub value_kind: Option<ValueKind>,
 }
 
 impl UtilitySpec {
-    pub fn classname(&self) -> String {
-        self.classname_override
+    fn new(
+        rust_name: &'static str,
+        receiver: UtilityReceiver,
+        argument_types: &'static [&'static str],
+        classname_override: Option<&'static str>,
+        value_kind: Option<ValueKind>,
+    ) -> Self {
+        let classname = classname_override
             .map(str::to_owned)
-            .unwrap_or_else(|| self.rust_name.to_kebab_case())
-    }
-
-    pub fn argument_kind(&self) -> ArgumentKind {
-        match self.argument_types.as_slice() {
+            .unwrap_or_else(|| rust_name.to_kebab_case());
+        let argument_kind = match argument_types {
             [] => ArgumentKind::None,
             [argument] => classify_argument_type(argument),
             _ => ArgumentKind::Unsupported,
+        };
+
+        Self {
+            rust_name,
+            receiver,
+            argument_types,
+            classname,
+            argument_kind,
+            value_kind,
         }
+    }
+
+    pub fn classname(&self) -> &str {
+        &self.classname
+    }
+
+    pub fn argument_kind(&self) -> ArgumentKind {
+        self.argument_kind
     }
 }
 
@@ -90,13 +113,13 @@ macro_rules! collect_style_specs {
         {
             let (value_kind, classname_override) = tailwind_metadata!($($tailwind)*);
 
-            $specs.push(UtilitySpec {
-                rust_name: stringify!($method_name),
-                receiver: $receiver,
-                argument_types: vec![ $( stringify!($argument_type) ),+ ],
+            $specs.push(UtilitySpec::new(
+                stringify!($method_name),
+                $receiver,
+                &[ $( stringify!($argument_type) ),+ ],
                 classname_override,
                 value_kind,
-            });
+            ));
         }
 
         collect_style_specs!($specs, $receiver; $( $rest )*);
@@ -112,13 +135,13 @@ macro_rules! collect_style_specs {
         {
             let (value_kind, classname_override) = tailwind_metadata!($($tailwind)*);
 
-            $specs.push(UtilitySpec {
-                rust_name: stringify!($method_name),
-                receiver: $receiver,
-                argument_types: Vec::new(),
+            $specs.push(UtilitySpec::new(
+                stringify!($method_name),
+                $receiver,
+                &[],
                 classname_override,
                 value_kind,
-            });
+            ));
         }
 
         collect_style_specs!($specs, $receiver; $( $rest )*);
@@ -130,13 +153,13 @@ macro_rules! collect_style_specs {
         $method_name:ident( $( $argument_name:ident: $argument_type:ty ),+ $(,)? ) => $implementation:expr;
         $($rest:tt)*
     ) => {
-        $specs.push(UtilitySpec {
-            rust_name: stringify!($method_name),
-            receiver: $receiver,
-            argument_types: vec![ $( stringify!($argument_type) ),+ ],
-            classname_override: None,
-            value_kind: None,
-        });
+        $specs.push(UtilitySpec::new(
+            stringify!($method_name),
+            $receiver,
+            &[ $( stringify!($argument_type) ),+ ],
+            None,
+            None,
+        ));
 
         collect_style_specs!(
             $specs,
@@ -151,13 +174,13 @@ macro_rules! collect_style_specs {
         $method_name:ident => $implementation:expr;
         $($rest:tt)*
     ) => {
-        $specs.push(UtilitySpec {
-            rust_name: stringify!($method_name),
-            receiver: $receiver,
-            argument_types: Vec::new(),
-            classname_override: None,
-            value_kind: None,
-        });
+        $specs.push(UtilitySpec::new(
+            stringify!($method_name),
+            $receiver,
+            &[],
+            None,
+            None,
+        ));
 
         collect_style_specs!(
             $specs,
@@ -243,13 +266,13 @@ macro_rules! collect_image_specs {
             let (value_kind, classname_override) =
                 tailwind_metadata!($($tailwind)*);
 
-            $specs.push(UtilitySpec {
-                rust_name: stringify!($method_name),
-                receiver: UtilityReceiver::Image,
-                argument_types: vec![$(stringify!($argument_type)),+],
+            $specs.push(UtilitySpec::new(
+                stringify!($method_name),
+                UtilityReceiver::Image,
+                &[$(stringify!($argument_type)),+],
                 classname_override,
                 value_kind,
-            });
+            ));
         }
 
         collect_image_specs!(
@@ -269,13 +292,13 @@ macro_rules! collect_image_specs {
         {
             let (value_kind, classname_override) = tailwind_metadata!($($tailwind)*);
 
-            $specs.push(UtilitySpec {
-                rust_name: stringify!($method_name),
-                receiver: UtilityReceiver::Image,
-                argument_types: Vec::new(),
+            $specs.push(UtilitySpec::new(
+                stringify!($method_name),
+                UtilityReceiver::Image,
+                &[],
                 classname_override,
                 value_kind,
-            });
+            ));
         }
 
         collect_image_specs!($specs; $($rest)*);
@@ -286,13 +309,13 @@ macro_rules! collect_image_specs {
         $method_name:ident($($argument_name:ident: $argument_type:ty),+ $(,)? );
         $($rest:tt)*
     ) => {
-        $specs.push(UtilitySpec {
-            rust_name: stringify!($method_name),
-            receiver: UtilityReceiver::Image,
-            argument_types: vec![$(stringify!($argument_type)),+],
-            classname_override: None,
-            value_kind: None,
-        });
+        $specs.push(UtilitySpec::new(
+            stringify!($method_name),
+            UtilityReceiver::Image,
+            &[$(stringify!($argument_type)),+],
+            None,
+            None,
+        ));
 
         collect_image_specs!($specs; $($rest)*);
     };
@@ -302,13 +325,13 @@ macro_rules! collect_image_specs {
         $method_name:ident;
         $($rest:tt)*
     ) => {
-        $specs.push(UtilitySpec {
-            rust_name: stringify!($method_name),
-            receiver: UtilityReceiver::Image,
-            argument_types: Vec::new(),
-            classname_override: None,
-            value_kind: None,
-        });
+        $specs.push(UtilitySpec::new(
+            stringify!($method_name),
+            UtilityReceiver::Image,
+            &[],
+            None,
+            None,
+        ));
 
         collect_image_specs!($specs; $($rest)*);
     };
@@ -335,13 +358,13 @@ macro_rules! collect_svg_specs {
         {
             let (value_kind, classname_override) = tailwind_metadata!($($tailwind)*);
 
-            $specs.push(UtilitySpec {
-                rust_name: stringify!($method_name),
-                receiver: UtilityReceiver::Svg,
-                argument_types: vec![$(stringify!($argument_type)),+],
+            $specs.push(UtilitySpec::new(
+                stringify!($method_name),
+                UtilityReceiver::Svg,
+                &[$(stringify!($argument_type)),+],
                 classname_override,
                 value_kind,
-            });
+            ));
         }
 
         collect_svg_specs!($specs; $($rest)*);
@@ -361,12 +384,16 @@ inkpaper_ui_style_schema::inkpaper_image_schema!(declare_image_specs);
 inkpaper_ui_style_schema::inkpaper_svg_schema!(declare_svg_specs);
 
 #[allow(clippy::vec_init_then_push)]
-pub fn utility_specs() -> Vec<UtilitySpec> {
-    let mut specs = Vec::new();
+pub fn utility_specs() -> &'static [UtilitySpec] {
+    static SPECS: OnceLock<Vec<UtilitySpec>> = OnceLock::new();
 
-    push_style_specs(&mut specs);
-    push_image_specs(&mut specs);
-    push_svg_specs(&mut specs);
+    SPECS.get_or_init(|| {
+        let mut specs = Vec::new();
 
-    specs
+        push_style_specs(&mut specs);
+        push_image_specs(&mut specs);
+        push_svg_specs(&mut specs);
+
+        specs
+    })
 }

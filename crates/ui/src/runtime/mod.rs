@@ -12,7 +12,7 @@ use crate::{
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
     emitter::{self, EventTable},
-    entity::{EntityArena, EntityStore, LeaseTable, ReleaseQueue, create_entity},
+    entity::{EntityArena, LeaseTable, ReleaseQueue, create_entity},
     global::{Global, GlobalAccessError, GlobalArena, GlobalMut, GlobalRef, GlobalSetError},
     interaction::{input::ActivationState, scroll::ScrollStateTable},
     pool::{MemoryStats, Pool},
@@ -30,10 +30,7 @@ mod root;
 
 pub use api::{RenderRuntimeApi, ResourceRuntimeApi, RuntimeApi};
 pub(crate) use cx::RuntimeCx;
-use dependencies::Dependencies;
-#[cfg(test)]
-pub(crate) use dependencies::NoDependencies;
-pub(crate) use dependencies::{DependencyStore, Source};
+pub(crate) use dependencies::{Dependencies, Source};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameBuildError {
@@ -1444,7 +1441,7 @@ mod partial_tests;
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity::EntityStore, pool::testing::pool, *};
+    use crate::{pool::testing::pool, *};
 
     type TestRuntime = Runtime;
 

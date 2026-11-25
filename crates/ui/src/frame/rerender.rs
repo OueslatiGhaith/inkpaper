@@ -7,7 +7,7 @@
 //! mounted apart from its parent's, so swapping subtrees at entity nodes keeps the
 //! sibling order that paint relies on.
 
-use super::{FrameArena, FrameStore, MountError, NodeId, NodeKind};
+use super::{FrameArena, MountError, NodeId, NodeKind};
 
 use crate::{
     DamageRegion, EntityId, RuntimeCx, count_metric,
@@ -90,7 +90,9 @@ impl FrameArena {
             self.detached_entities
                 .truncate(self.detached_entities.len() - 1);
             self.stale_entities.push(entity)?;
-            runtime.dependencies.forget(entity);
+            if let Some(dependencies) = runtime.dependencies {
+                dependencies.forget(entity);
+            }
             self.detach_content(node)?;
         }
 
@@ -201,7 +203,9 @@ impl FrameArena {
         // a notify while rendering keeps the entity dirty for the next frame
         runtime.entities.mark_rendered(entity);
         // the render records what it reads again
-        runtime.dependencies.forget(entity);
+        if let Some(dependencies) = runtime.dependencies {
+            dependencies.forget(entity);
+        }
         self.stale_entities.push(entity)?;
 
         count_metric!(self, entity_render_calls);
@@ -221,8 +225,22 @@ impl FrameArena {
 
         let mut current = Some(content);
         while let Some(node) = current {
-            self.node_mut(node).detached = true;
-            self.detached_nodes += 1;
+            if !self.node(node).detached {
+                if let NodeKind::Div { style } = self.node(node).kind
+                    && self.styles[usize::from(style)].has_non_monotonic_positioning()
+                {
+                    self.non_monotonic_positioned_divs -= 1;
+                }
+                if let Some(index) = self.interaction(node).styles
+                    && self.interaction_styles[usize::from(index)]
+                        .1
+                        .affects_positioning()
+                {
+                    self.positioned_interaction_styles -= 1;
+                }
+                self.node_mut(node).detached = true;
+                self.detached_nodes += 1;
+            }
 
             let NodeKind::Entity { entity, .. } = self.node(node).kind else {
                 current = self.next_depth_first_node_within(node, content);

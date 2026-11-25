@@ -5,7 +5,6 @@ use crate::pool::testing::{fill_leaving, pool_ref, pool_ref_of, pool_ref_with_ro
 use crate::{
     callback::CallbackArena,
     element::state::{ElementStateId, ElementStateTable, IdentityError, IdentityParent},
-    entity::EntityStore,
     *,
 };
 

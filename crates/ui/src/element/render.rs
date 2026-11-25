@@ -1,7 +1,7 @@
 use core::any::TypeId;
 
 use crate::{
-    AppContext, BorrowKind, Context, Element, Entity, EntityId, FrameStore, IntoElement, MountCx,
+    AppContext, BorrowKind, Context, Element, Entity, EntityId, FrameArena, IntoElement, MountCx,
     MountError, NodeId, RuntimeCx, entity::RawEntityBorrow,
 };
 
@@ -39,13 +39,13 @@ where
 pub(crate) type EntityRenderFn = fn(
     entity: EntityId,
     runtime: RuntimeCx<'_>,
-    frame: &mut dyn FrameStore,
+    frame: &mut FrameArena,
 ) -> Result<NodeId, MountError>;
 
 pub(crate) fn render_entity<T>(
     entity_id: EntityId,
     runtime: RuntimeCx<'_>,
-    frame: &mut dyn FrameStore,
+    frame: &mut FrameArena,
 ) -> Result<NodeId, MountError>
 where
     T: Render,

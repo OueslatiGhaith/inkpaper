@@ -11,8 +11,6 @@ pub(crate) mod state;
 mod stateful;
 mod svg;
 
-use core::marker::PhantomData;
-
 #[cfg(feature = "alloc")]
 pub use any::*;
 pub use canvas::*;
@@ -150,13 +148,75 @@ pub struct PushMany<C, I> {
     pub elements: I,
 }
 
+/// an element that mounts directly via a closure, used by `rsx!` to lower trees and
+/// control flow into plain Rust statements without nested builder or `Either` types
 #[doc(hidden)]
-pub struct PushEach<C, I, F, H, G, E> {
-    previous: C,
-    items: I,
-    render: F,
-    fallback: H,
-    marker: PhantomData<fn() -> (G, E)>,
+pub struct MountFn<F>(F);
+
+impl<F> MountFn<F>
+where
+    F: FnOnce(&mut MountCx<'_>) -> Result<NodeId, MountError>,
+{
+    pub fn new(f: F) -> Self {
+        Self(f)
+    }
+}
+
+impl<F> Element for MountFn<F>
+where
+    F: FnOnce(&mut MountCx<'_>) -> Result<NodeId, MountError>,
+{
+    fn mount(self, cx: &mut MountCx<'_>) -> Result<NodeId, MountError> {
+        (self.0)(cx)
+    }
+}
+
+/// a child sequence that mounts directly via a closure, used by `rsx!` for component
+/// children without nested `Push`/`Either` types
+#[doc(hidden)]
+pub struct ChildrenFn<F>(F);
+
+impl<F> ChildrenFn<F>
+where
+    F: FnOnce(NodeId, &mut MountCx<'_>) -> Result<(), MountError>,
+{
+    pub fn new(f: F) -> Self {
+        Self(f)
+    }
+}
+
+impl<F> Children for ChildrenFn<F>
+where
+    F: FnOnce(NodeId, &mut MountCx<'_>) -> Result<(), MountError>,
+{
+    fn mount_children(self, parent: NodeId, cx: &mut MountCx<'_>) -> Result<(), MountError> {
+        (self.0)(parent, cx)
+    }
+}
+
+#[doc(hidden)]
+pub fn mount_child<E>(parent: NodeId, child: E, cx: &mut MountCx<'_>) -> Result<(), MountError>
+where
+    E: IntoElement,
+{
+    let node = child.into_element().mount(cx)?;
+    cx.append_child(parent, node);
+
+    Ok(())
+}
+
+#[doc(hidden)]
+pub fn append_child(parent: NodeId, child: NodeId, cx: &mut MountCx<'_>) {
+    cx.append_child(parent, child);
+}
+
+#[doc(hidden)]
+pub fn identify_node(
+    node: NodeId,
+    id: impl IntoElementId,
+    cx: &mut MountCx<'_>,
+) -> Result<(), MountError> {
+    cx.identify(node, id.into_element_id())
 }
 
 pub trait Children {
@@ -204,84 +264,6 @@ where
         Ok(())
     }
 }
-
-impl<C, I, F, H, G, E> Children for PushEach<C, I, F, H, G, E>
-where
-    C: Children,
-    I: IntoIterator,
-    F: FnMut(I::Item) -> G,
-    H: FnOnce() -> E,
-    G: Children,
-    E: Children,
-{
-    fn mount_children(self, parent: NodeId, cx: &mut MountCx<'_>) -> Result<(), MountError> {
-        let PushEach {
-            previous,
-            items,
-            mut render,
-            fallback,
-            ..
-        } = self;
-
-        previous.mount_children(parent, cx)?;
-
-        let mut empty = true;
-
-        for item in items {
-            empty = false;
-            render(item).mount_children(parent, cx)?;
-        }
-
-        if empty {
-            fallback().mount_children(parent, cx)?;
-        }
-
-        Ok(())
-    }
-}
-
-#[doc(hidden)]
-pub trait ChildrenExt: Children + Sized {
-    fn child<E>(self, child: E) -> Push<Self, E>
-    where
-        E: IntoElement,
-    {
-        Push {
-            previous: self,
-            element: child,
-        }
-    }
-
-    fn children<I>(self, children: I) -> PushMany<Self, I>
-    where
-        I: IntoIterator,
-        I::Item: IntoElement,
-    {
-        PushMany {
-            previous: self,
-            elements: children,
-        }
-    }
-
-    fn each<I, F, H, G, E>(self, items: I, render: F, fallback: H) -> PushEach<Self, I, F, H, G, E>
-    where
-        I: IntoIterator,
-        F: FnMut(I::Item) -> G,
-        H: FnOnce() -> E,
-        G: Children,
-        E: Children,
-    {
-        PushEach {
-            previous: self,
-            items,
-            render,
-            fallback,
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<C> ChildrenExt for C where C: Children {}
 
 pub trait ParentElement: Sized {
     type WithChild<E>: ParentElement

@@ -1,8 +1,8 @@
 use crate::{
     Axis, CanvasPainter, Color, DamageRegion, FrameArena, GlyphBitmap, GlyphCacheError,
-    ImageColorMode, ImagePaint, ImageSource, NodeId, NodeKind, Offset, Pixels, Point, Position,
-    Rect, ResolvedTextStyle, ShapeError, callback::CallbackStore, count_metric,
-    entity::EntityStore, flow_axis, visual::VisualNode,
+    ImageColorMode, ImagePaint, ImageSource, NodeId, NodeKind, Offset, Pixels, Point, Rect,
+    ResolvedTextStyle, ShapeError, callback::CallbackArena, count_metric, entity::EntityArena,
+    flow_axis, visual::VisualNode,
 };
 
 mod canvas;
@@ -208,8 +208,8 @@ impl PaintResources for () {
 
 #[derive(Clone, Copy)]
 struct PaintRuntime<'a> {
-    entities: &'a dyn EntityStore,
-    callbacks: &'a dyn CallbackStore,
+    entities: &'a EntityArena,
+    callbacks: &'a CallbackArena,
 }
 
 impl FrameArena {
@@ -643,8 +643,8 @@ impl FrameArena {
     pub(crate) fn paint_with_runtime<R, P>(
         &self,
         root: NodeId,
-        entities: &dyn EntityStore,
-        callbacks: &dyn CallbackStore,
+        entities: &EntityArena,
+        callbacks: &CallbackArena,
         resources: &mut R,
         painter: &mut P,
     ) -> Result<PaintReport, PaintError<P::Error>>
@@ -669,8 +669,8 @@ impl FrameArena {
     pub(crate) fn paint_with_runtime_and_damage<R, P>(
         &self,
         root: NodeId,
-        entities: &dyn EntityStore,
-        callbacks: &dyn CallbackStore,
+        entities: &EntityArena,
+        callbacks: &CallbackArena,
         resources: &mut R,
         damage: DamageRegion,
         painter: &mut P,
@@ -708,28 +708,5 @@ impl FrameArena {
             crate::Axis::Horizontal => bounds.x() >= damage_bounds.right(),
             crate::Axis::Vertical => bounds.y() >= damage_bounds.bottom(),
         }
-    }
-
-    fn has_non_monotonic_positioning(&self) -> bool {
-        self.node_ids().any(|node| {
-            if self.node(node).detached {
-                return false;
-            }
-
-            let Some(style) = self.style(node) else {
-                return false;
-            };
-
-            match style.position {
-                Position::Static => false,
-                Position::Absolute => true,
-                Position::Relative => {
-                    style.inset.top.is_some()
-                        || style.inset.right.is_some()
-                        || style.inset.bottom.is_some()
-                        || style.inset.left.is_some()
-                }
-            }
-        })
     }
 }
