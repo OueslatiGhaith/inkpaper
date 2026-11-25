@@ -14,9 +14,10 @@ fn bytes(size: usize) -> Layout {
 fn hands_out_almost_all_of_its_memory() {
     let pool = pool(16 * 1024);
     let stats = pool.stats();
+    let capacity = stats.capacity.unwrap();
 
-    assert!(stats.capacity > 14 * 1024, "{stats:?}");
-    assert!(stats.capacity < 16 * 1024);
+    assert!(capacity > 14 * 1024, "{stats:?}");
+    assert!(capacity < 16 * 1024);
     assert_eq!((stats.used, stats.peak, stats.allocations), (0, 0, 0));
 }
 
@@ -60,7 +61,7 @@ fn counts_the_memory_each_table_uses() {
 fn fails_without_room_and_reuses_released_memory() {
     let pool = pool(4 * 1024);
     let handle = pool.handle();
-    let half = pool.stats().capacity / 2;
+    let half = pool.stats().capacity.unwrap() / 2;
 
     let first = handle.allocate(Table::Nodes, bytes(half)).unwrap();
     let before = pool.stats();
@@ -113,71 +114,73 @@ fn zero_sized_allocations_use_no_memory() {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn boxed_pool_allocates_its_own_memory() {
-    let pool = Pool::boxed(4 * 1024);
+fn global_pool_delegates_to_heap_and_tracks_stats() {
+    let pool = Pool::global();
+    let handle = pool.handle();
+    assert_eq!(pool.stats().capacity, None);
 
-    assert!(pool.stats().capacity > 2 * 1024);
-    assert!(pool.handle().allocate(Table::Nodes, bytes(1024)).is_some());
+    let first = handle.allocate(Table::Nodes, bytes(128)).unwrap();
+    let second = handle.allocate(Table::Text, bytes(64 * 1024)).unwrap();
+    let stats = pool.stats();
+
+    assert_eq!(stats.capacity, None);
+    assert_eq!(stats.table(Table::Nodes), 128);
+    assert_eq!(stats.table(Table::Text), 64 * 1024);
+    assert_eq!(stats.used, 128 + 64 * 1024);
+    assert_eq!(stats.peak, stats.used);
+    assert_eq!(stats.allocations, 2);
+
+    unsafe { first.as_ptr().copy_from([1, 2, 3, 4].as_ptr(), 4) };
+    let grown = unsafe { handle.reallocate(Table::Nodes, first, bytes(128), bytes(512)) }.unwrap();
+    assert_eq!(
+        unsafe { core::slice::from_raw_parts(grown.as_ptr(), 4) },
+        [1, 2, 3, 4]
+    );
+    assert_eq!(pool.stats().table(Table::Nodes), 512);
+    assert_eq!(pool.stats().allocations, 3);
+
+    unsafe {
+        handle.deallocate(Table::Nodes, grown, bytes(512));
+        handle.deallocate(Table::Text, second, bytes(64 * 1024));
+    }
+
+    let after = pool.stats();
+    assert_eq!(after.used, 0);
+    assert_eq!(after.table(Table::Nodes), 0);
+    assert_eq!(after.table(Table::Text), 0);
+    assert_eq!(after.peak, 512 + 64 * 1024);
 }
 
 #[cfg(feature = "alloc")]
 #[test]
-fn growable_pool_adds_a_chunk_when_it_runs_out() {
-    let pool = Pool::growable(4 * 1024);
-    let handle = pool.handle();
-    let first = pool.stats().capacity;
+fn vec_grows_and_frees_in_a_global_pool() {
+    let pool = Pool::global();
+    {
+        let mut values = PoolVec::new_in(pool.handle(), Table::Nodes);
 
-    // more than the first buffer holds
-    let filler = handle.allocate(Table::Nodes, bytes(first)).unwrap();
-    let grown = pool.stats();
+        for value in 0..4_096u32 {
+            values.try_push(value).unwrap();
+        }
 
-    assert_eq!(grown.chunks_added, 1);
-    // each chunk holds at least the pool's first size
-    assert!(grown.capacity > first + 3 * 1024, "{grown:?}");
-
-    // more than a chunk of the first size holds
-    let large = handle.allocate(Table::Text, bytes(64 * 1024)).unwrap();
-    let stats = pool.stats();
-
-    assert_eq!(stats.chunks_added, 2);
-    assert!(stats.capacity > grown.capacity + 64 * 1024);
-
-    unsafe {
-        handle.deallocate(Table::Nodes, filler, bytes(first));
-        handle.deallocate(Table::Text, large, bytes(64 * 1024));
+        assert_eq!(pool.stats().capacity, None);
+        assert!(pool.stats().table(Table::Nodes) >= 4_096 * core::mem::size_of::<u32>());
+        assert!(values.iter().copied().eq(0..4_096));
     }
 
     assert_eq!(pool.stats().used, 0);
-    // the chunks stay until the pool is dropped
-    assert_eq!(pool.stats().capacity, stats.capacity);
-}
-
-#[cfg(feature = "alloc")]
-#[test]
-fn vec_keeps_its_values_when_a_growable_pool_grows() {
-    let pool = Pool::growable(4 * 1024);
-    let mut values = PoolVec::new_in(pool.handle(), Table::Nodes);
-
-    for value in 0..4_096u32 {
-        values.try_push(value).unwrap();
-    }
-
-    assert!(pool.stats().chunks_added > 0);
-    assert!(values.iter().copied().eq(0..4_096));
 }
 
 #[test]
-fn fixed_pool_never_adds_chunks() {
+fn fixed_pool_rejects_allocations_beyond_capacity() {
     let pool = pool(4 * 1024);
-    let capacity = pool.stats().capacity;
+    let capacity = pool.stats().capacity.unwrap();
 
     assert!(
         pool.handle()
             .allocate(Table::Nodes, bytes(capacity))
             .is_none()
     );
-    assert_eq!(pool.stats().chunks_added, 0);
-    assert_eq!(pool.stats().capacity, capacity);
+    assert_eq!(pool.stats().capacity, Some(capacity));
 }
 
 #[test]
@@ -221,7 +224,7 @@ fn vec_doubles_its_capacity() {
 #[test]
 fn vec_grows_to_the_exact_size_when_doubling_does_not_fit() {
     let pool = pool(4 * 1024);
-    let len = pool.stats().capacity * 3 / 5;
+    let len = pool.stats().capacity.unwrap() * 3 / 5;
     let mut values = PoolVec::new_in(pool.handle(), Table::Text);
 
     values.try_resize(len, 1u8).unwrap();
@@ -238,7 +241,7 @@ fn vec_reports_full_without_changing_contents() {
     let pool = pool(4 * 1024);
     let mut values = PoolVec::new_in(pool.handle(), Table::Text);
     values.try_extend_from_slice(&[1u8, 2]).unwrap();
-    let too_many = pool.stats().capacity;
+    let too_many = pool.stats().capacity.unwrap();
 
     let out_of_memory = |requested| {
         Err(OutOfMemory {

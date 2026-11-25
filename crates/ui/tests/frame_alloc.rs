@@ -294,7 +294,7 @@ fn dynamic_identity_growth_preserves_focus_and_scrolling_without_input_allocatio
 #[test]
 fn rebuilds_that_run_out_of_pool_can_be_retried() {
     let (mut probe, screen) = state_runtime();
-    let header = 256 * 1024 - probe.memory().capacity;
+    let header = 256 * 1024 - probe.memory().capacity.unwrap();
     let four_rows = probe.memory().peak;
 
     probe
@@ -367,9 +367,11 @@ fn rebuilds_that_run_out_of_pool_can_be_retried() {
 }
 
 #[test]
-fn growable_pools_rebuild_screens_their_first_chunk_does_not_fit() {
-    let (mut runtime, screen) = state_runtime_in(Pool::growable(8 * 1024)).unwrap();
+fn global_pools_rebuild_screens_and_track_memory() {
+    let (mut runtime, screen) = state_runtime_in(Pool::global()).unwrap();
     let first = runtime.memory();
+    assert_eq!(first.capacity, None);
+    assert!(first.used > 0);
 
     runtime
         .update(screen, |screen, cx| {
@@ -380,8 +382,9 @@ fn growable_pools_rebuild_screens_their_first_chunk_does_not_fit() {
     runtime.rebuild().unwrap();
 
     let grown = runtime.memory();
-    assert!(grown.chunks_added > first.chunks_added);
-    assert!(grown.capacity > first.capacity);
+    assert_eq!(grown.capacity, None);
+    assert!(grown.peak > first.peak);
+    assert!(grown.used > first.used);
     assert!(runtime.frame_node_count() > 32);
 }
 
@@ -704,7 +707,7 @@ fn pool_of(bytes: usize) -> Pool {
 /// runtimes whose pools have room for 128 bytes, then 16 more each time, up to 4 KiB
 fn growing_runtimes() -> impl Iterator<Item = Runtime> {
     let probe = 64 * 1024;
-    let allocator = probe - pool_of(probe).stats().capacity;
+    let allocator = probe - pool_of(probe).stats().capacity.unwrap();
 
     (128..4 * 1024)
         .step_by(16)

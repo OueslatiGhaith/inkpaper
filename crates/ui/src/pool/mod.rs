@@ -1,18 +1,17 @@
 //! the byte pool the runtime keeps its tables in.
 //!
-//! a [`Pool`] takes a buffer of bytes from the application and hands out memory from it
-//! through a TLSF allocator, so allocation and release take constant time. The
-//! allocator's own state sits at the start of the buffer, which lets the tables hold a
-//! plain pointer to the pool while the runtime that owns it moves.
+//! a fixed [`Pool`] (`Pool::new`) takes a static buffer of bytes from the application and
+//! hands out memory from it through a TLSF allocator, so allocation and release take
+//! constant time and work without a global allocator. Under the `alloc` feature,
+//! [`Pool::global`] instead delegates directly to the global allocator so freed memory
+//! returns immediately without reserving or hoarding fixed chunks.
 //!
 //! SAFETY INVARIANTS:
 //!
 //! 1. a [`PoolRef`] is only used while the [`Pool`] it came from exists. The runtime
 //!    drops every table before its pool.
-//! 2. the allocator is only borrowed inside the methods of [`PoolRef`], which never run
-//!    other code meanwhile, so its borrows never overlap.
-//! 3. the chunks a growable pool adds are freed only when the pool is dropped, after
-//!    every table, and before the buffer that holds the allocator.
+//! 2. for a fixed pool, the allocator is only borrowed inside the methods of [`PoolRef`],
+//!    which never run other code meanwhile, so its borrows never overlap.
 
 use core::{
     alloc::Layout,
@@ -94,32 +93,30 @@ pub struct OutOfMemory {
 
 /// how much of a [`Pool`] the runtime uses.
 ///
-/// byte counts include the allocator's header and rounding for each allocation, so
-/// `used` reaching `capacity` is when allocations fail
+/// for fixed pools, byte counts include the allocator's header and rounding for each
+/// allocation, so `used` reaching `capacity` is when allocations fail. For
+/// [`Pool::global`], `capacity` is `None` and byte counts track requested layout sizes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryStats {
-    /// bytes the pool can hand out, after the allocator's own state
-    pub capacity: usize,
+    /// bytes a fixed pool can hand out after the allocator's own state, or `None` for
+    /// [`Pool::global`]
+    pub capacity: Option<usize>,
     /// bytes in use now
     pub used: usize,
     /// the most bytes in use at once
     pub peak: usize,
     /// allocations made so far, growing a table included
     pub allocations: usize,
-    /// chunks of memory a growable pool added because it ran out. Always 0 for a
-    /// fixed pool
-    pub chunks_added: usize,
     by_table: [usize; Table::COUNT],
 }
 
 impl MemoryStats {
-    const fn new(capacity: usize) -> Self {
+    const fn new(capacity: Option<usize>) -> Self {
         Self {
             capacity,
             used: 0,
             peak: 0,
             allocations: 0,
-            chunks_added: 0,
             by_table: [0; Table::COUNT],
         }
     }
@@ -141,35 +138,24 @@ impl MemoryStats {
     }
 }
 
+#[repr(C)]
 struct PoolHeader {
-    allocator: UnsafeCell<Allocator>,
     stats: Cell<MemoryStats>,
-    /// how the pool grows, if it does
     #[cfg(feature = "alloc")]
-    growth: Cell<Option<Growth>>,
+    is_global: bool,
 }
 
-#[cfg(feature = "alloc")]
-#[derive(Clone, Copy)]
-struct Growth {
-    /// the fewest bytes a chunk takes from the heap
-    min_chunk: usize,
-    /// the chunks added so far, newest first
-    chunks: Option<NonNull<Chunk>>,
-}
-
-/// the start of a chunk a growable pool added. The rest of the chunk is free memory
-#[cfg(feature = "alloc")]
-struct Chunk {
-    next: Option<NonNull<Chunk>>,
-    layout: Layout,
+#[repr(C)]
+struct FixedPoolHeader {
+    common: PoolHeader,
+    allocator: UnsafeCell<Allocator>,
 }
 
 /// the bytes the runtime keeps its tables in.
 ///
-/// a pool made with [`Pool::new`] or [`Pool::boxed`] has a fixed size: tables that
-/// need more than it holds fail with [`OutOfMemory`]. One made with [`Pool::growable`]
-/// takes another chunk from the heap instead.
+/// a pool made with [`Pool::new`] has a fixed size backed by an internal TLSF allocator:
+/// tables that need more than it holds fail with [`OutOfMemory`]. Under the `alloc`
+/// feature, [`Pool::global`] delegates directly to the global allocator.
 ///
 /// ```
 /// # use core::mem::MaybeUninit;
@@ -178,13 +164,10 @@ struct Chunk {
 ///
 /// // SAFETY: nothing else uses `BYTES`
 /// let pool = Pool::new(unsafe { &mut *core::ptr::addr_of_mut!(BYTES) });
-/// assert!(pool.stats().capacity > 14 * 1024);
+/// assert!(pool.stats().capacity.unwrap() > 14 * 1024);
 /// ```
 pub struct Pool {
     header: NonNull<PoolHeader>,
-    /// the buffer, when the pool allocated it
-    #[cfg(feature = "alloc")]
-    owned: Option<NonNull<[MaybeUninit<u8>]>>,
 }
 
 impl Pool {
@@ -194,91 +177,65 @@ impl Pool {
     ///
     /// when `memory` is too small to hold the allocator's state and an allocation
     pub fn new(memory: &'static mut [MaybeUninit<u8>]) -> Self {
-        // SAFETY: the memory is borrowed for the rest of the program, and only the pool
-        // uses it
-        unsafe { Self::from_raw(NonNull::from(memory)) }
-    }
-
-    /// a pool over a new heap buffer of `bytes` bytes, released when the pool is dropped
-    ///
-    /// # Panics
-    ///
-    /// when `bytes` is too few to hold the allocator's state and an allocation
-    #[cfg(feature = "alloc")]
-    pub fn boxed(bytes: usize) -> Self {
-        let memory = alloc::boxed::Box::<[u8]>::new_uninit_slice(bytes);
-        let memory = NonNull::from(alloc::boxed::Box::leak(memory));
-
-        // SAFETY: the pool owns the buffer and releases it after its last use
-        let mut pool = unsafe { Self::from_raw(memory) };
-        pool.owned = Some(memory);
-
-        pool
-    }
-
-    /// a pool over a new heap buffer of `bytes` bytes that takes another chunk from the
-    /// heap whenever it runs out. Each chunk holds at least `bytes` bytes and at least
-    /// twice the allocation that needed it. Chunks are released when the pool is
-    /// dropped, not when the memory in them is freed
-    ///
-    /// # Panics
-    ///
-    /// when `bytes` is too few to hold the allocator's state and an allocation
-    #[cfg(feature = "alloc")]
-    pub fn growable(bytes: usize) -> Self {
-        let pool = Self::boxed(bytes);
-        pool.handle().header().growth.set(Some(Growth {
-            min_chunk: bytes,
-            chunks: None,
-        }));
-
-        pool
-    }
-
-    /// # Safety
-    ///
-    /// `memory` is valid for the life of the pool, and nothing else uses it meanwhile
-    unsafe fn from_raw(memory: NonNull<[MaybeUninit<u8>]>) -> Self {
+        let memory = NonNull::from(memory);
         let start = memory.cast::<u8>();
         let len = memory.len();
 
-        let offset = start.align_offset(mem::align_of::<PoolHeader>());
+        let offset = start.align_offset(mem::align_of::<FixedPoolHeader>());
         let blocks_start = offset
-            .checked_add(mem::size_of::<PoolHeader>())
+            .checked_add(mem::size_of::<FixedPoolHeader>())
             .filter(|&end| end < len)
             .unwrap_or_else(|| panic!("a pool of {len} bytes can't hold its allocator"));
 
-        // SAFETY: the header and the block after it are inside `memory`, which the pool
-        // owns. The header is aligned
-        let (header, blocks) = unsafe {
-            let header = start.add(offset).cast::<PoolHeader>();
-            header.write(PoolHeader {
+        // SAFETY: the header and the block after it are inside `memory`, which is
+        // borrowed for `'static` and exclusively owned by this pool. The header is aligned
+        let (fixed, blocks) = unsafe {
+            let fixed = start.add(offset).cast::<FixedPoolHeader>();
+            fixed.write(FixedPoolHeader {
+                common: PoolHeader {
+                    stats: Cell::new(MemoryStats::new(None)),
+                    #[cfg(feature = "alloc")]
+                    is_global: false,
+                },
                 allocator: UnsafeCell::new(Allocator::new()),
-                stats: Cell::new(MemoryStats::new(0)),
-                #[cfg(feature = "alloc")]
-                growth: Cell::new(None),
             });
 
             let blocks = NonNull::slice_from_raw_parts(start.add(blocks_start), len - blocks_start);
 
-            (header, blocks)
+            (fixed, blocks)
         };
 
         // SAFETY: the block lives as long as the allocator, which is stored in front of
         // it, and nothing else borrows the allocator yet
-        let capacity = unsafe { (*header.as_ref().allocator.get()).insert_free_block_ptr(blocks) }
-            .unwrap_or_else(|| panic!("a pool of {len} bytes can't hold an allocation"));
-
-        // SAFETY: just written
-        unsafe { header.as_ref() }
-            .stats
-            .set(MemoryStats::new(capacity.get()));
-
-        Self {
-            header,
-            #[cfg(feature = "alloc")]
-            owned: None,
+        let capacity = unsafe {
+            let allocator = &raw const (*fixed.as_ptr()).allocator;
+            (*(*allocator).get()).insert_free_block_ptr(blocks)
         }
+        .unwrap_or_else(|| panic!("a pool of {len} bytes can't hold an allocation"));
+
+        // SAFETY: just written; pointer-to-pointer cast preserves provenance over the
+        // full `FixedPoolHeader`
+        let header = fixed.cast::<PoolHeader>();
+        unsafe {
+            (*header.as_ptr())
+                .stats
+                .set(MemoryStats::new(Some(capacity.get())));
+        }
+
+        Self { header }
+    }
+
+    /// a pool that allocates directly from the global allocator, returning freed memory
+    /// immediately while still tracking [`MemoryStats`] per table
+    #[cfg(feature = "alloc")]
+    pub fn global() -> Self {
+        let header = alloc::boxed::Box::new(PoolHeader {
+            stats: Cell::new(MemoryStats::new(None)),
+            is_global: true,
+        });
+        let header = NonNull::from(alloc::boxed::Box::leak(header));
+
+        Self { header }
     }
 
     pub fn stats(&self) -> MemoryStats {
@@ -295,28 +252,11 @@ impl Pool {
 
 impl Drop for Pool {
     fn drop(&mut self) {
-        // the chunks' list lives in the buffer below, so the chunks go first
         #[cfg(feature = "alloc")]
-        if let Some(growth) = self.handle().header().growth.get() {
-            let mut next = growth.chunks;
-            while let Some(chunk) = next {
-                // SAFETY: `grow` wrote this header at the start of the chunk, which no
-                // table uses any more
-                let Chunk {
-                    next: after,
-                    layout,
-                } = unsafe { chunk.read() };
-                // SAFETY: `grow` allocated the chunk with this layout
-                unsafe { alloc::alloc::dealloc(chunk.as_ptr().cast(), layout) };
-                next = after;
-            }
-        }
-
-        #[cfg(feature = "alloc")]
-        if let Some(memory) = self.owned {
-            // SAFETY: `boxed` leaked this box for the pool, and no table outlives the
-            // pool. The header needs no drop
-            drop(unsafe { alloc::boxed::Box::from_raw(memory.as_ptr()) });
+        if self.handle().is_global() {
+            // SAFETY: `global` leaked this `Box<PoolHeader>` for the pool, and no
+            // table outlives the pool
+            drop(unsafe { alloc::boxed::Box::from_raw(self.header.as_ptr()) });
         }
     }
 }
@@ -328,99 +268,43 @@ pub(crate) struct PoolRef {
 }
 
 impl PoolRef {
-    fn header(&self) -> &PoolHeader {
+    fn stats_cell(&self) -> &Cell<MemoryStats> {
         // SAFETY: the pool outlives its handles
-        unsafe { self.header.as_ref() }
+        unsafe { &(*self.header.as_ptr()).stats }
+    }
+
+    #[cfg(feature = "alloc")]
+    fn is_global(&self) -> bool {
+        // SAFETY: the pool outlives its handles, and `is_global` is never mutated
+        unsafe { (*self.header.as_ptr()).is_global }
     }
 
     /// # Safety
     ///
-    /// the returned borrow ends before the allocator is borrowed again
+    /// the pool must be a fixed pool (not [`Pool::global`]), and the returned borrow ends
+    /// before the allocator is borrowed again
     #[expect(
         clippy::mut_from_ref,
         reason = "the pool's allocator is only borrowed here"
     )]
     unsafe fn allocator(&self) -> &mut Allocator {
-        // SAFETY: upheld by the caller
-        unsafe { &mut *self.header().allocator.get() }
+        // SAFETY: upheld by the caller; `header` was cast from `NonNull<FixedPoolHeader>`
+        unsafe {
+            let fixed = self.header.cast::<FixedPoolHeader>();
+            let allocator = &raw const (*fixed.as_ptr()).allocator;
+            &mut *(*allocator).get()
+        }
     }
 
     fn update_stats(&self, update: impl FnOnce(&mut MemoryStats)) {
-        let header = self.header();
-        let mut stats = header.stats.get();
+        let cell = self.stats_cell();
+        let mut stats = cell.get();
         update(&mut stats);
-        header.stats.set(stats);
+        cell.set(stats);
     }
 
     pub(crate) fn stats(&self) -> MemoryStats {
-        self.header().stats.get()
-    }
-
-    /// adds a chunk from the heap with room for `layout`, if the pool grows. Returns
-    /// whether it did
-    #[cfg(feature = "alloc")]
-    fn grow(&self, layout: Layout) -> bool {
-        let header = self.header();
-        let Some(growth) = header.growth.get() else {
-            return false;
-        };
-
-        // the allocation, its header and alignment, the chunk's header, and the
-        // allocator's rounding and sentinel
-        let Some(needed) = layout
-            .size()
-            .checked_add(layout.align())
-            .and_then(|bytes| bytes.checked_add(mem::size_of::<Chunk>() + 4 * GRANULARITY))
-        else {
-            return false;
-        };
-        let bytes = needed.saturating_mul(2).max(growth.min_chunk);
-        let Ok(chunk_layout) =
-            Layout::from_size_align(bytes, mem::align_of::<Chunk>().max(GRANULARITY))
-        else {
-            return false;
-        };
-
-        // SAFETY: the layout has a nonzero size
-        let Some(chunk) = NonNull::new(unsafe { alloc::alloc::alloc(chunk_layout) }) else {
-            return false;
-        };
-        let chunk = chunk.cast::<Chunk>();
-
-        // SAFETY: the chunk is new, aligned for its header and larger than it. The free
-        // block after the header lives until the pool drops it, after the allocator's
-        // last use, and nothing borrows the allocator meanwhile
-        let added = unsafe {
-            chunk.write(Chunk {
-                next: growth.chunks,
-                layout: chunk_layout,
-            });
-            let start = chunk.cast::<u8>().add(mem::size_of::<Chunk>());
-            let block = NonNull::slice_from_raw_parts(start, bytes - mem::size_of::<Chunk>());
-
-            self.allocator().insert_free_block_ptr(block)
-        };
-        let Some(added) = added else {
-            // SAFETY: allocated above with this layout, and the allocator didn't take it
-            unsafe { alloc::alloc::dealloc(chunk.as_ptr().cast(), chunk_layout) };
-            return false;
-        };
-
-        header.growth.set(Some(Growth {
-            chunks: Some(chunk),
-            ..growth
-        }));
-        self.update_stats(|stats| {
-            stats.capacity += added.get();
-            stats.chunks_added += 1;
-        });
-
-        true
-    }
-
-    #[cfg(not(feature = "alloc"))]
-    fn grow(&self, _: Layout) -> bool {
-        false
+        self.stats_cell().get()
     }
 
     /// memory for `layout`, or `None` when the pool has no room. Zero-sized layouts get a
@@ -430,12 +314,19 @@ impl PoolRef {
             return Some(dangling(layout));
         }
 
-        // SAFETY: the borrows end with the calls
-        let ptr = match unsafe { self.allocator() }.allocate(layout) {
-            Some(ptr) => ptr,
-            None if self.grow(layout) => unsafe { self.allocator() }.allocate(layout)?,
-            None => return None,
-        };
+        #[cfg(feature = "alloc")]
+        if self.is_global() {
+            // SAFETY: `layout.size() > 0`
+            let ptr = NonNull::new(unsafe { alloc::alloc::alloc(layout) })?;
+            self.update_stats(|stats| {
+                stats.allocations += 1;
+                stats.add(table, layout.size());
+            });
+            return Some(ptr);
+        }
+
+        // SAFETY: not a global pool, and the borrow ends with the call
+        let ptr = unsafe { self.allocator() }.allocate(layout)?;
         self.update_stats(|stats| {
             stats.allocations += 1;
             stats.add(table, footprint(layout));
@@ -468,13 +359,24 @@ impl PoolRef {
             return Some(dangling(new));
         }
 
-        // SAFETY: `ptr` came from this allocator with this alignment, and the borrows
-        // end with the calls. A failed reallocation leaves `ptr` as it was
-        let moved = match unsafe { self.allocator().reallocate(ptr, new) } {
-            Some(moved) => moved,
-            None if self.grow(new) => unsafe { self.allocator().reallocate(ptr, new) }?,
-            None => return None,
-        };
+        #[cfg(feature = "alloc")]
+        if self.is_global() {
+            // SAFETY: `ptr` came from the global allocator with `old`, `new.size() > 0`,
+            // and `new` is a valid layout with the same alignment as `old`
+            let moved = NonNull::new(unsafe {
+                alloc::alloc::realloc(ptr.as_ptr(), old, new.size())
+            })?;
+            self.update_stats(|stats| {
+                stats.allocations += 1;
+                stats.remove(table, old.size());
+                stats.add(table, new.size());
+            });
+            return Some(moved);
+        }
+
+        // SAFETY: `ptr` came from this allocator with this alignment, and the borrow
+        // ends with the call. A failed reallocation leaves `ptr` as it was
+        let moved = unsafe { self.allocator().reallocate(ptr, new) }?;
         self.update_stats(|stats| {
             stats.allocations += 1;
             stats.remove(table, footprint(old));
@@ -489,6 +391,14 @@ impl PoolRef {
     /// `ptr` came from this pool for `layout` and `table`, and isn't used afterwards
     pub(crate) unsafe fn deallocate(&self, table: Table, ptr: NonNull<u8>, layout: Layout) {
         if layout.size() == 0 {
+            return;
+        }
+
+        #[cfg(feature = "alloc")]
+        if self.is_global() {
+            // SAFETY: `ptr` came from the global allocator with `layout`
+            unsafe { alloc::alloc::dealloc(ptr.as_ptr(), layout) };
+            self.update_stats(|stats| stats.remove(table, layout.size()));
             return;
         }
 
@@ -552,7 +462,7 @@ pub(crate) mod testing {
         let bytes = |size| Layout::from_size_align(size, 1).unwrap();
 
         let reserved = pool.allocate(Table::Text, bytes(room)).unwrap();
-        let mut size = pool.stats().capacity;
+        let mut size = pool.stats().capacity.expect("fixed pool has capacity");
         while size > 0 {
             if pool.allocate(Table::Text, bytes(size)).is_none() {
                 size /= 2;
