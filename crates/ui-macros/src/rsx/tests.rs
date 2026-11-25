@@ -553,7 +553,7 @@ fn rejects_image_utility_on_svg() {
 }
 
 #[test]
-fn expands_root_match_as_balanced_either() {
+fn expands_root_match_as_plain_match_without_either() {
     let result = expand_rsx(rsx_tokens(
         r#"
         {#match row}
@@ -569,13 +569,37 @@ fn expands_root_match_as_balanced_either() {
         "#,
     ))
     .unwrap()
-    .to_string()
-    .replace(' ', "");
+    .to_string();
 
-    // two levels for four arms, not three
-    assert!(result.contains("Either::Left(::inkpaper_ui::Either::Left("));
-    assert!(result.contains("Either::Right(::inkpaper_ui::Either::Right("));
-    assert!(!result.contains("Either::Right(::inkpaper_ui::Either::Right(::inkpaper_ui::Either"));
+    assert!(result.contains("MountFn :: new"));
+    assert!(result.contains("match row"));
+    assert!(!result.contains("Either"));
+}
+
+#[test]
+fn expands_control_flow_children_without_either_or_push() {
+    let result = expand_rsx(rsx_tokens(
+        r#"
+        <div>
+            {#if show}
+                <text>"A"</text>
+            {:else}
+                {#each items as item}
+                    <text>{item}</text>
+                {/each}
+            {/if}
+        </div>
+        "#,
+    ))
+    .unwrap()
+    .to_string();
+
+    assert!(result.contains("MountFn :: new"));
+    assert!(result.contains("if show"));
+    assert!(result.contains("for item in items"));
+    assert!(!result.contains("Either"));
+    assert!(!result.contains("PushEach"));
+    assert!(!result.contains("ParentElement :: child"));
 }
 
 #[test]
