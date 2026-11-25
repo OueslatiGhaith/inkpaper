@@ -7,6 +7,8 @@ use self::marks::MarkPlacement;
 
 mod arabic;
 mod bidi;
+#[cfg(feature = "ttf")]
+mod harfrust_shaper;
 mod line;
 mod logical;
 mod marks;

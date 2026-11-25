@@ -105,11 +105,11 @@ impl FontFace for TestFont {
         Some(GlyphId::new(index.saturating_add(1)))
     }
 
-    fn metrics(&self, _: u16) -> FontMetrics {
+    fn metrics(&self, _: FontProperties, _: u16) -> FontMetrics {
         FontMetrics::new(px(8), px(2), px(0))
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(&self, _: FontProperties, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
         if glyph.value() == 0 {
             return None;
         }
@@ -117,11 +117,17 @@ impl FontFace for TestFont {
         Some(GlyphMetrics::new(1, 1, px(0), px(-1), self.advance))
     }
 
-    fn kerning(&self, _: GlyphId, _: GlyphId, _: u16) -> Pixels {
+    fn kerning(&self, _: FontProperties, _: GlyphId, _: GlyphId, _: u16) -> Pixels {
         self.kerning
     }
 
-    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+    fn rasterize(
+        &self,
+        _: FontProperties,
+        _: GlyphId,
+        _: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
         let Some(pixel) = coverage.first_mut() else {
             return Err(FontRasterError::BufferTooSmall);
         };
@@ -151,11 +157,11 @@ impl FontFace for BoxFont {
         Some(GlyphId::new(index.saturating_add(1)))
     }
 
-    fn metrics(&self, _: u16) -> FontMetrics {
+    fn metrics(&self, _: FontProperties, _: u16) -> FontMetrics {
         FontMetrics::new(px(8), px(2), px(0))
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(&self, _: FontProperties, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
         let index = usize::from(glyph.value()).checked_sub(1)?;
         let (_, width, height, bearing_x, bearing_y) = *self.glyphs.get(index)?;
 
@@ -168,7 +174,13 @@ impl FontFace for BoxFont {
         ))
     }
 
-    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+    fn rasterize(
+        &self,
+        _: FontProperties,
+        _: GlyphId,
+        _: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
         coverage.fill(255);
 
         Ok(())
@@ -192,11 +204,11 @@ impl FontFace for AsymmetricKerningFont {
         Some(GlyphId::new(index.saturating_add(1)))
     }
 
-    fn metrics(&self, _: u16) -> FontMetrics {
+    fn metrics(&self, _: FontProperties, _: u16) -> FontMetrics {
         FontMetrics::new(px(8), px(2), px(0))
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(&self, _: FontProperties, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
         if glyph.value() == 0 {
             return None;
         }
@@ -204,7 +216,7 @@ impl FontFace for AsymmetricKerningFont {
         Some(GlyphMetrics::new(1, 1, px(0), px(-1), self.advance))
     }
 
-    fn kerning(&self, left: GlyphId, right: GlyphId, _: u16) -> Pixels {
+    fn kerning(&self, _: FontProperties, left: GlyphId, right: GlyphId, _: u16) -> Pixels {
         match (left.value(), right.value()) {
             // logical initial -> final
             (1, 2) => px(-1),
@@ -214,7 +226,13 @@ impl FontFace for AsymmetricKerningFont {
         }
     }
 
-    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+    fn rasterize(
+        &self,
+        _: FontProperties,
+        _: GlyphId,
+        _: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
         let Some(pixel) = coverage.first_mut() else {
             return Err(FontRasterError::BufferTooSmall);
         };
@@ -242,11 +260,11 @@ impl FontFace for AnchoredMarkFont {
         Some(GlyphId::new(index.saturating_add(1)))
     }
 
-    fn metrics(&self, _: u16) -> FontMetrics {
+    fn metrics(&self, _: FontProperties, _: u16) -> FontMetrics {
         FontMetrics::new(px(8), px(2), px(0))
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(&self, _: FontProperties, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
         if glyph.value() == 0 {
             return None;
         }
@@ -254,7 +272,13 @@ impl FontFace for AnchoredMarkFont {
         Some(GlyphMetrics::new(1, 1, px(0), px(-1), self.advance))
     }
 
-    fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, _: u16) -> Option<Offset> {
+    fn mark_to_base_offset(
+        &self,
+        _: FontProperties,
+        base: GlyphId,
+        mark: GlyphId,
+        _: u16,
+    ) -> Option<Offset> {
         match (base.value(), mark.value()) {
             // isolated beh -> fatha
             (1, 2) => Some(Offset::new(px(2), px(-3))),
@@ -263,7 +287,13 @@ impl FontFace for AnchoredMarkFont {
         }
     }
 
-    fn mark_to_mark_offset(&self, base_mark: GlyphId, mark: GlyphId, _: u16) -> Option<Offset> {
+    fn mark_to_mark_offset(
+        &self,
+        _: FontProperties,
+        base_mark: GlyphId,
+        mark: GlyphId,
+        _: u16,
+    ) -> Option<Offset> {
         match (base_mark.value(), mark.value()) {
             // fatha -> shadda
             (2, 3) => Some(Offset::new(px(0), px(-2))),
@@ -272,7 +302,13 @@ impl FontFace for AnchoredMarkFont {
         }
     }
 
-    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+    fn rasterize(
+        &self,
+        _: FontProperties,
+        _: GlyphId,
+        _: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
         let Some(pixel) = coverage.first_mut() else {
             return Err(FontRasterError::BufferTooSmall);
         };
@@ -300,11 +336,11 @@ impl FontFace for LigatureAnchorFont {
         Some(GlyphId::new(index.saturating_add(1)))
     }
 
-    fn metrics(&self, _: u16) -> FontMetrics {
+    fn metrics(&self, _: FontProperties, _: u16) -> FontMetrics {
         FontMetrics::new(px(8), px(2), px(0))
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(&self, _: FontProperties, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
         if glyph.value() == 0 {
             return None;
         }
@@ -314,6 +350,7 @@ impl FontFace for LigatureAnchorFont {
 
     fn mark_to_ligature_offset(
         &self,
+        _: FontProperties,
         ligature: GlyphId,
         component: u16,
         mark: GlyphId,
@@ -326,7 +363,13 @@ impl FontFace for LigatureAnchorFont {
         }
     }
 
-    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+    fn rasterize(
+        &self,
+        _: FontProperties,
+        _: GlyphId,
+        _: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
         let Some(pixel) = coverage.first_mut() else {
             return Err(FontRasterError::BufferTooSmall);
         };
@@ -354,11 +397,11 @@ impl FontFace for CursiveTestFont {
         Some(GlyphId::new(index.saturating_add(1)))
     }
 
-    fn metrics(&self, _: u16) -> FontMetrics {
+    fn metrics(&self, _: FontProperties, _: u16) -> FontMetrics {
         FontMetrics::new(px(8), px(2), px(0))
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(&self, _: FontProperties, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
         if glyph.value() == 0 {
             return None;
         }
@@ -366,7 +409,7 @@ impl FontFace for CursiveTestFont {
         Some(GlyphMetrics::new(1, 1, px(0), px(-1), self.advance))
     }
 
-    fn kerning(&self, _: GlyphId, _: GlyphId, _: u16) -> Pixels {
+    fn kerning(&self, _: FontProperties, _: GlyphId, _: GlyphId, _: u16) -> Pixels {
         // deliberately large enough that the regression fails if cursive attachment
         // does not takeprecedence.
         px(-5)
@@ -374,6 +417,7 @@ impl FontFace for CursiveTestFont {
 
     fn cursive_attachment(
         &self,
+        _: FontProperties,
         visual_left: GlyphId,
         visual_right: GlyphId,
         _: u16,
@@ -392,7 +436,13 @@ impl FontFace for CursiveTestFont {
         }
     }
 
-    fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, _: u16) -> Option<Offset> {
+    fn mark_to_base_offset(
+        &self,
+        _: FontProperties,
+        base: GlyphId,
+        mark: GlyphId,
+        _: u16,
+    ) -> Option<Offset> {
         match (base.value(), mark.value()) {
             // medial beh -> fatha
             (2, 3) => Some(Offset::new(px(1), px(-3))),
@@ -401,7 +451,13 @@ impl FontFace for CursiveTestFont {
         }
     }
 
-    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+    fn rasterize(
+        &self,
+        _: FontProperties,
+        _: GlyphId,
+        _: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
         let Some(pixel) = coverage.first_mut() else {
             return Err(FontRasterError::BufferTooSmall);
         };
@@ -429,11 +485,11 @@ impl FontFace for GsubArabicFont {
         Some(GlyphId::new(index.saturating_add(1)))
     }
 
-    fn metrics(&self, _: u16) -> FontMetrics {
+    fn metrics(&self, _: FontProperties, _: u16) -> FontMetrics {
         FontMetrics::new(px(8), px(2), px(0))
     }
 
-    fn glyph_metrics(&self, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(&self, _: FontProperties, glyph: GlyphId, _: u16) -> Option<GlyphMetrics> {
         if glyph.value() == 0 {
             return None;
         }
@@ -443,6 +499,7 @@ impl FontFace for GsubArabicFont {
 
     fn single_substitution(
         &self,
+        _: FontProperties,
         feature: crate::OpenTypeFeature,
         glyph: GlyphId,
     ) -> Option<GlyphId> {
@@ -460,6 +517,7 @@ impl FontFace for GsubArabicFont {
 
     fn ligature_substitution(
         &self,
+        _: FontProperties,
         feature: crate::OpenTypeFeature,
         first: GlyphId,
         second: GlyphId,
@@ -476,7 +534,13 @@ impl FontFace for GsubArabicFont {
         }
     }
 
-    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+    fn rasterize(
+        &self,
+        _: FontProperties,
+        _: GlyphId,
+        _: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
         let Some(pixel) = coverage.first_mut() else {
             return Err(FontRasterError::BufferTooSmall);
         };
@@ -1459,24 +1523,25 @@ impl FontFace for WeightedFont {
         Some(GlyphId::new(index.saturating_add(1)))
     }
 
-    fn metrics(&self, _: u16) -> FontMetrics {
+    fn metrics(&self, _: FontProperties, _: u16) -> FontMetrics {
         FontMetrics::new(px(8), px(2), px(0))
     }
 
-    fn glyph_metrics(&self, _: GlyphId, _: u16) -> Option<GlyphMetrics> {
+    fn glyph_metrics(&self, _: FontProperties, _: GlyphId, _: u16) -> Option<GlyphMetrics> {
         Some(GlyphMetrics::new(1, 1, px(0), px(-1), px(4)))
     }
 
-    fn glyph_advance_with_properties(
-        &self,
-        properties: FontProperties,
-        _: GlyphId,
-        _: u16,
-    ) -> Option<Pixels> {
+    fn glyph_advance(&self, properties: FontProperties, _: GlyphId, _: u16) -> Option<Pixels> {
         Some(px(i32::from(properties.weight().value() / 100)))
     }
 
-    fn rasterize(&self, _: GlyphId, _: u16, coverage: &mut [u8]) -> Result<(), FontRasterError> {
+    fn rasterize(
+        &self,
+        _: FontProperties,
+        _: GlyphId,
+        _: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
         let Some(pixel) = coverage.first_mut() else {
             return Err(FontRasterError::BufferTooSmall);
         };
@@ -2270,4 +2335,28 @@ fn ellipsis_after_a_one_letter_rtl_line_stays_together() {
         .collect();
 
     assert_eq!(order, expected);
+}
+
+#[test]
+fn unicode_bidi_handles_more_than_32_directional_runs_and_explicit_isolates() {
+    static CHARACTERS: [char; 5] = ['A', 'ب', ' ', '1', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+
+    // 40 alternating LTR/RTL runs (> old 32-run cap).
+    let alternating = "A ب ".repeat(20);
+    let (glyphs, advance) = shape_streamed_line::<64, 1>(&registry, font_id, &alternating, "")
+        .expect("unicode-bidi should not fail above 32 runs");
+    assert_eq!(glyphs.len(), 80);
+    assert_eq!(advance, px(400));
+
+    // Explicit FSI..PDI isolate keeps the inner RTL run from flipping outer paragraph dir.
+    let isolated = "\u{2068}ب\u{2069} A";
+    assert_eq!(paragraph_direction(isolated), TextDirection::LeftToRight);
 }

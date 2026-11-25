@@ -321,20 +321,32 @@ mod tests {
             u16::try_from(u32::from(character)).ok().map(GlyphId::new)
         }
 
-        fn metrics(&self, size_px: u16) -> crate::FontMetrics {
+        fn metrics(&self, _: crate::FontProperties, size_px: u16) -> crate::FontMetrics {
             crate::FontMetrics::new(px(i32::from(size_px)), px(0), px(0))
         }
 
-        fn glyph_metrics(&self, _glyph: GlyphId, _size_px: u16) -> Option<crate::GlyphMetrics> {
+        fn glyph_metrics(
+            &self,
+            _: crate::FontProperties,
+            _glyph: GlyphId,
+            _size_px: u16,
+        ) -> Option<crate::GlyphMetrics> {
             None
         }
 
-        fn kerning(&self, _left: GlyphId, _right: GlyphId, _size_px: u16) -> crate::Pixels {
+        fn kerning(
+            &self,
+            _: crate::FontProperties,
+            _left: GlyphId,
+            _right: GlyphId,
+            _size_px: u16,
+        ) -> crate::Pixels {
             px(self.0)
         }
 
         fn rasterize(
             &self,
+            _: crate::FontProperties,
             _glyph: GlyphId,
             _size_px: u16,
             _coverage: &mut [u8],

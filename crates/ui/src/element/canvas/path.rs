@@ -1,8 +1,5 @@
-use crate::float::ceil_usize;
+use crate::raster::{flatten_cubic, flatten_quadratic};
 use crate::{AffineTransform, PathCommand, VectorPath, VectorPoint};
-
-const CURVE_PIXELS_PER_STEP: f32 = 2.0;
-const MAX_CURVE_STEPS: usize = 32;
 
 pub(super) trait FlattenedPathSink {
     fn begin_contour(&mut self, start: VectorPoint);
@@ -56,7 +53,7 @@ where
                 let control = transform.map_point(control);
                 let to = transform.map_point(to);
 
-                flatten_quadratic(sink, from, control, to);
+                flatten_quadratic(from, control, to, |a, b| sink.segment(a, b));
 
                 current = Some(to);
             }
@@ -74,7 +71,7 @@ where
                 let control_2 = transform.map_point(control_2);
                 let to = transform.map_point(to);
 
-                flatten_cubic(sink, from, control_1, control_2, to);
+                flatten_cubic(from, control_1, control_2, to, |a, b| sink.segment(a, b));
 
                 current = Some(to);
             }
@@ -100,93 +97,4 @@ where
     if contour_active {
         sink.end_contour(false);
     }
-}
-
-fn flatten_quadratic<S>(sink: &mut S, start: VectorPoint, control: VectorPoint, end: VectorPoint)
-where
-    S: FlattenedPathSink + ?Sized,
-{
-    let steps = curve_steps(&[start, control, end]);
-
-    let mut previous = start;
-
-    for step in 1..=steps {
-        let t = step as f32 / steps as f32;
-        let inverse = 1.0 - t;
-
-        let point = VectorPoint::new(
-            inverse * inverse * start.x + 2.0 * inverse * t * control.x + t * t * end.x,
-            inverse * inverse * start.y + 2.0 * inverse * t * control.y + t * t * end.y,
-        );
-
-        if previous != point {
-            sink.segment(previous, point);
-        }
-
-        previous = point;
-    }
-}
-
-fn flatten_cubic<S>(
-    sink: &mut S,
-    start: VectorPoint,
-    control_1: VectorPoint,
-    control_2: VectorPoint,
-    end: VectorPoint,
-) where
-    S: FlattenedPathSink + ?Sized,
-{
-    let steps = curve_steps(&[start, control_1, control_2, end]);
-
-    let mut previous = start;
-
-    for step in 1..=steps {
-        let t = step as f32 / steps as f32;
-        let inverse = 1.0 - t;
-
-        let inverse_2 = inverse * inverse;
-        let t_2 = t * t;
-
-        let point = VectorPoint::new(
-            inverse_2 * inverse * start.x
-                + 3.0 * inverse_2 * t * control_1.x
-                + 3.0 * inverse * t_2 * control_2.x
-                + t_2 * t * end.x,
-            inverse_2 * inverse * start.y
-                + 3.0 * inverse_2 * t * control_1.y
-                + 3.0 * inverse * t_2 * control_2.y
-                + t_2 * t * end.y,
-        );
-
-        if previous != point {
-            sink.segment(previous, point);
-        }
-
-        previous = point;
-    }
-}
-
-fn curve_steps(points: &[VectorPoint]) -> usize {
-    if points.len() < 2 {
-        return 1;
-    }
-
-    let mut length = 0.0;
-
-    for pair in points.windows(2) {
-        length += approximate_distance(pair[0], pair[1]);
-    }
-
-    let estimate = length / CURVE_PIXELS_PER_STEP;
-    let mut steps = ceil_usize(estimate);
-
-    if steps == 0 {
-        steps = 1;
-    }
-
-    steps.min(MAX_CURVE_STEPS)
-}
-
-fn approximate_distance(from: VectorPoint, to: VectorPoint) -> f32 {
-    (to.x - from.x).abs() + (to.y - from.y).abs()
 }

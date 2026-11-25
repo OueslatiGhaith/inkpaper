@@ -736,7 +736,7 @@ fn text_run_underline_spans_the_run_below_the_baseline() {
     assert_eq!(rows.len(), 1);
 
     // two pixels below the 6 × 10 font's baseline
-    let baseline = TEST_FONT_FACE.metrics(10).ascent;
+    let baseline = TEST_FONT_FACE.metrics(FontProperties::NORMAL, 10).ascent;
     assert_eq!(px(rows[0]), baseline + px(2));
 }
 

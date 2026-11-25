@@ -1,3 +1,5 @@
+use core::ops::ControlFlow;
+
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 
 use crate::{Pixels, ShapeError, TextMaxLines, TextOverflow, TextWrap, px};
@@ -87,60 +89,384 @@ fn trim_hanging_whitespace(text: &str, start: usize, mut end: usize) -> usize {
     end
 }
 
-/// visits the pieces of a word wider than the line, each as wide as fits, except the
-/// last. Returns where the last piece starts, so later words can share its line
+fn advance_boundaries<B>(
+    text: &str,
+    mut pos: usize,
+    max_steps: usize,
+    next_boundary: &B,
+) -> (usize, usize)
+where
+    B: Fn(&str, usize) -> Option<usize>,
+{
+    let mut taken = 0usize;
+
+    while taken < max_steps && pos < text.len() {
+        let Some(next) = next_text_boundary(text, pos, next_boundary) else {
+            break;
+        };
+        pos = next;
+        taken += 1;
+    }
+
+    (taken, pos)
+}
+
+/// Finds the longest prefix of `text` ending at a cluster boundary `>= start_end`
+/// that fits within `max_width`, using exponential (galloping) + binary search.
+///
+/// Makes `O(log k)` calls to `measure` and `O(k)` boundary steps with zero allocation.
+/// If the very first boundary after `start_end` fails to fit and `initial` is `None`,
+/// returns `Err((first_end, first_width))` so callers that must make progress (like
+/// oversized-word splitting) do not re-measure it.
+fn find_longest_fitting_cluster_prefix<B, M>(
+    text: &str,
+    start_end: usize,
+    initial: Option<(usize, LineWidth)>,
+    max_width: Pixels,
+    next_boundary: &B,
+    measure: &mut M,
+) -> Result<Option<(usize, LineWidth)>, (usize, LineWidth)>
+where
+    B: Fn(&str, usize) -> Option<usize>,
+    M: FnMut(&str) -> LineWidth,
+{
+    let mut lo_steps = 0usize;
+    let mut lo_byte = start_end;
+    let mut lo_result = initial;
+    let mut step = 1usize;
+    let mut hi_steps = None;
+
+    while lo_byte < text.len() {
+        let (taken, probe_byte) = advance_boundaries(text, lo_byte, step, next_boundary);
+        if taken == 0 {
+            break;
+        }
+
+        let width = measure(&text[..probe_byte]);
+        if fits(width, max_width) {
+            lo_steps += taken;
+            lo_byte = probe_byte;
+            lo_result = Some((probe_byte, width));
+
+            if probe_byte == text.len() {
+                return Ok(lo_result);
+            }
+
+            step = step.saturating_mul(2);
+        } else {
+            if lo_result.is_none() && lo_steps == 0 && taken == 1 {
+                return Err((probe_byte, width));
+            }
+            hi_steps = Some(lo_steps + taken);
+            break;
+        }
+    }
+
+    if let Some(mut hi) = hi_steps {
+        while lo_steps + 1 < hi {
+            let mid_delta = (hi - lo_steps) / 2;
+            let (taken, mid_byte) = advance_boundaries(text, lo_byte, mid_delta, next_boundary);
+            if taken == 0 {
+                break;
+            }
+
+            let width = measure(&text[..mid_byte]);
+            if fits(width, max_width) {
+                lo_steps += taken;
+                lo_byte = mid_byte;
+                lo_result = Some((mid_byte, width));
+            } else {
+                hi = lo_steps + taken;
+            }
+        }
+    }
+
+    Ok(lo_result)
+}
+
+/// Visits the pieces of a word wider than the line, each as wide as fits, except the
+/// last. Returns `(tail_start, tail_width)` so later words can share its line without
+/// re-measuring it.
 fn split_oversized_word<'a, B, M, V>(
     word: &'a str,
     max_width: Pixels,
     next_boundary: &B,
     measure: &mut M,
     visit: &mut V,
-) -> usize
+) -> ControlFlow<(), (usize, LineWidth)>
 where
     B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> LineWidth,
-    V: FnMut(&'a str, LineWidth),
+    V: FnMut(&'a str, LineWidth) -> ControlFlow<()>,
 {
     let mut start = 0usize;
 
     loop {
-        let first_end = next_text_boundary(word, start, next_boundary)
-            .expect("non-empty word must contain a text boundary");
-
-        let mut end = first_end;
-        let mut last_fit = None;
-
-        loop {
-            let candidate = &word[start..end];
-            let width = measure(candidate);
-
-            if fits(width, max_width) {
-                last_fit = Some((end, width));
-            } else {
-                break;
+        let rest = &word[start..];
+        let (rel_end, width) = match find_longest_fitting_cluster_prefix(
+            rest,
+            0,
+            None,
+            max_width,
+            next_boundary,
+            measure,
+        ) {
+            Ok(Some(found)) => found,
+            Err(first) => first,
+            Ok(None) => {
+                let first_end = next_text_boundary(rest, 0, next_boundary)
+                    .expect("non-empty word must contain a text boundary");
+                (first_end, measure(&rest[..first_end]))
             }
-            if end == word.len() {
-                break;
-            }
-
-            let Some(next_end) = next_text_boundary(word, end, next_boundary) else {
-                break;
-            };
-
-            end = next_end;
-        }
-
-        let (end, width) = match last_fit {
-            Some(result) => result,
-            None => (first_end, measure(&word[start..first_end])),
         };
+
+        let end = start + rel_end;
         if end == word.len() {
-            return start;
+            return ControlFlow::Continue((start, width));
         }
 
-        visit(&word[start..end], width);
+        visit(&word[start..end], width)?;
         start = end;
     }
+}
+
+/// Advances up to `max_steps` non-empty word-break segments inside `chunk` starting
+/// from `pos`, returning `(steps_taken, content_end, segment_end)`.
+fn advance_word_breaks(chunk: &str, pos: usize, max_steps: usize) -> (usize, usize, usize) {
+    let mut taken = 0usize;
+    let mut seg_start = pos;
+    let mut last_content_end = pos;
+    let mut last_seg_end = pos;
+
+    for (rel_end, _) in linebreaks(&chunk[pos..]) {
+        let seg_end = pos + rel_end;
+        let content_end = trim_hanging_whitespace(chunk, seg_start, seg_end);
+        seg_start = seg_end;
+
+        if content_end <= last_content_end {
+            last_seg_end = seg_end;
+            continue;
+        }
+
+        last_content_end = content_end;
+        last_seg_end = seg_end;
+        taken += 1;
+
+        if taken == max_steps {
+            break;
+        }
+    }
+
+    (taken, last_content_end, last_seg_end)
+}
+
+/// Wraps one mandatory-break-free chunk of a paragraph in `TextWrap::Word` mode,
+/// galloping + binary-searching over word breaks per line (`O(log W)` measurements).
+fn wrap_word_chunk<'a, B, M, V>(
+    chunk: &'a str,
+    max_width: Pixels,
+    next_boundary: &B,
+    measure: &mut M,
+    visit: &mut V,
+) -> ControlFlow<()>
+where
+    B: Fn(&str, usize) -> Option<usize>,
+    M: FnMut(&str) -> LineWidth,
+    V: FnMut(&'a str, LineWidth) -> ControlFlow<()>,
+{
+    let mut cursor = skip_hanging_whitespace(chunk, 0);
+    if cursor >= chunk.len() {
+        return visit("", Ok(Pixels::ZERO));
+    }
+
+    // Track an oversized word's trailing piece so subsequent words can join its line.
+    let mut carried: Option<(usize, usize, LineWidth)> = None;
+
+    while cursor < chunk.len() || carried.is_some() {
+        let (line_start, mut lo_steps, mut lo_content_end, mut lo_seg_end, mut lo_width) =
+            if let Some((start, seg_end, width)) = carried.take() {
+                let content_end = trim_hanging_whitespace(chunk, start, seg_end);
+                (start, 0usize, content_end, seg_end, Some(width))
+            } else {
+                let start = skip_hanging_whitespace(chunk, cursor);
+                if start >= chunk.len() {
+                    break;
+                }
+                (start, 0usize, start, start, None)
+            };
+
+        let mut step = 1usize;
+        let mut hi_steps = None;
+
+        while lo_seg_end < chunk.len() {
+            let (taken, probe_content_end, probe_seg_end) =
+                advance_word_breaks(chunk, lo_seg_end, step);
+            if taken == 0 {
+                lo_seg_end = chunk.len();
+                break;
+            }
+
+            let width = measure(&chunk[line_start..probe_content_end]);
+            if fits(width, max_width) {
+                lo_steps += taken;
+                lo_content_end = probe_content_end;
+                lo_seg_end = probe_seg_end;
+                lo_width = Some(width);
+
+                if probe_seg_end >= chunk.len() {
+                    break;
+                }
+
+                step = step.saturating_mul(2);
+            } else {
+                hi_steps = Some(lo_steps + taken);
+                break;
+            }
+        }
+
+        if let Some(mut hi) = hi_steps {
+            while lo_steps + 1 < hi {
+                let mid_delta = (hi - lo_steps) / 2;
+                let (taken, mid_content_end, mid_seg_end) =
+                    advance_word_breaks(chunk, lo_seg_end, mid_delta);
+                if taken == 0 {
+                    break;
+                }
+
+                let width = measure(&chunk[line_start..mid_content_end]);
+                if fits(width, max_width) {
+                    lo_steps += taken;
+                    lo_content_end = mid_content_end;
+                    lo_seg_end = mid_seg_end;
+                    lo_width = Some(width);
+                } else {
+                    hi = lo_steps + taken;
+                }
+            }
+        }
+
+        if let Some(width) = lo_width {
+            visit(&chunk[line_start..lo_content_end], width)?;
+            cursor = lo_seg_end;
+        } else {
+            // The very first word on this line didn't fit — split it by cluster.
+            let (_, word_content_end, word_seg_end) = advance_word_breaks(chunk, line_start, 1);
+            let word = &chunk[line_start..word_content_end];
+            let (tail_rel, tail_width) =
+                split_oversized_word(word, max_width, next_boundary, measure, visit)?;
+            let tail_start = line_start + tail_rel;
+
+            cursor = word_seg_end;
+            if word_seg_end < chunk.len() {
+                carried = Some((tail_start, word_seg_end, tail_width));
+            } else {
+                visit(&chunk[tail_start..word_content_end], tail_width)?;
+            }
+        }
+    }
+
+    ControlFlow::Continue(())
+}
+
+/// Wraps one mandatory-break-free chunk of a paragraph in `TextWrap::Anywhere` mode,
+/// measuring whole words when they fit and galloping over clusters only on the word
+/// that crosses `max_width`.
+fn wrap_anywhere_chunk<'a, B, M, V>(
+    chunk: &'a str,
+    max_width: Pixels,
+    next_boundary: &B,
+    measure: &mut M,
+    visit: &mut V,
+) -> ControlFlow<()>
+where
+    B: Fn(&str, usize) -> Option<usize>,
+    M: FnMut(&str) -> LineWidth,
+    V: FnMut(&'a str, LineWidth) -> ControlFlow<()>,
+{
+    let mut line_start: Option<usize> = None;
+    let mut line_end = 0usize;
+    let mut line_width = Ok(Pixels::ZERO);
+    let mut emitted = false;
+    let mut segment_start = 0usize;
+
+    for (segment_end, _) in linebreaks(chunk) {
+        let start = segment_start;
+        segment_start = segment_end;
+
+        let content_end = trim_hanging_whitespace(chunk, start, segment_end);
+        let mut cursor = match line_start {
+            Some(_) => start,
+            None => skip_hanging_whitespace(chunk, start).min(content_end),
+        };
+
+        while cursor < content_end {
+            if let Some(line) = line_start {
+                let candidate = &chunk[line..content_end];
+                let width = measure(candidate);
+                if fits(width, max_width) {
+                    line_end = content_end;
+                    line_width = width;
+                    break;
+                }
+
+                // Try extending `chunk[line..]` past `cursor` (starting at `cursor - line`).
+                match find_longest_fitting_cluster_prefix(
+                    candidate,
+                    cursor - line,
+                    None,
+                    max_width,
+                    next_boundary,
+                    measure,
+                ) {
+                    Ok(Some((rel_end, width))) => {
+                        let fit_end = line + rel_end;
+                        visit(&chunk[line..fit_end], width)?;
+                        emitted = true;
+                        line_start = None;
+                        cursor = skip_hanging_whitespace(chunk, fit_end).min(content_end);
+                    }
+                    Ok(None) | Err(_) => {
+                        // Not even the first cluster at `cursor` fit; flush the prior line.
+                        visit(&chunk[line..line_end], line_width)?;
+                        emitted = true;
+                        line_start = None;
+                        cursor = skip_hanging_whitespace(chunk, cursor).min(content_end);
+                    }
+                }
+            } else {
+                let word = &chunk[cursor..content_end];
+                let width = measure(word);
+                if fits(width, max_width) {
+                    line_start = Some(cursor);
+                    line_end = content_end;
+                    line_width = width;
+                    break;
+                }
+
+                let (tail_rel, tail_width) =
+                    split_oversized_word(word, max_width, next_boundary, measure, visit)?;
+                if tail_rel > 0 {
+                    emitted = true;
+                }
+
+                line_start = Some(cursor + tail_rel);
+                line_end = content_end;
+                line_width = tail_width;
+                break;
+            }
+        }
+    }
+
+    if let Some(start) = line_start {
+        visit(&chunk[start..line_end], line_width)?;
+        emitted = true;
+    }
+
+    if !emitted {
+        visit("", Ok(Pixels::ZERO))?;
+    }
+
+    ControlFlow::Continue(())
 }
 
 /// wraps between words, or with `anywhere` between any two clusters
@@ -151,144 +477,55 @@ fn wrap_paragraph<'a, B, M, V>(
     next_boundary: &B,
     measure: &mut M,
     visit: &mut V,
-) where
+) -> ControlFlow<()>
+where
     B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> LineWidth,
-    V: FnMut(&'a str, LineWidth),
+    V: FnMut(&'a str, LineWidth) -> ControlFlow<()>,
 {
     if paragraph.is_empty() {
-        visit("", Ok(Pixels::ZERO));
-        return;
+        return visit("", Ok(Pixels::ZERO));
     }
 
     if max_width.is_non_positive() {
-        visit(paragraph, measure(paragraph));
-        return;
+        return visit(paragraph, measure(paragraph));
     }
 
-    let mut line_start: Option<usize> = None;
-    let mut line_end = 0usize;
-    let mut emitted = false;
-    // whether anything was visited since the last mandatory break
-    let mut line_visited = false;
-    let mut segment_start = 0usize;
+    let mut chunk_start = 0usize;
 
     for (segment_end, opportunity) in linebreaks(paragraph) {
-        let start = segment_start;
-        segment_start = segment_end;
+        if opportunity != BreakOpportunity::Mandatory {
+            continue;
+        }
 
-        let content_end = trim_hanging_whitespace(paragraph, start, segment_end);
+        let chunk = &paragraph[chunk_start..segment_end];
+        chunk_start = segment_end;
 
         if anywhere {
-            let mut cursor = match line_start {
-                Some(_) => start,
-                None => skip_hanging_whitespace(paragraph, start).min(content_end),
-            };
-
-            while cursor < content_end {
-                let end = next_text_boundary(&paragraph[..content_end], cursor, next_boundary)
-                    .expect("text before the content end must contain a boundary");
-
-                match line_start {
-                    Some(line) if !fits(measure(&paragraph[line..end]), max_width) => {
-                        let line = &paragraph[line..line_end];
-                        visit(line, measure(line));
-
-                        emitted = true;
-                        line_visited = true;
-                        line_start = None;
-                        // this cluster starts the next line
-                        continue;
-                    }
-                    Some(_) => line_end = end,
-                    None => {
-                        line_start = Some(cursor);
-                        line_end = end;
-                    }
-                }
-
-                cursor = end;
-            }
-        } else if let Some(line) = line_start
-            && content_end > start
-        {
-            let candidate = &paragraph[line..content_end];
-            if fits(measure(candidate), max_width) {
-                line_end = content_end;
-            } else {
-                let line = &paragraph[line..line_end];
-
-                visit(line, measure(line));
-
-                emitted = true;
-                line_visited = true;
-                line_start = None;
-            }
-        }
-
-        if !anywhere && line_start.is_none() {
-            let word_start = skip_hanging_whitespace(paragraph, start).min(content_end);
-
-            if word_start < content_end {
-                let word = &paragraph[word_start..content_end];
-                let width = measure(word);
-
-                if fits(width, max_width) {
-                    line_start = Some(word_start);
-                    line_end = content_end;
-                } else {
-                    let tail = split_oversized_word(word, max_width, next_boundary, measure, visit);
-                    if tail > 0 {
-                        emitted = true;
-                        line_visited = true;
-                    }
-
-                    line_start = Some(word_start + tail);
-                    line_end = content_end;
-                }
-            }
-        }
-
-        if opportunity == BreakOpportunity::Mandatory && segment_end < paragraph.len() {
-            match line_start.take() {
-                Some(start) => {
-                    let line = &paragraph[start..line_end];
-                    visit(line, measure(line));
-                }
-                None if !line_visited => visit("", Ok(Pixels::ZERO)),
-                None => {}
-            }
-
-            emitted = true;
-            line_visited = false;
+            wrap_anywhere_chunk(chunk, max_width, next_boundary, measure, visit)?;
+        } else {
+            wrap_word_chunk(chunk, max_width, next_boundary, measure, visit)?;
         }
     }
 
-    if let Some(start) = line_start {
-        let line = &paragraph[start..line_end];
-        visit(line, measure(line));
-        emitted = true;
-    }
-
-    if !emitted {
-        visit("", Ok(Pixels::ZERO));
-    }
+    ControlFlow::Continue(())
 }
 
-pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
+fn try_for_each_text_line_with_boundaries<'a, B, M, V>(
     text: &'a str,
     wrap: TextWrap,
     max_width: Pixels,
     next_boundary: B,
     mut measure: M,
     mut visit: V,
-) where
+) -> ControlFlow<()>
+where
     B: Fn(&str, usize) -> Option<usize>,
     M: FnMut(&str) -> LineWidth,
-    V: FnMut(&'a str, LineWidth),
+    V: FnMut(&'a str, LineWidth) -> ControlFlow<()>,
 {
     if text.is_empty() {
-        return;
+        return ControlFlow::Continue(());
     }
 
     let mut paragraph_start = 0usize;
@@ -304,7 +541,7 @@ pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
         let paragraph = &text[paragraph_start..paragraph_end];
 
         match wrap {
-            TextWrap::NoWrap => visit(paragraph, measure(paragraph)),
+            TextWrap::NoWrap => visit(paragraph, measure(paragraph))?,
             TextWrap::Word | TextWrap::Anywhere => {
                 wrap_paragraph(
                     paragraph,
@@ -313,7 +550,7 @@ pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
                     &next_boundary,
                     &mut measure,
                     &mut visit,
-                );
+                )?;
             }
         }
 
@@ -323,10 +560,38 @@ pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
 
         paragraph_start = paragraph_end.saturating_add(1);
         if paragraph_start == text.len() {
-            visit("", Ok(Pixels::ZERO));
+            visit("", Ok(Pixels::ZERO))?;
             break;
         }
     }
+
+    ControlFlow::Continue(())
+}
+
+#[cfg(test)]
+pub(crate) fn for_each_text_line_with_boundaries<'a, B, M, V>(
+    text: &'a str,
+    wrap: TextWrap,
+    max_width: Pixels,
+    next_boundary: B,
+    measure: M,
+    mut visit: V,
+) where
+    B: Fn(&str, usize) -> Option<usize>,
+    M: FnMut(&str) -> LineWidth,
+    V: FnMut(&'a str, LineWidth),
+{
+    let _ = try_for_each_text_line_with_boundaries(
+        text,
+        wrap,
+        max_width,
+        next_boundary,
+        measure,
+        |line, width| {
+            visit(line, width);
+            ControlFlow::Continue(())
+        },
+    );
 }
 
 #[cfg(test)]
@@ -379,25 +644,17 @@ where
         };
     }
 
-    let mut best_end = 0usize;
-    let mut best_width = ellipsis_only_width;
-    let mut cursor = 0usize;
-
-    while let Some(end) = next_text_boundary(line, cursor, next_boundary) {
-        let width = measured_ellipsized(&line[..end]);
-        if !fits(width, max_width) {
-            break;
-        }
-
-        best_end = end;
-        best_width = width;
-
-        if end == line.len() {
-            break;
-        }
-
-        cursor = end;
-    }
+    let (best_end, best_width) = match find_longest_fitting_cluster_prefix(
+        line,
+        0,
+        Some((0, ellipsis_only_width)),
+        max_width,
+        next_boundary,
+        measured_ellipsized,
+    ) {
+        Ok(Some(found)) => found,
+        _ => (0, ellipsis_only_width),
+    };
 
     VisibleTextLine {
         text: &line[..best_end],
@@ -462,27 +719,30 @@ pub(crate) fn for_each_visible_text_line_with_boundaries<'a, B, M, E, V>(
     let mut pending = None;
     let mut truncated = false;
 
-    for_each_text_line_with_boundaries(
+    let _ = try_for_each_text_line_with_boundaries(
         text,
         wrap,
         max_width,
         &next_boundary,
         |line| measure(line),
         |line, width| match limit {
-            None => emit_visible_line(
-                line,
-                width,
-                max_width,
-                overflow,
-                false,
-                &next_boundary,
-                &mut measured_ellipsized,
-                &mut visit,
-            ),
+            None => {
+                emit_visible_line(
+                    line,
+                    width,
+                    max_width,
+                    overflow,
+                    false,
+                    &next_boundary,
+                    &mut measured_ellipsized,
+                    &mut visit,
+                );
+                ControlFlow::Continue(())
+            }
             Some(limit) => {
                 if seen >= limit {
                     truncated = true;
-                    return;
+                    return ControlFlow::Break(());
                 }
 
                 seen = seen.saturating_add(1);
@@ -501,6 +761,8 @@ pub(crate) fn for_each_visible_text_line_with_boundaries<'a, B, M, E, V>(
                         &mut visit,
                     );
                 }
+
+                ControlFlow::Continue(())
             }
         },
     );
@@ -975,5 +1237,84 @@ mod tests {
         );
 
         assert_eq!(lines, vec![("abcdef", px(7), true)]);
+    }
+
+    #[test]
+    fn max_lines_stops_measuring_after_truncation_is_known() {
+        let text = "word ".repeat(200);
+        let mut measure_calls = 0usize;
+        let mut lines = Vec::new();
+
+        for_each_visible_text_line(
+            &text,
+            TextWrap::Word,
+            px(10),
+            TextMaxLines::Limited(2),
+            TextOverflow::Ellipsis,
+            |slice| {
+                measure_calls += 1;
+                measure(slice)
+            },
+            |slice| measure(slice).map(|width| width + px(1)),
+            |line| lines.push((line.text, line.ellipsis)),
+        );
+
+        assert_eq!(lines, vec![("word word", false), ("word word", true)]);
+        // 2 visible lines + 1 overflow line to detect truncation; never walks all 200 words.
+        assert!(
+            measure_calls < 20,
+            "expected early exit after max_lines, got {measure_calls} measure calls"
+        );
+    }
+
+    #[test]
+    fn long_single_line_wraps_in_logarithmic_measurements() {
+        let text = "a ".repeat(128);
+        let mut measure_calls = 0usize;
+        let mut lines = Vec::new();
+
+        for_each_text_line(
+            &text,
+            TextWrap::Word,
+            px(10_000),
+            |slice| {
+                measure_calls += 1;
+                measure(slice)
+            },
+            |line, _| lines.push(line),
+        );
+
+        assert_eq!(lines.len(), 1);
+        assert!(
+            measure_calls <= 16,
+            "expected O(log N) measure calls, got {measure_calls}"
+        );
+    }
+
+    #[test]
+    fn ellipsizing_long_line_uses_logarithmic_measurements() {
+        let text = "a".repeat(200);
+        let mut ellipsis_calls = 0usize;
+        let mut lines = Vec::new();
+
+        for_each_visible_text_line(
+            &text,
+            TextWrap::NoWrap,
+            px(100),
+            TextMaxLines::Unlimited,
+            TextOverflow::Ellipsis,
+            measure,
+            |slice| {
+                ellipsis_calls += 1;
+                measure(slice).map(|width| width + px(3))
+            },
+            |line| lines.push((line.text.len(), line.ellipsis)),
+        );
+
+        assert_eq!(lines, vec![(97, true)]);
+        assert!(
+            ellipsis_calls <= 20,
+            "expected O(log N) ellipsis measurements, got {ellipsis_calls}"
+        );
     }
 }

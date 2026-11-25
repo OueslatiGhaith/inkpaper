@@ -23,7 +23,7 @@ pub(crate) const ARABIC_RLIG_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"
 
 /// characters with no visible form, such as soft hyphens, zero-width spaces and joiners,
 /// bidi marks and variation selectors
-const DEFAULT_IGNORABLES: CodePointSetDataBorrowed<'static> =
+pub(super) const DEFAULT_IGNORABLES: CodePointSetDataBorrowed<'static> =
     CodePointSetData::new::<DefaultIgnorableCodePoint>();
 
 impl SimpleShaper {
@@ -253,7 +253,7 @@ impl SimpleShaper {
         &self,
         registry: &'font FontRegistry<'_, FONTS>,
         preferred_font: FontInstance,
-        prepared_font: Option<&PreparedFont<'font>>,
+        _prepared_font: Option<&PreparedFont<'font>>,
         size_px: u16,
         text: &str,
         from: usize,
@@ -262,36 +262,80 @@ impl SimpleShaper {
             return None;
         }
 
-        let mut state = ShapeState::new();
-        let mut next_boundary: Option<usize> = None;
+        let mut characters = text[from..].char_indices();
+        let mut consumed_base = false;
 
-        let result = self.try_shape_piece_with_prepared_font(
-            registry,
-            preferred_font,
-            prepared_font,
-            size_px,
-            text,
-            &mut state,
-            |glyph| {
-                let cluster = glyph.cluster();
-                if cluster <= from {
-                    return Ok::<(), Infallible>(());
-                }
-
-                next_boundary = Some(match next_boundary {
-                    Some(current) => current.min(cluster),
-                    None => cluster,
-                });
-
-                Ok(())
-            },
-        );
-
-        match result {
-            Ok(_) => next_boundary.or(Some(text.len())),
-            Err(error) => match error {},
+        // If `from` lands directly on the alef of a lam-alef ligature whose lam sits
+        // immediately before `from`, that alef belongs to lam's cluster rather than
+        // starting a new one.
+        if from > 0
+            && let Some(prev_char) = text[..from].chars().next_back()
+            && prev_char == '\u{0644}'
+            && let Some((_, alef)) = characters.clone().next()
+        {
+            let lam_start = from - prev_char.len_utf8();
+            let joins_previous = previous_non_transparent_connects_forward(&text[..lam_start]);
+            if resolve_lam_alef_ligature(registry, preferred_font, alef, joins_previous, size_px)
+                .is_some()
+            {
+                let _ = characters.next();
+            }
         }
+
+        while let Some((rel, character)) = characters.next() {
+            let offset = from + rel;
+            let joining = joining_type(character);
+
+            if DEFAULT_IGNORABLES.contains(character)
+                || joining.is_transparent()
+                || extends_cluster(character)
+            {
+                continue;
+            }
+
+            if offset > from {
+                return Some(offset);
+            }
+
+            // `offset == from`: consume this base cluster (including a lam-alef ligature
+            // if the font forms one), then continue until the next base character.
+            debug_assert!(!consumed_base);
+            consumed_base = true;
+
+            if character == '\u{0644}'
+                && let Some((_, alef)) = characters.clone().next()
+            {
+                let joins_previous = previous_non_transparent_connects_forward(&text[..from]);
+                if resolve_lam_alef_ligature(
+                    registry,
+                    preferred_font,
+                    alef,
+                    joins_previous,
+                    size_px,
+                )
+                .is_some()
+                {
+                    let _ = characters.next();
+                }
+            }
+        }
+
+        Some(text.len())
     }
+}
+
+fn previous_non_transparent_connects_forward(before: &str) -> bool {
+    for character in before.chars().rev() {
+        let joining = joining_type(character);
+
+        if joining.is_transparent() {
+            continue;
+        }
+
+        return joining.connects_forward();
+    }
+
+    false
 }
 
 fn next_non_transparent_accepts_previous(characters: &CharIndices<'_>) -> bool {

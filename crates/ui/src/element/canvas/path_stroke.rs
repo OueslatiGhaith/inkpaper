@@ -554,11 +554,12 @@ mod tests {
             PathStroke::new(3.0, Color::BLACK),
         );
 
+        // Stroke spans [1.1667, 4.1667]: 5/6 coverage on x=1 (212) and 1/6 on x=4 (43).
         assert_eq!(coverage_at(&painter, Point::new(px(0), px(4))), 0);
-        assert_eq!(coverage_at(&painter, Point::new(px(1), px(4))), 191);
+        assert_eq!(coverage_at(&painter, Point::new(px(1), px(4))), 212);
         assert_eq!(coverage_at(&painter, Point::new(px(2), px(4))), 255);
         assert_eq!(coverage_at(&painter, Point::new(px(3), px(4))), 255);
-        assert_eq!(coverage_at(&painter, Point::new(px(4), px(4))), 64);
+        assert_eq!(coverage_at(&painter, Point::new(px(4), px(4))), 43);
         assert_eq!(coverage_at(&painter, Point::new(px(5), px(4))), 0);
     }
 
@@ -669,11 +670,12 @@ mod tests {
             PathStroke::new(8.0 / 3.0, Color::BLACK),
         );
 
+        // Stroke spans [2/3, 10/3]: 1/3 coverage on x=0 and x=3 (85).
         assert_eq!(coverage_at(&painter, Point::new(px(-1), px(4))), 0);
-        assert_eq!(coverage_at(&painter, Point::new(px(0), px(4))), 64);
+        assert_eq!(coverage_at(&painter, Point::new(px(0), px(4))), 85);
         assert_eq!(coverage_at(&painter, Point::new(px(1), px(4))), 255);
         assert_eq!(coverage_at(&painter, Point::new(px(2), px(4))), 255);
-        assert_eq!(coverage_at(&painter, Point::new(px(3), px(4))), 64);
+        assert_eq!(coverage_at(&painter, Point::new(px(3), px(4))), 85);
         assert_eq!(coverage_at(&painter, Point::new(px(4), px(4))), 0);
     }
 }

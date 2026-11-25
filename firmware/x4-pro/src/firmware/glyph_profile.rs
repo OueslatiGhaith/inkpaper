@@ -126,7 +126,7 @@ pub(crate) fn run() {
     let hinted = HintedTtfFont::new(INTER);
 
     // builds the font's glyph styles, so the per-size instance below costs only itself
-    let _ = hinted.glyph_metrics_with_properties(PROPERTIES, GlyphId::new(0), 99);
+    let _ = hinted.glyph_metrics(PROPERTIES, GlyphId::new(0), 99);
 
     for size in SIZES {
         let mut instance = None;
@@ -145,7 +145,7 @@ pub(crate) fn run() {
         let instance = instance.expect("Inter hints");
 
         // builds `hinted`'s own instance for this size
-        let _ = hinted.glyph_metrics_with_properties(PROPERTIES, GlyphId::new(0), size);
+        let _ = hinted.glyph_metrics(PROPERTIES, GlyphId::new(0), size);
 
         let mut totals = Totals::default();
         let mut count = 0u64;
@@ -184,7 +184,7 @@ pub(crate) fn run() {
             // the unhinted advance from a freshly parsed font, and opening the font
             // in skrifa
             totals.advance += cycles(|| {
-                core::hint::black_box(INTER.glyph_advance_with_properties(PROPERTIES, glyph, size));
+                core::hint::black_box(INTER.glyph_advance(PROPERTIES, glyph, size));
             });
 
             totals.skrifa_setup += cycles(|| {
@@ -196,24 +196,19 @@ pub(crate) fn run() {
             // what the glyph cache does on a miss, in the same order
             let mut metrics = None;
             totals.hinted_outline += cycles(|| {
-                metrics = hinted.glyph_metrics_with_properties(PROPERTIES, glyph, size);
+                metrics = hinted.glyph_metrics(PROPERTIES, glyph, size);
             });
             let metrics = metrics.expect("hinted glyph has metrics");
             let bytes = metrics.coverage_bytes().expect("glyph fits");
 
             totals.hinted_fill += cycles(|| {
-                let _ = hinted.rasterize_with_properties(
-                    PROPERTIES,
-                    glyph,
-                    size,
-                    &mut coverage[..bytes],
-                );
+                let _ = hinted.rasterize(PROPERTIES, glyph, size, &mut coverage[..bytes]);
             });
             totals.sample_rows += u64::from(metrics.height) * 4;
 
             let mut metrics = None;
             totals.unhinted_metrics += cycles(|| {
-                metrics = INTER.glyph_metrics_with_properties(PROPERTIES, glyph, size);
+                metrics = INTER.glyph_metrics(PROPERTIES, glyph, size);
             });
             let bytes = metrics
                 .expect("glyph has metrics")
@@ -221,12 +216,7 @@ pub(crate) fn run() {
                 .expect("glyph fits");
 
             totals.unhinted_fill += cycles(|| {
-                let _ = INTER.rasterize_with_properties(
-                    PROPERTIES,
-                    glyph,
-                    size,
-                    &mut coverage[..bytes],
-                );
+                let _ = INTER.rasterize(PROPERTIES, glyph, size, &mut coverage[..bytes]);
             });
 
             count += 1;

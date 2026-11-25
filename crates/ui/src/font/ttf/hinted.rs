@@ -5,39 +5,32 @@
 //! glyph outlines change: advances, kerning and every other metric come from the
 //! unhinted font, so line breaking and shaping are unaffected.
 
-use crate::float::{ceil_i32, floor_i32};
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 
 use skrifa::{
     FontRef, MetadataProvider,
-    instance::{Location, Size},
+    instance::Size,
     outline::{
         DrawSettings, Engine, GlyphStyles, HintingInstance, HintingOptions, OutlineGlyphCollection,
         OutlinePen, SmoothMode, Target,
     },
 };
-use ttf_parser::{Face, OutlineBuilder};
 
 use super::{
-    TtfFont,
-    metrics::glyph_advance_for_face,
-    raster::{
-        Edge, EdgeBuilder, SUPERSAMPLE_Y, ScanlineBuilder, accumulate_scanline, normalize_coverage,
-    },
-    to_ttf_glyph,
+    OwnedTtfFont, PreparedTtfFont, TtfFont, TtfFontError, apply_harfrust_properties,
+    metrics::glyph_advance_for_font, to_skrifa_glyph,
 };
 use crate::{
-    CursiveAttachment, FontFace, FontMetrics, FontProperties, FontRasterError, FontStyle,
-    FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning,
-    Pixels, PreparedFontSource, px,
+    FillRule, FontData, FontFace, FontMetrics, FontProperties, FontRasterError, FontStyle,
+    FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Pixels, PreparedFontSource, VectorPoint,
+    float::{ceil_i32, floor_i32},
+    px,
+    raster::{CoverageGrid, STACK_CELLS, flatten_cubic, flatten_quadratic},
 };
 
 /// the reader and the UI each use a few sizes, and a hinting instance costs a pass
 /// over the font's style metrics to build
 const CACHED_INSTANCES: usize = 4;
-
-/// one parsed font per weight in use, usually regular and bold
-const CACHED_FACES: usize = 2;
 
 /// normal hinting also snaps vertical stems, which is what makes their widths
 /// consistent. Light hinting only snaps heights
@@ -50,17 +43,74 @@ const TARGET: Target = Target::Smooth {
 
 pub struct HintedTtfFont<'a> {
     font: TtfFont<'a>,
-    state: spin::Mutex<HintingState<'a>>,
+    cache: spin::Mutex<HintingCache>,
 }
 
-struct HintingState<'a> {
-    /// opened on first use, so a new glyph doesn't reopen the font
-    outlines: Option<OutlineGlyphCollection<'a>>,
-    /// parsed on first use, so a new glyph's advance doesn't reparse the font
-    faces: Vec<CachedFace<'a>>,
+impl<'a> HintedTtfFont<'a> {
+    pub const fn new(font: TtfFont<'a>) -> Self {
+        Self {
+            font,
+            cache: spin::Mutex::new(HintingCache::new()),
+        }
+    }
+
+    pub const fn font(&self) -> &TtfFont<'a> {
+        &self.font
+    }
+}
+
+/// An [`OwnedTtfFont`] whose glyph outlines are autohinted by skrifa, so
+/// runtime-loaded fonts (e.g. from SD card) render with the same stem snapping
+/// as embedded [`HintedTtfFont`] faces.
+///
+/// Cloning shares both the underlying font bytes and the hinting/shaping cache.
+pub struct HintedOwnedTtfFont<D> {
+    data: Arc<D>,
+    face_index: u32,
+    cache: Arc<spin::Mutex<HintingCache>>,
+}
+
+impl<D> Clone for HintedOwnedTtfFont<D> {
+    fn clone(&self) -> Self {
+        Self {
+            data: Arc::clone(&self.data),
+            face_index: self.face_index,
+            cache: Arc::clone(&self.cache),
+        }
+    }
+}
+
+impl<D: AsRef<[u8]> + Send + Sync + 'static> HintedOwnedTtfFont<D> {
+    pub fn new(font: OwnedTtfFont<D>) -> Self {
+        let (data, face_index) = font.into_parts();
+        Self {
+            data: Arc::new(data),
+            face_index,
+            cache: Arc::new(spin::Mutex::new(HintingCache::new())),
+        }
+    }
+
+    pub fn parse(data: D, face_index: u32) -> Result<Self, TtfFontError> {
+        OwnedTtfFont::parse(data, face_index).map(Self::new)
+    }
+
+    pub fn data(&self) -> &D {
+        self.data.as_ref()
+    }
+
+    fn font(&self) -> TtfFont<'_> {
+        TtfFont::from_data(FontData::new(self.data.as_ref().as_ref()), self.face_index)
+    }
+}
+
+struct HintingCache {
     instances: Instances,
     /// the glyph cache asks for a glyph's metrics right before rasterizing it
     last_outline: Option<CachedOutline>,
+    /// base `harfrust::Font` holding the shared OpenType layout caches
+    harf_base: Option<harfrust::Font>,
+    /// most recently used weight-varied `harfrust::Font`
+    harf_varied: Option<(FontWeight, harfrust::Font)>,
 }
 
 struct Instances {
@@ -68,12 +118,6 @@ struct Instances {
     styles: Option<GlyphStyles>,
     /// most recently used last
     cached: Vec<CachedInstance>,
-}
-
-/// the unhinted font the advances come from, with its weight already set
-struct CachedFace<'a> {
-    weight: Option<FontWeight>,
-    face: Face<'a>,
 }
 
 struct CachedInstance {
@@ -90,54 +134,97 @@ struct CachedOutline {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct InstanceKey {
     size_px: u16,
-    /// `None` is the font's default instance
-    weight: Option<FontWeight>,
+    weight: FontWeight,
 }
 
-impl<'a> HintedTtfFont<'a> {
-    pub const fn new(font: TtfFont<'a>) -> Self {
+impl HintingCache {
+    const fn new() -> Self {
         Self {
-            font,
-            state: spin::Mutex::new(HintingState {
-                outlines: None,
-                faces: Vec::new(),
-                instances: Instances {
-                    styles: None,
-                    cached: Vec::new(),
-                },
-                last_outline: None,
-            }),
+            instances: Instances {
+                styles: None,
+                cached: Vec::new(),
+            },
+            last_outline: None,
+            harf_base: None,
+            harf_varied: None,
         }
     }
 
-    pub const fn font(&self) -> &TtfFont<'a> {
-        &self.font
-    }
+    fn harfrust_font(
+        cache: &spin::Mutex<Self>,
+        make_blob: impl FnOnce() -> harfrust::font::Blob,
+        face_index: u32,
+        properties: FontProperties,
+    ) -> Option<harfrust::Font> {
+        let mut state = cache.lock();
+        let weight = properties.weight();
 
-    fn glyph_metrics_at(&self, key: InstanceKey, glyph: GlyphId) -> Option<GlyphMetrics> {
-        let advance = {
-            let mut state = self.state.lock();
-            let face = state.face(&self.font, key.weight)?;
+        if let Some((cached_weight, cached_font)) = &state.harf_varied
+            && *cached_weight == weight
+        {
+            return Some(cached_font.clone());
+        }
 
-            glyph_advance_for_face(face, to_ttf_glyph(glyph), key.size_px)?
+        let base = match &state.harf_base {
+            Some(base) => base,
+            None => {
+                let font = harfrust::Font::new(make_blob(), face_index)?;
+                state.harf_base.insert(font)
+            }
         };
 
-        self.with_outline(key, glyph, |outline| outline.metrics(advance))
-            .ok()
-            .flatten()
+        let varied = apply_harfrust_properties(base, properties);
+        state.harf_varied = Some((weight, varied.clone()));
+        Some(varied)
     }
 
-    fn rasterize_at(
-        &self,
-        key: InstanceKey,
+    fn glyph_metrics(
+        cache: &spin::Mutex<Self>,
+        font: TtfFont<'_>,
+        properties: FontProperties,
         glyph: GlyphId,
+        size_px: u16,
+    ) -> Option<GlyphMetrics> {
+        let font_ref = font.font_ref().ok()?;
+        let location = TtfFont::location_for(&font_ref, properties);
+        let advance =
+            glyph_advance_for_font(&font_ref, (&location).into(), to_skrifa_glyph(glyph), size_px)?;
+
+        let key = InstanceKey {
+            size_px,
+            weight: properties.weight(),
+        };
+
+        Self::with_outline(cache, &font_ref, properties, key, glyph, |outline| {
+            outline.metrics(advance)
+        })
+        .ok()
+        .flatten()
+    }
+
+    fn rasterize(
+        cache: &spin::Mutex<Self>,
+        font: TtfFont<'_>,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
         coverage: &mut [u8],
     ) -> Result<(), FontRasterError> {
-        self.with_outline(key, glyph, |outline| outline.rasterize(coverage))?
+        let font_ref = font.font_ref().map_err(|_| FontRasterError::InvalidFont)?;
+        let key = InstanceKey {
+            size_px,
+            weight: properties.weight(),
+        };
+
+        Self::with_outline(cache, &font_ref, properties, key, glyph, |outline| {
+            outline.rasterize(coverage)
+        })?
     }
 
     fn with_outline<R>(
-        &self,
+        cache: &spin::Mutex<Self>,
+        font_ref: &FontRef<'_>,
+        properties: FontProperties,
         key: InstanceKey,
         glyph: GlyphId,
         use_outline: impl FnOnce(&HintedOutline) -> R,
@@ -146,7 +233,7 @@ impl<'a> HintedTtfFont<'a> {
             return Err(FontRasterError::InvalidSize);
         }
 
-        let mut state = self.state.lock();
+        let mut state = cache.lock();
 
         if let Some(cached) = &state.last_outline
             && cached.key == key
@@ -155,24 +242,13 @@ impl<'a> HintedTtfFont<'a> {
             return Ok(use_outline(&cached.outline));
         }
 
-        if state.outlines.is_none() {
-            let font = FontRef::from_index(self.font.data().bytes(), self.font.face_index())
-                .map_err(|_| FontRasterError::InvalidFont)?;
-
-            state.outlines = Some(font.outline_glyphs());
-        }
-
-        let state = &mut *state;
-        let outlines = state
-            .outlines
-            .as_ref()
-            .expect("the outlines were just opened");
-        let instance = state.instances.get(&self.font, outlines, key)?;
+        let outlines = font_ref.outline_glyphs();
+        let instance = state.instances.get(font_ref, &outlines, properties, key)?;
 
         let mut recorder = OutlineRecorder::default();
 
         outlines
-            .get(skrifa::GlyphId::new(u32::from(glyph.value())))
+            .get(to_skrifa_glyph(glyph))
             .ok_or(FontRasterError::InvalidGlyph)?
             .draw(DrawSettings::hinted(instance, false), &mut recorder)
             .map_err(|_| FontRasterError::Unsupported)?;
@@ -190,34 +266,12 @@ impl<'a> HintedTtfFont<'a> {
     }
 }
 
-impl<'a> HintingState<'a> {
-    fn face(&mut self, font: &TtfFont<'a>, weight: Option<FontWeight>) -> Option<&Face<'a>> {
-        if let Some(index) = self.faces.iter().position(|cached| cached.weight == weight) {
-            let cached = self.faces.remove(index);
-            self.faces.push(cached);
-        } else {
-            let face = match weight {
-                Some(weight) => font.face_with_properties(FontProperties::new(weight)),
-                None => font.face(),
-            }
-            .ok()?;
-
-            if self.faces.len() == CACHED_FACES {
-                self.faces.remove(0);
-            }
-
-            self.faces.push(CachedFace { weight, face });
-        }
-
-        self.faces.last().map(|cached| &cached.face)
-    }
-}
-
 impl Instances {
     fn get(
         &mut self,
-        font: &TtfFont<'_>,
+        font_ref: &FontRef<'_>,
         outlines: &OutlineGlyphCollection<'_>,
+        properties: FontProperties,
         key: InstanceKey,
     ) -> Result<&HintingInstance, FontRasterError> {
         if let Some(index) = self.cached.iter().position(|cached| cached.key == key) {
@@ -229,10 +283,11 @@ impl Instances {
                 .get_or_insert_with(|| GlyphStyles::new(outlines))
                 .clone();
 
+            let location = TtfFont::location_for(font_ref, properties);
             let instance = HintingInstance::new(
                 outlines,
                 Size::new(f32::from(key.size_px)),
-                &location(font, key.weight)?,
+                &location,
                 HintingOptions {
                     engine: Engine::Auto(Some(styles)),
                     target: TARGET,
@@ -253,24 +308,6 @@ impl Instances {
             .expect("the requested instance was just pushed")
             .instance)
     }
-}
-
-/// opens the font only for a new instance, which is rare
-#[cfg(feature = "variable-fonts")]
-fn location(font: &TtfFont<'_>, weight: Option<FontWeight>) -> Result<Location, FontRasterError> {
-    let Some(weight) = weight else {
-        return Ok(Location::default());
-    };
-
-    let font = FontRef::from_index(font.data().bytes(), font.face_index())
-        .map_err(|_| FontRasterError::InvalidFont)?;
-
-    Ok(font.axes().location([("wght", f32::from(weight.value()))]))
-}
-
-#[cfg(not(feature = "variable-fonts"))]
-fn location(_font: &TtfFont<'_>, _weight: Option<FontWeight>) -> Result<Location, FontRasterError> {
-    Ok(Location::default())
 }
 
 #[derive(Clone, Copy)]
@@ -300,7 +337,7 @@ impl OutlineRecorder {
         });
     }
 
-    /// bitmap bounds in pixels, y down, like `glyph_metrics_for_face`
+    /// bitmap bounds in pixels, y down, like `glyph_metrics_for_font`
     fn pixel_bounds(&self) -> Option<(i32, i32, i32, i32)> {
         let (left, bottom, right, top) = self.bounds?;
 
@@ -312,32 +349,87 @@ impl OutlineRecorder {
         Some((left, top, width, height))
     }
 
-    /// flattens the outline into bitmap space once, so rasterizing it doesn't
-    /// redo the curve math for every sample row
+    /// flattens the outline into directed Y-down segments once, so rasterizing it
+    /// runs a single analytical pass with no curve re-evaluation
     fn finish(self) -> HintedOutline {
         let Some(bounds) = self.pixel_bounds() else {
             return HintedOutline {
                 bounds: None,
-                edges: Vec::new(),
+                segments: Vec::new(),
             };
         };
 
-        let (left, top, _, _) = bounds;
-        let mut edges = EdgeBuilder::new(left, top);
+        let mut segments = Vec::new();
+        let mut current: Option<VectorPoint> = None;
+        let mut contour_start: Option<VectorPoint> = None;
+
+        let close_contour = |current: &mut Option<VectorPoint>,
+                             contour_start: &mut Option<VectorPoint>,
+                             segments: &mut Vec<(VectorPoint, VectorPoint)>| {
+            if let (Some(from), Some(start)) = (current.take(), contour_start.take())
+                && from.y != start.y
+            {
+                segments.push((from, start));
+            }
+        };
 
         for command in &self.commands {
             match *command {
-                PathCommand::MoveTo(x, y) => edges.move_to(x, y),
-                PathCommand::LineTo(x, y) => edges.line_to(x, y),
-                PathCommand::QuadTo(x1, y1, x, y) => edges.quad_to(x1, y1, x, y),
-                PathCommand::CurveTo(x1, y1, x2, y2, x, y) => edges.curve_to(x1, y1, x2, y2, x, y),
-                PathCommand::Close => edges.close(),
+                PathCommand::MoveTo(x, y) => {
+                    close_contour(&mut current, &mut contour_start, &mut segments);
+                    let point = VectorPoint::new(x, -y);
+                    current = Some(point);
+                    contour_start = Some(point);
+                }
+                PathCommand::LineTo(x, y) => {
+                    let to = VectorPoint::new(x, -y);
+                    if let Some(from) = current
+                        && from.y != to.y
+                    {
+                        segments.push((from, to));
+                    }
+                    current = Some(to);
+                }
+                PathCommand::QuadTo(x1, y1, x, y) => {
+                    let end = VectorPoint::new(x, -y);
+                    let Some(start) = current else {
+                        current = Some(end);
+                        continue;
+                    };
+                    let control = VectorPoint::new(x1, -y1);
+                    flatten_quadratic(start, control, end, |from, to| {
+                        if from.y != to.y {
+                            segments.push((from, to));
+                        }
+                    });
+                    current = Some(end);
+                }
+                PathCommand::CurveTo(x1, y1, x2, y2, x, y) => {
+                    let end = VectorPoint::new(x, -y);
+                    let Some(start) = current else {
+                        current = Some(end);
+                        continue;
+                    };
+                    let c1 = VectorPoint::new(x1, -y1);
+                    let c2 = VectorPoint::new(x2, -y2);
+                    flatten_cubic(start, c1, c2, end, |from, to| {
+                        if from.y != to.y {
+                            segments.push((from, to));
+                        }
+                    });
+                    current = Some(end);
+                }
+                PathCommand::Close => {
+                    close_contour(&mut current, &mut contour_start, &mut segments);
+                }
             }
         }
 
+        close_contour(&mut current, &mut contour_start, &mut segments);
+
         HintedOutline {
             bounds: Some(bounds),
-            edges: edges.finish(),
+            segments,
         }
     }
 }
@@ -372,12 +464,11 @@ impl OutlinePen for OutlineRecorder {
     }
 }
 
-/// a hinted outline flattened into bitmap space
+/// a hinted outline flattened into Y-down pixel space
 struct HintedOutline {
     /// left, top, width, height in pixels, y down
     bounds: Option<(i32, i32, i32, i32)>,
-    /// sorted by top
-    edges: Vec<Edge>,
+    segments: Vec<(VectorPoint, VectorPoint)>,
 }
 
 impl HintedOutline {
@@ -395,8 +486,6 @@ impl HintedOutline {
         ))
     }
 
-    /// fills the outline exactly like `rasterize_face` fills an unhinted one, but
-    /// each sample row only visits the edges that can cross it
     fn rasterize(&self, coverage: &mut [u8]) -> Result<(), FontRasterError> {
         let Some((left, top, width, height)) = self.bounds else {
             return Ok(());
@@ -412,55 +501,36 @@ impl HintedOutline {
             .get_mut(..required)
             .ok_or(FontRasterError::BufferTooSmall)?;
 
-        coverage.fill(0);
-
-        for row in 0..height {
-            for sub_y in 0..SUPERSAMPLE_Y {
-                let sample_y = row as f32 + (sub_y as f32 + 0.5) / SUPERSAMPLE_Y as f32;
-
-                let mut scanline = ScanlineBuilder::new(1.0, left, top, sample_y);
-
-                for edge in &self.edges {
-                    if edge.top > sample_y {
-                        break;
-                    }
-
-                    if edge.bottom > sample_y {
-                        scanline.add_segment(edge.from, edge.to);
-                    }
-                }
-
-                if scanline.overflowed() {
-                    return Err(FontRasterError::OutlineTooComplex);
-                }
-
-                scanline.sort_intersections();
-
-                accumulate_scanline(width, row, coverage, scanline.intersections());
-            }
+        if required == 0 {
+            return Ok(());
         }
 
-        normalize_coverage(coverage);
+        let cells_len = width
+            .checked_add(1)
+            .and_then(|stride| stride.checked_mul(height))
+            .ok_or(FontRasterError::InvalidGlyph)?;
+
+        if cells_len <= STACK_CELLS {
+            let mut cells = [0.0f32; STACK_CELLS];
+            let mut grid = CoverageGrid::new(&mut cells, width, height, left, top);
+            for &(from, to) in &self.segments {
+                grid.add_segment(from, to);
+            }
+            grid.write_coverage(FillRule::NonZero, coverage);
+        } else {
+            let mut cells = alloc::vec![0.0f32; cells_len];
+            let mut grid = CoverageGrid::new(&mut cells, width, height, left, top);
+            for &(from, to) in &self.segments {
+                grid.add_segment(from, to);
+            }
+            grid.write_coverage(FillRule::NonZero, coverage);
+        }
 
         Ok(())
     }
 }
 
-fn default_instance(size_px: u16) -> InstanceKey {
-    InstanceKey {
-        size_px,
-        weight: None,
-    }
-}
-
-fn instance_with(properties: FontProperties, size_px: u16) -> InstanceKey {
-    InstanceKey {
-        size_px,
-        weight: Some(properties.weight()),
-    }
-}
-
-impl FontFace for HintedTtfFont<'_> {
+impl FontFace for HintedTtfFont<'static> {
     fn weight_range(&self) -> FontWeightRange {
         self.font.weight_range()
     }
@@ -469,235 +539,156 @@ impl FontFace for HintedTtfFont<'_> {
         self.font.style()
     }
 
-    fn prepare_with_properties(&self, properties: FontProperties) -> PreparedFontSource<'_> {
-        self.font.prepare_with_properties(properties)
+    fn prepare(&self, properties: FontProperties) -> PreparedFontSource<'_> {
+        match self.font.font_ref() {
+            Ok(font) => {
+                let location = TtfFont::location_for(&font, properties);
+                let harfrust = self.harfrust_font(properties);
+                PreparedFontSource::from_ttf(PreparedTtfFont::new(font, location, harfrust))
+            }
+            Err(_) => PreparedFontSource::unprepared(),
+        }
+    }
+
+    fn is_ttf_shaping(&self) -> bool {
+        true
+    }
+
+    fn harfrust_font(&self, properties: FontProperties) -> Option<harfrust::Font> {
+        HintingCache::harfrust_font(
+            &self.cache,
+            || harfrust::font::Blob::Static(self.font.data().bytes()),
+            self.font.face_index(),
+            properties,
+        )
     }
 
     fn glyph_id(&self, character: char) -> Option<GlyphId> {
         self.font.glyph_id(character)
     }
 
-    fn metrics(&self, size_px: u16) -> FontMetrics {
-        self.font.metrics(size_px)
+    fn metrics(&self, properties: FontProperties, size_px: u16) -> FontMetrics {
+        self.font.metrics(properties, size_px)
     }
 
-    fn glyph_advance(&self, glyph: GlyphId, size_px: u16) -> Option<Pixels> {
-        self.font.glyph_advance(glyph, size_px)
-    }
-
-    fn glyph_metrics(&self, glyph: GlyphId, size_px: u16) -> Option<GlyphMetrics> {
-        self.glyph_metrics_at(default_instance(size_px), glyph)
-    }
-
-    fn kerning(&self, left: GlyphId, right: GlyphId, size_px: u16) -> Pixels {
-        self.font.kerning(left, right, size_px)
-    }
-
-    fn single_substitution(&self, feature: OpenTypeFeature, glyph: GlyphId) -> Option<GlyphId> {
-        self.font.single_substitution(feature, glyph)
-    }
-
-    fn ligature_substitution(
-        &self,
-        feature: OpenTypeFeature,
-        first: GlyphId,
-        second: GlyphId,
-    ) -> Option<GlyphId> {
-        self.font.ligature_substitution(feature, first, second)
-    }
-
-    fn cursive_attachment(
-        &self,
-        visual_left: GlyphId,
-        visual_right: GlyphId,
-        size_px: u16,
-        right_to_left: bool,
-    ) -> Option<CursiveAttachment> {
-        self.font
-            .cursive_attachment(visual_left, visual_right, size_px, right_to_left)
-    }
-
-    fn mark_to_base_offset(&self, base: GlyphId, mark: GlyphId, size_px: u16) -> Option<Offset> {
-        self.font.mark_to_base_offset(base, mark, size_px)
-    }
-
-    fn mark_to_ligature_offset(
-        &self,
-        ligature: GlyphId,
-        component: u16,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.font
-            .mark_to_ligature_offset(ligature, component, mark, size_px)
-    }
-
-    fn mark_to_mark_offset(
-        &self,
-        base_mark: GlyphId,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.font.mark_to_mark_offset(base_mark, mark, size_px)
-    }
-
-    fn rasterize(
-        &self,
-        glyph: GlyphId,
-        size_px: u16,
-        coverage: &mut [u8],
-    ) -> Result<(), FontRasterError> {
-        self.rasterize_at(default_instance(size_px), glyph, coverage)
-    }
-
-    fn rasterize_with_properties(
-        &self,
-        properties: FontProperties,
-        glyph: GlyphId,
-        size_px: u16,
-        coverage: &mut [u8],
-    ) -> Result<(), FontRasterError> {
-        self.rasterize_at(instance_with(properties, size_px), glyph, coverage)
-    }
-
-    fn glyph_id_with_properties(
-        &self,
-        properties: FontProperties,
-        character: char,
-    ) -> Option<GlyphId> {
-        self.font.glyph_id_with_properties(properties, character)
-    }
-
-    fn metrics_with_properties(&self, properties: FontProperties, size_px: u16) -> FontMetrics {
-        self.font.metrics_with_properties(properties, size_px)
-    }
-
-    fn glyph_advance_with_properties(
+    fn glyph_advance(
         &self,
         properties: FontProperties,
         glyph: GlyphId,
         size_px: u16,
     ) -> Option<Pixels> {
-        self.font
-            .glyph_advance_with_properties(properties, glyph, size_px)
+        self.font.glyph_advance(properties, glyph, size_px)
     }
 
-    fn glyph_id_and_advance_with_properties(
+    fn glyph_id_and_advance(
         &self,
         properties: FontProperties,
         character: char,
         size_px: u16,
     ) -> Option<(GlyphId, Pixels)> {
         self.font
-            .glyph_id_and_advance_with_properties(properties, character, size_px)
+            .glyph_id_and_advance(properties, character, size_px)
     }
 
-    fn glyph_metrics_with_properties(
+    fn glyph_metrics(
         &self,
         properties: FontProperties,
         glyph: GlyphId,
         size_px: u16,
     ) -> Option<GlyphMetrics> {
-        self.glyph_metrics_at(instance_with(properties, size_px), glyph)
+        HintingCache::glyph_metrics(&self.cache, self.font, properties, glyph, size_px)
     }
 
-    fn kerning_with_properties(
+    fn rasterize(
         &self,
         properties: FontProperties,
-        left: GlyphId,
-        right: GlyphId,
-        size_px: u16,
-    ) -> Pixels {
-        self.font
-            .kerning_with_properties(properties, left, right, size_px)
-    }
-
-    fn single_substitution_with_properties(
-        &self,
-        properties: FontProperties,
-        feature: OpenTypeFeature,
         glyph: GlyphId,
-    ) -> Option<GlyphId> {
-        self.font
-            .single_substitution_with_properties(properties, feature, glyph)
-    }
-
-    fn ligature_substitution_with_properties(
-        &self,
-        properties: FontProperties,
-        feature: OpenTypeFeature,
-        first: GlyphId,
-        second: GlyphId,
-    ) -> Option<GlyphId> {
-        self.font
-            .ligature_substitution_with_properties(properties, feature, first, second)
-    }
-
-    fn cursive_attachment_with_properties(
-        &self,
-        properties: FontProperties,
-        visual_left: GlyphId,
-        visual_right: GlyphId,
         size_px: u16,
-        right_to_left: bool,
-    ) -> Option<CursiveAttachment> {
-        self.font.cursive_attachment_with_properties(
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
+        HintingCache::rasterize(&self.cache, self.font, properties, glyph, size_px, coverage)
+    }
+}
+
+impl<D: AsRef<[u8]> + Send + Sync + 'static> FontFace for HintedOwnedTtfFont<D> {
+    fn weight_range(&self) -> FontWeightRange {
+        self.font().weight_range()
+    }
+
+    fn style(&self) -> FontStyle {
+        self.font().style()
+    }
+
+    fn prepare(&self, properties: FontProperties) -> PreparedFontSource<'_> {
+        match self.font().font_ref() {
+            Ok(font) => {
+                let location = TtfFont::location_for(&font, properties);
+                let harfrust = self.harfrust_font(properties);
+                PreparedFontSource::from_ttf(PreparedTtfFont::new(font, location, harfrust))
+            }
+            Err(_) => PreparedFontSource::unprepared(),
+        }
+    }
+
+    fn is_ttf_shaping(&self) -> bool {
+        true
+    }
+
+    fn harfrust_font(&self, properties: FontProperties) -> Option<harfrust::Font> {
+        HintingCache::harfrust_font(
+            &self.cache,
+            || {
+                let shared: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::<D>::clone(&self.data);
+                harfrust::font::Blob::Shared(shared)
+            },
+            self.face_index,
             properties,
-            visual_left,
-            visual_right,
-            size_px,
-            right_to_left,
         )
     }
 
-    fn pair_positioning_with_properties(
-        &self,
-        properties: FontProperties,
-        visual_left: GlyphId,
-        visual_right: GlyphId,
-        size_px: u16,
-        right_to_left: bool,
-    ) -> PairPositioning {
-        self.font.pair_positioning_with_properties(
-            properties,
-            visual_left,
-            visual_right,
-            size_px,
-            right_to_left,
-        )
+    fn glyph_id(&self, character: char) -> Option<GlyphId> {
+        self.font().glyph_id(character)
     }
 
-    fn mark_to_base_offset_with_properties(
-        &self,
-        properties: FontProperties,
-        base: GlyphId,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.font
-            .mark_to_base_offset_with_properties(properties, base, mark, size_px)
+    fn metrics(&self, properties: FontProperties, size_px: u16) -> FontMetrics {
+        self.font().metrics(properties, size_px)
     }
 
-    fn mark_to_ligature_offset_with_properties(
+    fn glyph_advance(
         &self,
         properties: FontProperties,
-        ligature: GlyphId,
-        component: u16,
-        mark: GlyphId,
+        glyph: GlyphId,
         size_px: u16,
-    ) -> Option<Offset> {
-        self.font
-            .mark_to_ligature_offset_with_properties(properties, ligature, component, mark, size_px)
+    ) -> Option<Pixels> {
+        self.font().glyph_advance(properties, glyph, size_px)
     }
 
-    fn mark_to_mark_offset_with_properties(
+    fn glyph_id_and_advance(
         &self,
         properties: FontProperties,
-        base_mark: GlyphId,
-        mark: GlyphId,
+        character: char,
         size_px: u16,
-    ) -> Option<Offset> {
-        self.font
-            .mark_to_mark_offset_with_properties(properties, base_mark, mark, size_px)
+    ) -> Option<(GlyphId, Pixels)> {
+        self.font()
+            .glyph_id_and_advance(properties, character, size_px)
+    }
+
+    fn glyph_metrics(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+    ) -> Option<GlyphMetrics> {
+        HintingCache::glyph_metrics(&self.cache, self.font(), properties, glyph, size_px)
+    }
+
+    fn rasterize(
+        &self,
+        properties: FontProperties,
+        glyph: GlyphId,
+        size_px: u16,
+        coverage: &mut [u8],
+    ) -> Result<(), FontRasterError> {
+        HintingCache::rasterize(&self.cache, self.font(), properties, glyph, size_px, coverage)
     }
 }
