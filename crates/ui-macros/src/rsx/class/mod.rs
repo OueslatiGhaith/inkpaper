@@ -208,15 +208,16 @@ fn apply_class(
 
     let mut candidates = Vec::new();
 
-    for spec in &specs {
+    for spec in specs {
         if !target.accepts(spec) || spec.argument_types.is_empty() {
             continue;
         }
 
         let classname = spec.classname();
-        let prefix = format!("{classname}-");
-
-        let Some(value) = class.strip_prefix(&prefix) else {
+        let Some(value) = class
+            .strip_prefix(classname)
+            .and_then(|rest| rest.strip_prefix('-'))
+        else {
             continue;
         };
 
@@ -296,7 +297,9 @@ fn class_matches_spec(spec: &UtilitySpec, class: &str) -> bool {
         return classname == class;
     }
 
-    class.starts_with(&format!("{classname}-"))
+    class
+        .strip_prefix(classname)
+        .is_some_and(|rest| rest.starts_with('-'))
 }
 
 fn split_classes(classes: &str, span: Span) -> syn::Result<Vec<&str>> {
