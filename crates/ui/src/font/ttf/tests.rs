@@ -3,74 +3,7 @@ use skrifa::{
     raw::{FontData as RawFontData, FontRead, tables::gsub::MultipleSubstFormat1},
 };
 
-use super::{
-    gsub::apply_multiple_single_output,
-    raster::{
-        Intersection, MAX_CURVE_STEPS, RasterPoint, SUPERSAMPLE_Y, ScanlineBuilder,
-        accumulate_scanline, curve_steps, normalize_coverage,
-    },
-};
-
-#[test]
-fn non_zero_winding_fills_between_intersections() {
-    let mut coverage = [0u8; 6];
-
-    let intersections = [
-        Intersection {
-            x: 1.0,
-            winding: -1,
-        },
-        Intersection { x: 5.0, winding: 1 },
-    ];
-
-    for _ in 0..SUPERSAMPLE_Y {
-        accumulate_scanline(6, 0, &mut coverage, &intersections);
-    }
-
-    normalize_coverage(&mut coverage);
-
-    assert_eq!(coverage, [0, 255, 255, 255, 255, 0,],);
-}
-
-#[test]
-fn scanline_builder_tracks_winding_direction() {
-    let mut builder = ScanlineBuilder::new(1.0, 0, 0, 2.5);
-
-    builder.add_segment(
-        RasterPoint { x: 5.0, y: 1.0 },
-        RasterPoint { x: 5.0, y: 5.0 },
-    );
-
-    builder.add_segment(
-        RasterPoint { x: 1.0, y: 5.0 },
-        RasterPoint { x: 1.0, y: 1.0 },
-    );
-
-    builder.sort_intersections();
-
-    assert_eq!(builder.intersections().len(), 2,);
-    assert_eq!(builder.intersections()[0].x, 1.0,);
-    assert_eq!(builder.intersections()[0].winding, -1,);
-    assert_eq!(builder.intersections()[1].x, 5.0,);
-    assert_eq!(builder.intersections()[1].winding, 1,);
-}
-
-#[test]
-fn curve_subdivision_is_bounded() {
-    let steps = curve_steps(&[
-        RasterPoint::ZERO,
-        RasterPoint {
-            x: 10_000.0,
-            y: 10_000.0,
-        },
-        RasterPoint {
-            x: 20_000.0,
-            y: 0.0,
-        },
-    ]);
-
-    assert_eq!(steps, MAX_CURVE_STEPS,);
-}
+use super::gsub::apply_multiple_single_output;
 
 const SINGLE_OUTPUT_MULTIPLE_SUBSTITUTION: &[u8] = &[
     // MultipleSubst format 1

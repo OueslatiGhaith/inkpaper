@@ -7,9 +7,10 @@ use skrifa::{
 };
 
 use crate::{
-    CursiveAttachment, FontData, FontFace, FontMetrics, FontProperties, FontRasterError, FontStyle,
-    FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning,
-    Pixels, PreparedFontSource, px,
+    CursiveAttachment, FillRule, FontData, FontFace, FontMetrics, FontProperties, FontRasterError,
+    FontStyle, FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature,
+    PairPositioning, Pixels, PreparedFontSource, px,
+    raster::{CoverageGrid, GlyphOutlinePen, STACK_CELLS},
 };
 
 mod gpos;
@@ -18,7 +19,6 @@ mod gsub;
 mod hinted;
 mod metrics;
 mod owned;
-mod raster;
 
 use gpos::{
     gpos_cursive_attachment_for_font, gpos_kerning_for_font, gpos_pair_positioning_for_font,
@@ -27,7 +27,6 @@ use gpos::{
 };
 use gsub::{gsub_pair_ligature_for_font, gsub_single_substitution_for_font};
 use metrics::{font_metrics_for_font, glyph_advance_for_font, glyph_metrics_for_font};
-use raster::{SUPERSAMPLE_Y, ScanlineBuilder, accumulate_scanline, normalize_coverage};
 
 #[cfg(feature = "hinting")]
 pub use hinted::{HintedOwnedTtfFont, HintedTtfFont};
@@ -442,33 +441,61 @@ fn rasterize_font(
     let height = usize::from(metrics.height);
     let left = metrics.bearing_x.get();
     let top = metrics.bearing_y.get();
+    let cells_len = width
+        .checked_add(1)
+        .and_then(|stride| stride.checked_mul(height))
+        .ok_or(FontRasterError::InvalidGlyph)?;
 
-    for row in 0..height {
-        for sub_y in 0..SUPERSAMPLE_Y {
-            let sample_y = row as f32 + (sub_y as f32 + 0.5) / SUPERSAMPLE_Y as f32;
-
-            let mut scanline = ScanlineBuilder::new(1.0, left, top, sample_y);
-
-            outline
-                .draw(DrawSettings::unhinted(size, location), &mut scanline)
-                .map_err(|_| FontRasterError::Unsupported)?;
-
-            if scanline.overflowed() {
-                return Err(FontRasterError::OutlineTooComplex);
-            }
-
-            scanline.sort_intersections();
-
-            accumulate_scanline(
-                width,
-                row,
-                &mut coverage[..required],
-                scanline.intersections(),
-            );
-        }
+    if cells_len <= STACK_CELLS {
+        let mut cells = [0.0f32; STACK_CELLS];
+        rasterize_outline_into(
+            &mut cells,
+            &outline,
+            size,
+            location,
+            width,
+            height,
+            left,
+            top,
+            &mut coverage[..required],
+        )
+    } else {
+        let mut cells = alloc::vec![0.0f32; cells_len];
+        rasterize_outline_into(
+            &mut cells,
+            &outline,
+            size,
+            location,
+            width,
+            height,
+            left,
+            top,
+            &mut coverage[..required],
+        )
     }
+}
 
-    normalize_coverage(&mut coverage[..required]);
+#[allow(clippy::too_many_arguments)]
+fn rasterize_outline_into(
+    cells: &mut [f32],
+    outline: &skrifa::outline::OutlineGlyph<'_>,
+    size: Size,
+    location: &Location,
+    width: usize,
+    height: usize,
+    left: i32,
+    top: i32,
+    coverage: &mut [u8],
+) -> Result<(), FontRasterError> {
+    let mut grid = CoverageGrid::new(cells, width, height, left, top);
+    let mut pen = GlyphOutlinePen::new(&mut grid);
+
+    outline
+        .draw(DrawSettings::unhinted(size, location), &mut pen)
+        .map_err(|_| FontRasterError::Unsupported)?;
+    pen.finish();
+
+    grid.write_coverage(FillRule::NonZero, coverage);
 
     Ok(())
 }

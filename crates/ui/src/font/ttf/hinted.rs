@@ -16,20 +16,14 @@ use skrifa::{
     },
 };
 
-use super::{
-    OwnedTtfFont, TtfFont, TtfFontError,
-    metrics::glyph_advance_for_font,
-    raster::{
-        Edge, EdgeBuilder, SUPERSAMPLE_Y, ScanlineBuilder, accumulate_scanline, normalize_coverage,
-    },
-    to_skrifa_glyph,
-};
+use super::{OwnedTtfFont, TtfFont, TtfFontError, metrics::glyph_advance_for_font, to_skrifa_glyph};
 use crate::{
-    CursiveAttachment, FontFace, FontMetrics, FontProperties, FontRasterError, FontStyle,
+    CursiveAttachment, FillRule, FontFace, FontMetrics, FontProperties, FontRasterError, FontStyle,
     FontWeight, FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning,
-    Pixels, PreparedFontSource,
+    Pixels, PreparedFontSource, VectorPoint,
     float::{ceil_i32, floor_i32},
     px,
+    raster::{CoverageGrid, STACK_CELLS, flatten_cubic, flatten_quadratic},
 };
 
 /// the reader and the UI each use a few sizes, and a hinting instance costs a pass
@@ -309,32 +303,87 @@ impl OutlineRecorder {
         Some((left, top, width, height))
     }
 
-    /// flattens the outline into bitmap space once, so rasterizing it doesn't
-    /// redo the curve math for every sample row
+    /// flattens the outline into directed Y-down segments once, so rasterizing it
+    /// runs a single analytical pass with no curve re-evaluation
     fn finish(self) -> HintedOutline {
         let Some(bounds) = self.pixel_bounds() else {
             return HintedOutline {
                 bounds: None,
-                edges: Vec::new(),
+                segments: Vec::new(),
             };
         };
 
-        let (left, top, _, _) = bounds;
-        let mut edges = EdgeBuilder::new(left, top);
+        let mut segments = Vec::new();
+        let mut current: Option<VectorPoint> = None;
+        let mut contour_start: Option<VectorPoint> = None;
+
+        let close_contour = |current: &mut Option<VectorPoint>,
+                             contour_start: &mut Option<VectorPoint>,
+                             segments: &mut Vec<(VectorPoint, VectorPoint)>| {
+            if let (Some(from), Some(start)) = (current.take(), contour_start.take())
+                && from.y != start.y
+            {
+                segments.push((from, start));
+            }
+        };
 
         for command in &self.commands {
             match *command {
-                PathCommand::MoveTo(x, y) => edges.move_to(x, y),
-                PathCommand::LineTo(x, y) => edges.line_to(x, y),
-                PathCommand::QuadTo(x1, y1, x, y) => edges.quad_to(x1, y1, x, y),
-                PathCommand::CurveTo(x1, y1, x2, y2, x, y) => edges.curve_to(x1, y1, x2, y2, x, y),
-                PathCommand::Close => edges.close(),
+                PathCommand::MoveTo(x, y) => {
+                    close_contour(&mut current, &mut contour_start, &mut segments);
+                    let point = VectorPoint::new(x, -y);
+                    current = Some(point);
+                    contour_start = Some(point);
+                }
+                PathCommand::LineTo(x, y) => {
+                    let to = VectorPoint::new(x, -y);
+                    if let Some(from) = current
+                        && from.y != to.y
+                    {
+                        segments.push((from, to));
+                    }
+                    current = Some(to);
+                }
+                PathCommand::QuadTo(x1, y1, x, y) => {
+                    let end = VectorPoint::new(x, -y);
+                    let Some(start) = current else {
+                        current = Some(end);
+                        continue;
+                    };
+                    let control = VectorPoint::new(x1, -y1);
+                    flatten_quadratic(start, control, end, |from, to| {
+                        if from.y != to.y {
+                            segments.push((from, to));
+                        }
+                    });
+                    current = Some(end);
+                }
+                PathCommand::CurveTo(x1, y1, x2, y2, x, y) => {
+                    let end = VectorPoint::new(x, -y);
+                    let Some(start) = current else {
+                        current = Some(end);
+                        continue;
+                    };
+                    let c1 = VectorPoint::new(x1, -y1);
+                    let c2 = VectorPoint::new(x2, -y2);
+                    flatten_cubic(start, c1, c2, end, |from, to| {
+                        if from.y != to.y {
+                            segments.push((from, to));
+                        }
+                    });
+                    current = Some(end);
+                }
+                PathCommand::Close => {
+                    close_contour(&mut current, &mut contour_start, &mut segments);
+                }
             }
         }
 
+        close_contour(&mut current, &mut contour_start, &mut segments);
+
         HintedOutline {
             bounds: Some(bounds),
-            edges: edges.finish(),
+            segments,
         }
     }
 }
@@ -369,12 +418,11 @@ impl OutlinePen for OutlineRecorder {
     }
 }
 
-/// a hinted outline flattened into bitmap space
+/// a hinted outline flattened into Y-down pixel space
 struct HintedOutline {
     /// left, top, width, height in pixels, y down
     bounds: Option<(i32, i32, i32, i32)>,
-    /// sorted by top
-    edges: Vec<Edge>,
+    segments: Vec<(VectorPoint, VectorPoint)>,
 }
 
 impl HintedOutline {
@@ -392,8 +440,6 @@ impl HintedOutline {
         ))
     }
 
-    /// fills the outline exactly like `rasterize_font` fills an unhinted one, but
-    /// each sample row only visits the edges that can cross it
     fn rasterize(&self, coverage: &mut [u8]) -> Result<(), FontRasterError> {
         let Some((left, top, width, height)) = self.bounds else {
             return Ok(());
@@ -409,35 +455,30 @@ impl HintedOutline {
             .get_mut(..required)
             .ok_or(FontRasterError::BufferTooSmall)?;
 
-        coverage.fill(0);
-
-        for row in 0..height {
-            for sub_y in 0..SUPERSAMPLE_Y {
-                let sample_y = row as f32 + (sub_y as f32 + 0.5) / SUPERSAMPLE_Y as f32;
-
-                let mut scanline = ScanlineBuilder::new(1.0, left, top, sample_y);
-
-                for edge in &self.edges {
-                    if edge.top > sample_y {
-                        break;
-                    }
-
-                    if edge.bottom > sample_y {
-                        scanline.add_segment(edge.from, edge.to);
-                    }
-                }
-
-                if scanline.overflowed() {
-                    return Err(FontRasterError::OutlineTooComplex);
-                }
-
-                scanline.sort_intersections();
-
-                accumulate_scanline(width, row, coverage, scanline.intersections());
-            }
+        if required == 0 {
+            return Ok(());
         }
 
-        normalize_coverage(coverage);
+        let cells_len = width
+            .checked_add(1)
+            .and_then(|stride| stride.checked_mul(height))
+            .ok_or(FontRasterError::InvalidGlyph)?;
+
+        if cells_len <= STACK_CELLS {
+            let mut cells = [0.0f32; STACK_CELLS];
+            let mut grid = CoverageGrid::new(&mut cells, width, height, left, top);
+            for &(from, to) in &self.segments {
+                grid.add_segment(from, to);
+            }
+            grid.write_coverage(FillRule::NonZero, coverage);
+        } else {
+            let mut cells = alloc::vec![0.0f32; cells_len];
+            let mut grid = CoverageGrid::new(&mut cells, width, height, left, top);
+            for &(from, to) in &self.segments {
+                grid.add_segment(from, to);
+            }
+            grid.write_coverage(FillRule::NonZero, coverage);
+        }
 
         Ok(())
     }

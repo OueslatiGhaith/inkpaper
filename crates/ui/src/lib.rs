@@ -34,6 +34,7 @@ mod interaction;
 mod layout;
 mod metrics;
 mod pool;
+mod raster;
 mod rendering;
 mod resources;
 mod runtime;
