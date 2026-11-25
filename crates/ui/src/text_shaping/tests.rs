@@ -2336,3 +2336,27 @@ fn ellipsis_after_a_one_letter_rtl_line_stays_together() {
 
     assert_eq!(order, expected);
 }
+
+#[test]
+fn unicode_bidi_handles_more_than_32_directional_runs_and_explicit_isolates() {
+    static CHARACTERS: [char; 5] = ['A', 'ب', ' ', '1', '?'];
+
+    let font = TestFont {
+        characters: &CHARACTERS,
+        advance: px(5),
+        kerning: px(0),
+    };
+    let mut registry = FontRegistry::<1>::default();
+    let font_id = registry.register(&font).unwrap();
+
+    // 40 alternating LTR/RTL runs (> old 32-run cap).
+    let alternating = "A ب ".repeat(20);
+    let (glyphs, advance) = shape_streamed_line::<64, 1>(&registry, font_id, &alternating, "")
+        .expect("unicode-bidi should not fail above 32 runs");
+    assert_eq!(glyphs.len(), 80);
+    assert_eq!(advance, px(400));
+
+    // Explicit FSI..PDI isolate keeps the inner RTL run from flipping outer paragraph dir.
+    let isolated = "\u{2068}ب\u{2069} A";
+    assert_eq!(paragraph_direction(isolated), TextDirection::LeftToRight);
+}

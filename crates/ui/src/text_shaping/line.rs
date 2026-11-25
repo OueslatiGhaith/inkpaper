@@ -12,9 +12,7 @@ use crate::{FontRegistry, ShapeSummary, pair_cache::PairPositioningCache, px};
 
 use super::{
     PreparedSimpleShaper, ShapeError, ShapeState, ShapedGlyph,
-    bidi::{
-        TextRunBuilder, mirror_clusters, paragraph_direction, piece_cluster, reverse_glyph_clusters,
-    },
+    bidi::{mirror_clusters, piece_cluster, resolve_visual_runs, reverse_glyph_clusters},
     positioning::RunPositioner,
 };
 
@@ -80,26 +78,13 @@ impl<'font> PreparedSimpleShaper<'font> {
             suffix,
         };
 
-        let mut builder = TextRunBuilder::new(text, paragraph_direction(text));
-        if !builder.is_single_run() {
-            let mut result = Ok(());
-            line.for_each_glyph(|glyph| {
-                if result.is_ok() {
-                    result = builder.push(glyph.cluster());
-                }
-            });
-            result?;
-        }
-        let runs = builder.finish();
-
-        let (order, run_count) = runs.visual_order();
+        let runs = resolve_visual_runs(text, suffix);
         let mut glyph_count = 0usize;
         let mut advance = px(0);
 
-        for &index in &order[..run_count] {
-            let index = usize::from(index);
-            let range = runs.range(index);
-            let right_to_left = runs.level(index) % 2 == 1;
+        for run in runs.as_slice() {
+            let range = run.range.clone();
+            let right_to_left = run.right_to_left;
             let mut positioner = RunPositioner::new();
 
             let mut emit = |chunk: &mut [ShapedGlyph]| {

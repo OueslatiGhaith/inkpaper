@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["ttf", "variable-fonts", "macros"]
+default = ["ttf", "variable-fonts", "macros", "bidi"]
 alloc = []
+bidi = ["dep:unicode-bidi"]
 macros = ["dep:inkpaper-ui-macros"]
 defmt = ["dep:defmt", "heapless/defmt"]
 embedded-graphics = ["dep:embedded-graphics", "embedded-graphics/defmt"]
@@ -26,6 +27,7 @@ num-traits = { version = "0.2.19", default-features = false }
 rlsf = { version = "0.2.3", default-features = false }
 skrifa = { version = "0.44.0", optional = true, default-features = false, features = ["libm"] }
 spin = { version = "0.12.3", optional = true, default-features = false, features = ["spin_mutex"] }
+unicode-bidi = { version = "0.3.18", optional = true, default-features = false }
 unicode-linebreak = { workspace = true }
 
 [dev-dependencies]

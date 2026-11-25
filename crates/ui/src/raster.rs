@@ -12,6 +12,7 @@ pub(crate) const MAX_CURVE_STEPS: usize = 32;
 
 /// Stack scratch capacity (2 KiB) used for single-pass glyph rasterization and
 /// `no_alloc` path tiling.
+#[cfg(any(feature = "ttf", not(any(test, feature = "alloc"))))]
 pub(crate) const STACK_CELLS: usize = 512;
 
 /// Flattens a quadratic Bézier curve using Wang's formula at 0.25 px tolerance.
