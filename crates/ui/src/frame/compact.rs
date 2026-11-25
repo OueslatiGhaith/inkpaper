@@ -28,6 +28,20 @@ impl FrameArena {
         self.compact_interaction_styles();
         self.compact_extras();
         self.count_text_style_changes();
+        debug_assert_eq!(
+            self.non_monotonic_positioned_divs,
+            self.styles
+                .iter()
+                .filter(|style| style.has_non_monotonic_positioning())
+                .count()
+        );
+        debug_assert_eq!(
+            self.positioned_interaction_styles,
+            self.interaction_styles
+                .iter()
+                .filter(|(_, styles)| styles.affects_positioning())
+                .count()
+        );
         self.relink();
         let root = self.moved(root);
         self.move_nodes();

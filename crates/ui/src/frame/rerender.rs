@@ -225,8 +225,22 @@ impl FrameArena {
 
         let mut current = Some(content);
         while let Some(node) = current {
-            self.node_mut(node).detached = true;
-            self.detached_nodes += 1;
+            if !self.node(node).detached {
+                if let NodeKind::Div { style } = self.node(node).kind
+                    && self.styles[usize::from(style)].has_non_monotonic_positioning()
+                {
+                    self.non_monotonic_positioned_divs -= 1;
+                }
+                if let Some(index) = self.interaction(node).styles
+                    && self.interaction_styles[usize::from(index)]
+                        .1
+                        .affects_positioning()
+                {
+                    self.positioned_interaction_styles -= 1;
+                }
+                self.node_mut(node).detached = true;
+                self.detached_nodes += 1;
+            }
 
             let NodeKind::Entity { entity, .. } = self.node(node).kind else {
                 current = self.next_depth_first_node_within(node, content);

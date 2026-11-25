@@ -186,6 +186,10 @@ impl InteractionStyles {
             pressed: self.pressed.merge(later.pressed),
         }
     }
+
+    pub(crate) const fn affects_positioning(self) -> bool {
+        self.focused.affects_positioning() || self.pressed.affects_positioning()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,6 +276,11 @@ pub(crate) struct FrameArena {
     /// the elements whose interaction styles apply
     focused: Option<ElementStateId>,
     pressed: Option<ElementStateId>,
+    /// live divs whose base style has non-monotonic positioning (absolute or relative with
+    /// inset), maintained incrementally across mounts and detaches
+    non_monotonic_positioned_divs: usize,
+    /// live interaction-style entries whose focused or pressed patch modifies positioning
+    positioned_interaction_styles: usize,
     subtree_paint_bounds_valid: bool,
     #[cfg(feature = "metrics")]
     pub(crate) metrics: PerformanceMetricsCell,
@@ -304,6 +313,8 @@ impl FrameArena {
             extras: FrameBuffer::new_in(pool, Table::Nodes),
             focused: None,
             pressed: None,
+            non_monotonic_positioned_divs: 0,
+            positioned_interaction_styles: 0,
             subtree_paint_bounds_valid: false,
             #[cfg(feature = "metrics")]
             metrics: PerformanceMetricsCell::default(),
@@ -380,6 +391,8 @@ impl FrameArena {
         self.extras.clear();
         self.focused = None;
         self.pressed = None;
+        self.non_monotonic_positioned_divs = 0;
+        self.positioned_interaction_styles = 0;
         self.subtree_paint_bounds_valid = false;
     }
 
@@ -452,6 +465,24 @@ impl FrameArena {
         }
 
         Some(style)
+    }
+
+    pub(crate) fn has_non_monotonic_positioning(&self) -> bool {
+        if self.non_monotonic_positioned_divs > 0 {
+            return true;
+        }
+        if self.positioned_interaction_styles == 0
+            || (self.focused.is_none() && self.pressed.is_none())
+        {
+            return false;
+        }
+
+        self.interaction_styles.iter().any(|&(node, _)| {
+            !self.node(node).detached
+                && self
+                    .style(node)
+                    .is_some_and(Style::has_non_monotonic_positioning)
+        })
     }
 
     /// the text style the last resolve pass found for `id`

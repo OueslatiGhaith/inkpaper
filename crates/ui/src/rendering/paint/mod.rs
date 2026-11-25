@@ -1,8 +1,8 @@
 use crate::{
     Axis, CanvasPainter, Color, DamageRegion, FrameArena, GlyphBitmap, GlyphCacheError,
-    ImageColorMode, ImagePaint, ImageSource, NodeId, NodeKind, Offset, Pixels, Point, Position,
-    Rect, ResolvedTextStyle, ShapeError, callback::CallbackArena, count_metric,
-    entity::EntityArena, flow_axis, visual::VisualNode,
+    ImageColorMode, ImagePaint, ImageSource, NodeId, NodeKind, Offset, Pixels, Point, Rect,
+    ResolvedTextStyle, ShapeError, callback::CallbackArena, count_metric, entity::EntityArena,
+    flow_axis, visual::VisualNode,
 };
 
 mod canvas;
@@ -708,28 +708,5 @@ impl FrameArena {
             crate::Axis::Horizontal => bounds.x() >= damage_bounds.right(),
             crate::Axis::Vertical => bounds.y() >= damage_bounds.bottom(),
         }
-    }
-
-    fn has_non_monotonic_positioning(&self) -> bool {
-        self.node_ids().any(|node| {
-            if self.node(node).detached {
-                return false;
-            }
-
-            let Some(style) = self.style(node) else {
-                return false;
-            };
-
-            match style.position {
-                Position::Static => false,
-                Position::Absolute => true,
-                Position::Relative => {
-                    style.inset.top.is_some()
-                        || style.inset.right.is_some()
-                        || style.inset.bottom.is_some()
-                        || style.inset.left.is_some()
-                }
-            }
-        })
     }
 }

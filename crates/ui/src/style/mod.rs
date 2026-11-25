@@ -110,6 +110,21 @@ macro_rules! declare_style {
             pub(crate) text: TextStyle,
         }
 
+        impl Style {
+            pub(crate) const fn has_non_monotonic_positioning(self) -> bool {
+                match self.position {
+                    Position::Static => false,
+                    Position::Absolute => true,
+                    Position::Relative => {
+                        self.inset.top.is_some()
+                            || self.inset.right.is_some()
+                            || self.inset.bottom.is_some()
+                            || self.inset.left.is_some()
+                    }
+                }
+            }
+        }
+
         impl Default for Style {
             fn default() -> Self {
                 Self {
@@ -202,6 +217,10 @@ macro_rules! declare_style {
         }
 
         impl StylePatch {
+            pub(crate) const fn affects_positioning(self) -> bool {
+                self.position.is_some() || self.inset.is_some()
+            }
+
             pub(crate) fn between(base: Style, variant: Style) -> Self {
                 Self {
                     $(

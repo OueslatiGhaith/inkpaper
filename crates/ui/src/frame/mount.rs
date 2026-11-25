@@ -122,8 +122,15 @@ impl FrameArena {
         }
         self.styles.push(style)?;
 
-        self.push_node(NodeKind::Div { style: style_id })
-            .inspect_err(|_| self.styles.truncate(index))
+        let node = self
+            .push_node(NodeKind::Div { style: style_id })
+            .inspect_err(|_| self.styles.truncate(index))?;
+
+        if style.has_non_monotonic_positioning() {
+            self.non_monotonic_positioned_divs += 1;
+        }
+
+        Ok(node)
     }
 
     pub(crate) fn push_text(&mut self, text: &str, style: TextStyle) -> Result<NodeId, MountError> {
@@ -279,7 +286,11 @@ impl FrameArena {
             match self.interaction(node).styles {
                 Some(index) => {
                     let (_, existing) = &mut self.interaction_styles[usize::from(index)];
+                    let was_positioned = existing.affects_positioning();
                     *existing = existing.merge(styles);
+                    if !was_positioned && existing.affects_positioning() {
+                        self.positioned_interaction_styles += 1;
+                    }
                 }
                 None => {
                     let index = u16::try_from(self.interaction_styles.len())
@@ -288,6 +299,9 @@ impl FrameArena {
                     self.reserve_text_style_change()?;
                     self.interaction_styles.push((node, styles))?;
                     self.extras_or_insert(node)?.interaction.styles = Some(index);
+                    if styles.affects_positioning() {
+                        self.positioned_interaction_styles += 1;
+                    }
                 }
             }
         }
