@@ -15,12 +15,6 @@ use crate::firmware::{
 
 const DISPLAY_SIZE: Size = Size::new(px(LOGICAL_WIDTH as i32), px(LOGICAL_HEIGHT as i32));
 
-/// the bytes the UI keeps its tables in at first. The simulator peaks near 120 KiB,
-/// after a list of about 90 nodes rebuilds and its nodes table doubles to 256 slots. This
-/// leaves room for the next doubling, to 512 slots. The pool takes more from the heap if
-/// it runs out. Allocated from the heap, which puts it in PSRAM
-pub const UI_POOL_BYTES: usize = 256 * 1024;
-
 const UI_GLYPH_CACHE_SLOTS: usize = 128;
 const UI_GLYPH_CACHE_BYTES: usize = 16 * 1024;
 
@@ -271,7 +265,6 @@ fn render_frame(
         frame = frame_id,
     );
 
-    let chunks = runtime.memory().chunks_added;
     let damage = runtime
         .prepare_frame_with(DISPLAY_SIZE, |phase| match phase {
             FramePhase::Rebuild => inkpaper_trace::span!(target: "ui.render", "rebuild"),
@@ -279,15 +272,6 @@ fn render_frame(
         })
         .expect("UI rebuild capacity exceeded");
 
-    let memory = runtime.memory();
-    if memory.chunks_added > chunks {
-        // the screen needed more than UI_POOL_BYTES
-        defmt::warn!(
-            "ui pool grew to {} bytes, peak {}",
-            memory.capacity,
-            memory.peak
-        );
-    }
     if damage.is_none() {
         return None;
     }
