@@ -430,6 +430,18 @@ pub trait FontFace {
         PreparedFontSource::unprepared()
     }
 
+    #[cfg(feature = "ttf")]
+    #[doc(hidden)]
+    fn is_ttf_shaping(&self) -> bool {
+        false
+    }
+
+    #[cfg(feature = "ttf")]
+    #[doc(hidden)]
+    fn harfrust_font(&self, _properties: FontProperties) -> Option<harfrust::Font> {
+        None
+    }
+
     /// resolve one unicode scalar value to a font-local glyph.
     fn glyph_id(&self, character: char) -> Option<GlyphId>;
 
@@ -730,6 +742,11 @@ impl<'font> ResolvedFont<'font> {
             .rasterize(self.properties(), glyph, size_px, coverage)
     }
 
+    #[cfg(feature = "ttf")]
+    pub(crate) fn harfrust_font(self) -> Option<harfrust::Font> {
+        self.face.harfrust_font(self.properties())
+    }
+
     pub(crate) fn prepare(self) -> PreparedFont<'font> {
         let source = self.face.prepare(self.properties());
 
@@ -748,6 +765,22 @@ pub(crate) struct PreparedFont<'font> {
 impl PreparedFont<'_> {
     pub(crate) const fn instance(&self) -> FontInstance {
         self.resolved.instance()
+    }
+
+    #[cfg(feature = "ttf")]
+    pub(crate) fn glyph_id(&self, character: char) -> Option<GlyphId> {
+        match &self.source.kind {
+            PreparedFontKind::Unprepared(_) => self.resolved.glyph_id(character),
+            PreparedFontKind::Ttf(font) => font.glyph_id(character),
+        }
+    }
+
+    #[cfg(feature = "ttf")]
+    pub(crate) fn harfrust_font(&self) -> Option<&harfrust::Font> {
+        match &self.source.kind {
+            PreparedFontKind::Unprepared(_) => None,
+            PreparedFontKind::Ttf(font) => font.harfrust_font(),
+        }
     }
 
     pub(crate) fn glyph_id_and_advance(
@@ -771,16 +804,7 @@ impl PreparedFont<'_> {
         size_px: u16,
         right_to_left: bool,
     ) -> PairPositioning {
-        match &self.source.kind {
-            PreparedFontKind::Unprepared(_) => {
-                self.resolved
-                    .pair_positioning(visual_left, visual_right, size_px, right_to_left)
-            }
-
-            #[cfg(feature = "ttf")]
-            PreparedFontKind::Ttf(font) => {
-                font.pair_positioning(visual_left, visual_right, size_px, right_to_left)
-            }
-        }
+        self.resolved
+            .pair_positioning(visual_left, visual_right, size_px, right_to_left)
     }
 }

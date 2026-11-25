@@ -1,7 +1,6 @@
 use crate::{
-    CursiveAttachment, FontData, FontFace, FontMetrics, FontProperties, FontRasterError, FontStyle,
-    FontWeightRange, GlyphId, GlyphMetrics, Offset, OpenTypeFeature, PairPositioning, Pixels,
-    PreparedFontSource,
+    FontData, FontFace, FontMetrics, FontProperties, FontRasterError, FontStyle, FontWeightRange,
+    GlyphId, GlyphMetrics, Pixels, PreparedFontSource,
 };
 
 #[cfg(feature = "hinting")]
@@ -9,7 +8,7 @@ use super::HintedOwnedTtfFont;
 use super::{PreparedTtfFont, TtfFont, TtfFontError};
 
 /// A [`TtfFont`] that keeps its bytes, like a font read from a file, so it
-/// can be registered as an owned face. Shared bytes such as `Rc<[u8]>` let
+/// can be registered as an owned face. Shared bytes such as `Arc<[u8]>` let
 /// several registries use one copy.
 #[derive(Debug, Clone)]
 pub struct OwnedTtfFont<D> {
@@ -29,9 +28,21 @@ impl<D: AsRef<[u8]>> OwnedTtfFont<D> {
         &self.data
     }
 
+    pub const fn face_index(&self) -> u32 {
+        self.face_index
+    }
+
     #[cfg(feature = "hinting")]
-    pub fn into_hinted(self) -> HintedOwnedTtfFont<D> {
+    pub fn into_hinted(self) -> HintedOwnedTtfFont<D>
+    where
+        D: Send + Sync + 'static,
+    {
         HintedOwnedTtfFont::new(self)
+    }
+
+    #[cfg(feature = "hinting")]
+    pub(super) fn into_parts(self) -> (D, u32) {
+        (self.data, self.face_index)
     }
 
     pub(super) fn font(&self) -> TtfFont<'_> {
@@ -44,10 +55,19 @@ impl<D: AsRef<[u8]>> FontFace for OwnedTtfFont<D> {
         match self.font().font_ref() {
             Ok(font) => {
                 let location = TtfFont::location_for(&font, properties);
-                PreparedFontSource::from_ttf(PreparedTtfFont::new(font, location))
+                let harfrust = self.font().harfrust_font(properties);
+                PreparedFontSource::from_ttf(PreparedTtfFont::new(font, location, harfrust))
             }
             Err(_) => PreparedFontSource::unprepared(),
         }
+    }
+
+    fn is_ttf_shaping(&self) -> bool {
+        true
+    }
+
+    fn harfrust_font(&self, properties: FontProperties) -> Option<harfrust::Font> {
+        self.font().harfrust_font(properties)
     }
 
     fn weight_range(&self) -> FontWeightRange {
@@ -92,94 +112,6 @@ impl<D: AsRef<[u8]>> FontFace for OwnedTtfFont<D> {
         size_px: u16,
     ) -> Option<GlyphMetrics> {
         self.font().glyph_metrics(properties, glyph, size_px)
-    }
-
-    fn kerning(
-        &self,
-        properties: FontProperties,
-        left: GlyphId,
-        right: GlyphId,
-        size_px: u16,
-    ) -> Pixels {
-        self.font().kerning(properties, left, right, size_px)
-    }
-
-    fn single_substitution(
-        &self,
-        properties: FontProperties,
-        feature: OpenTypeFeature,
-        glyph: GlyphId,
-    ) -> Option<GlyphId> {
-        self.font().single_substitution(properties, feature, glyph)
-    }
-
-    fn ligature_substitution(
-        &self,
-        properties: FontProperties,
-        feature: OpenTypeFeature,
-        first: GlyphId,
-        second: GlyphId,
-    ) -> Option<GlyphId> {
-        self.font()
-            .ligature_substitution(properties, feature, first, second)
-    }
-
-    fn cursive_attachment(
-        &self,
-        properties: FontProperties,
-        visual_left: GlyphId,
-        visual_right: GlyphId,
-        size_px: u16,
-        right_to_left: bool,
-    ) -> Option<CursiveAttachment> {
-        self.font()
-            .cursive_attachment(properties, visual_left, visual_right, size_px, right_to_left)
-    }
-
-    fn pair_positioning(
-        &self,
-        properties: FontProperties,
-        visual_left: GlyphId,
-        visual_right: GlyphId,
-        size_px: u16,
-        right_to_left: bool,
-    ) -> PairPositioning {
-        self.font()
-            .pair_positioning(properties, visual_left, visual_right, size_px, right_to_left)
-    }
-
-    fn mark_to_base_offset(
-        &self,
-        properties: FontProperties,
-        base: GlyphId,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.font()
-            .mark_to_base_offset(properties, base, mark, size_px)
-    }
-
-    fn mark_to_ligature_offset(
-        &self,
-        properties: FontProperties,
-        ligature: GlyphId,
-        component: u16,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.font()
-            .mark_to_ligature_offset(properties, ligature, component, mark, size_px)
-    }
-
-    fn mark_to_mark_offset(
-        &self,
-        properties: FontProperties,
-        base_mark: GlyphId,
-        mark: GlyphId,
-        size_px: u16,
-    ) -> Option<Offset> {
-        self.font()
-            .mark_to_mark_offset(properties, base_mark, mark, size_px)
     }
 
     fn rasterize(

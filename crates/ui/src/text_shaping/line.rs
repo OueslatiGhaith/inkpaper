@@ -70,6 +70,20 @@ impl<'font> PreparedSimpleShaper<'font> {
         mut pair_positioning_cache: Option<&mut PairPositioningCache<SLOTS>>,
         mut visit: impl FnMut(ShapedGlyph),
     ) -> Result<ShapeSummary, ShapeError> {
+        let runs = resolve_visual_runs(text, suffix);
+
+        #[cfg(feature = "ttf")]
+        if let Some(result) = self.try_shape_line_with_harfrust(
+            registry,
+            size_px,
+            text,
+            suffix,
+            runs.as_slice(),
+            &mut visit,
+        ) {
+            return result;
+        }
+
         let line = Line {
             shaper: self,
             registry,
@@ -78,7 +92,6 @@ impl<'font> PreparedSimpleShaper<'font> {
             suffix,
         };
 
-        let runs = resolve_visual_runs(text, suffix);
         let mut glyph_count = 0usize;
         let mut advance = px(0);
 

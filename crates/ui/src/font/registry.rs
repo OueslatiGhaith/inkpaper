@@ -288,6 +288,12 @@ impl<'font, const FONTS: usize> FontRegistry<'font, FONTS> {
         self.resolve_instance(instance).map(ResolvedFont::prepare)
     }
 
+    #[cfg(feature = "ttf")]
+    pub(crate) fn has_ttf_face(&self) -> bool {
+        self.entries()
+            .any(|(_, entry)| entry.face.face().is_ttf_shaping())
+    }
+
     pub fn resolve_weight(&self, weight: FontWeight) -> Option<ResolvedFont<'_>> {
         self.resolve_family_weight(FontFamilyId::DEFAULT, weight)
     }

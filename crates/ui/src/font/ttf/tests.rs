@@ -1,56 +1,162 @@
-use skrifa::{
-    GlyphId16,
-    raw::{FontData as RawFontData, FontRead, tables::gsub::MultipleSubstFormat1},
-};
+mod shaping {
+    use alloc::vec::Vec;
 
-use super::gsub::apply_multiple_single_output;
+    use crate::{
+        FontData, FontFace, FontProperties, FontRegistry, FontWeight, ShapedGlyph, SimpleShaper,
+        TtfFont, px,
+    };
 
-const SINGLE_OUTPUT_MULTIPLE_SUBSTITUTION: &[u8] = &[
-    // MultipleSubst format 1
-    0x00, 0x01, // coverage offset = 8
-    0x00, 0x08, // sequence count = 1
-    0x00, 0x01, // sequence[0] offset = 14
-    0x00, 0x0E, // Coverage format 1
-    0x00, 0x01, // glyph count = 1
-    0x00, 0x01, // covered glyph = 5
-    0x00, 0x05, // Sequence:
-    // substitute count = 1
-    0x00, 0x01, // substitute glyph = 9
-    0x00, 0x09,
-];
+    const INTER: TtfFont<'static> = TtfFont::from_data(
+        FontData::new(include_bytes!(
+            "../../../../app/assets/fonts/InterVariable.ttf"
+        )),
+        0,
+    );
 
-const MULTI_OUTPUT_MULTIPLE_SUBSTITUTION: &[u8] = &[
-    // MultipleSubst format 1
-    0x00, 0x01, // coverage offset = 8
-    0x00, 0x08, // sequence count = 1
-    0x00, 0x01, // sequence[0] offset = 14
-    0x00, 0x0E, // Coverage format 1
-    0x00, 0x01, // glyph count = 1
-    0x00, 0x01, // covered glyph = 5
-    0x00, 0x05, // Sequence:
-    // substitute count = 2
-    0x00, 0x02, // substitute glyphs = 9, 10
-    0x00, 0x09, 0x00, 0x0A,
-];
+    const LIBRON: TtfFont<'static> = TtfFont::from_data(
+        FontData::new(include_bytes!(
+            "../../../../app/assets/fonts/Libron-Regular.ttf"
+        )),
+        0,
+    );
 
-#[test]
-fn single_output_multiple_substitution_is_accepted() {
-    let substitution =
-        MultipleSubstFormat1::read(RawFontData::new(SINGLE_OUTPUT_MULTIPLE_SUBSTITUTION)).unwrap();
+    fn shape(
+        registry: &FontRegistry<'_, 4>,
+        font: crate::FontId,
+        properties: FontProperties,
+        size_px: u16,
+        text: &str,
+    ) -> (Vec<ShapedGlyph>, crate::Pixels) {
+        let mut glyphs = Vec::new();
+        let shaper = SimpleShaper::with_properties(properties).prepare(registry, font);
+        let summary = shaper
+            .shape_line_with(registry, size_px, text, "", |glyph| glyphs.push(glyph))
+            .unwrap();
+        (glyphs, summary.advance())
+    }
 
-    let result = apply_multiple_single_output(&substitution, GlyphId16::new(5));
+    #[test]
+    fn harfrust_applies_kerning_pairs() {
+        let mut registry = FontRegistry::<4>::default();
+        let font = registry.register(&LIBRON).unwrap();
 
-    assert_eq!(result, Some(GlyphId16::new(9)));
-}
+        let (glyphs_av, width_av) = shape(&registry, font, FontProperties::NORMAL, 32, "AV");
+        let (_, width_a) = shape(&registry, font, FontProperties::NORMAL, 32, "A");
+        let (_, width_v) = shape(&registry, font, FontProperties::NORMAL, 32, "V");
 
-#[test]
-fn multi_output_multiple_substitution_is_rejected() {
-    let substitution =
-        MultipleSubstFormat1::read(RawFontData::new(MULTI_OUTPUT_MULTIPLE_SUBSTITUTION)).unwrap();
+        assert_eq!(glyphs_av.len(), 2);
+        assert!(
+            width_av < width_a + width_v,
+            "expected kerning on \"AV\": shaped={width_av:?}, sum={:?}",
+            width_a + width_v
+        );
+    }
 
-    let result = apply_multiple_single_output(&substitution, GlyphId16::new(5));
+    #[test]
+    fn harfrust_forms_standard_ligatures() {
+        let mut registry = FontRegistry::<4>::default();
+        let font = registry.register(&LIBRON).unwrap();
 
-    assert_eq!(result, None);
+        let (glyphs, width) = shape(&registry, font, FontProperties::NORMAL, 24, "fi");
+
+        assert_eq!(glyphs.len(), 1, "expected \"fi\" ligature in Libron");
+        assert_eq!(glyphs[0].cluster(), 0);
+        assert!(width > px(0));
+    }
+
+    #[test]
+    fn harfrust_applies_variable_weight_axis() {
+        let mut registry = FontRegistry::<4>::default();
+        let font = registry.register(&INTER).unwrap();
+
+        let (_, light_width) = shape(
+            &registry,
+            font,
+            FontProperties::new(FontWeight::LIGHT),
+            24,
+            "Typography",
+        );
+        let (_, bold_width) = shape(
+            &registry,
+            font,
+            FontProperties::new(FontWeight::BOLD),
+            24,
+            "Typography",
+        );
+
+        assert!(
+            bold_width > light_width,
+            "expected Inter bold ({bold_width:?}) wider than light ({light_width:?})"
+        );
+    }
+
+    #[test]
+    fn harfrust_strips_default_ignorables() {
+        let mut registry = FontRegistry::<4>::default();
+        let font = registry.register(&INTER).unwrap();
+
+        let (plain_glyphs, plain_width) =
+            shape(&registry, font, FontProperties::NORMAL, 20, "ebook");
+        let (ignorable_glyphs, ignorable_width) = shape(
+            &registry,
+            font,
+            FontProperties::NORMAL,
+            20,
+            "e\u{00AD}\u{200B}book",
+        );
+
+        assert_eq!(ignorable_glyphs.len(), plain_glyphs.len());
+        assert_eq!(ignorable_width, plain_width);
+    }
+
+    #[test]
+    fn harfrust_falls_back_to_second_face_and_preserves_clusters() {
+        let mut registry = FontRegistry::<4>::default();
+        let libron = registry.register(&LIBRON).unwrap();
+        let inter = registry.register(&INTER).unwrap();
+
+        // Pick a character present in Inter but absent from Libron if available,
+        // otherwise verify fallback to replacement glyph works without panicking.
+        let sample = if LIBRON.glyph_id('€').is_none() && INTER.glyph_id('€').is_some() {
+            "A€B"
+        } else {
+            "A☃B"
+        };
+
+        let (glyphs, width) = shape(&registry, libron, FontProperties::NORMAL, 20, sample);
+        assert_eq!(glyphs.len(), 3);
+        assert_eq!(glyphs[0].cluster(), 0);
+        assert_eq!(glyphs[1].cluster(), 1);
+        assert_eq!(glyphs[2].cluster(), sample.len() - 1);
+        if sample == "A€B" {
+            assert_eq!(glyphs[0].font(), libron);
+            assert_eq!(glyphs[1].font(), inter);
+            assert_eq!(glyphs[2].font(), libron);
+        }
+        assert!(width > px(0));
+    }
+
+    #[cfg(feature = "hinting")]
+    #[test]
+    fn hinted_faces_share_harfrust_shaping_results() {
+        use alloc::sync::Arc;
+
+        use crate::{HintedOwnedTtfFont, HintedTtfFont};
+
+        let hinted = HintedTtfFont::new(LIBRON);
+        let owned = HintedOwnedTtfFont::parse(Arc::<[u8]>::from(LIBRON.data().bytes()), 0).unwrap();
+
+        let mut reg_hinted = FontRegistry::<4>::default();
+        let id_hinted = reg_hinted.register(&hinted).unwrap();
+        let mut reg_owned = FontRegistry::<4>::default();
+        let id_owned = reg_owned.register(&owned).unwrap();
+
+        let (g1, w1) = shape(&reg_hinted, id_hinted, FontProperties::NORMAL, 24, "AV fi");
+        let (g2, w2) = shape(&reg_owned, id_owned, FontProperties::NORMAL, 24, "AV fi");
+
+        assert_eq!(g1, g2);
+        assert_eq!(w1, w2);
+    }
 }
 
 #[cfg(feature = "hinting")]

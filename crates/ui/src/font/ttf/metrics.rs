@@ -1,7 +1,6 @@
 use skrifa::{
     FontRef, GlyphId as SkrifaGlyphId, MetadataProvider,
     instance::{LocationRef, Size},
-    raw::TableProvider,
 };
 
 use crate::{
@@ -9,19 +8,6 @@ use crate::{
     float::{ceil_i32, floor_i32, round_i32},
     px,
 };
-
-pub(super) fn font_scale(font: &FontRef<'_>, size_px: u16) -> Option<f32> {
-    if size_px == 0 {
-        return None;
-    }
-
-    let units_per_em = font.head().ok()?.units_per_em();
-    if units_per_em == 0 {
-        return None;
-    }
-
-    Some(f32::from(size_px) / f32::from(units_per_em))
-}
 
 pub(super) fn positive_scaled(value: f32) -> Pixels {
     if value <= 0.0 || !value.is_finite() {

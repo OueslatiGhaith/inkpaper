@@ -23,7 +23,7 @@ pub(crate) const ARABIC_RLIG_FEATURE: OpenTypeFeature = OpenTypeFeature::new(*b"
 
 /// characters with no visible form, such as soft hyphens, zero-width spaces and joiners,
 /// bidi marks and variation selectors
-const DEFAULT_IGNORABLES: CodePointSetDataBorrowed<'static> =
+pub(super) const DEFAULT_IGNORABLES: CodePointSetDataBorrowed<'static> =
     CodePointSetData::new::<DefaultIgnorableCodePoint>();
 
 impl SimpleShaper {
