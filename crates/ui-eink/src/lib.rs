@@ -132,7 +132,10 @@ where
         let color = color_to_gray2(color);
 
         if damage.is_full() {
-            return self.target.clear(color);
+            return match self.ui_mode {
+                EInkUiMode::NativeGray2 => self.target.clear(color),
+                EInkUiMode::BinaryDither => BinaryDitherTarget::new(self.target).clear(color),
+            };
         }
 
         let target_bounds = self.target.bounding_box();
@@ -148,8 +151,18 @@ where
             return Ok(());
         }
 
-        for &rect in damage.rects() {
-            self.target.fill_solid(&to_embedded_rect(rect), color)?;
+        match self.ui_mode {
+            EInkUiMode::NativeGray2 => {
+                for &rect in damage.rects() {
+                    self.target.fill_solid(&to_embedded_rect(rect), color)?;
+                }
+            }
+            EInkUiMode::BinaryDither => {
+                let mut dithered = BinaryDitherTarget::new(self.target);
+                for &rect in damage.rects() {
+                    dithered.fill_solid(&to_embedded_rect(rect), color)?;
+                }
+            }
         }
 
         Ok(())
@@ -293,9 +306,15 @@ where
     fn fill_rect(&mut self, rect: Rect, color: Color, clip: Rect) -> Result<(), Self::Error> {
         self.record_native_ui_color(color);
 
-        to_embedded_rect(rect)
-            .into_styled(EgPrimitiveStyle::with_fill(color_to_gray2(color)))
-            .draw(&mut self.target.clipped(&to_embedded_rect(clip)))
+        let primitive = to_embedded_rect(rect)
+            .into_styled(EgPrimitiveStyle::with_fill(color_to_gray2(color)));
+        let clip = to_embedded_rect(clip);
+        let mut clipped = self.target.clipped(&clip);
+
+        match self.ui_mode {
+            EInkUiMode::NativeGray2 => primitive.draw(&mut clipped),
+            EInkUiMode::BinaryDither => primitive.draw(&mut BinaryDitherTarget::new(&mut clipped)),
+        }
     }
 
     fn draw_pixels(&mut self, origin: Point, pixels: &[Color]) -> Result<(), Self::Error> {
@@ -412,5 +431,82 @@ mod tests {
 
         assert_eq!(draw(false, true, TextDarkness::NORMAL), binary);
         assert_eq!(draw(true, false, TextDarkness::NORMAL), binary);
+    }
+
+    #[test]
+    fn fill_rect_dithers_gray_in_binary_dither_mode() {
+        let mut display = white_display();
+        let area = Rect::new(Point::ZERO, Size::new(px(4), px(4)));
+        let mid_gray = Color::rgb(170, 170, 170);
+
+        let tone = {
+            let mut painter = EInkPainter::new(&mut display).with_ui_mode(EInkUiMode::BinaryDither);
+            painter.fill_rect(area, mid_gray, area).unwrap();
+            painter.report().tone()
+        };
+
+        assert_eq!(tone, EInkTone::Binary);
+
+        let mut black = 0;
+        let mut white = 0;
+        for y in 0..4 {
+            for x in 0..4 {
+                match display.get_pixel(EgPoint::new(x, y)).unwrap().luma() {
+                    0 => black += 1,
+                    3 => white += 1,
+                    other => panic!("expected binary dither output, got luma {other}"),
+                }
+            }
+        }
+        assert!(black > 0 && white > 0);
+    }
+
+    #[test]
+    fn fill_rect_keeps_native_gray_in_native_mode() {
+        let mut display = white_display();
+        let area = Rect::new(Point::ZERO, Size::new(px(4), px(4)));
+        let mid_gray = Color::rgb(170, 170, 170);
+
+        let tone = {
+            let mut painter = EInkPainter::new(&mut display).with_ui_mode(EInkUiMode::NativeGray2);
+            painter.fill_rect(area, mid_gray, area).unwrap();
+            painter.report().tone()
+        };
+
+        assert_eq!(tone, EInkTone::Gray4);
+        for y in 0..4 {
+            for x in 0..4 {
+                assert_eq!(display.get_pixel(EgPoint::new(x, y)).unwrap().luma(), 2);
+            }
+        }
+    }
+
+    #[test]
+    fn clear_damage_dithers_gray_in_binary_dither_mode() {
+        let mut display = white_display();
+        let area = Rect::new(Point::ZERO, Size::new(px(4), px(4)));
+        let mid_gray = Color::rgb(170, 170, 170);
+
+        let tone = {
+            let mut painter = EInkPainter::new(&mut display).with_ui_mode(EInkUiMode::BinaryDither);
+            painter
+                .clear_damage(DamageRegion::from_rect(area), mid_gray)
+                .unwrap();
+            painter.report().tone()
+        };
+
+        assert_eq!(tone, EInkTone::Binary);
+        let mut black = 0;
+        let mut white = 0;
+        for y in 0..4 {
+            for x in 0..4 {
+                match display.get_pixel(EgPoint::new(x, y)).unwrap().luma() {
+                    0 => black += 1,
+                    3 => white += 1,
+                    other => panic!("expected binary dither output, got luma {other}"),
+                }
+            }
+        }
+        assert!(black > 0 && white > 0);
     }
 }

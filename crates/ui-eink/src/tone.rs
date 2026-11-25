@@ -138,6 +138,10 @@ where
     }
 
     fn clear(&mut self, color: Self::Color) -> Result<(), Self::Error> {
+        if color.luma() == 0 || color.luma() == 3 {
+            return self.target.clear(color);
+        }
+
         self.fill_solid(&self.bounding_box(), color)
     }
 }
