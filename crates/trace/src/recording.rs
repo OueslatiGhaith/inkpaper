@@ -38,6 +38,9 @@ struct Clock {
     monotonic_clock: MonotonicClockFn,
     monotonic_hz: u32,
 
+    cycles_per_tick: u32,
+    cycles_rem_hz: u32,
+
     anchor_cycles: u32,
     anchor_monotonic: u64,
 }
@@ -60,6 +63,9 @@ impl Clock {
             monotonic_clock,
             monotonic_hz,
 
+            cycles_per_tick: cycle_hz / monotonic_hz,
+            cycles_rem_hz: cycle_hz % monotonic_hz,
+
             anchor_cycles,
             anchor_monotonic,
         }
@@ -75,13 +81,37 @@ impl Clock {
 
         let monotonic_delta = monotonic.wrapping_sub(self.anchor_monotonic);
 
-        let coarse_cycles = u128::from(monotonic_delta).saturating_mul(u128::from(self.cycle_hz))
-            / u128::from(self.monotonic_hz);
-
-        let coarse_cycles = u64::try_from(coarse_cycles).unwrap_or(u64::MAX);
+        let coarse_cycles = scale_monotonic_to_cycles(
+            monotonic_delta,
+            self.cycles_per_tick,
+            self.cycles_rem_hz,
+            self.monotonic_hz,
+        );
 
         unwrap_cycle_counter(raw_delta, coarse_cycles)
     }
+}
+
+#[inline(always)]
+fn scale_monotonic_to_cycles(
+    monotonic_delta: u64,
+    cycles_per_tick: u32,
+    cycles_rem_hz: u32,
+    monotonic_hz: u32,
+) -> u64 {
+    let whole = monotonic_delta.saturating_mul(u64::from(cycles_per_tick));
+    if cycles_rem_hz == 0 {
+        return whole;
+    }
+
+    let denom = u64::from(monotonic_hz);
+    let rem = u64::from(cycles_rem_hz);
+    let ticks_q = monotonic_delta / denom;
+    let ticks_r = monotonic_delta % denom;
+
+    whole
+        .saturating_add(ticks_q.saturating_mul(rem))
+        .saturating_add((ticks_r * rem) / denom)
 }
 
 #[inline(always)]
@@ -1608,5 +1638,39 @@ mod tests {
         assert!(second_text.contains("trace/v4 span id=0"));
 
         assert!(second_text.contains("trace/v4 metric id=0 value=12"));
+    }
+
+    #[test]
+    fn monotonic_to_cycles_scaling_matches_u128_reference() {
+        let cases: &[(u64, u32, u32)] = &[
+            (0, 240_000_000, 1_000_000),
+            (1, 240_000_000, 1_000_000),
+            (10_000_000_000, 240_000_000, 1_000_000),
+            (u64::MAX, 240_000_000, 1_000_000),
+            (123_456_789, 240_000_000, 32_768),
+            (987_654_321_012_345, 32_768, 1_000_000),
+            (u64::MAX, 32_768, 1_000_000),
+            (u64::MAX, u32::MAX - 1, u32::MAX),
+            (u64::MAX, u32::MAX, u32::MAX - 1),
+            (u64::MAX / 2, 1_000_000_007, 999_999_937),
+        ];
+
+        for &(delta, cycle_hz, monotonic_hz) in cases {
+            let actual = super::scale_monotonic_to_cycles(
+                delta,
+                cycle_hz / monotonic_hz,
+                cycle_hz % monotonic_hz,
+                monotonic_hz,
+            );
+            let expected = u64::try_from(
+                u128::from(delta).saturating_mul(u128::from(cycle_hz)) / u128::from(monotonic_hz),
+            )
+            .unwrap_or(u64::MAX);
+
+            assert_eq!(
+                actual, expected,
+                "mismatch for delta={delta} cycle_hz={cycle_hz} monotonic_hz={monotonic_hz}"
+            );
+        }
     }
 }
