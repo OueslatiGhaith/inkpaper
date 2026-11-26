@@ -17,7 +17,7 @@ epd-bus = { path = "../../crates/epd-bus", features = ["defmt"] }
 frontlight = { path = "../../crates/frontlight", features = ["defmt"] }
 gt911 = { path = "../../crates/gt911", features = ["defmt"] }
 inkpaper-app = { path = "../../crates/app", features = ["defmt"] }
-inkpaper-epub = { path = "../../crates/epub" }
+inkpaper-io = { path = "../../crates/io" }
 inkpaper-trace = { path = "../../crates/trace" }
 inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "defmt"] }
 inkpaper-ui-eink = { path = "../../crates/ui-eink", features = ["defmt"] }

@@ -1,5 +1,6 @@
 use futures_lite::future;
-use inkpaper_epub::{ArchivePath, Epub, Inline, LinkTarget, SliceSource};
+use inkpaper_epub::{ArchivePath, Epub, Inline, LinkTarget};
+use inkpaper_io::SliceSource;
 
 const LINKS: &[u8] = include_bytes!("../../../fixtures/links.epub");
 

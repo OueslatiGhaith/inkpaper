@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use inkpaper_epub::EpubSource;
+use inkpaper_io::ByteSource;
 
 #[derive(Debug)]
 pub struct HostFileSource {
@@ -21,7 +21,7 @@ impl HostFileSource {
     }
 }
 
-impl EpubSource for HostFileSource {
+impl ByteSource for HostFileSource {
     type Error = io::Error;
 
     async fn len(&mut self) -> Result<u64, Self::Error> {

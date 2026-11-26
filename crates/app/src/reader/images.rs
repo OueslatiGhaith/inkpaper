@@ -1,7 +1,8 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::mem;
 
-use inkpaper_epub::{ArchivePath, Chapter, Epub, EpubSource, ImageDimensions, Inline};
+use inkpaper_epub::{ArchivePath, Chapter, Epub, ImageDimensions, Inline};
+use inkpaper_io::ByteSource;
 use inkpaper_ui::{
     Color, ImageId, ImageResource, ImageSource, Luminance, ResourceRuntimeApi, Size, px,
 };
@@ -257,7 +258,7 @@ pub(super) async fn load_chapter_images<S>(
     chapter: &Chapter,
 ) -> LoadedChapterImages
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     let mut loaded = LoadedChapterImages::default();
 

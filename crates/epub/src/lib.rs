@@ -22,7 +22,7 @@ pub use css::{
 };
 pub use error::{ArchiveError, ContainerError, Error, NavigationError, PackageError, XhtmlError};
 pub use image::ImageDimensions;
-pub use inkpaper_io::{ByteSource, ByteSource as EpubSource, SliceSource, SliceSourceError};
+pub use inkpaper_io::ByteSource;
 pub use location::{BookLocation, ContentOffset, SpineIndex};
 pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};

@@ -2,9 +2,9 @@ use std::convert::Infallible;
 
 use futures_lite::future;
 use inkpaper_epub::{
-    BookLocation, ChapterImage, ContentOffset, Epub, ImageDimensions, Inline, SliceSource,
-    SpineIndex,
+    BookLocation, ChapterImage, ContentOffset, Epub, ImageDimensions, Inline, SpineIndex,
 };
+use inkpaper_io::SliceSource;
 use inkpaper_reader::{
     HyphenationLanguage, ImageMeasurer, PageItem, PageRange, ReaderSettings, Rect, TextAlign,
     TextMeasurer, TextStyle, Viewport, paginate_chapter,

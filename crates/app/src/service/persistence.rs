@@ -382,7 +382,7 @@ where
 mod tests {
     use alloc::{collections::BTreeMap, string::String, vec::Vec};
     use futures_lite::future;
-    use inkpaper_epub::SliceSource;
+    use inkpaper_io::SliceSource;
 
     use crate::{
         AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials, WifiJoinPlan,

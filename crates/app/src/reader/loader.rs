@@ -1,8 +1,9 @@
 use alloc::{string::String, vec::Vec};
 
 use inkpaper_epub::{
-    BookLocation, ChapterStyles, ContentOffset, Epub, EpubSource, Error as EpubError, SpineIndex,
+    BookLocation, ChapterStyles, ContentOffset, Epub, Error as EpubError, SpineIndex,
 };
+use inkpaper_io::ByteSource;
 use inkpaper_reader::{ReadingPosition, paginate_chapter};
 use inkpaper_trace::{async_span, span};
 use inkpaper_ui::{FontRegistryError, ShapeError};
@@ -36,7 +37,7 @@ pub(crate) enum ReaderLoadError<E> {
 
 pub(crate) struct ReaderSession<S>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     path: String,
     epub: Epub<S>,
@@ -48,7 +49,7 @@ where
 
 impl<S> ReaderSession<S>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     #[inkpaper_trace::instrument(target = "reader.session", name = "open")]
     pub async fn open(path: String, source: S) -> Result<Self, ReaderLoadError<S::Error>> {
@@ -250,7 +251,7 @@ pub(crate) async fn load_reader_document<S>(
     source: S,
 ) -> Result<ReaderDocument, ReaderLoadError<S::Error>>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     let mut session = ReaderSession::open(path, source).await?;
 
@@ -271,7 +272,7 @@ async fn load_reader_document_from_epub<S>(
     fonts: &ReaderFonts,
 ) -> Result<ReaderDocument, ReaderLoadError<S::Error>>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     let identifier = epub.metadata().identifier().map(String::from);
 
@@ -336,7 +337,7 @@ async fn load_adjacent_reader_chapter_from_epub<S>(
     fonts: &ReaderFonts,
 ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     let spine_len = epub.spine().items().len();
 
@@ -376,7 +377,7 @@ async fn load_book_progress_map<S>(
     epub: &mut Epub<S>,
 ) -> Result<BookProgressMap, ReaderLoadError<S::Error>>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     let sizes = epub
         .spine_resource_sizes()
@@ -412,7 +413,7 @@ async fn load_readable_chapter_at<S>(
     fonts: &ReaderFonts,
 ) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     Ok(load_chapter_with_anchor(epub, index, text, fonts, None)
         .await?
@@ -434,7 +435,7 @@ async fn load_chapter_with_anchor<S>(
     anchor: Option<&str>,
 ) -> Result<Option<(ReaderChapter, Option<ContentOffset>)>, ReaderLoadError<S::Error>>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     let linear = epub
         .spine()

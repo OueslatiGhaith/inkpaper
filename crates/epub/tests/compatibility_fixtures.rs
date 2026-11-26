@@ -1,5 +1,6 @@
 use futures_lite::future;
-use inkpaper_epub::{Chapter, Epub, FontStyle, Inline, SliceSource, TextAlign};
+use inkpaper_epub::{Chapter, Epub, FontStyle, Inline, TextAlign};
+use inkpaper_io::SliceSource;
 
 const ENCODED_CONTAINER_PATH: &[u8] =
     include_bytes!("../../../fixtures/compat-encoded-container-path.epub");
