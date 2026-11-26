@@ -17,7 +17,7 @@ mod tests;
 
 pub(crate) use definition::{DEFINITION_HEIGHT, DEFINITION_WIDTH, layout_definition};
 pub(crate) use document::{ReaderChapter, ReaderDocument};
-pub(crate) use images::{GrayImage, decode_image};
+pub(crate) use images::{ChapterImages, GrayImage, decode_image};
 pub(crate) use loader::ReaderSession;
 #[cfg(test)]
 pub(crate) use loader::load_reader_document;

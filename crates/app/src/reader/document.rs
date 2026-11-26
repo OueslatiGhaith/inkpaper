@@ -1,44 +1,71 @@
 use alloc::{string::String, vec::Vec};
 
-use inkpaper_epub::{ArchivePath, SpineIndex};
-use inkpaper_reader::{Page, Pagination, ReadingPosition};
+use inkpaper_epub::{ArchivePath, Chapter, ChapterStyles, SpineIndex};
+use inkpaper_reader::{
+    ChapterPageIndex, Page, ReaderSettings, ReadingPosition, Viewport, render_page,
+};
 use inkpaper_ui::{ImageId, ImageSource, ResourceRuntimeApi};
 
 use crate::{
     BookProgress,
-    reader::{images::ChapterImages, progress::BookProgressMap},
+    reader::{
+        images::{ChapterImageMetrics, ChapterImages, page_image_paths},
+        measurer::{ReaderFonts, ReaderMeasurer},
+        progress::BookProgressMap,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReaderChapter {
     chapter_path: String,
     spine: SpineIndex,
-    pagination: Pagination<'static>,
+    chapter: Chapter,
+    styles: ChapterStyles,
+    image_metrics: ChapterImageMetrics,
+    viewport: Viewport,
+    settings: ReaderSettings,
+    index: ChapterPageIndex,
+    current_page_index: usize,
+    current_page: Page<'static>,
     images: ChapterImages,
 }
 
 impl ReaderChapter {
-    #[cfg(test)]
-    pub(super) fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn from_index(
         chapter_path: String,
         spine: SpineIndex,
-        pagination: Pagination<'static>,
-    ) -> Self {
-        Self::with_images(chapter_path, spine, pagination, ChapterImages::default())
-    }
-
-    pub(super) fn with_images(
-        chapter_path: String,
-        spine: SpineIndex,
-        pagination: Pagination<'static>,
+        chapter: Chapter,
+        styles: ChapterStyles,
+        image_metrics: ChapterImageMetrics,
+        viewport: Viewport,
+        settings: ReaderSettings,
+        index: ChapterPageIndex,
+        current_page_index: usize,
+        current_page: Page<'static>,
         images: ChapterImages,
     ) -> Self {
         Self {
             chapter_path,
             spine,
-            pagination,
+            chapter,
+            styles,
+            image_metrics,
+            viewport,
+            settings,
+            index,
+            current_page_index,
+            current_page,
             images,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_path_and_spine(&self, chapter_path: String, spine: SpineIndex) -> Self {
+        let mut cloned = self.clone();
+        cloned.chapter_path = chapter_path;
+        cloned.spine = spine;
+        cloned
     }
 
     pub(crate) fn register_images<'resource>(
@@ -48,6 +75,17 @@ impl ReaderChapter {
         registered: &mut Vec<ImageId>,
     ) {
         self.images.register(runtime, max_slots, registered);
+    }
+
+    pub(super) fn replace_images(&mut self, images: ChapterImages) {
+        self.images = images;
+    }
+
+    pub(super) fn missing_page_images(&self) -> Vec<ArchivePath> {
+        page_image_paths(&self.current_page)
+            .into_iter()
+            .filter(|path| !self.images.contains(path))
+            .collect()
     }
 
     pub fn image_source(&self, path: &ArchivePath) -> Option<ImageSource> {
@@ -63,20 +101,62 @@ impl ReaderChapter {
     }
 
     pub fn page_count(&self) -> usize {
-        self.pagination.len()
-    }
-
-    pub fn page(&self, index: usize) -> Option<&Page<'static>> {
-        self.pagination.pages().get(index)
-    }
-
-    pub fn page_at_position(&self, position: ReadingPosition) -> Option<usize> {
-        self.pagination.page_at_position(position)
+        self.index.len()
     }
 
     #[cfg(test)]
-    pub(super) fn pagination(&self) -> &Pagination<'static> {
-        &self.pagination
+    pub fn page_position(&self, index: usize) -> Option<ReadingPosition> {
+        self.index.page_position(index)
+    }
+
+    pub fn page_end_position(&self, index: usize) -> Option<ReadingPosition> {
+        self.index.page_end_position(index)
+    }
+
+    pub const fn end_position(&self) -> ReadingPosition {
+        self.index.end_position()
+    }
+
+    pub fn page(&self, index: usize) -> Option<&Page<'static>> {
+        (index == self.current_page_index).then_some(&self.current_page)
+    }
+
+    /// Materializes `index` on demand from its checkpoint when it is not
+    /// already the cached visible page.
+    pub(super) fn select_page(&mut self, index: usize, fonts: &ReaderFonts) -> bool {
+        if index >= self.index.len() {
+            return false;
+        }
+
+        if index == self.current_page_index {
+            return true;
+        }
+
+        let mut measurer = ReaderMeasurer::new(fonts, self.image_metrics.clone());
+        let Ok(Some(page)) = render_page(
+            &self.chapter,
+            &self.styles,
+            &self.index,
+            index,
+            self.viewport,
+            self.settings,
+            &mut measurer,
+        ) else {
+            return false;
+        };
+
+        self.current_page_index = index;
+        self.current_page = page.into_owned();
+        true
+    }
+
+    pub fn page_at_position(&self, position: ReadingPosition) -> Option<usize> {
+        self.index.page_at_position(position)
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_decoded_image(&self, path: &ArchivePath) -> bool {
+        self.images.contains(path)
     }
 }
 
@@ -149,6 +229,23 @@ impl ReaderDocument {
     }
 
     #[cfg(test)]
+    pub fn page_position(&self, index: usize) -> Option<ReadingPosition> {
+        self.chapter.page_position(index)
+    }
+
+    pub(super) fn select_page(&mut self, index: usize, fonts: &ReaderFonts) -> bool {
+        self.chapter.select_page(index, fonts)
+    }
+
+    pub(super) fn missing_page_images(&self) -> Vec<ArchivePath> {
+        self.chapter.missing_page_images()
+    }
+
+    pub(super) fn replace_images(&mut self, images: ChapterImages) {
+        self.chapter.replace_images(images);
+    }
+
+    #[cfg(test)]
     pub fn first_page(&self) -> &Page<'static> {
         self.page(0)
             .expect("reader document always contains a page")
@@ -169,11 +266,7 @@ impl ReaderDocument {
     }
 
     pub fn progress_at_page(&self, index: usize) -> BookProgress {
-        let Some(page) = self.page(index) else {
-            return BookProgress::ZERO;
-        };
-
-        let Some(chapter_end) = self.page(self.page_count().saturating_sub(1)) else {
+        let Some(page_end) = self.chapter.page_end_position(index) else {
             return BookProgress::ZERO;
         };
 
@@ -181,8 +274,8 @@ impl ReaderDocument {
             self.spine(),
             // progress represents content consumed through the visible page,
             // so use the page end.
-            page.end_position().location().offset(),
-            chapter_end.end_position().location().offset(),
+            page_end.location().offset(),
+            self.chapter.end_position().location().offset(),
         )
     }
 

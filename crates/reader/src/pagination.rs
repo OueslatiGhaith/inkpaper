@@ -1,4 +1,4 @@
-use alloc::{borrow::Cow, format, string::String, vec::Vec};
+use alloc::{borrow::Cow, string::String, vec::Vec};
 use core::mem;
 
 use inkpaper_epub::{
@@ -60,6 +60,104 @@ impl<'a> Pagination<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FlowCursor {
+    block_index: usize,
+    inline_index: usize,
+    text_byte_offset: usize,
+    block_first_line: bool,
+}
+
+impl FlowCursor {
+    const fn start_of_block(block_index: usize) -> Self {
+        Self {
+            block_index,
+            inline_index: 0,
+            text_byte_offset: 0,
+            block_first_line: true,
+        }
+    }
+}
+
+/// Lightweight bookmark marking the start of one paginated page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageCheckpoint {
+    position: ReadingPosition,
+    flow: FlowCursor,
+    last_line_height: u32,
+}
+
+impl PageCheckpoint {
+    pub const fn position(self) -> ReadingPosition {
+        self.position
+    }
+}
+
+/// Page-break index for a chapter, storing only lightweight checkpoints rather
+/// than materialized page fragments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChapterPageIndex {
+    checkpoints: Vec<PageCheckpoint>,
+    end_position: ReadingPosition,
+    has_visible_content: bool,
+}
+
+impl ChapterPageIndex {
+    pub fn len(&self) -> usize {
+        self.checkpoints.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.checkpoints.is_empty()
+    }
+
+    pub const fn has_visible_content(&self) -> bool {
+        self.has_visible_content
+    }
+
+    pub fn checkpoints(&self) -> &[PageCheckpoint] {
+        &self.checkpoints
+    }
+
+    pub fn page_position(&self, page_index: usize) -> Option<ReadingPosition> {
+        self.checkpoints
+            .get(page_index)
+            .map(|checkpoint| checkpoint.position)
+    }
+
+    pub fn page_end_position(&self, page_index: usize) -> Option<ReadingPosition> {
+        if page_index >= self.checkpoints.len() {
+            return None;
+        }
+
+        Some(
+            self.checkpoints
+                .get(page_index + 1)
+                .map_or(self.end_position, |next| next.position),
+        )
+    }
+
+    pub const fn end_position(&self) -> ReadingPosition {
+        self.end_position
+    }
+
+    /// Finds the page containing `position` within this chapter.
+    pub fn page_at_position(&self, position: ReadingPosition) -> Option<usize> {
+        let index = self
+            .checkpoints
+            .partition_point(|checkpoint| checkpoint.position <= position)
+            .checked_sub(1)?;
+        let start = self.checkpoints[index].position;
+        let end = self
+            .checkpoints
+            .get(index + 1)
+            .map_or(self.end_position, |next| next.position);
+
+        (position < end || (self.checkpoints.len() == 1 && position == start && start == end))
+            .then_some(index)
+    }
+}
+
 pub fn paginate_chapter<'a, M>(
     chapter: &'a Chapter,
     styles: &ChapterStyles,
@@ -71,7 +169,80 @@ pub fn paginate_chapter<'a, M>(
 where
     M: TextMeasurer + ImageMeasurer,
 {
-    Paginator::new(chapter, styles, spine, viewport, settings, measurer).paginate()
+    Paginator::new(
+        chapter,
+        styles,
+        spine,
+        viewport,
+        settings,
+        measurer,
+        PaginatorMode::AllPages,
+    )
+    .paginate()
+}
+
+/// Paginates `chapter` into lightweight page-start checkpoints without
+/// allocating page fragments.
+pub fn index_chapter<M>(
+    chapter: &Chapter,
+    styles: &ChapterStyles,
+    spine: SpineIndex,
+    viewport: Viewport,
+    settings: ReaderSettings,
+    measurer: &mut M,
+) -> Result<ChapterPageIndex, M::Error>
+where
+    M: TextMeasurer + ImageMeasurer,
+{
+    Paginator::new(
+        chapter,
+        styles,
+        spine,
+        viewport,
+        settings,
+        measurer,
+        PaginatorMode::IndexOnly,
+    )
+    .index()
+}
+
+/// Materializes a single page from `chapter` using a previously computed
+/// [`ChapterPageIndex`], seeking directly to that page's checkpoint.
+pub fn render_page<'a, M>(
+    chapter: &'a Chapter,
+    styles: &ChapterStyles,
+    index: &ChapterPageIndex,
+    page_index: usize,
+    viewport: Viewport,
+    settings: ReaderSettings,
+    measurer: &mut M,
+) -> Result<Option<Page<'a>>, M::Error>
+where
+    M: TextMeasurer + ImageMeasurer,
+{
+    let Some(&checkpoint) = index.checkpoints.get(page_index) else {
+        return Ok(None);
+    };
+
+    let page = Paginator::new(
+        chapter,
+        styles,
+        checkpoint.position.location().spine(),
+        viewport,
+        settings,
+        measurer,
+        PaginatorMode::SinglePage,
+    )
+    .render_single_page(checkpoint, index.end_position)?;
+
+    Ok(Some(page))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaginatorMode {
+    AllPages,
+    IndexOnly,
+    SinglePage,
 }
 
 struct PendingText<'a> {
@@ -134,22 +305,60 @@ enum LineEnd {
     Last,
 }
 
+struct RunSegment<'a> {
+    inline_index: usize,
+    source_offset: usize,
+    block_start: usize,
+    block_end: usize,
+    source: &'a str,
+    style: TextStyle,
+    link: Option<&'a LinkTarget>,
+}
+
+struct WordSlice<'a> {
+    inline_index: usize,
+    source: &'a str,
+    start: usize,
+    end: usize,
+    style: TextStyle,
+    link: Option<&'a LinkTarget>,
+    block_start: usize,
+}
+
+const SOFT_HYPHEN: char = '\u{00AD}';
+const LIST_BULLET: &str = "• ";
+
+#[derive(Debug, Clone, Copy)]
+struct ListMarker {
+    style: TextStyle,
+    width: u32,
+}
+
 struct Paginator<'chapter, 'context, M> {
     chapter: &'chapter Chapter,
     styles: &'context ChapterStyles,
     viewport: Viewport,
     settings: ReaderSettings,
     measurer: &'context mut M,
+    mode: PaginatorMode,
+    done: bool,
+    has_visible_content: bool,
 
     pages: Vec<Page<'chapter>>,
+    checkpoints: Vec<PageCheckpoint>,
     page_items: Vec<PageItem<'chapter>>,
 
     page_start: ReadingPosition,
+    page_start_flow: FlowCursor,
+    page_start_last_line_height: u32,
     cursor: ReadingPosition,
     used_height: u32,
 
+    current_block_index: usize,
+
     line_active: bool,
     line_start: ReadingPosition,
+    line_start_flow: FlowCursor,
     line_width: u32,
     line_height: u32,
     /// the height of the last line laid out, which sizes extra block spacing
@@ -160,13 +369,20 @@ struct Paginator<'chapter, 'context, M> {
     line_text_height: u32,
     line_align: TextAlign,
     line_indent: u32,
+    line_list_marker: Option<ListMarker>,
     line_items: Vec<PendingText<'chapter>>,
     /// reused to measure a word's start with its hyphen
     hyphen_scratch: String,
+    /// reused scratch buffers for cross-run line breaking within a block
+    block_text: String,
+    run_segments: Vec<RunSegment<'chapter>>,
+    hidden_runs: Vec<(usize, &'chapter str)>,
 
     block_laid_out: bool,
     block_align: TextAlign,
     block_text_indent: u32,
+    block_hanging_indent: u32,
+    block_list_marker: Option<ListMarker>,
     block_first_line: bool,
     block_line_height: LineHeight,
 }
@@ -182,8 +398,10 @@ where
         viewport: Viewport,
         settings: ReaderSettings,
         measurer: &'context mut M,
+        mode: PaginatorMode,
     ) -> Self {
         let start = ReadingPosition::new(BookLocation::new(spine, ContentOffset::ZERO), 0);
+        let start_flow = FlowCursor::start_of_block(0);
 
         Self {
             chapter,
@@ -191,13 +409,21 @@ where
             viewport,
             settings,
             measurer,
+            mode,
+            done: false,
+            has_visible_content: false,
             pages: Vec::new(),
+            checkpoints: Vec::new(),
             page_items: Vec::new(),
             page_start: start,
+            page_start_flow: start_flow,
+            page_start_last_line_height: 0,
             cursor: start,
             used_height: 0,
+            current_block_index: 0,
             line_active: false,
             line_start: start,
+            line_start_flow: start_flow,
             line_width: 0,
             line_height: 0,
             last_line_height: 0,
@@ -205,33 +431,35 @@ where
             line_text_height: 0,
             line_align: TextAlign::Start,
             line_indent: 0,
+            line_list_marker: None,
             line_items: Vec::new(),
             hyphen_scratch: String::new(),
+            block_text: String::new(),
+            run_segments: Vec::new(),
+            hidden_runs: Vec::new(),
             block_laid_out: false,
             block_align: TextAlign::Start,
             block_text_indent: 0,
+            block_hanging_indent: 0,
+            block_list_marker: None,
             block_first_line: false,
             block_line_height: LineHeight::NORMAL,
         }
     }
 
+    const fn emits_items(&self) -> bool {
+        !matches!(self.mode, PaginatorMode::IndexOnly)
+    }
+
     fn paginate(mut self) -> Result<Pagination<'chapter>, M::Error> {
-        for (index, block) in self.chapter.blocks().iter().enumerate() {
-            self.layout_block(block)?;
-
-            if let Some(next) = self.chapter.blocks().get(index + 1) {
-                self.add_block_spacing(block, next);
-            }
-        }
-
-        self.flush_line(LineEnd::Last);
+        self.run_from(FlowCursor::start_of_block(0))?;
 
         let end = self.cursor;
 
         debug_assert_eq!(end.location().offset(), self.chapter.content_len(),);
 
         if self.used_height > 0 {
-            self.push_page(end);
+            self.push_page(end, FlowCursor::start_of_block(self.chapter.blocks().len()));
         } else if self.pages.is_empty() {
             self.pages.push(Page::new(
                 self.page_start,
@@ -247,28 +475,151 @@ where
         Ok(Pagination { pages: self.pages })
     }
 
-    fn layout_block(&mut self, block: &'chapter ChapterBlock) -> Result<(), M::Error> {
+    fn index(mut self) -> Result<ChapterPageIndex, M::Error> {
+        self.run_from(FlowCursor::start_of_block(0))?;
+
+        let end = self.cursor;
+
+        debug_assert_eq!(end.location().offset(), self.chapter.content_len(),);
+
+        if self.used_height > 0 {
+            self.push_page(end, FlowCursor::start_of_block(self.chapter.blocks().len()));
+        } else if self.checkpoints.is_empty() {
+            self.checkpoints.push(PageCheckpoint {
+                position: self.page_start,
+                flow: self.page_start_flow,
+                last_line_height: self.page_start_last_line_height,
+            });
+        }
+
+        Ok(ChapterPageIndex {
+            checkpoints: self.checkpoints,
+            end_position: end,
+            has_visible_content: self.has_visible_content,
+        })
+    }
+
+    fn render_single_page(
+        mut self,
+        checkpoint: PageCheckpoint,
+        chapter_end: ReadingPosition,
+    ) -> Result<Page<'chapter>, M::Error> {
+        self.page_start = checkpoint.position;
+        self.page_start_flow = checkpoint.flow;
+        self.page_start_last_line_height = checkpoint.last_line_height;
+        self.cursor = checkpoint.position;
+        self.line_start = checkpoint.position;
+        self.line_start_flow = checkpoint.flow;
+        self.last_line_height = checkpoint.last_line_height;
+
+        self.run_from(checkpoint.flow)?;
+
+        if let Some(page) = self.pages.into_iter().next() {
+            return Ok(page);
+        }
+
+        Ok(Page::new(
+            self.page_start,
+            chapter_end,
+            mem::take(&mut self.page_items),
+        ))
+    }
+
+    fn run_from(&mut self, start: FlowCursor) -> Result<(), M::Error> {
+        for index in start.block_index..self.chapter.blocks().len() {
+            if self.done {
+                break;
+            }
+
+            let block = &self.chapter.blocks()[index];
+            self.current_block_index = index;
+
+            if index == start.block_index {
+                self.layout_block(
+                    block,
+                    start.inline_index,
+                    start.text_byte_offset,
+                    start.block_first_line,
+                )?;
+            } else {
+                self.layout_block(block, 0, 0, true)?;
+            }
+
+            if self.done {
+                break;
+            }
+
+            if let Some(next) = self.chapter.blocks().get(index + 1) {
+                self.add_block_spacing(block, next, index + 1);
+            }
+        }
+
+        if !self.done {
+            self.flush_line(LineEnd::Last);
+        }
+
+        Ok(())
+    }
+
+    fn layout_block(
+        &mut self,
+        block: &'chapter ChapterBlock,
+        start_inline: usize,
+        start_text_offset: usize,
+        block_first_line: bool,
+    ) -> Result<(), M::Error> {
         self.block_laid_out = false;
 
         let block_style = self.computed_style(block.style_node());
 
         self.block_align = self.resolve_block_align(block.kind(), block_style);
         self.block_text_indent = self.resolve_text_indent(block.kind(), block_style)?;
-        self.block_first_line = true;
+        let list_marker = self.resolve_list_marker(block.kind(), block_style)?;
+        self.block_hanging_indent = list_marker.map_or(0, |marker| marker.width);
+        self.block_list_marker = if block_first_line { list_marker } else { None };
+        self.block_first_line = block_first_line;
         self.block_line_height = block_style.line_height();
 
-        for inline in block.inlines() {
+        self.block_text.clear();
+        self.run_segments.clear();
+        self.hidden_runs.clear();
+
+        for (inline_index, inline) in block.inlines().iter().enumerate().skip(start_inline) {
+            if self.done {
+                break;
+            }
+
+            let text_offset = if inline_index == start_inline {
+                start_text_offset
+            } else {
+                0
+            };
+
             match inline {
                 Inline::Text(text) => {
-                    self.layout_text(block.kind(), text)?;
+                    self.push_block_text_run(block.kind(), inline_index, text_offset, text);
                 }
                 Inline::Image(image) => {
-                    self.layout_image(image);
+                    self.flush_block_text_runs()?;
+                    if self.done {
+                        break;
+                    }
+                    self.layout_image(inline_index, image);
+                    if self.done {
+                        break;
+                    }
                     self.cursor = self.cursor.advance_non_text();
                 }
                 Inline::Break => {
+                    self.flush_block_text_runs()?;
+                    if self.done {
+                        break;
+                    }
                     if !block_style.hidden() {
-                        self.layout_break(block.kind(), block_style)?;
+                        self.layout_break(inline_index, block.kind(), block_style)?;
+                        if self.done {
+                            break;
+                        }
                     }
                     self.cursor = self.cursor.advance_non_text();
                 }
@@ -276,27 +627,40 @@ where
             }
         }
 
-        self.flush_line(LineEnd::Last);
+        if !self.done {
+            self.flush_block_text_runs()?;
+        }
+        if !self.done {
+            self.flush_line(LineEnd::Last);
+        }
 
         self.block_align = TextAlign::Start;
         self.block_text_indent = 0;
+        self.block_hanging_indent = 0;
+        self.block_list_marker = None;
         self.block_first_line = false;
         self.block_line_height = LineHeight::NORMAL;
 
         Ok(())
     }
 
-    fn layout_text(
+    fn push_block_text_run(
         &mut self,
         block_kind: BlockKind,
+        inline_index: usize,
+        source_offset: usize,
         run: &'chapter TextRun,
-    ) -> Result<(), M::Error> {
+    ) {
+        let slice = &run.text()[source_offset..];
         let computed = self.computed_style(run.style_node());
 
         if computed.hidden() {
-            self.cursor = self.cursor.advance_text(run.text());
+            self.hidden_runs.push((self.block_text.len(), slice));
+            return;
+        }
 
-            return Ok(());
+        if slice.is_empty() {
+            return;
         }
 
         let style = TextStyle::new(
@@ -306,10 +670,434 @@ where
             computed.font_style(),
         );
 
-        self.layout_text_content(run.text(), style, run.link(), self.block_align)
+        let block_start = self.block_text.len();
+        self.block_text.push_str(slice);
+        let block_end = self.block_text.len();
+
+        self.run_segments.push(RunSegment {
+            inline_index,
+            source_offset,
+            block_start,
+            block_end,
+            source: run.text(),
+            style,
+            link: run.link(),
+        });
     }
 
-    fn layout_image(&mut self, image: &'chapter ChapterImage) {
+    fn flush_block_text_runs(&mut self) -> Result<(), M::Error> {
+        if self.block_text.is_empty() && self.hidden_runs.is_empty() {
+            return Ok(());
+        }
+
+        let block_text = mem::take(&mut self.block_text);
+        let run_segments = mem::take(&mut self.run_segments);
+        let hidden_runs = mem::take(&mut self.hidden_runs);
+
+        let result = self.layout_text_runs(&block_text, &run_segments, &hidden_runs);
+
+        self.block_text = block_text;
+        self.block_text.clear();
+        self.run_segments = run_segments;
+        self.run_segments.clear();
+        self.hidden_runs = hidden_runs;
+        self.hidden_runs.clear();
+
+        result
+    }
+
+    fn layout_text_runs(
+        &mut self,
+        block_text: &str,
+        segments: &[RunSegment<'chapter>],
+        hidden_runs: &[(usize, &'chapter str)],
+    ) -> Result<(), M::Error> {
+        let align = self.block_align;
+        let mut hidden_cursor = 0usize;
+        let mut seg_cursor = 0usize;
+        let mut start = 0usize;
+        let mut cluster: Vec<WordSlice<'chapter>> = Vec::new();
+
+        // newlines in a run are collapsible whitespace, so mandatory breaks are
+        // treated like any other break opportunity.
+        // Coalesce segments split by U+00AD soft hyphen so the whole word is
+        // measured without soft hyphens and only breaks with a visible '-'
+        // when it does not fit on the current line.
+        for (end, _) in linebreaks(block_text) {
+            if self.done {
+                break;
+            }
+
+            if end < block_text.len() && block_text[start..end].ends_with(SOFT_HYPHEN) {
+                continue;
+            }
+
+            let content_start = skip_break_whitespace(block_text, start, end);
+            let content_end = trim_break_whitespace(block_text, content_start, end);
+
+            if start < content_start {
+                self.layout_whitespace_range(
+                    start,
+                    content_start,
+                    segments,
+                    &mut seg_cursor,
+                    hidden_runs,
+                    &mut hidden_cursor,
+                    align,
+                )?;
+                if self.done {
+                    break;
+                }
+            }
+
+            if content_start < content_end {
+                collect_word_slices(
+                    content_start,
+                    content_end,
+                    segments,
+                    &mut seg_cursor,
+                    &mut cluster,
+                );
+                self.layout_word_cluster(&cluster, hidden_runs, &mut hidden_cursor, align)?;
+                if self.done {
+                    break;
+                }
+            }
+
+            if content_end < end {
+                self.layout_whitespace_range(
+                    content_end,
+                    end,
+                    segments,
+                    &mut seg_cursor,
+                    hidden_runs,
+                    &mut hidden_cursor,
+                    align,
+                )?;
+                if self.done {
+                    break;
+                }
+            }
+
+            start = end;
+        }
+
+        if !self.done {
+            self.advance_hidden_up_to(block_text.len(), hidden_runs, &mut hidden_cursor);
+        }
+
+        Ok(())
+    }
+
+    fn advance_hidden_up_to(
+        &mut self,
+        block_pos: usize,
+        hidden_runs: &[(usize, &'chapter str)],
+        hidden_cursor: &mut usize,
+    ) {
+        while let Some(&(offset, text)) = hidden_runs.get(*hidden_cursor) {
+            if offset > block_pos {
+                break;
+            }
+
+            self.cursor = self.cursor.advance_text(text);
+            *hidden_cursor += 1;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_whitespace_range(
+        &mut self,
+        mut start: usize,
+        end: usize,
+        segments: &[RunSegment<'chapter>],
+        seg_cursor: &mut usize,
+        hidden_runs: &[(usize, &'chapter str)],
+        hidden_cursor: &mut usize,
+        align: TextAlign,
+    ) -> Result<(), M::Error> {
+        while start < end {
+            if self.done {
+                break;
+            }
+
+            while *seg_cursor < segments.len() && segments[*seg_cursor].block_end <= start {
+                *seg_cursor += 1;
+            }
+
+            let seg = &segments[*seg_cursor];
+            let piece_end = end.min(seg.block_end);
+            let local_start = seg.source_offset + (start - seg.block_start);
+            let local_end = seg.source_offset + (piece_end - seg.block_start);
+
+            self.advance_hidden_up_to(start, hidden_runs, hidden_cursor);
+            self.layout_whitespace(
+                seg.inline_index,
+                seg.source,
+                local_start,
+                local_end,
+                seg.style,
+                seg.link,
+                align,
+            )?;
+
+            start = piece_end;
+        }
+
+        Ok(())
+    }
+
+    fn layout_word_cluster(
+        &mut self,
+        cluster: &[WordSlice<'chapter>],
+        hidden_runs: &[(usize, &'chapter str)],
+        hidden_cursor: &mut usize,
+        align: TextAlign,
+    ) -> Result<(), M::Error> {
+        if let [only] = cluster {
+            self.advance_hidden_up_to(only.block_start, hidden_runs, hidden_cursor);
+            return self.layout_word(
+                only.inline_index,
+                only.source,
+                only.start,
+                only.end,
+                only.style,
+                only.link,
+                align,
+            );
+        }
+
+        let mut start_idx = 0usize;
+        let mut start_offset = cluster[0].start;
+
+        loop {
+            if self.done {
+                return Ok(());
+            }
+
+            let mut total_width = 0u32;
+            for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+                let s = if i == start_idx { start_offset } else { slice.start };
+                let piece = &slice.source[s..slice.end];
+                total_width =
+                    total_width.saturating_add(self.measure_visible_text(piece, slice.style)?);
+            }
+
+            let used = if self.line_active {
+                self.line_indent.saturating_add(self.line_width)
+            } else {
+                self.prospective_line_indent()
+            };
+
+            let available = self.viewport.width().saturating_sub(used);
+
+            if total_width <= available {
+                for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+                    let s = if i == start_idx { start_offset } else { slice.start };
+                    let piece = &slice.source[s..slice.end];
+                    let width = self.measure_visible_text(piece, slice.style)?;
+                    self.advance_hidden_up_to(
+                        slice.block_start + (s - slice.start),
+                        hidden_runs,
+                        hidden_cursor,
+                    );
+                    self.add_text_piece(
+                        slice.inline_index,
+                        slice.source,
+                        s,
+                        slice.end,
+                        width,
+                        slice.style,
+                        slice.link,
+                        align,
+                    )?;
+                }
+
+                return Ok(());
+            }
+
+            if let Some((alpha_idx, split, split_width)) =
+                self.cluster_hyphenation_break(cluster, start_idx, start_offset, available)?
+            {
+                for (i, slice) in cluster[..alpha_idx].iter().enumerate().skip(start_idx) {
+                    let s = if i == start_idx { start_offset } else { slice.start };
+                    let piece = &slice.source[s..slice.end];
+                    let width = self.measure_visible_text(piece, slice.style)?;
+                    self.advance_hidden_up_to(
+                        slice.block_start + (s - slice.start),
+                        hidden_runs,
+                        hidden_cursor,
+                    );
+                    self.add_text_piece(
+                        slice.inline_index,
+                        slice.source,
+                        s,
+                        slice.end,
+                        width,
+                        slice.style,
+                        slice.link,
+                        align,
+                    )?;
+                }
+
+                let alpha = &cluster[alpha_idx];
+                let alpha_start = if alpha_idx == start_idx {
+                    start_offset
+                } else {
+                    alpha.start
+                };
+                self.advance_hidden_up_to(
+                    alpha.block_start + (alpha_start - alpha.start),
+                    hidden_runs,
+                    hidden_cursor,
+                );
+                self.add_text_piece(
+                    alpha.inline_index,
+                    alpha.source,
+                    alpha_start,
+                    split,
+                    split_width,
+                    alpha.style,
+                    alpha.link,
+                    align,
+                )?;
+
+                if let Some(piece) = self.line_items.last_mut() {
+                    piece.hyphen = true;
+                }
+
+                self.flush_line(LineEnd::Wrapped);
+                if self.done {
+                    return Ok(());
+                }
+
+                if split < alpha.end {
+                    start_idx = alpha_idx;
+                    start_offset = split;
+                } else if alpha_idx + 1 < cluster.len() {
+                    start_idx = alpha_idx + 1;
+                    start_offset = cluster[start_idx].start;
+                } else {
+                    return Ok(());
+                }
+                continue;
+            }
+
+            if !self.line_active {
+                for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+                    if self.done {
+                        return Ok(());
+                    }
+                    let s = if i == start_idx { start_offset } else { slice.start };
+                    self.advance_hidden_up_to(
+                        slice.block_start + (s - slice.start),
+                        hidden_runs,
+                        hidden_cursor,
+                    );
+                    self.layout_oversized_word(
+                        slice.inline_index,
+                        slice.source,
+                        s,
+                        slice.end,
+                        slice.style,
+                        slice.link,
+                        align,
+                    )?;
+                }
+
+                return Ok(());
+            }
+
+            self.flush_line(LineEnd::Wrapped);
+        }
+    }
+
+    /// Hyphenates a multi-run cluster (such as `(<em>extraordinary</em>).`)
+    /// at soft hyphens or when all alphabetic characters belong to a single
+    /// styled run.
+    fn cluster_hyphenation_break(
+        &mut self,
+        cluster: &[WordSlice<'chapter>],
+        start_idx: usize,
+        start_offset: usize,
+        available: u32,
+    ) -> Result<Option<(usize, usize, u32)>, M::Error> {
+        let mut leading_width = 0u32;
+        let mut best_soft: Option<(usize, usize, u32)> = None;
+
+        for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+            let s = if i == start_idx { start_offset } else { slice.start };
+            let piece = &slice.source[s..slice.end];
+
+            if leading_width < available && piece.contains(SOFT_HYPHEN) {
+                let remaining = available - leading_width;
+                if let Some((split, width)) =
+                    self.soft_hyphen_break(piece, remaining, slice.style)?
+                {
+                    best_soft = Some((i, s.saturating_add(split), width));
+                }
+            }
+
+            leading_width =
+                leading_width.saturating_add(self.measure_visible_text(piece, slice.style)?);
+            if leading_width >= available {
+                break;
+            }
+        }
+
+        if best_soft.is_some() {
+            return Ok(best_soft);
+        }
+
+        if self.settings.hyphenation().is_none() {
+            return Ok(None);
+        }
+
+        let mut alpha_idx = None;
+        for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+            let s = if i == start_idx { start_offset } else { slice.start };
+            let text = &slice.source[s..slice.end];
+            if text.chars().any(char::is_alphabetic) {
+                if alpha_idx.is_some() {
+                    return Ok(None);
+                }
+                alpha_idx = Some(i);
+            }
+        }
+
+        let Some(alpha_idx) = alpha_idx else {
+            return Ok(None);
+        };
+
+        let mut leading_width = 0u32;
+        for (i, slice) in cluster[..alpha_idx].iter().enumerate().skip(start_idx) {
+            let s = if i == start_idx { start_offset } else { slice.start };
+            let piece = &slice.source[s..slice.end];
+            leading_width =
+                leading_width.saturating_add(self.measure_visible_text(piece, slice.style)?);
+        }
+
+        if leading_width >= available {
+            return Ok(None);
+        }
+
+        let alpha = &cluster[alpha_idx];
+        let alpha_start = if alpha_idx == start_idx {
+            start_offset
+        } else {
+            alpha.start
+        };
+        let word = &alpha.source[alpha_start..alpha.end];
+        let remaining = available - leading_width;
+
+        let Some((split, width)) = self.hyphenation_break(word, remaining, alpha.style)? else {
+            return Ok(None);
+        };
+
+        Ok(Some((alpha_idx, alpha_start.saturating_add(split), width)))
+    }
+
+    fn layout_image(&mut self, inline_index: usize, image: &'chapter ChapterImage) {
         let computed = self.computed_style(image.style_node());
 
         if computed.hidden() {
@@ -317,6 +1105,9 @@ where
         }
 
         self.flush_line(LineEnd::Last);
+        if self.done {
+            return;
+        }
 
         let Some(intrinsic) = self.measurer.image_dimensions(image) else {
             return;
@@ -331,52 +1122,34 @@ where
         {
             // images consume no ContentOffset. This may intentionally produce a zero-length
             // PageRange for an image-only page.
-            self.push_page(self.cursor);
+            let next_flow = FlowCursor {
+                block_index: self.current_block_index,
+                inline_index,
+                text_byte_offset: 0,
+                block_first_line: self.block_first_line,
+            };
+            self.push_page(self.cursor, next_flow);
+            if self.done {
+                return;
+            }
         }
 
-        let x = alignment_offset(computed.text_align(), self.viewport.width(), layout.width());
+        if self.emits_items() {
+            let x = alignment_offset(computed.text_align(), self.viewport.width(), layout.width());
+            let bounds = Rect::new(x, self.used_height, layout.width(), height);
+            self.page_items
+                .push(PageItem::Image(ImageFragment::new(image, bounds)));
+        }
 
-        let bounds = Rect::new(x, self.used_height, layout.width(), height);
-
-        self.page_items
-            .push(PageItem::Image(ImageFragment::new(image, bounds)));
+        self.has_visible_content = true;
         self.used_height = self.used_height.saturating_add(height);
         self.block_laid_out = true;
     }
 
-    fn layout_text_content(
-        &mut self,
-        text: &'chapter str,
-        style: TextStyle,
-        link: Option<&'chapter LinkTarget>,
-        align: TextAlign,
-    ) -> Result<(), M::Error> {
-        let mut start = 0usize;
-
-        // newlines in a run are collapsible whitespace, so mandatory breaks are
-        // treated like any other break opportunity.
-        for (end, _) in linebreaks(text) {
-            let content_start = skip_break_whitespace(text, start, end);
-            let content_end = trim_break_whitespace(text, content_start, end);
-
-            if start < content_start {
-                self.layout_whitespace(text, start, content_start, style, link, align)?;
-            }
-            if content_start < content_end {
-                self.layout_word(text, content_start, content_end, style, link, align)?;
-            }
-            if content_end < end {
-                self.layout_whitespace(text, content_end, end, style, link, align)?;
-            }
-
-            start = end;
-        }
-
-        Ok(())
-    }
-
+    #[allow(clippy::too_many_arguments)]
     fn layout_whitespace(
         &mut self,
+        inline_index: usize,
         source: &'chapter str,
         start: usize,
         end: usize,
@@ -401,17 +1174,22 @@ where
 
         if occupied > self.viewport.width() {
             self.flush_line(LineEnd::Wrapped);
+            if self.done {
+                return Ok(());
+            }
 
             self.cursor = self.cursor.advance_text(whitespace);
 
             return Ok(());
         }
 
-        self.add_text_piece(source, start, end, width, style, link, align)
+        self.add_text_piece(inline_index, source, start, end, width, style, link, align)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_word(
         &mut self,
+        inline_index: usize,
         source: &'chapter str,
         start: usize,
         end: usize,
@@ -422,9 +1200,13 @@ where
         let mut start = start;
 
         loop {
+            if self.done {
+                return Ok(());
+            }
+
             let word = &source[start..end];
 
-            let width = self.measurer.measure_text(word, style)?;
+            let width = self.measure_visible_text(word, style)?;
 
             let used = if self.line_active {
                 self.line_indent.saturating_add(self.line_width)
@@ -435,33 +1217,141 @@ where
             let available = self.viewport.width().saturating_sub(used);
 
             if width <= available {
-                return self.add_text_piece(source, start, end, width, style, link, align);
+                return self.add_text_piece(
+                    inline_index,
+                    source,
+                    start,
+                    end,
+                    width,
+                    style,
+                    link,
+                    align,
+                );
             }
+
+            // prefer explicit U+00AD soft hyphens, then algorithmic hyphenation
+            let break_point = if word.contains(SOFT_HYPHEN) {
+                self.soft_hyphen_break(word, available, style)?
+            } else {
+                None
+            };
+            let break_point = match break_point {
+                Some(found) => Some(found),
+                None => self.hyphenation_break(word, available, style)?,
+            };
 
             // fill the line with the word's start and a hyphen, and carry the
             // rest over to the next line
-            if let Some((split, width)) = self.hyphenation_break(word, available, style)? {
+            if let Some((split, width)) = break_point {
                 let split = start.saturating_add(split);
 
-                self.add_text_piece(source, start, split, width, style, link, align)?;
+                self.add_text_piece(
+                    inline_index,
+                    source,
+                    start,
+                    split,
+                    width,
+                    style,
+                    link,
+                    align,
+                )?;
 
                 if let Some(piece) = self.line_items.last_mut() {
                     piece.hyphen = true;
                 }
 
                 self.flush_line(LineEnd::Wrapped);
+                if self.done {
+                    return Ok(());
+                }
 
                 start = split;
+                if start >= end {
+                    return Ok(());
+                }
 
                 continue;
             }
 
             if !self.line_active {
-                return self.layout_oversized_word(source, start, end, style, link, align);
+                return self.layout_oversized_word(
+                    inline_index,
+                    source,
+                    start,
+                    end,
+                    style,
+                    link,
+                    align,
+                );
             }
 
             self.flush_line(LineEnd::Wrapped);
         }
+    }
+
+    fn measure_visible_text(&mut self, text: &str, style: TextStyle) -> Result<u32, M::Error> {
+        if !text.contains(SOFT_HYPHEN) {
+            return self.measurer.measure_text(text, style);
+        }
+
+        let mut scratch = mem::take(&mut self.hyphen_scratch);
+        scratch.clear();
+        for ch in text.chars() {
+            if ch != SOFT_HYPHEN {
+                scratch.push(ch);
+            }
+        }
+
+        let result = self.measurer.measure_text(&scratch, style);
+        self.hyphen_scratch = scratch;
+        result
+    }
+
+    /// The longest prefix of `word` ending at a `U+00AD` soft hyphen that fits
+    /// in `available` with a visible `-`.
+    fn soft_hyphen_break(
+        &mut self,
+        word: &str,
+        available: u32,
+        style: TextStyle,
+    ) -> Result<Option<(usize, u32)>, M::Error> {
+        let mut scratch = mem::take(&mut self.hyphen_scratch);
+        let mut best = None;
+
+        for (index, ch) in word.char_indices() {
+            if ch != SOFT_HYPHEN || index == 0 {
+                continue;
+            }
+
+            scratch.clear();
+            for prefix_ch in word[..index].chars() {
+                if prefix_ch != SOFT_HYPHEN {
+                    scratch.push(prefix_ch);
+                }
+            }
+            if scratch.is_empty() {
+                continue;
+            }
+            scratch.push('-');
+
+            let width = match self.measurer.measure_text(&scratch, style) {
+                Ok(width) => width,
+                Err(error) => {
+                    self.hyphen_scratch = scratch;
+                    return Err(error);
+                }
+            };
+
+            if width > available {
+                break;
+            }
+
+            let split = index + SOFT_HYPHEN.len_utf8();
+            best = Some((split, width));
+        }
+
+        self.hyphen_scratch = scratch;
+        Ok(best)
     }
 
     /// The longest start of `word` that fits in `available` with a hyphen, as
@@ -523,8 +1413,10 @@ where
         Ok(best)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_oversized_word(
         &mut self,
+        inline_index: usize,
         source: &'chapter str,
         word_start: usize,
         word_end: usize,
@@ -537,6 +1429,10 @@ where
         let mut start = 0usize;
 
         while start < word.len() {
+            if self.done {
+                break;
+            }
+
             let Some(first_end) = self.next_boundary(word, start, style)? else {
                 break;
             };
@@ -555,7 +1451,7 @@ where
             loop {
                 let candidate = &word[start..end];
 
-                let width = self.measurer.measure_text(candidate, style)?;
+                let width = self.measure_visible_text(candidate, style)?;
 
                 if width <= available {
                     best = Some((end, width));
@@ -579,14 +1475,23 @@ where
                 None => {
                     let candidate = &word[start..first_end];
 
-                    (first_end, self.measurer.measure_text(candidate, style)?)
+                    (first_end, self.measure_visible_text(candidate, style)?)
                 }
             };
 
             let source_start = word_start.saturating_add(start);
             let source_end = word_start.saturating_add(end);
 
-            self.add_text_piece(source, source_start, source_end, width, style, link, align)?;
+            self.add_text_piece(
+                inline_index,
+                source,
+                source_start,
+                source_end,
+                width,
+                style,
+                link,
+                align,
+            )?;
 
             start = end;
 
@@ -601,6 +1506,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn add_text_piece(
         &mut self,
+        inline_index: usize,
         source: &'chapter str,
         start: usize,
         end: usize,
@@ -620,26 +1526,38 @@ where
 
             self.line_active = true;
             self.line_start = self.cursor;
+            self.line_start_flow = FlowCursor {
+                block_index: self.current_block_index,
+                inline_index,
+                text_byte_offset: start,
+                block_first_line: self.block_first_line,
+            };
             self.line_align = align;
             self.line_indent = indent;
+            if self.block_first_line {
+                self.line_list_marker = self.block_list_marker.take();
+            }
             self.block_first_line = false;
         }
 
         let height = self.measured_line_height(style)?;
         let text_height = self.measurer.line_height(style)?.max(1);
 
-        self.line_items.push(PendingText {
-            source,
-            start,
-            end,
-            style,
-            link,
-            x: self.line_width,
-            width,
-            word_spacing: text.contains(' ').then_some(0),
-            hyphen: false,
-        });
+        if self.emits_items() {
+            self.line_items.push(PendingText {
+                source,
+                start,
+                end,
+                style,
+                link,
+                x: self.line_width,
+                width,
+                word_spacing: text.contains(' ').then_some(0),
+                hyphen: false,
+            });
+        }
 
+        self.has_visible_content = true;
         self.line_width = self.line_width.saturating_add(width);
         self.line_height = self.line_height.max(height);
         self.line_text_offset = self
@@ -654,6 +1572,7 @@ where
 
     fn layout_break(
         &mut self,
+        inline_index: usize,
         block_kind: BlockKind,
         computed: ComputedStyle,
     ) -> Result<(), M::Error> {
@@ -674,6 +1593,12 @@ where
 
         self.line_active = true;
         self.line_start = self.cursor;
+        self.line_start_flow = FlowCursor {
+            block_index: self.current_block_index,
+            inline_index,
+            text_byte_offset: 0,
+            block_first_line: self.block_first_line,
+        };
         self.line_align = self.block_align;
         self.line_indent = indent;
         self.block_first_line = false;
@@ -690,48 +1615,65 @@ where
             return;
         }
 
-        // spaces at the end of a line take no room
-        while let Some(item) = self.line_items.pop_if(|item| item.is_whitespace()) {
-            self.line_width = self.line_width.saturating_sub(item.width);
-        }
-
         let height = self.line_height.max(1);
 
         if self.used_height > 0 && self.used_height.saturating_add(height) > self.viewport.height()
         {
-            self.push_page(self.line_start);
+            self.push_page(self.line_start, self.line_start_flow);
+            if self.done {
+                return;
+            }
         }
 
-        let y = self.used_height;
-        let text_y = y.saturating_add(self.line_text_offset);
-        let text_height = self.line_text_height.max(1);
+        if self.emits_items() {
+            // spaces at the end of a line take no room
+            while let Some(item) = self.line_items.pop_if(|item| item.is_whitespace()) {
+                self.line_width = self.line_width.saturating_sub(item.width);
+            }
 
-        let line_width = self.viewport.width().saturating_sub(self.line_indent);
+            let y = self.used_height;
+            let text_y = y.saturating_add(self.line_text_offset);
+            let text_height = self.line_text_height.max(1);
 
-        if end == LineEnd::Wrapped && self.line_align == TextAlign::Justify {
-            justify(
-                &mut self.line_items,
-                line_width.saturating_sub(self.line_width),
-            );
-        }
+            let line_width = self.viewport.width().saturating_sub(self.line_indent);
 
-        let alignment = alignment_offset(self.line_align, line_width, self.line_width);
-        let origin = self.line_indent.saturating_add(alignment);
+            if end == LineEnd::Wrapped && self.line_align == TextAlign::Justify {
+                justify(
+                    &mut self.line_items,
+                    line_width.saturating_sub(self.line_width),
+                );
+            }
 
-        let mut items = mem::take(&mut self.line_items).into_iter();
+            let alignment = alignment_offset(self.line_align, line_width, self.line_width);
+            let origin = self.line_indent.saturating_add(alignment);
 
-        if let Some(mut current) = items.next() {
-            for next in items {
-                if current.can_merge_with(&next) {
-                    current.merge(next);
-                    continue;
+            if let Some(marker) = self.line_list_marker.take() {
+                let marker_x = origin.saturating_sub(marker.width);
+                self.page_items.push(PageItem::Text(TextFragment::new(
+                    Cow::Borrowed(LIST_BULLET),
+                    Rect::new(marker_x, text_y, marker.width, text_height),
+                    marker.style,
+                    None,
+                    0,
+                    false,
+                )));
+            }
+
+            let mut items = mem::take(&mut self.line_items).into_iter();
+
+            if let Some(mut current) = items.next() {
+                for next in items {
+                    if current.can_merge_with(&next) {
+                        current.merge(next);
+                        continue;
+                    }
+
+                    self.push_text_fragment(current, origin, text_y, text_height);
+                    current = next;
                 }
 
                 self.push_text_fragment(current, origin, text_y, text_height);
-                current = next;
             }
-
-            self.push_text_fragment(current, origin, text_y, text_height);
         }
 
         self.used_height = self.used_height.saturating_add(height);
@@ -744,6 +1686,7 @@ where
         self.line_text_height = 0;
         self.line_align = TextAlign::Start;
         self.line_indent = 0;
+        self.line_list_marker = None;
     }
 
     fn push_text_fragment(
@@ -753,10 +1696,20 @@ where
         y: u32,
         height: u32,
     ) {
-        let text = if item.hyphen {
-            Cow::Owned(format!("{}-", item.text()))
+        let raw = item.text();
+        let text = if item.hyphen || raw.contains(SOFT_HYPHEN) {
+            let mut owned = String::with_capacity(raw.len() + usize::from(item.hyphen));
+            for ch in raw.chars() {
+                if ch != SOFT_HYPHEN {
+                    owned.push(ch);
+                }
+            }
+            if item.hyphen {
+                owned.push('-');
+            }
+            Cow::Owned(owned)
         } else {
-            Cow::Borrowed(item.text())
+            Cow::Borrowed(raw)
         };
 
         self.page_items.push(PageItem::Text(TextFragment::new(
@@ -769,7 +1722,12 @@ where
         )));
     }
 
-    fn add_block_spacing(&mut self, current: &ChapterBlock, next: &ChapterBlock) {
+    fn add_block_spacing(
+        &mut self,
+        current: &ChapterBlock,
+        next: &ChapterBlock,
+        next_block_index: usize,
+    ) {
         if !self.block_laid_out {
             return;
         }
@@ -796,7 +1754,7 @@ where
         }
 
         if self.used_height.saturating_add(spacing) > self.viewport.height() {
-            self.push_page(self.cursor);
+            self.push_page(self.cursor, FlowCursor::start_of_block(next_block_index));
 
             return;
         }
@@ -804,14 +1762,35 @@ where
         self.used_height = self.used_height.saturating_add(spacing);
     }
 
-    fn push_page(&mut self, end: ReadingPosition) {
-        self.pages.push(Page::new(
-            self.page_start,
-            end,
-            mem::take(&mut self.page_items),
-        ));
+    fn push_page(&mut self, end: ReadingPosition, next_flow: FlowCursor) {
+        match self.mode {
+            PaginatorMode::AllPages => {
+                self.pages.push(Page::new(
+                    self.page_start,
+                    end,
+                    mem::take(&mut self.page_items),
+                ));
+            }
+            PaginatorMode::IndexOnly => {
+                self.checkpoints.push(PageCheckpoint {
+                    position: self.page_start,
+                    flow: self.page_start_flow,
+                    last_line_height: self.page_start_last_line_height,
+                });
+            }
+            PaginatorMode::SinglePage => {
+                self.pages.push(Page::new(
+                    self.page_start,
+                    end,
+                    mem::take(&mut self.page_items),
+                ));
+                self.done = true;
+            }
+        }
 
         self.page_start = end;
+        self.page_start_flow = next_flow;
+        self.page_start_last_line_height = self.last_line_height;
         self.used_height = 0;
     }
 
@@ -821,16 +1800,17 @@ where
 
     fn measured_line_height(&mut self, style: TextStyle) -> Result<u32, M::Error> {
         let font_size = u32::from(style.font_size());
+        let native = self.measurer.line_height(style)?.max(1);
 
         if let Some(percent) = self.settings.line_height_percent() {
-            return Ok((font_size * u32::from(percent) / 100).max(1));
+            return Ok((font_size * u32::from(percent) / 100).max(native));
         }
 
         if let Some(height) = self.block_line_height.resolve(font_size) {
-            return Ok(height.max(1));
+            return Ok(height.max(native));
         }
 
-        Ok(self.measurer.line_height(style)?.max(1))
+        Ok(native)
     }
 
     fn next_boundary(
@@ -856,10 +1836,38 @@ where
         if self.line_active {
             self.line_indent
         } else if self.block_first_line {
-            self.block_text_indent
+            self.block_hanging_indent
+                .saturating_add(self.block_text_indent)
+                .min(self.viewport.width().saturating_sub(1))
         } else {
-            0
+            self.block_hanging_indent
         }
+    }
+
+    fn resolve_list_marker(
+        &mut self,
+        kind: BlockKind,
+        style: ComputedStyle,
+    ) -> Result<Option<ListMarker>, M::Error> {
+        if kind != BlockKind::ListItem || style.hidden() {
+            return Ok(None);
+        }
+
+        let marker_style = TextStyle::new(
+            self.settings.font_size(),
+            kind,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let marker_width = self
+            .measurer
+            .measure_text(LIST_BULLET, marker_style)?
+            .min(self.viewport.width().saturating_sub(1));
+
+        Ok(Some(ListMarker {
+            style: marker_style,
+            width: marker_width,
+        }))
     }
 
     fn resolve_text_indent(
@@ -921,15 +1929,53 @@ where
     }
 }
 
-/// spreads `spare` pixels over a line's gaps, the leftover pixels going to the
-/// first gaps. A line without gaps keeps its natural spacing
-fn justify(items: &mut [PendingText<'_>], spare: u32) {
-    let gaps = items.iter().filter(|item| item.is_gap()).count();
-    let Ok(gaps) = u32::try_from(gaps) else {
-        return;
-    };
+fn collect_word_slices<'a>(
+    mut start: usize,
+    end: usize,
+    segments: &[RunSegment<'a>],
+    seg_cursor: &mut usize,
+    out: &mut Vec<WordSlice<'a>>,
+) {
+    out.clear();
 
-    if gaps == 0 || spare == 0 {
+    while start < end {
+        while *seg_cursor < segments.len() && segments[*seg_cursor].block_end <= start {
+            *seg_cursor += 1;
+        }
+
+        let seg = &segments[*seg_cursor];
+        let piece_end = end.min(seg.block_end);
+
+        out.push(WordSlice {
+            inline_index: seg.inline_index,
+            source: seg.source,
+            start: seg.source_offset + (start - seg.block_start),
+            end: seg.source_offset + (piece_end - seg.block_start),
+            style: seg.style,
+            link: seg.link,
+            block_start: start,
+        });
+
+        start = piece_end;
+    }
+}
+
+/// spreads `spare` pixels over a line's gaps, the leftover pixels going to the
+/// first gaps. A line without gaps, or one whose gaps would stretch beyond 3×
+/// their natural width (creating wide rivers), keeps its natural spacing.
+fn justify(items: &mut [PendingText<'_>], spare: u32) {
+    let mut gaps = 0u32;
+    let mut max_total_stretch = 0u64;
+
+    for item in items.iter() {
+        if !item.is_gap() {
+            continue;
+        }
+        gaps = gaps.saturating_add(1);
+        max_total_stretch = max_total_stretch.saturating_add(u64::from(item.width) * 2);
+    }
+
+    if gaps == 0 || spare == 0 || u64::from(spare) > max_total_stretch {
         return;
     }
 

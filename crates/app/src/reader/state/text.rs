@@ -1,6 +1,6 @@
 use inkpaper_epub::SpineIndex;
 
-use crate::{ReaderChapter, ReaderPreferences, reader::TextSettings};
+use crate::{ReaderChapter, ReaderPreferences, fonts::CardFont, reader::TextSettings};
 
 use super::{PendingRepaginationRequest, ReaderRequest, ReaderState};
 
@@ -42,12 +42,24 @@ impl ReaderState {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn apply_repaginated_chapter(
         &mut self,
         path: &str,
         spine: SpineIndex,
         text: TextSettings,
         chapter: ReaderChapter,
+    ) -> bool {
+        self.apply_repaginated_chapter_with_card(path, spine, text, chapter, None)
+    }
+
+    pub(crate) fn apply_repaginated_chapter_with_card(
+        &mut self,
+        path: &str,
+        spine: SpineIndex,
+        text: TextSettings,
+        chapter: ReaderChapter,
+        card: Option<&CardFont>,
     ) -> bool {
         if path != self.path {
             return false;
@@ -71,16 +83,18 @@ impl ReaderState {
             return false;
         }
 
-        let page_index = chapter.page_at_position(request.position).unwrap_or(0);
+        let page_index = chapter
+            .page_at_position(request.position)
+            .unwrap_or(0)
+            .min(chapter.page_count().saturating_sub(1));
 
         document.replace_chapter(chapter);
-
-        self.page_index = page_index.min(document.page_count().saturating_sub(1));
 
         self.text = text;
         self.saved_text = text;
         self.pending_repagination = None;
 
+        let _ = self.select_page(page_index, card);
         self.refresh_chrome();
         self.queue_preferences_update();
         self.queue_progress_update();

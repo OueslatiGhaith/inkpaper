@@ -7,7 +7,7 @@ use inkpaper_epub::{
 use inkpaper_io::SliceSource;
 use inkpaper_reader::{
     HyphenationLanguage, ImageMeasurer, PageItem, PageRange, ReaderSettings, Rect, TextAlign,
-    TextMeasurer, TextStyle, Viewport, paginate_chapter,
+    TextMeasurer, TextStyle, Viewport, index_chapter, paginate_chapter, render_page,
 };
 
 use support::build_stored_zip;
@@ -1144,7 +1144,7 @@ fn paragraph_align_setting_overrides_the_book_but_not_headings() {
     assert_eq!(bounds, [Rect::new(0, 0, 3, 1)]);
 
     let bounds = line_bounds(r#"<li style="text-align: right">one</li>"#, settings);
-    assert_eq!(bounds, [Rect::new(0, 0, 3, 1)]);
+    assert_eq!(bounds, [Rect::new(0, 0, 2, 1), Rect::new(2, 0, 3, 1)]);
 
     let bounds = line_bounds(r#"<h1 style="text-align: center">one</h1>"#, settings);
     assert_eq!(bounds, [Rect::new(8, 0, 3, 1)]);
@@ -1324,4 +1324,317 @@ fn fragments_say_whether_the_line_break_added_their_hyphen() {
         hyphenated("<p>aaaaaaaaaaaaaa well-known</p>", hyphenating())[0],
         (String::from("aaaaaaaaaaaaaa well-"), false),
     );
+}
+
+#[test]
+fn cross_run_punctuation_wraps_with_its_word() {
+    // "aaaaaaaaaaaaaaa " is 16 wide; "word" (4) would fit in 20, but "word." (5)
+    // must wrap together so the period is not orphaned on the next line.
+    assert_eq!(
+        first_page_lines("<p>aaaaaaaaaaaaaaa <em>word</em>.</p>", 20),
+        [(0, String::from("aaaaaaaaaaaaaaa")), (1, String::from("word.")),],
+    );
+
+    // Leading and trailing punctuation in outer runs stay attached to inner runs.
+    assert_eq!(
+        first_page_lines("<p>See (<em>word</em>), next</p>", 10),
+        [
+            (0, String::from("See")),
+            (1, String::from("(word),")),
+            (2, String::from("next")),
+        ],
+    );
+
+    // Adjacent styled halves of one word stay together.
+    assert_eq!(
+        first_page_lines("<p>aaaaaaaaaaaa foo<b>bar</b></p>", 18),
+        [(0, String::from("aaaaaaaaaaaa")), (1, String::from("foobar")),],
+    );
+}
+
+#[test]
+fn cross_run_hyphenation_keeps_trailing_punctuation_attached() {
+    assert_eq!(
+        line_fragments("<p>this is <em>extraordinary</em>.</p>", hyphenating()),
+        [
+            fragment("this is ", Rect::new(0, 0, 8, 1), 0),
+            fragment("extraordi-", Rect::new(8, 0, 10, 1), 0),
+            fragment("nary", Rect::new(0, 1, 4, 1), 0),
+            fragment(".", Rect::new(4, 1, 1, 1), 0),
+        ],
+    );
+}
+
+#[test]
+fn justification_skips_lines_that_would_stretch_gaps_too_wide() {
+    let settings = ReaderSettings::new(1, 0)
+        .unwrap()
+        .with_paragraph_align(TextAlign::Justify);
+
+    // "a b" is 3 wide on a 20-wide viewport (1 gap, spare = 17 > 2 * 1), so
+    // it stays naturally spaced instead of creating a 17-column river.
+    assert_eq!(
+        line_fragments("<p>a b supercalifragilistic</p>", settings),
+        [
+            fragment("a b", Rect::new(0, 0, 3, 1), 0),
+            fragment("supercalifragilistic", Rect::new(0, 1, 20, 1), 0),
+        ],
+    );
+}
+
+#[test]
+fn line_box_never_shrinks_below_measured_heading_line_height() {
+    struct TallHeadingMeasurer;
+
+    impl TextMeasurer for TallHeadingMeasurer {
+        type Error = Infallible;
+
+        fn measure_text(&mut self, text: &str, _style: TextStyle) -> Result<u32, Self::Error> {
+            Ok(u32::try_from(text.chars().count()).unwrap())
+        }
+
+        fn line_height(&mut self, style: TextStyle) -> Result<u32, Self::Error> {
+            match style.block_kind() {
+                inkpaper_reader::BlockKind::Heading(_) => Ok(4),
+                _ => Ok(1),
+            }
+        }
+    }
+
+    impl ImageMeasurer for TallHeadingMeasurer {}
+
+    let bytes = build_test_epub(r#"<h1 style="line-height: 1">one<br/>two</h1>"#);
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
+
+    let settings = ReaderSettings::new(1, 0)
+        .unwrap()
+        .with_line_height_percent(150)
+        .unwrap();
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(20, 40).unwrap(),
+        settings,
+        &mut TallHeadingMeasurer,
+    )
+    .unwrap();
+
+    let bounds: Vec<_> = pagination.pages()[0]
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            PageItem::Text(text) => Some(text.bounds()),
+            PageItem::Image(_) => None,
+        })
+        .collect();
+
+    // Native heading line height is 4, so lines advance by 4 instead of overlapping at y=1.
+    assert_eq!(bounds, [Rect::new(0, 0, 3, 4), Rect::new(0, 4, 3, 4)]);
+}
+
+#[test]
+fn list_items_render_with_bullet_and_hanging_indent() {
+    let settings = ReaderSettings::new(1, 0).unwrap();
+
+    assert_eq!(
+        line_fragments(
+            "<ul><li>first item wraps onto a second line</li><li>second</li></ul>",
+            settings,
+        ),
+        [
+            fragment("• ", Rect::new(0, 0, 2, 1), 0),
+            fragment("first item wraps", Rect::new(2, 0, 16, 1), 0),
+            fragment("onto a second line", Rect::new(2, 1, 18, 1), 0),
+            fragment("• ", Rect::new(0, 2, 2, 1), 0),
+            fragment("second", Rect::new(2, 2, 6, 1), 0),
+        ],
+    );
+}
+
+#[test]
+fn soft_hyphens_are_invisible_inline_and_render_hyphen_on_break() {
+    let settings = ReaderSettings::new(1, 0).unwrap();
+
+    // Fits without breaking: U+00AD is stripped from measured width and rendered text.
+    assert_eq!(
+        line_fragments("<p>super\u{00AD}cali</p>", settings),
+        [fragment("supercali", Rect::new(0, 0, 9, 1), 0)],
+    );
+
+    // Does not fit on line 1: breaks at U+00AD with a visible '-' even without
+    // algorithmic hyphenation enabled.
+    let bytes = build_test_epub("<p>aaaaaaaaaaaa super\u{00AD}cali\u{00AD}fragilistic</p>");
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
+
+    let pagination = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        Viewport::new(20, 40).unwrap(),
+        settings,
+        &mut MonoMeasurer::default(),
+    )
+    .unwrap();
+
+    let items: Vec<(String, Rect, bool)> = pagination.pages()[0]
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            PageItem::Text(text) => Some((text.text().into(), text.bounds(), text.hyphenated())),
+            PageItem::Image(_) => None,
+        })
+        .collect();
+
+    assert_eq!(
+        items,
+        [
+            (String::from("aaaaaaaaaaaa super-"), Rect::new(0, 0, 19, 1), true),
+            (String::from("califragilistic"), Rect::new(0, 1, 15, 1), false),
+        ],
+    );
+    // Canonical ContentOffset still includes the U+00AD scalars from the chapter.
+    assert_eq!(
+        pagination.pages()[0].end().offset(),
+        chapter.content_len(),
+    );
+}
+
+#[test]
+fn checkpoint_index_and_render_page_match_full_pagination_exactly() {
+    const RICH_BODY: &str = r#"
+        <h1>Chapter One</h1>
+        <p style="text-indent: 2px">Alpha beta gamma <em>extraordinary</em>. Delta epsilon zeta super&#173;cali&#173;fragilistic eta theta iota.</p>
+        <p style="display:none">hidden block between visible blocks</p>
+        <p>Before <span style="display:none">secret</span>after<br/><br/>after double break.</p>
+        <ul>
+            <li>First list item that wraps across multiple lines and pages</li>
+            <li>Second list item with <b>bold</b> words.</li>
+        </ul>
+        <p><img src="../Images/a.png" alt="A" /><img src="../Images/b.png" alt="B" />tail text</p>
+        <p>incomprehensibilities end</p>
+        <p style="display:none">trailing hidden</p>
+    "#;
+
+    let bytes = build_test_epub(RICH_BODY);
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
+
+    let viewport = Viewport::new(16, 3).unwrap();
+    let settings = ReaderSettings::new(1, 1)
+        .unwrap()
+        .with_paragraph_align(TextAlign::Justify)
+        .with_extra_block_spacing(true)
+        .with_hyphenation(HyphenationLanguage::ENGLISH);
+
+    let mut measurer = MonoMeasurer {
+        image_dimensions: Some(ImageDimensions::new(6, 2)),
+    };
+
+    let full = paginate_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        viewport,
+        settings,
+        &mut measurer,
+    )
+    .unwrap();
+
+    let index = index_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        viewport,
+        settings,
+        &mut measurer,
+    )
+    .unwrap();
+
+    assert!(index.has_visible_content());
+    assert_eq!(index.len(), full.len());
+    assert!(index.len() > 8, "fixture should span many pages");
+
+    for (page_index, expected) in full.pages().iter().enumerate() {
+        assert_eq!(index.page_position(page_index), Some(expected.position()));
+        assert_eq!(
+            index.page_end_position(page_index),
+            Some(expected.end_position())
+        );
+        assert_eq!(
+            index.page_at_position(expected.position()),
+            full.page_at_position(expected.position())
+        );
+
+        let rendered = render_page(
+            &chapter,
+            &styles,
+            &index,
+            page_index,
+            viewport,
+            settings,
+            &mut measurer,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            &rendered, expected,
+            "page {page_index} rendered from checkpoint must match full pagination"
+        );
+    }
+
+    assert!(
+        render_page(
+            &chapter,
+            &styles,
+            &index,
+            index.len(),
+            viewport,
+            settings,
+            &mut measurer,
+        )
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[test]
+fn checkpoint_index_reports_empty_or_hidden_chapters() {
+    let bytes = build_test_epub(r#"<p style="display:none">hidden only</p>"#);
+    let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
+        .unwrap()
+        .unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
+
+    let viewport = Viewport::new(20, 10).unwrap();
+    let settings = ReaderSettings::new(1, 0).unwrap();
+    let mut measurer = MonoMeasurer::default();
+
+    let index = index_chapter(
+        &chapter,
+        &styles,
+        SpineIndex::ZERO,
+        viewport,
+        settings,
+        &mut measurer,
+    )
+    .unwrap();
+
+    assert!(!index.has_visible_content());
+    assert_eq!(index.len(), 1);
+    assert_eq!(index.end_position().location().offset(), chapter.content_len());
 }

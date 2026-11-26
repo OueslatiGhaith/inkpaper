@@ -3,6 +3,7 @@ use core::mem;
 
 use inkpaper_epub::{ArchivePath, Chapter, Epub, ImageDimensions, Inline};
 use inkpaper_io::ByteSource;
+use inkpaper_reader::{Page, PageItem};
 use inkpaper_ui::{
     Color, ImageId, ImageResource, ImageSource, Luminance, ResourceRuntimeApi, Size, px,
 };
@@ -62,10 +63,6 @@ impl GrayImage {
             height: u32::try_from(height).ok()?,
             pixels,
         })
-    }
-
-    const fn dimensions(&self) -> ImageDimensions {
-        ImageDimensions::new(self.width, self.height)
     }
 
     pub(crate) const fn width(&self) -> u32 {
@@ -172,12 +169,12 @@ struct ChapterImageEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(super) struct ChapterImages {
+pub(crate) struct ChapterImages {
     entries: Vec<ChapterImageEntry>,
 }
 
 impl ChapterImages {
-    fn contains(&self, path: &ArchivePath) -> bool {
+    pub(super) fn contains(&self, path: &ArchivePath) -> bool {
         self.entries.iter().any(|entry| entry.path == *path)
     }
 
@@ -204,7 +201,7 @@ impl ChapterImages {
             })
     }
 
-    pub(super) fn register<'resource>(
+    pub(crate) fn register<'resource>(
         &mut self,
         runtime: &mut impl ResourceRuntimeApi<'resource>,
         max_slots: usize,
@@ -241,26 +238,16 @@ impl ChapterImages {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(super) struct LoadedChapterImages {
-    metrics: ChapterImageMetrics,
-    images: ChapterImages,
-}
-
-impl LoadedChapterImages {
-    pub(super) fn into_parts(self) -> (ChapterImageMetrics, ChapterImages) {
-        (self.metrics, self.images)
-    }
-}
-
-pub(super) async fn load_chapter_images<S>(
+/// Probes intrinsic dimensions for every unique image referenced in `chapter`
+/// using header-only streaming without decoding pixel buffers.
+pub(super) async fn probe_chapter_image_metrics<S>(
     epub: &mut Epub<S>,
     chapter: &Chapter,
-) -> LoadedChapterImages
+) -> ChapterImageMetrics
 where
     S: ByteSource,
 {
-    let mut loaded = LoadedChapterImages::default();
+    let mut metrics = ChapterImageMetrics::default();
 
     for block in chapter.blocks() {
         for inline in block.inlines() {
@@ -268,28 +255,61 @@ where
                 continue;
             };
 
-            let path = image.path().clone();
-
-            if loaded.images.contains(&path) {
+            let path = image.path();
+            if metrics.entries.iter().any(|entry| entry.path == *path) {
                 continue;
             }
 
-            let decoded = match epub.read_resource(&path).await {
-                Ok(Some(bytes)) => decode_image(&bytes),
-                Ok(None) | Err(_) => None,
-            };
-
-            let dimensions = match decoded.as_ref() {
-                Some(image) => Some(image.dimensions()),
-                None => epub.image_dimensions(&path).await.ok().flatten(),
-            };
-
-            loaded.metrics.record(path.clone(), dimensions);
-            loaded.images.record(path, decoded);
+            let dimensions = epub.image_dimensions(path).await.ok().flatten();
+            metrics.record(path.clone(), dimensions);
         }
     }
 
-    loaded
+    metrics
+}
+
+/// Collects the unique image archive paths rendered on `page`.
+pub(super) fn page_image_paths(page: &Page<'_>) -> Vec<ArchivePath> {
+    let mut paths = Vec::new();
+
+    for item in page.items() {
+        let PageItem::Image(fragment) = item else {
+            continue;
+        };
+
+        let path = fragment.image().path();
+        if !paths.iter().any(|existing| existing == path) {
+            paths.push(path.clone());
+        }
+    }
+
+    paths
+}
+
+/// Decodes only the images in `paths` (for the currently visible page).
+pub(super) async fn decode_page_images<S>(
+    epub: &mut Epub<S>,
+    paths: &[ArchivePath],
+) -> ChapterImages
+where
+    S: ByteSource,
+{
+    let mut images = ChapterImages::default();
+
+    for path in paths {
+        if images.contains(path) {
+            continue;
+        }
+
+        let decoded = match epub.read_resource(path).await {
+            Ok(Some(bytes)) => decode_image(&bytes),
+            Ok(None) | Err(_) => None,
+        };
+
+        images.record(path.clone(), decoded);
+    }
+
+    images
 }
 
 /// A PNG or JPEG decoded to gray.

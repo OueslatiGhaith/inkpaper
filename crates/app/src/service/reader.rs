@@ -147,6 +147,29 @@ where
                 })?;
             }
 
+            ReaderRequest::LoadPageImages {
+                path,
+                spine,
+                page_index,
+                images,
+            } => {
+                let loaded = match self.reader_session.as_mut() {
+                    Some(session) if session.path() == path => {
+                        Some(session.load_page_images(&images).await)
+                    }
+
+                    _ => None,
+                };
+
+                if let Some(mut loaded) = loaded {
+                    loaded.register(runtime, READER_IMAGE_SLOTS, &mut self.reader_image_ids);
+
+                    runtime.update(app, move |app, cx| {
+                        app.apply_reader_page_images(path, spine, page_index, loaded, cx);
+                    })?;
+                }
+            }
+
             ReaderRequest::UpdateProgress(progress) => {
                 self.history.get_mut().record(progress);
                 self.history.mark_dirty();

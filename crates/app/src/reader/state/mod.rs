@@ -11,8 +11,11 @@ use inkpaper_reader::{Page, ReadingPosition};
 
 use crate::{
     ReaderDocument, ReaderPreferences, ReadingHistoryEntry,
+    fonts::{CardFont, card_for},
     paging::Pager,
-    reader::{TableOfContents, TextSettings, WordSelection, measurer::CachedReaderFonts},
+    reader::{
+        ChapterImages, TableOfContents, TextSettings, WordSelection, measurer::CachedReaderFonts,
+    },
     resume::ResumeLimit,
 };
 
@@ -50,6 +53,13 @@ pub(crate) enum ReaderRequest {
 
     LoadTableOfContents {
         path: String,
+    },
+
+    LoadPageImages {
+        path: String,
+        spine: SpineIndex,
+        page_index: usize,
+        images: Vec<ArchivePath>,
     },
 
     UpdateProgress(ReadingHistoryEntry),
@@ -103,6 +113,13 @@ struct ReaderChromeState {
     progress_label: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingPageImagesRequest {
+    spine: SpineIndex,
+    page_index: usize,
+    images: Vec<ArchivePath>,
+}
+
 #[derive(Debug)]
 pub(crate) struct ReaderState {
     path: String,
@@ -110,6 +127,7 @@ pub(crate) struct ReaderState {
 
     pending_document: Option<ReaderRequest>,
     pending_toc: Option<String>,
+    pending_page_images: Option<PendingPageImagesRequest>,
     pending_progress: Option<ReadingHistoryEntry>,
     pending_preferences: Option<ReaderPreferences>,
     pending_chapter: Option<PendingChapterRequest>,
@@ -146,6 +164,7 @@ impl Default for ReaderState {
             fallback_title: String::new(),
             pending_document: None,
             pending_toc: None,
+            pending_page_images: None,
             pending_progress: None,
             pending_preferences: None,
             pending_chapter: None,
@@ -185,6 +204,7 @@ impl ReaderState {
             resume,
         });
         self.pending_toc = None;
+        self.pending_page_images = None;
 
         self.pending_chapter = None;
         self.pending_repagination = None;
@@ -212,6 +232,15 @@ impl ReaderState {
 
         if let Some(request) = self.pending_document.take() {
             return Some(request);
+        }
+
+        if let Some(request) = self.pending_page_images.take() {
+            return Some(ReaderRequest::LoadPageImages {
+                path: self.path.clone(),
+                spine: request.spine,
+                page_index: request.page_index,
+                images: request.images,
+            });
         }
 
         self.pending_toc
@@ -244,6 +273,27 @@ impl ReaderState {
             ReaderRequest::LoadTableOfContents { path } => {
                 if self.path == path && self.toc == TableOfContents::Loading {
                     self.pending_toc.get_or_insert(path);
+                }
+            }
+            ReaderRequest::LoadPageImages {
+                path,
+                spine,
+                page_index,
+                images,
+            } => {
+                if self.path == path
+                    && self.page_index == page_index
+                    && self
+                        .document
+                        .as_ref()
+                        .is_some_and(|document| document.spine() == spine)
+                {
+                    self.pending_page_images
+                        .get_or_insert(PendingPageImagesRequest {
+                            spine,
+                            page_index,
+                            images,
+                        });
                 }
             }
             document_request => {
@@ -290,6 +340,7 @@ impl ReaderState {
         self.document = Some(document);
 
         self.pending_document = None;
+        self.pending_page_images = None;
         self.pending_chapter = None;
         self.pending_repagination = None;
         self.pending_jump = None;
@@ -297,10 +348,72 @@ impl ReaderState {
 
         self.chrome.menu_open = false;
 
+        self.queue_missing_page_images();
         self.refresh_chrome();
         self.queue_progress_update();
 
         true
+    }
+
+    pub(crate) fn apply_page_images(
+        &mut self,
+        path: &str,
+        spine: SpineIndex,
+        page_index: usize,
+        images: ChapterImages,
+    ) -> bool {
+        if path != self.path || self.page_index != page_index {
+            return false;
+        }
+
+        let Some(document) = self.document.as_mut() else {
+            return false;
+        };
+
+        if document.spine() != spine {
+            return false;
+        }
+
+        document.replace_images(images);
+        true
+    }
+
+    pub(super) fn select_page(&mut self, index: usize, card: Option<&CardFont>) -> bool {
+        let Ok(fonts) = self
+            .selection_fonts
+            .get_or_init(card_for(self.text.font(), card))
+        else {
+            return false;
+        };
+
+        let Some(document) = self.document.as_mut() else {
+            return false;
+        };
+
+        if !document.select_page(index, fonts) {
+            return false;
+        }
+
+        self.page_index = index;
+        self.queue_missing_page_images();
+        true
+    }
+
+    pub(super) fn queue_missing_page_images(&mut self) {
+        self.pending_page_images = None;
+
+        let Some(document) = self.document.as_ref() else {
+            return;
+        };
+
+        let missing = document.missing_page_images();
+        if !missing.is_empty() {
+            self.pending_page_images = Some(PendingPageImagesRequest {
+                spine: document.spine(),
+                page_index: self.page_index,
+                images: missing,
+            });
+        }
     }
 
     pub(crate) fn apply_error(&mut self, path: &str) -> bool {
@@ -311,6 +424,7 @@ impl ReaderState {
         self.document = None;
         self.pending_document = None;
         self.pending_toc = None;
+        self.pending_page_images = None;
         self.pending_chapter = None;
         self.pending_repagination = None;
         self.pending_jump = None;

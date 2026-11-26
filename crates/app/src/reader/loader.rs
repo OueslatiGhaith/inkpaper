@@ -1,10 +1,10 @@
 use alloc::{string::String, vec::Vec};
 
 use inkpaper_epub::{
-    BookLocation, ChapterStyles, ContentOffset, Epub, Error as EpubError, SpineIndex,
+    ArchivePath, BookLocation, ChapterStyles, Epub, Error as EpubError, SpineIndex,
 };
 use inkpaper_io::ByteSource;
-use inkpaper_reader::{ReadingPosition, paginate_chapter};
+use inkpaper_reader::{ReadingPosition, index_chapter, render_page};
 use inkpaper_trace::{async_span, span};
 use inkpaper_ui::{FontRegistryError, ShapeError};
 
@@ -12,8 +12,8 @@ use crate::{
     cover::read_cover_image,
     fonts::CardFont,
     reader::{
-        GrayImage, TextSettings,
-        images::load_chapter_images,
+        ChapterImages, GrayImage, TextSettings,
+        images::{decode_page_images, page_image_paths, probe_chapter_image_metrics},
         progress::BookProgressMap,
         toc::{TocEntry, toc_entries},
     },
@@ -146,6 +146,11 @@ where
         Ok(toc_entries(&navigation, self.epub.package()))
     }
 
+    /// Decodes only the image paths needed for the currently visible page.
+    pub async fn load_page_images(&mut self, paths: &[ArchivePath]) -> ChapterImages {
+        decode_page_images(&mut self.epub, paths).await
+    }
+
     /// Loads the chapter at `spine` and finds the page holding `anchor`, or the
     /// chapter's first page when there is no anchor or it cannot be found.
     #[inkpaper_trace::instrument(
@@ -162,21 +167,14 @@ where
             .as_usize()
             .ok_or(ReaderLoadError::SpineIndexOverflow)?;
 
-        let Some((chapter, anchor_offset)) =
-            load_chapter_with_anchor(&mut self.epub, index, self.text, &self.fonts, anchor).await?
-        else {
-            return Ok(None);
-        };
-
-        let page_index = anchor_offset
-            .and_then(|offset| {
-                let position = ReadingPosition::new(BookLocation::new(spine, offset), 0);
-
-                chapter.page_at_position(position)
-            })
-            .unwrap_or(0);
-
-        Ok(Some((chapter, page_index)))
+        load_chapter_with_landing(
+            &mut self.epub,
+            index,
+            self.text,
+            &self.fonts,
+            ChapterLanding::Anchor(anchor),
+        )
+        .await
     }
 
     /// The chapter `target` lands in and the index of its page there. `None`
@@ -202,15 +200,20 @@ where
             }
 
             JumpTarget::Position(position) => {
-                let spine = position.location().spine();
+                let index = position
+                    .location()
+                    .spine()
+                    .as_usize()
+                    .ok_or(ReaderLoadError::SpineIndexOverflow)?;
 
-                let Some((chapter, _)) = self.load_chapter_at(spine, None).await? else {
-                    return Ok(None);
-                };
-
-                let page_index = chapter.page_at_position(*position).unwrap_or(0);
-
-                Ok(Some((chapter, page_index)))
+                load_chapter_with_landing(
+                    &mut self.epub,
+                    index,
+                    self.text,
+                    &self.fonts,
+                    ChapterLanding::Position(*position),
+                )
+                .await
             }
         }
     }
@@ -234,7 +237,15 @@ where
             .ok_or(ReaderLoadError::SpineIndexOverflow)?;
 
         let fonts = ReaderFonts::new(card).map_err(ReaderLoadError::FontRegistry)?;
-        let chapter = load_readable_chapter_at(&mut self.epub, index, text, &fonts).await?;
+        let chapter = load_chapter_with_landing(
+            &mut self.epub,
+            index,
+            text,
+            &fonts,
+            ChapterLanding::FirstPage,
+        )
+        .await?
+        .map(|(chapter, _)| chapter);
 
         if chapter.is_some() {
             self.text = text;
@@ -287,10 +298,15 @@ where
     if let Some(position) = resume
         && let Some(index) = position.location().spine().as_usize()
         && index < spine_len
-        && let Some(chapter) = load_readable_chapter_at(epub, index, text, fonts).await?
+        && let Some((chapter, opening_page_index)) = load_chapter_with_landing(
+            epub,
+            index,
+            text,
+            fonts,
+            ChapterLanding::Position(position),
+        )
+        .await?
     {
-        let opening_page_index = chapter.page_at_position(position).unwrap_or(0);
-
         return Ok(ReaderDocument::new(
             path,
             identifier,
@@ -304,7 +320,9 @@ where
     }
 
     for index in 0..spine_len {
-        if let Some(chapter) = load_readable_chapter_at(epub, index, text, fonts).await? {
+        if let Some((chapter, opening_page_index)) =
+            load_chapter_with_landing(epub, index, text, fonts, ChapterLanding::FirstPage).await?
+        {
             return Ok(ReaderDocument::new(
                 path,
                 identifier,
@@ -313,7 +331,7 @@ where
                 package_path,
                 progress,
                 chapter,
-                0,
+                opening_page_index,
             ));
         }
     }
@@ -350,7 +368,10 @@ where
     match direction {
         ReaderChapterDirection::Next => {
             for index in from.saturating_add(1)..spine_len {
-                if let Some(chapter) = load_readable_chapter_at(epub, index, text, fonts).await? {
+                if let Some((chapter, _)) =
+                    load_chapter_with_landing(epub, index, text, fonts, ChapterLanding::FirstPage)
+                        .await?
+                {
                     return Ok(Some(chapter));
                 }
             }
@@ -358,7 +379,10 @@ where
 
         ReaderChapterDirection::Previous => {
             for index in (0..from).rev() {
-                if let Some(chapter) = load_readable_chapter_at(epub, index, text, fonts).await? {
+                if let Some((chapter, _)) =
+                    load_chapter_with_landing(epub, index, text, fonts, ChapterLanding::LastPage)
+                        .await?
+                {
                     return Ok(Some(chapter));
                 }
             }
@@ -406,34 +430,28 @@ where
     Ok(BookProgressMap::from_weights(weights))
 }
 
-async fn load_readable_chapter_at<S>(
-    epub: &mut Epub<S>,
-    index: usize,
-    text: TextSettings,
-    fonts: &ReaderFonts,
-) -> Result<Option<ReaderChapter>, ReaderLoadError<S::Error>>
-where
-    S: ByteSource,
-{
-    Ok(load_chapter_with_anchor(epub, index, text, fonts, None)
-        .await?
-        .map(|(chapter, _)| chapter))
+#[derive(Debug, Clone, Copy)]
+enum ChapterLanding<'a> {
+    FirstPage,
+    LastPage,
+    Anchor(Option<&'a str>),
+    Position(ReadingPosition),
 }
 
-/// Loads and paginates a readable spine entry. The anchor offset is resolved
-/// here because the parsed chapter is dropped once it is paginated.
+/// Loads a readable spine entry into lightweight page checkpoints, materializing
+/// and decoding images only for its landing page.
 #[inkpaper_trace::instrument(
     target = "reader.chapter",
     name = "load",
     fields(spine = index, font_size = text.font_size())
 )]
-async fn load_chapter_with_anchor<S>(
+async fn load_chapter_with_landing<S>(
     epub: &mut Epub<S>,
     index: usize,
     text: TextSettings,
     fonts: &ReaderFonts,
-    anchor: Option<&str>,
-) -> Result<Option<(ReaderChapter, Option<ContentOffset>)>, ReaderLoadError<S::Error>>
+    landing: ChapterLanding<'_>,
+) -> Result<Option<(ReaderChapter, usize)>, ReaderLoadError<S::Error>>
 where
     S: ByteSource,
 {
@@ -472,7 +490,10 @@ where
         return Ok(None);
     };
 
-    let anchor_offset = anchor.and_then(|anchor| chapter.anchor_offset(anchor));
+    let anchor_offset = match landing {
+        ChapterLanding::Anchor(Some(anchor)) => chapter.anchor_offset(anchor),
+        _ => None,
+    };
 
     let styles = {
         let _trace = async_span!(
@@ -490,64 +511,107 @@ where
         }
     };
 
-    let loaded_images = {
+    let image_metrics = {
         let _trace = async_span!(
             target: "reader.chapter",
-            "images",
+            "image_headers",
             spine = index,
         );
 
-        load_chapter_images(epub, &chapter).await
+        probe_chapter_image_metrics(epub, &chapter).await
     };
 
-    let (image_metrics, chapter_images) = loaded_images.into_parts();
-
     let spine = SpineIndex::try_from_usize(index).ok_or(ReaderLoadError::SpineIndexOverflow)?;
-
     let chapter_path = String::from(chapter.path().as_str());
+    let viewport = text.viewport();
+    let reader_settings = text.reader_settings(epub.metadata().language());
 
-    let mut measurer = ReaderMeasurer::new(fonts, image_metrics);
+    let mut measurer = ReaderMeasurer::new(fonts, image_metrics.clone());
 
-    let pagination = {
+    let page_index_table = {
         let _trace = inkpaper_trace::span!(
             target: "reader.pagination",
-            "paginate",
+            "index",
             spine = index,
             font_size = text.font_size(),
         );
 
-        paginate_chapter(
+        index_chapter(
             &chapter,
             &styles,
             spine,
-            text.viewport(),
-            text.reader_settings(epub.metadata().language()),
+            viewport,
+            reader_settings,
             &mut measurer,
         )
         .map_err(ReaderLoadError::Shape)?
     };
 
-    if pagination
-        .pages()
-        .iter()
-        .all(|page| page.items().is_empty())
-    {
+    if !page_index_table.has_visible_content() {
         return Ok(None);
     }
 
-    let pagination = {
+    let landing_page_index = match landing {
+        ChapterLanding::FirstPage => 0,
+        ChapterLanding::LastPage => page_index_table.len().saturating_sub(1),
+        ChapterLanding::Anchor(_) => anchor_offset
+            .and_then(|offset| {
+                let position = ReadingPosition::new(BookLocation::new(spine, offset), 0);
+                page_index_table.page_at_position(position)
+            })
+            .unwrap_or(0),
+        ChapterLanding::Position(position) => page_index_table.page_at_position(position).unwrap_or(0),
+    };
+
+    let landing_page = {
         let _trace = inkpaper_trace::span!(
             target: "reader.pagination",
-            "own_pages",
+            "render_page",
             spine = index,
-            pages = pagination.len(),
+            page = landing_page_index,
         );
 
-        pagination.into_owned()
+        render_page(
+            &chapter,
+            &styles,
+            &page_index_table,
+            landing_page_index,
+            viewport,
+            reader_settings,
+            &mut measurer,
+        )
+        .map_err(ReaderLoadError::Shape)?
+        .ok_or(ReaderLoadError::NoReadableChapter)?
+        .into_owned()
+    };
+
+    let page_images = {
+        let paths = page_image_paths(&landing_page);
+        let _trace = async_span!(
+            target: "reader.chapter",
+            "page_images",
+            spine = index,
+            page = landing_page_index,
+            count = paths.len(),
+        );
+
+        decode_page_images(epub, &paths).await
     };
 
     Ok(Some((
-        ReaderChapter::with_images(chapter_path, spine, pagination, chapter_images),
-        anchor_offset,
+        ReaderChapter::from_index(
+            chapter_path,
+            spine,
+            chapter,
+            styles,
+            image_metrics,
+            viewport,
+            reader_settings,
+            page_index_table,
+            landing_page_index,
+            landing_page,
+            page_images,
+        ),
+        landing_page_index,
     )))
 }
