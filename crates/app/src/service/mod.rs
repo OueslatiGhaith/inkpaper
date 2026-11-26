@@ -11,7 +11,7 @@ use inkpaper_ui::{Entity, EntityAccessError, ImageSource, ResourceRuntimeApi, Ru
 use crate::{
     BookCover, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure,
     FileTransferRequest, FrontlightPreferences, InkPaperApp, ReaderPreferences, ReaderSession,
-    ReadingHistory, ReadingHistoryRequest, WifiJoinFailure, WifiScanError,
+    ReadingHistory, ReadingHistoryRequest, SavedNetworks, WifiJoinFailure, WifiScanError,
     app::AppRequest,
     dictionaries::{DictionaryFolder, find_dictionaries},
     fonts::{CardFont, FontFamily, find_font_families},
@@ -19,6 +19,7 @@ use crate::{
 };
 
 use dictionary::OpenDictionary;
+use persistence::Persisted;
 pub use platform::{AppPlatform, PlatformEntry};
 
 #[derive(Debug)]
@@ -61,18 +62,13 @@ where
     /// whether long work was put off until the screen shows what asked for it
     deferred: bool,
 
-    history: ReadingHistory,
+    history: Persisted<ReadingHistory>,
     /// the book being read when the device went to sleep, to reopen at boot
-    resume: Option<SleptBook>,
-    preferences: ReaderPreferences,
-    frontlight_preferences: FrontlightPreferences,
-    clock_preferences: ClockPreferences,
-
-    history_dirty: bool,
-    resume_dirty: bool,
-    preferences_dirty: bool,
-    frontlight_preferences_dirty: bool,
-    clock_preferences_dirty: bool,
+    resume: Persisted<Option<SleptBook>>,
+    preferences: Persisted<ReaderPreferences>,
+    frontlight_preferences: Persisted<FrontlightPreferences>,
+    clock_preferences: Persisted<ClockPreferences>,
+    wifi_networks: Persisted<SavedNetworks>,
 
     initialized: bool,
 }
@@ -96,17 +92,12 @@ where
             dictionary: None,
             deferred: false,
 
-            history: ReadingHistory::default(),
-            resume: None,
-            preferences: ReaderPreferences::default(),
-            frontlight_preferences: FrontlightPreferences::default(),
-            clock_preferences: ClockPreferences::default(),
-
-            history_dirty: false,
-            resume_dirty: false,
-            preferences_dirty: false,
-            frontlight_preferences_dirty: false,
-            clock_preferences_dirty: false,
+            history: Persisted::default(),
+            resume: Persisted::default(),
+            preferences: Persisted::default(),
+            frontlight_preferences: Persisted::default(),
+            clock_preferences: Persisted::default(),
+            wifi_networks: Persisted::default(),
 
             initialized: false,
         }
@@ -164,16 +155,15 @@ where
                     }
                 }
                 AppRequest::SaveWifiNetworks(networks) => {
-                    self.save_wifi_networks(&networks).await;
+                    self.wifi_networks.set(networks);
+                    self.persist_wifi_networks().await;
                 }
                 AppRequest::SaveClockPreferences(preferences) => {
-                    self.clock_preferences = preferences;
-                    self.clock_preferences_dirty = true;
+                    self.clock_preferences.set(preferences);
                     self.persist_clock_preferences().await;
                 }
                 AppRequest::SaveReaderPreferences(preferences) => {
-                    self.preferences = preferences;
-                    self.preferences_dirty = true;
+                    self.preferences.set(preferences);
                     self.persist_preferences().await;
                 }
                 AppRequest::Dictionary(request) => {
@@ -234,11 +224,11 @@ where
         runtime: &mut impl RuntimeApi,
         app: Entity<InkPaperApp>,
     ) -> Result<(), AppServiceError> {
-        self.resume = runtime.update(app, |app, cx| {
+        let resume = runtime.update(app, |app, cx| {
             app.prepare_for_sleep(cx);
             app.book_to_resume(cx)
         })?;
-        self.resume_dirty = true;
+        self.resume.set(resume);
 
         Ok(())
     }
@@ -249,12 +239,14 @@ where
         let preferences_saved = self.persist_preferences().await;
         let frontlight_preferences_saved = self.persist_frontlight_preferences().await;
         let clock_preferences_saved = self.persist_clock_preferences().await;
+        let wifi_networks_saved = self.persist_wifi_networks().await;
 
         history_saved
             && resume_saved
             && preferences_saved
             && frontlight_preferences_saved
             && clock_preferences_saved
+            && wifi_networks_saved
     }
 
     async fn ensure_initialized<'resource, R>(
@@ -273,15 +265,20 @@ where
         self.font_families = find_font_families(&mut self.platform).await;
         self.dictionaries = find_dictionaries(&mut self.platform).await;
 
-        self.history = self.load_history().await;
-        self.preferences = self.load_preferences().await;
-        self.frontlight_preferences = self.load_frontlight_preferences().await;
-        self.clock_preferences = self.load_clock_preferences().await;
+        let history = self.load_history().await;
+        self.history.load(history);
+        let preferences = self.load_preferences().await;
+        self.preferences.load(preferences);
+        let frontlight_preferences = self.load_frontlight_preferences().await;
+        self.frontlight_preferences.load(frontlight_preferences);
+        let clock_preferences = self.load_clock_preferences().await;
+        self.clock_preferences.load(clock_preferences);
         let wifi_networks = self.load_wifi_networks().await;
+        self.wifi_networks.load(wifi_networks.clone());
         let resume = self.take_resume().await;
 
-        let entries = self.history.entries().to_vec();
-        let preferences = self.preferences;
+        let entries = self.history.get().entries().to_vec();
+        let preferences = *self.preferences.get();
         let font_names = self
             .font_families
             .iter()
@@ -292,8 +289,8 @@ where
             .iter()
             .map(|dictionary| String::from(dictionary.name()))
             .collect();
-        let frontlight_preferences = self.frontlight_preferences;
-        let clock_preferences = self.clock_preferences;
+        let frontlight_preferences = *self.frontlight_preferences.get();
+        let clock_preferences = *self.clock_preferences.get();
 
         runtime.update(app, move |app, cx| {
             app.apply_frontlight_preferences(frontlight_preferences, cx);
@@ -363,7 +360,7 @@ where
     {
         match request {
             ReadingHistoryRequest::Load => {
-                let entries = self.history.entries().to_vec();
+                let entries = self.history.get().entries().to_vec();
 
                 runtime.update(app, move |app, cx| {
                     app.apply_reading_history(entries, cx);

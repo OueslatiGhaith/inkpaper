@@ -26,6 +26,48 @@ const RESUME_STATE: &str = "resume.dat";
 /// room for a path of FAT's 255 bytes
 const MAX_RESUME_BYTES: usize = 512;
 
+/// Application state mirrored to a persisted `.dat` file.
+#[derive(Debug, Default)]
+pub(super) struct Persisted<T> {
+    value: T,
+    dirty: bool,
+}
+
+impl<T> Persisted<T> {
+    pub(super) fn get(&self) -> &T {
+        &self.value
+    }
+
+    pub(super) fn get_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+
+    /// Replaces the value with one loaded from storage (not dirty).
+    pub(super) fn load(&mut self, value: T) {
+        self.value = value;
+        self.dirty = false;
+    }
+
+    /// Replaces the value and marks it dirty for persistence.
+    pub(super) fn set(&mut self, value: T) {
+        self.value = value;
+        self.dirty = true;
+    }
+
+    /// Marks the current value dirty after an in-place mutation.
+    pub(super) fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    pub(super) const fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub(super) fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
+}
+
 /// The book to reopen at boot, and when the device went to sleep.
 #[derive(Debug, Encode, Decode)]
 struct StoredResume {
@@ -36,6 +78,56 @@ struct StoredResume {
     slept_at: Option<u32>,
 }
 
+#[cfg(feature = "defmt")]
+fn warn_storage(action: &str, name: &str) {
+    defmt::warn!("storage {} failed for {}", action, name);
+}
+
+#[cfg(not(feature = "defmt"))]
+fn warn_storage(_action: &str, _name: &str) {}
+
+async fn write_platform_state<P, E>(
+    platform: &mut P,
+    name: &str,
+    encoded: Result<Vec<u8>, E>,
+) -> bool
+where
+    P: AppPlatform,
+{
+    let Ok(bytes) = encoded else {
+        warn_storage("encode", name);
+        return false;
+    };
+
+    if platform.save_state(name, &bytes).await.is_err() {
+        warn_storage("write", name);
+        return false;
+    }
+
+    true
+}
+
+async fn persist_slot<P, T, E>(
+    platform: &mut P,
+    name: &str,
+    slot: &mut Persisted<T>,
+    encode: impl FnOnce(&T) -> Result<Vec<u8>, E>,
+) -> bool
+where
+    P: AppPlatform,
+{
+    if !slot.is_dirty() {
+        return true;
+    }
+
+    if write_platform_state(platform, name, encode(slot.get())).await {
+        slot.mark_clean();
+        true
+    } else {
+        false
+    }
+}
+
 impl<P> AppService<P>
 where
     P: AppPlatform,
@@ -43,27 +135,49 @@ where
     /// The bytes saved as `name`; `None` when nothing was saved or reading
     /// failed.
     pub(super) async fn read_state(&mut self, name: &str, max_bytes: usize) -> Option<Vec<u8>> {
-        self.platform
-            .load_state(name, max_bytes)
-            .await
-            .ok()
-            .flatten()
+        match self.platform.load_state(name, max_bytes).await {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                warn_storage("read", name);
+                None
+            }
+        }
     }
 
     /// Saves `encoded` as `name`, returning whether it was encoded and written.
     pub(super) async fn write_state<E>(&mut self, name: &str, encoded: Result<Vec<u8>, E>) -> bool {
-        let Ok(bytes) = encoded else {
-            return false;
+        write_platform_state(&mut self.platform, name, encoded).await
+    }
+
+    async fn load_decoded<T, E>(
+        &mut self,
+        name: &str,
+        max_bytes: usize,
+        decode: impl FnOnce(&[u8]) -> Result<T, E>,
+    ) -> T
+    where
+        T: Default,
+    {
+        let Some(bytes) = self.read_state(name, max_bytes).await else {
+            return T::default();
         };
 
-        self.platform.save_state(name, &bytes).await.is_ok()
+        match decode(&bytes) {
+            Ok(value) => value,
+            Err(_) => {
+                warn_storage("decode", name);
+                T::default()
+            }
+        }
     }
 
     pub(super) async fn load_history(&mut self) -> ReadingHistory {
-        self.read_state(READING_HISTORY_STATE, MAX_READING_HISTORY_BYTES)
-            .await
-            .and_then(|bytes| ReadingHistory::decode(&bytes).ok())
-            .unwrap_or_default()
+        self.load_decoded(
+            READING_HISTORY_STATE,
+            MAX_READING_HISTORY_BYTES,
+            ReadingHistory::decode,
+        )
+        .await
     }
 
     pub(super) async fn load_preferences(&mut self) -> ReaderPreferences {
@@ -77,7 +191,7 @@ where
         let families = &self.font_families;
         let dictionaries = &self.dictionaries;
 
-        ReaderPreferences::decode(
+        match ReaderPreferences::decode(
             &bytes,
             |name| {
                 let index = families.iter().position(|family| family.name() == name)?;
@@ -91,8 +205,13 @@ where
 
                 u8::try_from(index).ok()
             },
-        )
-        .unwrap_or_default()
+        ) {
+            Ok(preferences) => preferences,
+            Err(_) => {
+                warn_storage("decode", READER_PREFERENCES_STATE);
+                ReaderPreferences::default()
+            }
+        }
     }
 
     /// The book to reopen at boot, read once: it's forgotten before it opens,
@@ -100,7 +219,13 @@ where
     /// `None` when it couldn't be forgotten either.
     pub(super) async fn take_resume(&mut self) -> Option<SleptBook> {
         let bytes = self.read_state(RESUME_STATE, MAX_RESUME_BYTES).await?;
-        let stored = storage::decode::<StoredResume>(&bytes).ok()?;
+        let stored = match storage::decode::<StoredResume>(&bytes) {
+            Ok(stored) => stored,
+            Err(_) => {
+                warn_storage("decode", RESUME_STATE);
+                return None;
+            }
+        };
         let book = SleptBook {
             path: stored.book?,
             slept_at: stored.slept_at,
@@ -117,34 +242,29 @@ where
     }
 
     pub(super) async fn load_frontlight_preferences(&mut self) -> FrontlightPreferences {
-        self.read_state(
+        self.load_decoded(
             FRONTLIGHT_PREFERENCES_STATE,
             MAX_FRONTLIGHT_PREFERENCES_BYTES,
+            FrontlightPreferences::decode,
         )
         .await
-        .and_then(|bytes| FrontlightPreferences::decode(&bytes).ok())
-        .unwrap_or_default()
     }
 
     pub(super) async fn load_clock_preferences(&mut self) -> ClockPreferences {
-        self.read_state(CLOCK_PREFERENCES_STATE, MAX_CLOCK_PREFERENCES_BYTES)
-            .await
-            .and_then(|bytes| ClockPreferences::decode(&bytes).ok())
-            .unwrap_or_default()
+        self.load_decoded(
+            CLOCK_PREFERENCES_STATE,
+            MAX_CLOCK_PREFERENCES_BYTES,
+            ClockPreferences::decode,
+        )
+        .await
     }
 
     pub(super) async fn load_wifi_networks(&mut self) -> SavedNetworks {
-        self.read_state(WIFI_NETWORKS_STATE, MAX_WIFI_NETWORKS_BYTES)
-            .await
-            .and_then(|bytes| SavedNetworks::decode(&bytes, &self.platform.device_key()).ok())
-            .unwrap_or_default()
-    }
-
-    /// Networks are saved as soon as one is chosen; they change rarely.
-    pub(super) async fn save_wifi_networks(&mut self, networks: &SavedNetworks) -> bool {
-        let encoded = networks.encode(&self.platform.device_key());
-
-        self.write_state(WIFI_NETWORKS_STATE, encoded).await
+        let key = self.platform.device_key();
+        self.load_decoded(WIFI_NETWORKS_STATE, MAX_WIFI_NETWORKS_BYTES, |bytes| {
+            SavedNetworks::decode(bytes, &key)
+        })
+        .await
     }
 
     pub(super) async fn service_frontlight_preferences_request(
@@ -153,12 +273,11 @@ where
     ) {
         match request {
             FrontlightPreferencesRequest::Update(preferences) => {
-                if self.frontlight_preferences == preferences {
+                if *self.frontlight_preferences.get() == preferences {
                     return;
                 }
 
-                self.frontlight_preferences = preferences;
-                self.frontlight_preferences_dirty = true;
+                self.frontlight_preferences.set(preferences);
             }
 
             FrontlightPreferencesRequest::Persist => {
@@ -168,65 +287,204 @@ where
     }
 
     pub(super) async fn persist_history(&mut self) -> bool {
-        if self.history_dirty {
-            let encoded = self.history.encode();
-            self.history_dirty = !self.write_state(READING_HISTORY_STATE, encoded).await;
-        }
-
-        !self.history_dirty
+        persist_slot(
+            &mut self.platform,
+            READING_HISTORY_STATE,
+            &mut self.history,
+            ReadingHistory::encode,
+        )
+        .await
     }
 
     pub(super) async fn persist_preferences(&mut self) -> bool {
-        if self.preferences_dirty {
-            let font_name = match self.preferences.text().font() {
-                ReaderFont::Card(index) => self
-                    .font_families
-                    .get(usize::from(index))
-                    .map(FontFamily::name),
-                ReaderFont::BuiltIn => None,
-            };
-            let dictionary_name = self
-                .preferences
-                .dictionary()
-                .and_then(|index| self.dictionaries.get(usize::from(index)))
-                .map(DictionaryFolder::name);
-            let encoded = self.preferences.encode(font_name, dictionary_name);
-            self.preferences_dirty = !self.write_state(READER_PREFERENCES_STATE, encoded).await;
-        }
+        let font_families = &self.font_families;
+        let dictionaries = &self.dictionaries;
 
-        !self.preferences_dirty
+        persist_slot(
+            &mut self.platform,
+            READER_PREFERENCES_STATE,
+            &mut self.preferences,
+            |preferences| {
+                let font_name = match preferences.text().font() {
+                    ReaderFont::Card(index) => font_families
+                        .get(usize::from(index))
+                        .map(FontFamily::name),
+                    ReaderFont::BuiltIn => None,
+                };
+                let dictionary_name = preferences
+                    .dictionary()
+                    .and_then(|index| dictionaries.get(usize::from(index)))
+                    .map(DictionaryFolder::name);
+
+                preferences.encode(font_name, dictionary_name)
+            },
+        )
+        .await
     }
 
     pub(super) async fn persist_resume(&mut self) -> bool {
-        if self.resume_dirty {
-            let encoded = storage::encode(&StoredResume {
-                book: self.resume.as_ref().map(|book| book.path.clone()),
-                slept_at: self.resume.as_ref().and_then(|book| book.slept_at),
-            });
-            self.resume_dirty = !self.write_state(RESUME_STATE, encoded).await;
-        }
-
-        !self.resume_dirty
+        persist_slot(
+            &mut self.platform,
+            RESUME_STATE,
+            &mut self.resume,
+            |resume| {
+                storage::encode(&StoredResume {
+                    book: resume.as_ref().map(|book| book.path.clone()),
+                    slept_at: resume.as_ref().and_then(|book| book.slept_at),
+                })
+            },
+        )
+        .await
     }
 
     pub(super) async fn persist_frontlight_preferences(&mut self) -> bool {
-        if self.frontlight_preferences_dirty {
-            let encoded = self.frontlight_preferences.encode();
-            self.frontlight_preferences_dirty = !self
-                .write_state(FRONTLIGHT_PREFERENCES_STATE, encoded)
-                .await;
-        }
-
-        !self.frontlight_preferences_dirty
+        persist_slot(
+            &mut self.platform,
+            FRONTLIGHT_PREFERENCES_STATE,
+            &mut self.frontlight_preferences,
+            |preferences| preferences.encode(),
+        )
+        .await
     }
 
     pub(super) async fn persist_clock_preferences(&mut self) -> bool {
-        if self.clock_preferences_dirty {
-            let encoded = self.clock_preferences.encode();
-            self.clock_preferences_dirty =
-                !self.write_state(CLOCK_PREFERENCES_STATE, encoded).await;
+        persist_slot(
+            &mut self.platform,
+            CLOCK_PREFERENCES_STATE,
+            &mut self.clock_preferences,
+            |preferences| preferences.encode(),
+        )
+        .await
+    }
+
+    pub(super) async fn persist_wifi_networks(&mut self) -> bool {
+        let key = self.platform.device_key();
+        persist_slot(
+            &mut self.platform,
+            WIFI_NETWORKS_STATE,
+            &mut self.wifi_networks,
+            |networks| networks.encode(&key),
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{collections::BTreeMap, string::String, vec::Vec};
+    use futures_lite::future;
+    use inkpaper_epub::SliceSource;
+
+    use crate::{
+        AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials, WifiJoinPlan,
+        WifiJoinToken,
+    };
+
+    use super::*;
+
+    struct MemoryPlatform {
+        files: BTreeMap<String, Vec<u8>>,
+        fail_saves: bool,
+    }
+
+    impl MemoryPlatform {
+        fn new() -> Self {
+            Self {
+                files: BTreeMap::new(),
+                fail_saves: false,
+            }
+        }
+    }
+
+    impl AppPlatform for MemoryPlatform {
+        type Error = ();
+        type RandomAccessSource = SliceSource<'static>;
+
+        async fn list_directory(&mut self, _: &str) -> Result<Vec<PlatformEntry>, Self::Error> {
+            Ok(Vec::new())
         }
 
-        !self.clock_preferences_dirty
+        async fn open_random_access(
+            &mut self,
+            _: &str,
+        ) -> Result<Self::RandomAccessSource, Self::Error> {
+            Err(())
+        }
+
+        async fn read_file(&mut self, _: &str, _: usize) -> Result<Vec<u8>, Self::Error> {
+            Err(())
+        }
+
+        async fn set_frontlight(&mut self, _: FrontlightSetting) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn load_state(
+            &mut self,
+            name: &str,
+            max_bytes: usize,
+        ) -> Result<Option<Vec<u8>>, Self::Error> {
+            let Some(bytes) = self.files.get(name) else {
+                return Ok(None);
+            };
+            if bytes.len() > max_bytes {
+                return Err(());
+            }
+            Ok(Some(bytes.clone()))
+        }
+
+        async fn save_state(&mut self, name: &str, bytes: &[u8]) -> Result<(), Self::Error> {
+            if self.fail_saves {
+                return Err(());
+            }
+            self.files.insert(String::from(name), bytes.to_vec());
+            Ok(())
+        }
+
+        async fn enter_usb_drive(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn device_key(&self) -> DeviceKey {
+            [0x3c, 0x71, 0xbf, 0x0a, 0x9e, 0x42]
+        }
+
+        async fn start_clock_sync(&mut self, _: &WifiJoinPlan) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn start_wifi_join(
+            &mut self,
+            _: WifiJoinToken,
+            _: &WifiCredentials,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn start_wifi_scan(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn flush_retries_dirty_wifi_networks_after_transient_save_failure() {
+        let mut service = AppService::new(MemoryPlatform::new());
+        let mut wifi = crate::wifi::WifiState::default();
+        assert!(wifi.connect(WifiCredentials::new("home", "secretpass").unwrap()));
+        let saved = wifi.take_save_request().unwrap();
+
+        service.platform.fail_saves = true;
+        service.wifi_networks.set(saved.clone());
+        assert!(!future::block_on(service.persist_wifi_networks()));
+        assert!(service.wifi_networks.is_dirty());
+        assert!(!future::block_on(service.flush()));
+
+        // Once storage is healthy again, flush persists WiFi networks too.
+        service.platform.fail_saves = false;
+        assert!(future::block_on(service.flush()));
+        assert!(!service.wifi_networks.is_dirty());
+
+        let reloaded = future::block_on(service.load_wifi_networks());
+        assert_eq!(reloaded, saved);
     }
 }

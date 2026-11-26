@@ -138,8 +138,8 @@ where
             }
 
             ReaderRequest::UpdateProgress(progress) => {
-                self.history.record(progress);
-                self.history_dirty = true;
+                self.history.get_mut().record(progress);
+                self.history.mark_dirty();
             }
         }
 
@@ -202,7 +202,7 @@ where
             if session.set_text_settings(text, card).is_err() {
                 None
             } else {
-                let resume = self.history.resume_position(&path, session.identifier());
+                let resume = self.history.get().resume_position(&path, session.identifier());
 
                 session.load_document_at(resume).await.ok()
             }
