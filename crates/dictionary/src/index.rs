@@ -3,7 +3,10 @@ use core::cmp::Ordering;
 
 use inkpaper_io::ByteSource;
 
-use crate::{error::Error, samples::SAMPLE_INTERVAL};
+use crate::{
+    error::Error,
+    samples::{FileSamples, SAMPLE_INTERVAL},
+};
 
 /// The longest word the format allows, with its NUL
 const MAX_WORD_BYTES: usize = 256;
@@ -67,9 +70,9 @@ pub(crate) struct WordList<S> {
     source: S,
     len: u64,
     kind: EntryKind,
-    /// where every 256th entry starts; without them a search reads the file
-    /// from its start
-    samples: Option<Vec<u32>>,
+    /// where every 256th entry starts and its headword; without them a search
+    /// reads the file from its start
+    samples: Option<FileSamples>,
 }
 
 impl<S> WordList<S>
@@ -91,26 +94,29 @@ where
         self.len
     }
 
-    pub fn set_samples(&mut self, samples: Vec<u32>) {
+    pub fn set_samples(&mut self, samples: FileSamples) {
         self.samples = Some(samples);
     }
 
     /// Takes samples in one pass over the file and searches through them from
     /// now on.
-    pub async fn sample(&mut self) -> Result<&[u32], Error<S::Error>> {
-        let mut entries = EntryReader::new(&mut self.source, self.len, self.kind, 0, BUFFER_BYTES);
-        let mut samples = Vec::new();
+    pub async fn sample(&mut self) -> Result<&FileSamples, Error<S::Error>> {
+        let mut entries = EntryReader::new(&mut self.source, self.len, self.kind, 0);
+        let mut samples = FileSamples::new(self.len);
         let mut count = 0usize;
 
         loop {
             let position = entries.position();
 
-            if entries.next().await?.is_none() {
+            let Some(entry) = entries.next().await? else {
                 break;
-            }
+            };
 
             if count.is_multiple_of(SAMPLE_INTERVAL) {
-                samples.push(u32::try_from(position).map_err(|_| Error::MalformedIndex)?);
+                let offset = u32::try_from(position).map_err(|_| Error::MalformedIndex)?;
+                samples
+                    .push(offset, entry.word)
+                    .ok_or(Error::MalformedIndex)?;
             }
 
             count += 1;
@@ -119,37 +125,45 @@ where
         Ok(self.samples.insert(samples))
     }
 
-    /// The entry matching `target` the way StarDict sorts, ASCII letters in
-    /// any case. An entry spelled exactly like `target` wins over one in
-    /// another case.
-    pub async fn find(&mut self, target: &[u8]) -> Result<Option<(String, Tail)>, Error<S::Error>> {
-        let start = self.scan_start(target).await?;
+    /// All entries matching `target` the way StarDict sorts, ASCII letters in
+    /// any case. When one or more entries match `target`'s exact case, only
+    /// those exact-case entries are returned; otherwise all case-folded
+    /// matches are returned in index order.
+    pub async fn find_all(
+        &mut self,
+        target: &[u8],
+    ) -> Result<Vec<(String, Tail)>, Error<S::Error>> {
+        let start = self.scan_start(target);
 
-        let mut entries =
-            EntryReader::new(&mut self.source, self.len, self.kind, start, BUFFER_BYTES);
-        let mut found = None;
+        let mut entries = EntryReader::new(&mut self.source, self.len, self.kind, start);
+        let mut exact = Vec::new();
+        let mut folded = Vec::new();
 
         while let Some(entry) = entries.next().await? {
             match compare_folded(entry.word, target) {
                 Ordering::Less => {}
                 Ordering::Greater => break,
                 Ordering::Equal => {
-                    let exact = entry.word == target;
-
-                    if found.is_none() || exact {
-                        let word = String::from_utf8_lossy(entry.word).into_owned();
-
-                        found = Some((word, entry.tail));
-                    }
-
-                    if exact {
-                        break;
+                    if entry.word == target {
+                        exact.push((
+                            String::from_utf8_lossy(entry.word).into_owned(),
+                            entry.tail,
+                        ));
+                    } else if exact.is_empty() {
+                        folded.push((
+                            String::from_utf8_lossy(entry.word).into_owned(),
+                            entry.tail,
+                        ));
                     }
                 }
             }
         }
 
-        Ok(found)
+        if exact.is_empty() {
+            Ok(folded)
+        } else {
+            Ok(exact)
+        }
     }
 
     /// The entry numbered `ordinal`, counting from 0.
@@ -159,16 +173,15 @@ where
         let (start, skip) = match &self.samples {
             Some(samples) => {
                 let sample = samples
-                    .get(ordinal / SAMPLE_INTERVAL)
+                    .offset(ordinal / SAMPLE_INTERVAL)
                     .ok_or(Error::MalformedIndex)?;
 
-                (u64::from(*sample), ordinal % SAMPLE_INTERVAL)
+                (u64::from(sample), ordinal % SAMPLE_INTERVAL)
             }
             None => (0, ordinal),
         };
 
-        let mut entries =
-            EntryReader::new(&mut self.source, self.len, self.kind, start, BUFFER_BYTES);
+        let mut entries = EntryReader::new(&mut self.source, self.len, self.kind, start);
 
         for _ in 0..skip {
             entries.next().await?.ok_or(Error::MalformedIndex)?;
@@ -179,41 +192,12 @@ where
         Ok((String::from_utf8_lossy(entry.word).into_owned(), entry.tail))
     }
 
-    /// Where to start reading entries for `target`: the last sample sorting
-    /// before it. Entries matching it may come right before a sample that
-    /// matches too, so a sample has to sort strictly before it.
-    async fn scan_start(&mut self, target: &[u8]) -> Result<u64, Error<S::Error>> {
-        let Some(samples) = &self.samples else {
-            return Ok(0);
-        };
-
-        // samples[..low] sort before target, samples[high..] don't
-        let mut low = 0;
-        let mut high = samples.len();
-
-        while low < high {
-            let middle = low + (high - low) / 2;
-
-            let offset = u64::from(samples[middle]);
-            let mut entries = EntryReader::new(
-                &mut self.source,
-                self.len,
-                self.kind,
-                offset,
-                MAX_ENTRY_BYTES,
-            );
-            let entry = entries.next().await?.ok_or(Error::MalformedIndex)?;
-
-            if compare_folded(entry.word, target) == Ordering::Less {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-
-        Ok(low
-            .checked_sub(1)
-            .map_or(0, |sample| u64::from(samples[sample])))
+    /// Where to start reading entries for `target`, computed purely in memory
+    /// from the sampled headwords.
+    fn scan_start(&self, target: &[u8]) -> u64 {
+        self.samples
+            .as_ref()
+            .map_or(0, |samples| samples.scan_start(target))
     }
 }
 
@@ -223,8 +207,6 @@ struct EntryReader<'s, S> {
     len: u64,
     kind: EntryKind,
     buffer: Vec<u8>,
-    /// how much to read at a time, at least [`MAX_ENTRY_BYTES`]
-    buffer_bytes: usize,
     /// the file offset of the buffer's first byte
     buffer_start: u64,
     /// the file offset of the next entry
@@ -235,19 +217,12 @@ impl<'s, S> EntryReader<'s, S>
 where
     S: ByteSource,
 {
-    fn new(
-        source: &'s mut S,
-        len: u64,
-        kind: EntryKind,
-        position: u64,
-        buffer_bytes: usize,
-    ) -> Self {
+    fn new(source: &'s mut S, len: u64, kind: EntryKind, position: u64) -> Self {
         Self {
             source,
             len,
             kind,
             buffer: Vec::new(),
-            buffer_bytes: buffer_bytes.max(MAX_ENTRY_BYTES),
             buffer_start: 0,
             position,
         }
@@ -267,7 +242,7 @@ where
 
         // refill whenever the longest possible entry might not fit what's left
         if self.position < self.buffer_start || entry_end > buffer_end {
-            let read_len = (self.len - self.position).min(self.buffer_bytes as u64) as usize;
+            let read_len = (self.len - self.position).min(BUFFER_BYTES as u64) as usize;
 
             self.buffer.resize(read_len, 0);
             self.source

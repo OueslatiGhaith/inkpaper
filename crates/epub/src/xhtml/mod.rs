@@ -1,6 +1,9 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{string::String, vec, vec::Vec};
 
-use crate::{ArchivePath, PathError, location::ContentOffset, path::decode_url_component};
+use crate::{
+    ArchivePath, ChapterStyles, ComputedStyle, FontStyle, FontWeight, PathError,
+    location::ContentOffset, path::decode_url_component,
+};
 
 mod parser;
 mod style_context;
@@ -22,6 +25,12 @@ impl Chapter {
     /// `path` resolves its relative links and images.
     pub fn parse(xhtml: &str, path: ArchivePath) -> Result<(Self, StyleContext), crate::XhtmlError> {
         parse_xhtml(xhtml, path)
+    }
+
+    /// Starts building a chapter directly from blocks and styled text runs,
+    /// without parsing XHTML or resolving CSS.
+    pub const fn builder(path: ArchivePath) -> ChapterBuilder {
+        ChapterBuilder::new(path)
     }
 
     pub fn path(&self) -> &ArchivePath {
@@ -236,6 +245,91 @@ fn is_external_reference(reference: &str) -> bool {
     scheme
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+}
+
+const STYLE_NORMAL: StyleNodeId = StyleNodeId::new(0);
+const STYLE_BOLD: StyleNodeId = StyleNodeId::new(1);
+const STYLE_ITALIC: StyleNodeId = StyleNodeId::new(2);
+const STYLE_BOLD_ITALIC: StyleNodeId = StyleNodeId::new(3);
+
+const fn style_node_for(weight: FontWeight, style: FontStyle) -> StyleNodeId {
+    match (weight, style) {
+        (FontWeight::Normal, FontStyle::Normal) => STYLE_NORMAL,
+        (FontWeight::Bold, FontStyle::Normal) => STYLE_BOLD,
+        (FontWeight::Normal, FontStyle::Italic) => STYLE_ITALIC,
+        (FontWeight::Bold, FontStyle::Italic) => STYLE_BOLD_ITALIC,
+    }
+}
+
+/// Builds a [`Chapter`] and its [`ChapterStyles`] directly from blocks and
+/// styled text runs, skipping XHTML serialization, XML parsing, and CSS
+/// cascade resolution.
+pub struct ChapterBuilder {
+    path: ArchivePath,
+    blocks: Vec<ChapterBlock>,
+    current: Option<ChapterBlockBuilder>,
+}
+
+impl ChapterBuilder {
+    pub const fn new(path: ArchivePath) -> Self {
+        Self {
+            path,
+            blocks: Vec::new(),
+            current: None,
+        }
+    }
+
+    /// Finishes any open block and starts a new block of `kind`.
+    pub fn start_block(&mut self, kind: BlockKind) {
+        self.end_block();
+        self.current = Some(ChapterBlockBuilder::new(kind, None, STYLE_NORMAL));
+    }
+
+    /// Appends `text` to the current block (starting a paragraph if none is
+    /// open), applying the same whitespace collapsing and run merging as XHTML
+    /// parsing.
+    pub fn push_text(&mut self, text: &str, weight: FontWeight, style: FontStyle) {
+        let style_node = style_node_for(weight, style);
+        let block = self
+            .current
+            .get_or_insert_with(|| ChapterBlockBuilder::new(BlockKind::Paragraph, None, STYLE_NORMAL));
+
+        block.push_text(text, None, style_node);
+    }
+
+    /// Inserts an explicit line break into the current block, if one is open.
+    pub fn push_break(&mut self) {
+        if let Some(block) = &mut self.current {
+            block.push_break();
+        }
+    }
+
+    /// Finishes the current block, dropping it if it contains no inlines.
+    pub fn end_block(&mut self) {
+        if let Some(block) = self.current.take().and_then(ChapterBlockBuilder::finish) {
+            self.blocks.push(block);
+        }
+    }
+
+    /// Completes the chapter and returns it paired with its resolved styles.
+    pub fn finish(mut self) -> (Chapter, ChapterStyles) {
+        self.end_block();
+
+        let styles = ChapterStyles::from_styles(vec![
+            ComputedStyle::with_font(FontWeight::Normal, FontStyle::Normal),
+            ComputedStyle::with_font(FontWeight::Bold, FontStyle::Normal),
+            ComputedStyle::with_font(FontWeight::Normal, FontStyle::Italic),
+            ComputedStyle::with_font(FontWeight::Bold, FontStyle::Italic),
+        ]);
+
+        (
+            Chapter {
+                path: self.path,
+                blocks: self.blocks,
+            },
+            styles,
+        )
+    }
 }
 
 struct ChapterBlockBuilder {

@@ -1,11 +1,14 @@
-//! A dictionary definition laid out in pages like a book's chapter, the way
-//! crosspoint lays out HTML definitions through its EPUB engine. Markup
-//! keeps its bold, italics and lists; the rest is kept for its text.
+//! A dictionary definition laid out in pages like a book's chapter. Markup
+//! keeps its bold, italics and lists; the rest is kept for its text, built
+//! directly into chapter blocks without round-tripping through XHTML.
 
-use alloc::{format, string::String, vec::Vec};
+use alloc::{borrow::Cow, format, string::String, vec::Vec};
 
 use inkpaper_dictionary::{Definition, FieldKind};
-use inkpaper_epub::{ArchivePath, Chapter, ChapterStyles, SpineIndex};
+use inkpaper_epub::{
+    ArchivePath, BlockKind, Chapter, ChapterBuilder, ChapterStyles, FontStyle, FontWeight,
+    SpineIndex, decode_xml_text,
+};
 use inkpaper_reader::{Page, Viewport, paginate_chapter};
 
 use super::{
@@ -34,22 +37,16 @@ pub(crate) fn layout_definition(
         .with_paragraph_spacing(true);
     let text = text.with_paragraph_indent(0).unwrap_or(text);
 
-    // markup can leave text that isn't XHTML, like a bare `&`; escaped
-    // whole, it always is
-    [false, true]
-        .into_iter()
-        .find_map(|escape_all| paginate(&definition_xhtml(definition, escape_all), text, card))
-        .unwrap_or_default()
+    paginate(definition, text, card).unwrap_or_default()
 }
 
 fn paginate(
-    xhtml: &str,
+    definition: &Definition,
     text: TextSettings,
     card: Option<&CardFont>,
 ) -> Option<Vec<Page<'static>>> {
     let path = ArchivePath::new("definition.xhtml").ok()?;
-    let (chapter, style_context) = Chapter::parse(xhtml, path).ok()?;
-    let styles = ChapterStyles::defaults(style_context);
+    let (chapter, styles) = build_definition_chapter(definition, path);
 
     let fonts = ReaderFonts::new(card_for(text.font(), card)).ok()?;
     let mut measurer = ReaderMeasurer::new(&fonts, Default::default());
@@ -67,17 +64,20 @@ fn paginate(
     Some(pagination.into_owned().pages().to_vec())
 }
 
-/// A chapter of `definition`'s fields, their markup's bold, italics and
-/// lists kept, pronunciations in italics. Markup keeps its entities unless
-/// `escape_all`.
-fn definition_xhtml(definition: &Definition, escape_all: bool) -> String {
-    let mut body = Body::new(escape_all);
+/// Builds a chapter and its styles directly from `definition`'s fields:
+/// markup keeps bold, italics, headings, and lists; pronunciations are
+/// italicized.
+fn build_definition_chapter(
+    definition: &Definition,
+    path: ArchivePath,
+) -> (Chapter, ChapterStyles) {
+    let mut body = Body::new(path);
 
     for field in definition.fields() {
         match field.kind() {
             FieldKind::Plain => body.plain(field.text()),
             FieldKind::Phonetic => {
-                body.open(Inline::Italic);
+                body.open(InlineStyle::Italic);
                 body.plain(field.text());
             }
             // in HTML, a newline is a space like any other
@@ -88,39 +88,25 @@ fn definition_xhtml(definition: &Definition, escape_all: bool) -> String {
         body.end_field();
     }
 
-    format!(
-        r#"<html xmlns="http://www.w3.org/1999/xhtml"><body>{}</body></html>"#,
-        body.xhtml
-    )
+    body.finish()
 }
 
 /// The bold and italics a definition's text can keep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Inline {
+enum InlineStyle {
     Bold,
     Italic,
 }
 
-impl Inline {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Bold => "b",
-            Self::Italic => "i",
-        }
-    }
-}
-
 /// What a tag of a definition's markup does to its text.
 enum Tag {
-    Inline(Inline),
+    Inline(InlineStyle),
     /// a line of its own, like a paragraph
     Block,
     /// a line of its own in bold, like a heading
     Heading,
     /// a list, numbered or not
-    List {
-        numbered: bool,
-    },
+    List { numbered: bool },
     Item,
     /// a line ends there
     Break,
@@ -133,8 +119,8 @@ enum Tag {
 impl Tag {
     fn from_name(name: &str) -> Self {
         match name {
-            "b" | "strong" => Self::Inline(Inline::Bold),
-            "i" | "em" | "cite" | "dfn" | "var" => Self::Inline(Inline::Italic),
+            "b" | "strong" => Self::Inline(InlineStyle::Bold),
+            "i" | "em" | "cite" | "dfn" | "var" => Self::Inline(InlineStyle::Italic),
             "p" | "div" | "blockquote" | "dl" | "dd" | "table" | "tr" | "hr" | "section"
             | "pre" => Self::Block,
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "dt" => Self::Heading,
@@ -148,16 +134,16 @@ impl Tag {
     }
 }
 
-/// The XHTML body of a definition, built a paragraph at a time from markup
-/// that needn't be well-formed: only paragraphs, bold, italics and line
-/// breaks are written, each closed before its paragraph ends.
+/// Builds a definition's chapter blocks directly from markup that needn't be
+/// well-formed, tracking open bold/italic nesting and lists in place.
 struct Body {
-    xhtml: String,
-    escape_all: bool,
-    /// whether a paragraph is open
+    builder: ChapterBuilder,
+    /// whether a paragraph has received non-whitespace content
     paragraph: bool,
-    /// the bold and italics open, innermost last, reopened in each paragraph
-    inline: Vec<Inline>,
+    /// nesting depth of bold tags
+    bold: usize,
+    /// nesting depth of italic tags
+    italic: usize,
     /// the lists open, innermost last, with the last number of a numbered one
     lists: Vec<Option<u32>>,
     /// a list item's bullet or number, written before its first text
@@ -165,20 +151,24 @@ struct Body {
 }
 
 impl Body {
-    const fn new(escape_all: bool) -> Self {
+    const fn new(path: ArchivePath) -> Self {
         Self {
-            xhtml: String::new(),
-            escape_all,
+            builder: Chapter::builder(path),
             paragraph: false,
-            inline: Vec::new(),
+            bold: 0,
+            italic: 0,
             lists: Vec::new(),
             marker: None,
         }
     }
 
+    fn finish(self) -> (Chapter, ChapterStyles) {
+        self.builder.finish()
+    }
+
     /// Plain text, a paragraph a line.
     fn plain(&mut self, text: &str) {
-        self.lines(text, true, true);
+        self.lines(text, false, true);
     }
 
     /// Markup's text and tags. Newlines end lines when `newlines`, like in
@@ -187,14 +177,25 @@ impl Body {
         let mut rest = markup;
 
         while let Some(start) = rest.find('<') {
-            self.lines(&rest[..start], false, newlines);
+            self.lines(&rest[..start], true, newlines);
 
-            let Some(end) = rest[start..].find('>') else {
+            let after_lt = &rest[start + 1..];
+
+            // A bare `<` not starting a tag (e.g. `x < 5`) or without a
+            // closing `>` is literal text rather than markup.
+            if !starts_tag(after_lt) {
+                self.text("<", false);
+                rest = after_lt;
+                continue;
+            }
+
+            let Some(end) = after_lt.find('>') else {
+                self.lines(&rest[start..], true, newlines);
                 return;
             };
 
-            let tag = &rest[start + 1..start + end];
-            rest = &rest[start + end + 1..];
+            let tag = &after_lt[..end];
+            rest = &after_lt[end + 1..];
 
             let closing = tag.starts_with('/');
             let self_closing = tag.ends_with('/');
@@ -206,8 +207,8 @@ impl Body {
                 .to_ascii_lowercase();
 
             match Tag::from_name(&name) {
-                // a comment, a doctype, or a tag naming nothing
-                _ if name.is_empty() || name.starts_with('!') => {}
+                // a comment, a doctype, a processing instruction, or an empty tag
+                _ if name.is_empty() || name.starts_with('!') || name.starts_with('?') => {}
                 Tag::Skipped if !closing && !self_closing => {
                     rest = skip_element(rest, &name);
                 }
@@ -220,9 +221,9 @@ impl Body {
                     self.end_paragraph();
 
                     if closing {
-                        self.close(Inline::Bold);
+                        self.close(InlineStyle::Bold);
                     } else {
-                        self.open(Inline::Bold);
+                        self.open(InlineStyle::Bold);
                     }
                 }
                 Tag::List { numbered } => {
@@ -254,14 +255,14 @@ impl Body {
             }
         }
 
-        self.lines(rest, false, newlines);
+        self.lines(rest, true, newlines);
     }
 
-    /// `text`, escaped whole when `plain`, its newlines ending lines when
-    /// `newlines`.
-    fn lines(&mut self, text: &str, plain: bool, newlines: bool) {
+    /// `text`, decoding entities when `decode_entities`, with newlines ending
+    /// paragraphs when `newlines`.
+    fn lines(&mut self, text: &str, decode_entities: bool, newlines: bool) {
         if !newlines {
-            self.text(text, plain);
+            self.text(text, decode_entities);
             return;
         }
 
@@ -270,15 +271,27 @@ impl Body {
                 self.end_paragraph();
             }
 
-            self.text(line, plain);
+            self.text(line, decode_entities);
         }
     }
 
-    fn text(&mut self, text: &str, plain: bool) {
-        // whitespace alone doesn't start a paragraph
-        if text.trim().is_empty() {
-            if self.paragraph && !text.is_empty() {
-                self.xhtml.push(' ');
+    fn text(&mut self, text: &str, decode_entities: bool) {
+        if text.is_empty() {
+            return;
+        }
+
+        let decoded = if decode_entities {
+            decode_xml_text(text)
+        } else {
+            Cow::Borrowed(text)
+        };
+
+        // Collapsible whitespace alone doesn't start a paragraph, though
+        // non-breaking spaces (e.g. `&nbsp;`) are kept as real text.
+        if is_only_collapsible_whitespace(&decoded) {
+            if self.paragraph {
+                let (weight, style) = self.current_font();
+                self.builder.push_text(" ", weight, style);
             }
 
             return;
@@ -286,50 +299,45 @@ impl Body {
 
         if !self.paragraph {
             self.paragraph = true;
-            self.xhtml.push_str("<p>");
+            self.builder.start_block(BlockKind::Paragraph);
 
             if let Some(marker) = self.marker.take() {
-                self.xhtml.push_str(&marker);
-            }
-
-            for index in 0..self.inline.len() {
-                self.start_tag(self.inline[index]);
+                self.builder
+                    .push_text(&marker, FontWeight::Normal, FontStyle::Normal);
             }
         }
 
-        self.xhtml.push_str(&escape(text, plain || self.escape_all));
+        let (weight, style) = self.current_font();
+        self.builder.push_text(&decoded, weight, style);
     }
 
-    fn open(&mut self, inline: Inline) {
-        self.inline.push(inline);
-
-        if self.paragraph {
-            self.start_tag(inline);
-        }
-    }
-
-    /// Closes the innermost `inline` open, and with it the ones inside it,
-    /// which open again after it. A tag closing nothing is left out.
-    fn close(&mut self, inline: Inline) {
-        let Some(index) = self.inline.iter().rposition(|open| *open == inline) else {
-            return;
+    const fn current_font(&self) -> (FontWeight, FontStyle) {
+        let weight = if self.bold > 0 {
+            FontWeight::Bold
+        } else {
+            FontWeight::Normal
+        };
+        let style = if self.italic > 0 {
+            FontStyle::Italic
+        } else {
+            FontStyle::Normal
         };
 
-        if self.paragraph {
-            for open in self.inline[index..].iter().rev() {
-                self.xhtml.push_str(&format!("</{}>", open.name()));
-            }
-
-            for open in &self.inline[index + 1..] {
-                self.xhtml.push_str(&format!("<{}>", open.name()));
-            }
-        }
-
-        self.inline.remove(index);
+        (weight, style)
     }
 
-    fn start_tag(&mut self, inline: Inline) {
-        self.xhtml.push_str(&format!("<{}>", inline.name()));
+    fn open(&mut self, inline: InlineStyle) {
+        match inline {
+            InlineStyle::Bold => self.bold += 1,
+            InlineStyle::Italic => self.italic += 1,
+        }
+    }
+
+    fn close(&mut self, inline: InlineStyle) {
+        match inline {
+            InlineStyle::Bold => self.bold = self.bold.saturating_sub(1),
+            InlineStyle::Italic => self.italic = self.italic.saturating_sub(1),
+        }
     }
 
     fn end_paragraph(&mut self) {
@@ -337,73 +345,204 @@ impl Body {
             return;
         }
 
-        for open in self.inline.iter().rev() {
-            self.xhtml.push_str(&format!("</{}>", open.name()));
-        }
-
-        self.xhtml.push_str("</p>");
+        self.builder.end_block();
         self.paragraph = false;
     }
 
     /// Ends a field, and whatever its markup left open.
     fn end_field(&mut self) {
         self.end_paragraph();
-        self.inline.clear();
+        self.bold = 0;
+        self.italic = 0;
         self.lists.clear();
         self.marker = None;
     }
 }
 
+/// Whether the text immediately after `<` can begin a markup tag, comment,
+/// doctype, or processing instruction.
+fn starts_tag(after_lt: &str) -> bool {
+    matches!(
+        after_lt.as_bytes().first(),
+        Some(b'a'..=b'z' | b'A'..=b'Z' | b'/' | b'!' | b'?')
+    )
+}
+
+fn is_only_collapsible_whitespace(text: &str) -> bool {
+    text.chars()
+        .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{FEFF}'))
+}
+
 /// `rest` after the end of the element named `name` it's inside, or nothing
 /// when it doesn't end.
 fn skip_element<'a>(rest: &'a str, name: &str) -> &'a str {
-    let lowercase = rest.to_ascii_lowercase();
-    let closing = format!("</{name}");
+    let bytes = rest.as_bytes();
+    let name_bytes = name.as_bytes();
 
-    lowercase
-        .find(&closing)
-        .and_then(|start| rest[start..].find('>').map(|end| &rest[start + end + 1..]))
-        .unwrap_or_default()
-}
-
-/// `text` safe in XHTML. Unless `ampersands`, the entities in it, like
-/// `&nbsp;`, are kept, and only a bare `&` escaped.
-fn escape(text: &str, ampersands: bool) -> String {
-    let mut escaped = String::with_capacity(text.len());
-
-    for (offset, character) in text.char_indices() {
-        match character {
-            '&' if ampersands || !starts_entity(&text[offset + 1..]) => {
-                escaped.push_str("&amp;");
-            }
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            character => escaped.push(character),
+    for start in 0..bytes.len() {
+        if bytes[start] == b'<'
+            && bytes.get(start + 1) == Some(&b'/')
+            && bytes
+                .get(start + 2..start + 2 + name_bytes.len())
+                .is_some_and(|slice| slice.eq_ignore_ascii_case(name_bytes))
+            && bytes
+                .get(start + 2 + name_bytes.len())
+                .is_some_and(|&next| next == b'>' || next.is_ascii_whitespace())
+            && let Some(end) = rest[start..].find('>')
+        {
+            return &rest[start + end + 1..];
         }
     }
 
-    escaped
+    ""
 }
 
-/// Whether `rest`, after an `&`, is an entity's name or number and its `;`.
-fn starts_entity(rest: &str) -> bool {
-    let Some((name, _)) = rest.split_once(';') else {
-        return false;
-    };
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
 
-    let number = name
-        .strip_prefix("#x")
-        .or_else(|| name.strip_prefix("#X"))
-        .map(|hex| hex.chars().all(|digit| digit.is_ascii_hexdigit()))
-        .or_else(|| {
-            name.strip_prefix('#')
-                .map(|decimal| decimal.chars().all(|digit| digit.is_ascii_digit()))
+    use super::*;
+    use inkpaper_epub::Inline;
+
+    fn styled_paragraphs(build: impl FnOnce(&mut Body)) -> Vec<Vec<(String, FontWeight, FontStyle)>> {
+        let path = ArchivePath::new("definition.xhtml").unwrap();
+        let mut body = Body::new(path);
+        build(&mut body);
+        let (chapter, styles) = body.finish();
+
+        chapter
+            .blocks()
+            .iter()
+            .map(|block| {
+                block
+                    .inlines()
+                    .iter()
+                    .map(|inline| match inline {
+                        Inline::Text(run) => {
+                            let style = styles.style(run.style_node()).unwrap();
+                            (String::from(run.text()), style.font_weight(), style.font_style())
+                        }
+                        _ => panic!("unexpected inline in definition"),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn formats_markup_styles_headings_lists_and_skips_scripts() {
+        let blocks = styled_paragraphs(|body| {
+            body.open(InlineStyle::Italic);
+            body.plain("liːd");
+            body.end_field();
+
+            body.markup(
+                "<h3>Verb</h3><style>.x { color: red; }</style>\
+                 <p>To <b>guide <i>or</i></b> direct.</p>\
+                 <ol><li>First<ul><li>Nested</li></ul></li><li>Second</li></ol>\
+                 Line one<br/>Line two",
+                false,
+            );
+            body.end_field();
         });
 
-    !name.is_empty()
-        && name.len() <= 32
-        && number.unwrap_or_else(|| {
-            name.chars()
-                .all(|character| character.is_ascii_alphanumeric())
-        })
+        assert_eq!(
+            blocks,
+            vec![
+                vec![(String::from("liːd"), FontWeight::Normal, FontStyle::Italic)],
+                vec![(String::from("Verb"), FontWeight::Bold, FontStyle::Normal)],
+                vec![
+                    (String::from("To "), FontWeight::Normal, FontStyle::Normal),
+                    (String::from("guide "), FontWeight::Bold, FontStyle::Normal),
+                    (String::from("or"), FontWeight::Bold, FontStyle::Italic),
+                    (
+                        String::from(" direct."),
+                        FontWeight::Normal,
+                        FontStyle::Normal,
+                    ),
+                ],
+                vec![(
+                    String::from("1. First"),
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                )],
+                vec![(
+                    format!("{NESTED_INDENT}\u{2022} Nested"),
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                )],
+                vec![(
+                    String::from("2. Second"),
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                )],
+                vec![(
+                    String::from("Line one"),
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                )],
+                vec![(
+                    String::from("Line two"),
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                )],
+            ],
+        );
+    }
+
+    #[test]
+    fn decodes_entities_and_preserves_bare_ampersands_and_less_than() {
+        let blocks = styled_paragraphs(|body| {
+            body.markup(
+                "Fish &amp; Chips &mdash; R&D &amp; x < 5 and y <z",
+                false,
+            );
+            body.end_field();
+
+            body.plain("plain &amp; literal <tag>\nsecond line");
+            body.end_field();
+        });
+
+        assert_eq!(
+            blocks,
+            vec![
+                vec![(
+                    String::from("Fish & Chips — R&D & x < 5 and y <z"),
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                )],
+                vec![(
+                    String::from("plain &amp; literal <tag>"),
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                )],
+                vec![(
+                    String::from("second line"),
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                )],
+            ],
+        );
+    }
+
+    #[test]
+    fn keeps_nbsp_between_styled_runs() {
+        let blocks = styled_paragraphs(|body| {
+            body.markup("<b>one</b>&nbsp;<i>two</i>", false);
+            body.end_field();
+        });
+
+        assert_eq!(
+            blocks,
+            vec![vec![
+                (String::from("one"), FontWeight::Bold, FontStyle::Normal),
+                (
+                    String::from("\u{00a0}"),
+                    FontWeight::Normal,
+                    FontStyle::Normal,
+                ),
+                (String::from("two"), FontWeight::Normal, FontStyle::Italic),
+            ]],
+        );
+    }
 }

@@ -28,9 +28,10 @@ pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};
 pub use path::{ArchivePath, PathError};
 pub use xhtml::{
-    BlockKind, Chapter, ChapterBlock, ChapterImage, Inline, LinkTarget, StyleContext, StyleNode,
-    StyleNodeId, StylesheetSource, TextRun,
+    BlockKind, Chapter, ChapterBlock, ChapterBuilder, ChapterImage, Inline, LinkTarget,
+    StyleContext, StyleNode, StyleNodeId, StylesheetSource, TextRun,
 };
+pub use xml::decode_xml_text;
 
 use archive::Archive;
 use container::parse_container;

@@ -8,10 +8,11 @@ use inkpaper_io::{ByteSource, SliceSource, SliceSourceError};
 
 use support::{StarDict, stardict};
 
-/// A source counting the bytes read from it.
+/// A source counting the bytes and calls read from it.
 struct CountingSource<'a> {
     source: SliceSource<'a>,
-    read: &'a Cell<usize>,
+    bytes: &'a Cell<usize>,
+    calls: &'a Cell<usize>,
 }
 
 impl ByteSource for CountingSource<'_> {
@@ -22,28 +23,46 @@ impl ByteSource for CountingSource<'_> {
     }
 
     async fn read_exact_at(&mut self, offset: u64, buffer: &mut [u8]) -> Result<(), Self::Error> {
-        self.read.set(self.read.get() + buffer.len());
+        self.bytes.set(self.bytes.get() + buffer.len());
+        self.calls.set(self.calls.get() + 1);
 
         self.source.read_exact_at(offset, buffer).await
     }
 }
 
-/// Opens `dictionary`, counting the bytes read from both its files in `read`.
-fn open<'a>(dictionary: &'a StarDict, read: &'a Cell<usize>) -> Dictionary<CountingSource<'a>> {
+/// Opens `dictionary`, counting reads from its index and data files separately.
+fn open_counted<'a>(
+    dictionary: &'a StarDict,
+    idx_bytes: &'a Cell<usize>,
+    idx_calls: &'a Cell<usize>,
+    dict_bytes: &'a Cell<usize>,
+    dict_calls: &'a Cell<usize>,
+) -> Dictionary<CountingSource<'a>> {
     let info = DictionaryInfo::parse(dictionary.ifo.as_bytes()).unwrap();
 
     future::block_on(Dictionary::open(
         info,
         CountingSource {
             source: SliceSource::new(&dictionary.idx),
-            read,
+            bytes: idx_bytes,
+            calls: idx_calls,
         },
         CountingSource {
             source: SliceSource::new(&dictionary.dict),
-            read,
+            bytes: dict_bytes,
+            calls: dict_calls,
         },
     ))
     .unwrap()
+}
+
+/// Opens `dictionary`, counting the bytes read from both its files in `read`.
+fn open<'a>(
+    dictionary: &'a StarDict,
+    read: &'a Cell<usize>,
+    calls: &'a Cell<usize>,
+) -> Dictionary<CountingSource<'a>> {
+    open_counted(dictionary, read, calls, read, calls)
 }
 
 fn numbered(count: usize) -> StarDict {
@@ -62,13 +81,15 @@ fn headword(dictionary: &mut Dictionary<CountingSource<'_>>, word: &str) -> Opti
         .map(|definition| definition.headword().to_string())
 }
 
-fn encoded(index_len: usize, offsets: &[usize]) -> Vec<u8> {
-    let mut bytes = b"IXS1".to_vec();
+fn encoded(index_len: usize, samples: &[(usize, &[u8])]) -> Vec<u8> {
+    let mut bytes = b"IXS2".to_vec();
     bytes.extend_from_slice(&(index_len as u64).to_le_bytes());
-    bytes.extend_from_slice(&(offsets.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&(samples.len() as u32).to_le_bytes());
 
-    for &offset in offsets {
+    for &(offset, word) in samples {
         bytes.extend_from_slice(&(offset as u32).to_le_bytes());
+        bytes.push(word.len() as u8);
+        bytes.extend_from_slice(word);
     }
 
     // without synonyms
@@ -81,7 +102,8 @@ fn encoded(index_len: usize, offsets: &[usize]) -> Vec<u8> {
 fn samples_every_256th_entry() {
     let dictionary = numbered(600);
     let read = Cell::new(0);
-    let mut opened = open(&dictionary, &read);
+    let calls = Cell::new(0);
+    let mut opened = open(&dictionary, &read, &calls);
 
     let samples = future::block_on(opened.sample_index()).unwrap().encode();
 
@@ -90,7 +112,14 @@ fn samples_every_256th_entry() {
 
     assert_eq!(
         samples,
-        encoded(dictionary.idx.len(), &[0, 256 * entry_len, 512 * entry_len]),
+        encoded(
+            dictionary.idx.len(),
+            &[
+                (0, b"word00000"),
+                (256 * entry_len, b"word00256"),
+                (512 * entry_len, b"word00512"),
+            ],
+        ),
     );
 }
 
@@ -98,7 +127,8 @@ fn samples_every_256th_entry() {
 fn finds_words_around_the_samples() {
     let dictionary = numbered(2_000);
     let read = Cell::new(0);
-    let mut opened = open(&dictionary, &read);
+    let calls = Cell::new(0);
+    let mut opened = open(&dictionary, &read, &calls);
 
     future::block_on(opened.sample_index()).unwrap();
 
@@ -114,20 +144,35 @@ fn finds_words_around_the_samples() {
 }
 
 #[test]
-fn reads_a_fraction_of_the_files_through_samples() {
+fn binary_search_does_zero_index_reads() {
     let dictionary = numbered(20_000);
-    let read = Cell::new(0);
-    let mut opened = open(&dictionary, &read);
+    let idx_bytes = Cell::new(0);
+    let idx_calls = Cell::new(0);
+    let dict_bytes = Cell::new(0);
+    let dict_calls = Cell::new(0);
+    let mut opened = open_counted(
+        &dictionary,
+        &idx_bytes,
+        &idx_calls,
+        &dict_bytes,
+        &dict_calls,
+    );
 
     future::block_on(opened.sample_index()).unwrap();
-    read.set(0);
+    idx_bytes.set(0);
+    idx_calls.set(0);
+    dict_bytes.set(0);
+    dict_calls.set(0);
 
-    assert!(headword(&mut opened, "word19999").is_some());
-    assert!(
-        read.get() < dictionary.idx.len() / 20,
-        "read {} bytes",
-        read.get(),
+    // Entry 19999 sits 31 entries after the last sample (entry 19968 = 78 * 256),
+    // so only a single 32-entry (576-byte) sequential read should touch `.idx`.
+    assert_eq!(
+        headword(&mut opened, "word19999").as_deref(),
+        Some("word19999"),
     );
+    assert_eq!(idx_calls.get(), 1);
+    assert_eq!(idx_bytes.get(), 32 * 18);
+    assert_eq!(dict_calls.get(), 1);
 }
 
 #[test]
@@ -143,7 +188,8 @@ fn finds_a_case_run_split_by_a_sample() {
 
     let dictionary = stardict(Some("m"), &entries);
     let read = Cell::new(0);
-    let mut opened = open(&dictionary, &read);
+    let calls = Cell::new(0);
+    let mut opened = open(&dictionary, &read, &calls);
 
     future::block_on(opened.sample_index()).unwrap();
 
@@ -155,12 +201,13 @@ fn finds_a_case_run_split_by_a_sample() {
 fn round_trips_saved_samples() {
     let dictionary = numbered(2_000);
     let read = Cell::new(0);
+    let calls = Cell::new(0);
 
-    let saved = future::block_on(open(&dictionary, &read).sample_index())
+    let saved = future::block_on(open(&dictionary, &read, &calls).sample_index())
         .unwrap()
         .encode();
 
-    let mut reopened = open(&dictionary, &read);
+    let mut reopened = open(&dictionary, &read, &calls);
 
     assert!(reopened.use_samples(IndexSamples::decode(&saved).unwrap()));
     assert_eq!(
@@ -174,27 +221,52 @@ fn refuses_samples_of_another_index() {
     let dictionary = numbered(2_000);
     let other = numbered(1_000);
     let read = Cell::new(0);
+    let calls = Cell::new(0);
 
-    let samples = future::block_on(open(&other, &read).sample_index())
+    let samples = future::block_on(open(&other, &read, &calls).sample_index())
         .unwrap()
         .encode();
 
-    let mut opened = open(&dictionary, &read);
+    let mut opened = open(&dictionary, &read, &calls);
 
     assert!(!opened.use_samples(IndexSamples::decode(&samples).unwrap()));
 }
 
 #[test]
 fn rejects_damaged_saved_samples() {
-    let saved = encoded(10_000, &[0, 4_608, 9_216]);
+    let saved = encoded(
+        10_000,
+        &[(0, b"apple"), (4_608, b"mango"), (9_216, b"zebra")],
+    );
 
     assert!(IndexSamples::decode(&saved).is_some());
     assert_eq!(IndexSamples::decode(&saved[..saved.len() - 1]), None);
+    assert_eq!(IndexSamples::decode(b"IXS1"), None);
     assert_eq!(IndexSamples::decode(b"IXS0"), None);
     assert_eq!(
-        IndexSamples::decode(&encoded(10_000, &[0, 9_216, 4_608])),
+        IndexSamples::decode(&encoded(
+            10_000,
+            &[(0, b"apple"), (9_216, b"mango"), (4_608, b"zebra")],
+        )),
         None,
     );
-    assert_eq!(IndexSamples::decode(&encoded(10_000, &[18, 4_608])), None);
-    assert_eq!(IndexSamples::decode(&encoded(10_000, &[0, 10_000])), None);
+    assert_eq!(
+        IndexSamples::decode(&encoded(10_000, &[(18, b"apple"), (4_608, b"mango")])),
+        None,
+    );
+    assert_eq!(
+        IndexSamples::decode(&encoded(10_000, &[(0, b"apple"), (10_000, b"mango")])),
+        None,
+    );
+    assert_eq!(
+        IndexSamples::decode(&encoded(
+            10_000,
+            &[(0, b"mango"), (4_608, b"apple")],
+        )),
+        None,
+    );
+    assert_eq!(
+        IndexSamples::decode(&encoded(10_000, &[(0, b"ap\0ple")])),
+        None,
+    );
 }

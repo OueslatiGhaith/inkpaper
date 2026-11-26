@@ -198,3 +198,97 @@ fn reports_a_definition_past_the_data() {
         Err(Error::DefinitionOutOfBounds),
     ));
 }
+
+#[test]
+fn combines_homograph_entries_in_index_order() {
+    let dictionary = stardict(
+        Some("tm"),
+        &[
+            ("apple", b"aep\0a fruit"),
+            ("lead", b"li:d\0to guide"),
+            ("lead", b"led\0a heavy metal"),
+            ("zebra", b"zib\0an animal"),
+        ],
+    );
+
+    let definition = lookup(&dictionary, "lead").unwrap();
+
+    assert_eq!(definition.headword(), "lead");
+    assert_eq!(
+        fields(&definition),
+        [
+            (FieldKind::Phonetic, "li:d"),
+            (FieldKind::Plain, "to guide"),
+            (FieldKind::Phonetic, "led"),
+            (FieldKind::Plain, "a heavy metal"),
+        ],
+    );
+}
+
+#[test]
+fn keeps_all_exact_case_homographs_and_drops_other_cases() {
+    let dictionary = stardict(
+        Some("m"),
+        &[
+            ("Polish", b"from Poland"),
+            ("polish", b"to make shine"),
+            ("polish", b"a substance for shining"),
+        ],
+    );
+
+    let lower = lookup(&dictionary, "polish").unwrap();
+    assert_eq!(lower.headword(), "polish");
+    assert_eq!(
+        fields(&lower),
+        [
+            (FieldKind::Plain, "to make shine"),
+            (FieldKind::Plain, "a substance for shining"),
+        ],
+    );
+
+    let title = lookup(&dictionary, "Polish").unwrap();
+    assert_eq!(title.headword(), "Polish");
+    assert_eq!(fields(&title), [(FieldKind::Plain, "from Poland")]);
+
+    let upper = lookup(&dictionary, "POLISH").unwrap();
+    assert_eq!(upper.headword(), "Polish");
+    assert_eq!(
+        fields(&upper),
+        [
+            (FieldKind::Plain, "from Poland"),
+            (FieldKind::Plain, "to make shine"),
+            (FieldKind::Plain, "a substance for shining"),
+        ],
+    );
+}
+
+#[test]
+fn finds_homographs_split_across_a_sample_boundary() {
+    let fillers: Vec<String> = (0..255).map(|index| format!("a{index:03}")).collect();
+    let mut entries: Vec<(&str, &[u8])> = fillers
+        .iter()
+        .map(|word| (word.as_str(), &b"filler"[..]))
+        .collect();
+    entries.push(("lead", b"to guide"));
+    entries.push(("lead", b"a heavy metal"));
+
+    let dictionary = stardict(Some("m"), &entries);
+    let info = DictionaryInfo::parse(dictionary.ifo.as_bytes()).unwrap();
+    let mut opened = future::block_on(Dictionary::open(
+        info,
+        SliceSource::new(&dictionary.idx),
+        SliceSource::new(&dictionary.dict),
+    ))
+    .unwrap();
+
+    future::block_on(opened.sample_index()).unwrap();
+
+    let definition = future::block_on(opened.lookup("lead")).unwrap().unwrap();
+    assert_eq!(
+        fields(&definition),
+        [
+            (FieldKind::Plain, "to guide"),
+            (FieldKind::Plain, "a heavy metal"),
+        ],
+    );
+}

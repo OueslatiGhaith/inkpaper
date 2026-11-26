@@ -180,6 +180,19 @@ pub struct ComputedStyle {
 }
 
 impl ComputedStyle {
+    pub(crate) const fn with_font(font_weight: FontWeight, font_style: FontStyle) -> Self {
+        Self {
+            font_weight,
+            font_style,
+            text_align: None,
+            margin_top: None,
+            margin_bottom: None,
+            text_indent: CssLength::ZERO,
+            line_height: LineHeight::NORMAL,
+            hidden: false,
+        }
+    }
+
     pub const fn font_weight(self) -> FontWeight {
         self.font_weight
     }
@@ -227,6 +240,10 @@ pub struct ChapterStyles {
 }
 
 impl ChapterStyles {
+    pub(crate) const fn from_styles(styles: Vec<ComputedStyle>) -> Self {
+        Self { styles }
+    }
+
     /// The chapter's styles from its markup alone, such as bold headings and
     /// italic `<em>`, ignoring the book's stylesheets and `style` attributes.
     /// Consumes `style_context` so the element tree is dropped once resolved.
