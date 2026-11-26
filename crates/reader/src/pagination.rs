@@ -134,6 +134,23 @@ enum LineEnd {
     Last,
 }
 
+struct RunSegment<'a> {
+    block_start: usize,
+    block_end: usize,
+    source: &'a str,
+    style: TextStyle,
+    link: Option<&'a LinkTarget>,
+}
+
+struct WordSlice<'a> {
+    source: &'a str,
+    start: usize,
+    end: usize,
+    style: TextStyle,
+    link: Option<&'a LinkTarget>,
+    block_start: usize,
+}
+
 struct Paginator<'chapter, 'context, M> {
     chapter: &'chapter Chapter,
     styles: &'context ChapterStyles,
@@ -163,6 +180,10 @@ struct Paginator<'chapter, 'context, M> {
     line_items: Vec<PendingText<'chapter>>,
     /// reused to measure a word's start with its hyphen
     hyphen_scratch: String,
+    /// reused scratch buffers for cross-run line breaking within a block
+    block_text: String,
+    run_segments: Vec<RunSegment<'chapter>>,
+    hidden_runs: Vec<(usize, &'chapter str)>,
 
     block_laid_out: bool,
     block_align: TextAlign,
@@ -207,6 +228,9 @@ where
             line_indent: 0,
             line_items: Vec::new(),
             hyphen_scratch: String::new(),
+            block_text: String::new(),
+            run_segments: Vec::new(),
+            hidden_runs: Vec::new(),
             block_laid_out: false,
             block_align: TextAlign::Start,
             block_text_indent: 0,
@@ -257,16 +281,22 @@ where
         self.block_first_line = true;
         self.block_line_height = block_style.line_height();
 
+        self.block_text.clear();
+        self.run_segments.clear();
+        self.hidden_runs.clear();
+
         for inline in block.inlines() {
             match inline {
                 Inline::Text(text) => {
-                    self.layout_text(block.kind(), text)?;
+                    self.push_block_text_run(block.kind(), text);
                 }
                 Inline::Image(image) => {
+                    self.flush_block_text_runs()?;
                     self.layout_image(image);
                     self.cursor = self.cursor.advance_non_text();
                 }
                 Inline::Break => {
+                    self.flush_block_text_runs()?;
                     if !block_style.hidden() {
                         self.layout_break(block.kind(), block_style)?;
                     }
@@ -276,6 +306,7 @@ where
             }
         }
 
+        self.flush_block_text_runs()?;
         self.flush_line(LineEnd::Last);
 
         self.block_align = TextAlign::Start;
@@ -286,17 +317,16 @@ where
         Ok(())
     }
 
-    fn layout_text(
-        &mut self,
-        block_kind: BlockKind,
-        run: &'chapter TextRun,
-    ) -> Result<(), M::Error> {
+    fn push_block_text_run(&mut self, block_kind: BlockKind, run: &'chapter TextRun) {
         let computed = self.computed_style(run.style_node());
 
         if computed.hidden() {
-            self.cursor = self.cursor.advance_text(run.text());
+            self.hidden_runs.push((self.block_text.len(), run.text()));
+            return;
+        }
 
-            return Ok(());
+        if run.text().is_empty() {
+            return;
         }
 
         let style = TextStyle::new(
@@ -306,7 +336,335 @@ where
             computed.font_style(),
         );
 
-        self.layout_text_content(run.text(), style, run.link(), self.block_align)
+        let block_start = self.block_text.len();
+        self.block_text.push_str(run.text());
+        let block_end = self.block_text.len();
+
+        self.run_segments.push(RunSegment {
+            block_start,
+            block_end,
+            source: run.text(),
+            style,
+            link: run.link(),
+        });
+    }
+
+    fn flush_block_text_runs(&mut self) -> Result<(), M::Error> {
+        if self.block_text.is_empty() && self.hidden_runs.is_empty() {
+            return Ok(());
+        }
+
+        let block_text = mem::take(&mut self.block_text);
+        let run_segments = mem::take(&mut self.run_segments);
+        let hidden_runs = mem::take(&mut self.hidden_runs);
+
+        let result = self.layout_text_runs(&block_text, &run_segments, &hidden_runs);
+
+        self.block_text = block_text;
+        self.block_text.clear();
+        self.run_segments = run_segments;
+        self.run_segments.clear();
+        self.hidden_runs = hidden_runs;
+        self.hidden_runs.clear();
+
+        result
+    }
+
+    fn layout_text_runs(
+        &mut self,
+        block_text: &str,
+        segments: &[RunSegment<'chapter>],
+        hidden_runs: &[(usize, &'chapter str)],
+    ) -> Result<(), M::Error> {
+        let align = self.block_align;
+        let mut hidden_cursor = 0usize;
+        let mut seg_cursor = 0usize;
+        let mut start = 0usize;
+        let mut cluster: Vec<WordSlice<'chapter>> = Vec::new();
+
+        // newlines in a run are collapsible whitespace, so mandatory breaks are
+        // treated like any other break opportunity.
+        for (end, _) in linebreaks(block_text) {
+            let content_start = skip_break_whitespace(block_text, start, end);
+            let content_end = trim_break_whitespace(block_text, content_start, end);
+
+            if start < content_start {
+                self.layout_whitespace_range(
+                    start,
+                    content_start,
+                    segments,
+                    &mut seg_cursor,
+                    hidden_runs,
+                    &mut hidden_cursor,
+                    align,
+                )?;
+            }
+
+            if content_start < content_end {
+                collect_word_slices(
+                    content_start,
+                    content_end,
+                    segments,
+                    &mut seg_cursor,
+                    &mut cluster,
+                );
+                self.layout_word_cluster(&cluster, hidden_runs, &mut hidden_cursor, align)?;
+            }
+
+            if content_end < end {
+                self.layout_whitespace_range(
+                    content_end,
+                    end,
+                    segments,
+                    &mut seg_cursor,
+                    hidden_runs,
+                    &mut hidden_cursor,
+                    align,
+                )?;
+            }
+
+            start = end;
+        }
+
+        self.advance_hidden_up_to(block_text.len(), hidden_runs, &mut hidden_cursor);
+
+        Ok(())
+    }
+
+    fn advance_hidden_up_to(
+        &mut self,
+        block_pos: usize,
+        hidden_runs: &[(usize, &'chapter str)],
+        hidden_cursor: &mut usize,
+    ) {
+        while let Some(&(offset, text)) = hidden_runs.get(*hidden_cursor) {
+            if offset > block_pos {
+                break;
+            }
+
+            self.cursor = self.cursor.advance_text(text);
+            *hidden_cursor += 1;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_whitespace_range(
+        &mut self,
+        mut start: usize,
+        end: usize,
+        segments: &[RunSegment<'chapter>],
+        seg_cursor: &mut usize,
+        hidden_runs: &[(usize, &'chapter str)],
+        hidden_cursor: &mut usize,
+        align: TextAlign,
+    ) -> Result<(), M::Error> {
+        while start < end {
+            while *seg_cursor < segments.len() && segments[*seg_cursor].block_end <= start {
+                *seg_cursor += 1;
+            }
+
+            let seg = &segments[*seg_cursor];
+            let piece_end = end.min(seg.block_end);
+            let local_start = start - seg.block_start;
+            let local_end = piece_end - seg.block_start;
+
+            self.advance_hidden_up_to(start, hidden_runs, hidden_cursor);
+            self.layout_whitespace(seg.source, local_start, local_end, seg.style, seg.link, align)?;
+
+            start = piece_end;
+        }
+
+        Ok(())
+    }
+
+    fn layout_word_cluster(
+        &mut self,
+        cluster: &[WordSlice<'chapter>],
+        hidden_runs: &[(usize, &'chapter str)],
+        hidden_cursor: &mut usize,
+        align: TextAlign,
+    ) -> Result<(), M::Error> {
+        if let [only] = cluster {
+            self.advance_hidden_up_to(only.block_start, hidden_runs, hidden_cursor);
+            return self.layout_word(
+                only.source,
+                only.start,
+                only.end,
+                only.style,
+                only.link,
+                align,
+            );
+        }
+
+        let mut start_idx = 0usize;
+        let mut start_offset = cluster[0].start;
+
+        loop {
+            let mut total_width = 0u32;
+            for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+                let s = if i == start_idx { start_offset } else { slice.start };
+                let piece = &slice.source[s..slice.end];
+                total_width = total_width.saturating_add(self.measurer.measure_text(piece, slice.style)?);
+            }
+
+            let used = if self.line_active {
+                self.line_indent.saturating_add(self.line_width)
+            } else {
+                self.prospective_line_indent()
+            };
+
+            let available = self.viewport.width().saturating_sub(used);
+
+            if total_width <= available {
+                for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+                    let s = if i == start_idx { start_offset } else { slice.start };
+                    let piece = &slice.source[s..slice.end];
+                    let width = self.measurer.measure_text(piece, slice.style)?;
+                    self.advance_hidden_up_to(slice.block_start + (s - slice.start), hidden_runs, hidden_cursor);
+                    self.add_text_piece(
+                        slice.source,
+                        s,
+                        slice.end,
+                        width,
+                        slice.style,
+                        slice.link,
+                        align,
+                    )?;
+                }
+
+                return Ok(());
+            }
+
+            if let Some((alpha_idx, split, split_width)) =
+                self.cluster_hyphenation_break(cluster, start_idx, start_offset, available)?
+            {
+                for (i, slice) in cluster[..alpha_idx].iter().enumerate().skip(start_idx) {
+                    let s = if i == start_idx { start_offset } else { slice.start };
+                    let piece = &slice.source[s..slice.end];
+                    let width = self.measurer.measure_text(piece, slice.style)?;
+                    self.advance_hidden_up_to(slice.block_start + (s - slice.start), hidden_runs, hidden_cursor);
+                    self.add_text_piece(
+                        slice.source,
+                        s,
+                        slice.end,
+                        width,
+                        slice.style,
+                        slice.link,
+                        align,
+                    )?;
+                }
+
+                let alpha = &cluster[alpha_idx];
+                let alpha_start = if alpha_idx == start_idx {
+                    start_offset
+                } else {
+                    alpha.start
+                };
+                self.advance_hidden_up_to(
+                    alpha.block_start + (alpha_start - alpha.start),
+                    hidden_runs,
+                    hidden_cursor,
+                );
+                self.add_text_piece(
+                    alpha.source,
+                    alpha_start,
+                    split,
+                    split_width,
+                    alpha.style,
+                    alpha.link,
+                    align,
+                )?;
+
+                if let Some(piece) = self.line_items.last_mut() {
+                    piece.hyphen = true;
+                }
+
+                self.flush_line(LineEnd::Wrapped);
+
+                start_idx = alpha_idx;
+                start_offset = split;
+                continue;
+            }
+
+            if !self.line_active {
+                for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+                    let s = if i == start_idx { start_offset } else { slice.start };
+                    self.advance_hidden_up_to(
+                        slice.block_start + (s - slice.start),
+                        hidden_runs,
+                        hidden_cursor,
+                    );
+                    self.layout_oversized_word(
+                        slice.source,
+                        s,
+                        slice.end,
+                        slice.style,
+                        slice.link,
+                        align,
+                    )?;
+                }
+
+                return Ok(());
+            }
+
+            self.flush_line(LineEnd::Wrapped);
+        }
+    }
+
+    /// Hyphenates a multi-run cluster (such as `(<em>extraordinary</em>).`)
+    /// when all alphabetic characters belong to a single styled run.
+    fn cluster_hyphenation_break(
+        &mut self,
+        cluster: &[WordSlice<'chapter>],
+        start_idx: usize,
+        start_offset: usize,
+        available: u32,
+    ) -> Result<Option<(usize, usize, u32)>, M::Error> {
+        if self.settings.hyphenation().is_none() {
+            return Ok(None);
+        }
+
+        let mut alpha_idx = None;
+        for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+            let s = if i == start_idx { start_offset } else { slice.start };
+            let text = &slice.source[s..slice.end];
+            if text.chars().any(char::is_alphabetic) {
+                if alpha_idx.is_some() {
+                    return Ok(None);
+                }
+                alpha_idx = Some(i);
+            }
+        }
+
+        let Some(alpha_idx) = alpha_idx else {
+            return Ok(None);
+        };
+
+        let mut leading_width = 0u32;
+        for (i, slice) in cluster[..alpha_idx].iter().enumerate().skip(start_idx) {
+            let s = if i == start_idx { start_offset } else { slice.start };
+            let piece = &slice.source[s..slice.end];
+            leading_width = leading_width.saturating_add(self.measurer.measure_text(piece, slice.style)?);
+        }
+
+        if leading_width >= available {
+            return Ok(None);
+        }
+
+        let alpha = &cluster[alpha_idx];
+        let alpha_start = if alpha_idx == start_idx {
+            start_offset
+        } else {
+            alpha.start
+        };
+        let word = &alpha.source[alpha_start..alpha.end];
+        let remaining = available - leading_width;
+
+        let Some((split, width)) = self.hyphenation_break(word, remaining, alpha.style)? else {
+            return Ok(None);
+        };
+
+        Ok(Some((alpha_idx, alpha_start.saturating_add(split), width)))
     }
 
     fn layout_image(&mut self, image: &'chapter ChapterImage) {
@@ -342,37 +700,6 @@ where
             .push(PageItem::Image(ImageFragment::new(image, bounds)));
         self.used_height = self.used_height.saturating_add(height);
         self.block_laid_out = true;
-    }
-
-    fn layout_text_content(
-        &mut self,
-        text: &'chapter str,
-        style: TextStyle,
-        link: Option<&'chapter LinkTarget>,
-        align: TextAlign,
-    ) -> Result<(), M::Error> {
-        let mut start = 0usize;
-
-        // newlines in a run are collapsible whitespace, so mandatory breaks are
-        // treated like any other break opportunity.
-        for (end, _) in linebreaks(text) {
-            let content_start = skip_break_whitespace(text, start, end);
-            let content_end = trim_break_whitespace(text, content_start, end);
-
-            if start < content_start {
-                self.layout_whitespace(text, start, content_start, style, link, align)?;
-            }
-            if content_start < content_end {
-                self.layout_word(text, content_start, content_end, style, link, align)?;
-            }
-            if content_end < end {
-                self.layout_whitespace(text, content_end, end, style, link, align)?;
-            }
-
-            start = end;
-        }
-
-        Ok(())
     }
 
     fn layout_whitespace(
@@ -918,6 +1245,36 @@ where
         let resolved = length.resolve(u32::from(self.settings.font_size()), self.viewport.width());
 
         u32::try_from(resolved.max(0)).unwrap_or(u32::MAX)
+    }
+}
+
+fn collect_word_slices<'a>(
+    mut start: usize,
+    end: usize,
+    segments: &[RunSegment<'a>],
+    seg_cursor: &mut usize,
+    out: &mut Vec<WordSlice<'a>>,
+) {
+    out.clear();
+
+    while start < end {
+        while *seg_cursor < segments.len() && segments[*seg_cursor].block_end <= start {
+            *seg_cursor += 1;
+        }
+
+        let seg = &segments[*seg_cursor];
+        let piece_end = end.min(seg.block_end);
+
+        out.push(WordSlice {
+            source: seg.source,
+            start: start - seg.block_start,
+            end: piece_end - seg.block_start,
+            style: seg.style,
+            link: seg.link,
+            block_start: start,
+        });
+
+        start = piece_end;
     }
 }
 

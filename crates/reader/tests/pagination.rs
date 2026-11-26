@@ -1325,3 +1325,42 @@ fn fragments_say_whether_the_line_break_added_their_hyphen() {
         (String::from("aaaaaaaaaaaaaa well-"), false),
     );
 }
+
+#[test]
+fn cross_run_punctuation_wraps_with_its_word() {
+    // "aaaaaaaaaaaaaaa " is 16 wide; "word" (4) would fit in 20, but "word." (5)
+    // must wrap together so the period is not orphaned on the next line.
+    assert_eq!(
+        first_page_lines("<p>aaaaaaaaaaaaaaa <em>word</em>.</p>", 20),
+        [(0, String::from("aaaaaaaaaaaaaaa")), (1, String::from("word.")),],
+    );
+
+    // Leading and trailing punctuation in outer runs stay attached to inner runs.
+    assert_eq!(
+        first_page_lines("<p>See (<em>word</em>), next</p>", 10),
+        [
+            (0, String::from("See")),
+            (1, String::from("(word),")),
+            (2, String::from("next")),
+        ],
+    );
+
+    // Adjacent styled halves of one word stay together.
+    assert_eq!(
+        first_page_lines("<p>aaaaaaaaaaaa foo<b>bar</b></p>", 18),
+        [(0, String::from("aaaaaaaaaaaa")), (1, String::from("foobar")),],
+    );
+}
+
+#[test]
+fn cross_run_hyphenation_keeps_trailing_punctuation_attached() {
+    assert_eq!(
+        line_fragments("<p>this is <em>extraordinary</em>.</p>", hyphenating()),
+        [
+            fragment("this is ", Rect::new(0, 0, 8, 1), 0),
+            fragment("extraordi-", Rect::new(8, 0, 10, 1), 0),
+            fragment("nary", Rect::new(0, 1, 4, 1), 0),
+            fragment(".", Rect::new(4, 1, 1, 1), 0),
+        ],
+    );
+}
