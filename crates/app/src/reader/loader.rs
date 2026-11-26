@@ -590,7 +590,6 @@ where
         let _trace = async_span!(
             target: "reader.chapter",
             "page_images",
-            spine = index,
             page = landing_page_index,
             count = paths.len(),
         );
