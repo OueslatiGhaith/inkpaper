@@ -1,3 +1,6 @@
+use alloc::{vec, vec::Vec};
+use core::ops::Range;
+
 use inkpaper_epub::{
     ChapterImage, FontStyle as ReaderFontStyle, FontWeight as ReaderFontWeight, ImageDimensions,
 };
@@ -79,6 +82,50 @@ impl<'fonts> ReaderMeasurer<'fonts> {
             images,
             measure_cache: ReaderMeasureCache::default(),
         }
+    }
+
+    /// Measures the visual `(left, right)` x-bounds (relative to the start of
+    /// `text`) of each sorted, non-overlapping byte `range` in `ranges` using a
+    /// single shaping pass over `text`.
+    pub(super) fn measure_ranges(
+        &self,
+        text: &str,
+        style: ReaderTextStyle,
+        word_spacing: u32,
+        ranges: &[Range<usize>],
+    ) -> Result<Vec<Option<(u32, u32)>>, ShapeError> {
+        let mut bounds: Vec<Option<(u32, u32)>> = vec![None; ranges.len()];
+        if ranges.is_empty() {
+            return Ok(bounds);
+        }
+
+        let shaper = &self.shapers[shaper_index(style.font_weight(), style.font_style())];
+        let mut pen_x: i32 = 0;
+
+        shaper.shape_line_with(&self.fonts.registry, style.font_size(), text, "", |glyph| {
+            let start_x = pen_x.max(0) as u32;
+            let advance = glyph.advance().get();
+            let extra = if text.as_bytes().get(glyph.cluster()) == Some(&b' ') {
+                i32::try_from(word_spacing).unwrap_or(i32::MAX)
+            } else {
+                0
+            };
+            pen_x = pen_x.saturating_add(advance).saturating_add(extra);
+            let end_x = (start_x as i64 + i64::from(advance)).max(0) as u32;
+
+            let cluster = glyph.cluster();
+            let index = ranges.partition_point(|range| range.end <= cluster);
+            if let Some(range) = ranges.get(index)
+                && cluster >= range.start
+            {
+                bounds[index] = Some(match bounds[index] {
+                    Some((min_left, max_right)) => (min_left.min(start_x), max_right.max(end_x)),
+                    None => (start_x, end_x),
+                });
+            }
+        })?;
+
+        Ok(bounds)
     }
 }
 
