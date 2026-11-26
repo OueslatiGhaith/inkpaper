@@ -17,6 +17,7 @@ const EOCD_MIN_LEN: usize = 22;
 const CENTRAL_HEADER_LEN: usize = 46;
 const LOCAL_HEADER_LEN: usize = 30;
 
+const FAST_EOCD_PROBE: usize = 512;
 const MAX_EOCD_SEARCH: usize = EOCD_MIN_LEN + u16::MAX as usize;
 
 const COMPRESSION_STORED: u16 = 0;
@@ -31,15 +32,14 @@ struct Entry {
     local_header_offset: u32,
 }
 
-struct CentralEntry {
-    name: String,
+#[derive(Debug, Clone, Copy)]
+struct IndexedEntry {
     entry: Entry,
     disk_start: u16,
-    next_offset: u64,
 }
 
-impl CentralEntry {
-    fn validated_entry(&self) -> Result<Entry, ArchiveError> {
+impl IndexedEntry {
+    fn validated_entry(self) -> Result<Entry, ArchiveError> {
         if self.disk_start != 0 {
             return Err(ArchiveError::MultiDiskUnsupported);
         }
@@ -58,9 +58,7 @@ impl CentralEntry {
 pub(crate) struct Archive<S> {
     source: S,
     archive_len: u64,
-    central_directory_offset: u64,
-    central_directory_size: u64,
-    entry_count: u16,
+    entries: Vec<(String, IndexedEntry)>,
 }
 
 impl<S> Archive<S>
@@ -73,34 +71,19 @@ where
             return Err(Error::Archive(ArchiveError::EndOfCentralDirectoryMissing));
         }
 
-        let tail_len = archive_len.min(MAX_EOCD_SEARCH as u64);
-        let tail_len =
-            usize::try_from(tail_len).map_err(|_| Error::Archive(ArchiveError::SizeOverflow))?;
+        let eocd = read_eocd(&mut source, archive_len).await?;
 
-        let tail_offset = archive_len
-            .checked_sub(tail_len as u64)
-            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
-
-        let mut tail = vec![0; tail_len];
-        source
-            .read_exact_at(tail_offset, &mut tail)
-            .await
-            .map_err(Error::Source)?;
-
-        let eocd =
-            find_eocd(&tail).ok_or(Error::Archive(ArchiveError::EndOfCentralDirectoryMissing))?;
-
-        let disk = le_u16(&tail[eocd + 4..eocd + 6]);
-        let central_disk = le_u16(&tail[eocd + 6..eocd + 8]);
-        let disk_entries = le_u16(&tail[eocd + 8..eocd + 10]);
-        let entry_count = le_u16(&tail[eocd + 10..eocd + 12]);
+        let disk = le_u16(&eocd[4..6]);
+        let central_disk = le_u16(&eocd[6..8]);
+        let disk_entries = le_u16(&eocd[8..10]);
+        let entry_count = le_u16(&eocd[10..12]);
 
         if disk != 0 || central_disk != 0 || disk_entries != entry_count {
             return Err(Error::Archive(ArchiveError::MultiDiskUnsupported));
         }
 
-        let central_directory_size = le_u32(&tail[eocd + 12..eocd + 16]);
-        let central_directory_offset = le_u32(&tail[eocd + 16..eocd + 20]);
+        let central_directory_size = le_u32(&eocd[12..16]);
+        let central_directory_offset = le_u32(&eocd[16..20]);
 
         if entry_count == u16::MAX
             || central_directory_size == u32::MAX
@@ -109,20 +92,32 @@ where
             return Err(Error::Archive(ArchiveError::Zip64Unsupported));
         }
 
-        let central_directory_end = u64::from(central_directory_offset)
-            .checked_add(u64::from(central_directory_size))
+        let central_directory_offset = u64::from(central_directory_offset);
+        let central_directory_size_u64 = u64::from(central_directory_size);
+
+        let central_directory_end = central_directory_offset
+            .checked_add(central_directory_size_u64)
             .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
 
         if central_directory_end > archive_len {
             return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
         }
 
+        let central_directory_len = usize::try_from(central_directory_size)
+            .map_err(|_| Error::Archive(ArchiveError::SizeOverflow))?;
+
+        let mut central_directory = vec![0u8; central_directory_len];
+        source
+            .read_exact_at(central_directory_offset, &mut central_directory)
+            .await
+            .map_err(Error::Source)?;
+
+        let entries = parse_central_directory(&central_directory, entry_count)?;
+
         Ok(Self {
             source,
             archive_len,
-            central_directory_offset: u64::from(central_directory_offset),
-            central_directory_size: u64::from(central_directory_size),
-            entry_count,
+            entries,
         })
     }
 
@@ -130,7 +125,7 @@ where
         &mut self,
         path: &ArchivePath,
     ) -> Result<Vec<u8>, Error<S::Error>> {
-        let entry = self.find_entry(path).await?;
+        let entry = self.find_entry(path).map_err(Error::Archive)?;
         if entry.flags & 0x0001 != 0 {
             return Err(Error::Archive(ArchiveError::EncryptedEntry));
         }
@@ -210,86 +205,112 @@ where
         }
     }
 
-    pub(crate) async fn uncompressed_sizes(
-        &mut self,
+    pub(crate) fn uncompressed_sizes(
+        &self,
         paths: &[ArchivePath],
-    ) -> Result<Vec<Option<u64>>, Error<S::Error>> {
-        let mut sizes = vec![None; paths.len()];
+    ) -> Result<Vec<Option<u64>>, ArchiveError> {
+        let mut sizes = Vec::with_capacity(paths.len());
 
-        if paths.is_empty() {
-            return Ok(sizes);
-        }
-
-        let central_end = self
-            .central_directory_offset
-            .checked_add(self.central_directory_size)
-            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
-
-        let mut offset = self.central_directory_offset;
-
-        let mut remaining = paths.len();
-
-        for _ in 0..self.entry_count {
-            let central = self.read_central_entry(offset, central_end).await?;
-
-            for (index, path) in paths.iter().enumerate() {
-                if sizes[index].is_some() || central.name.as_str() != path.as_str() {
-                    continue;
+        for path in paths {
+            match self.lookup_indexed(path) {
+                Some(indexed) => {
+                    let entry = indexed.validated_entry()?;
+                    sizes.push(Some(u64::from(entry.uncompressed_size)));
                 }
-
-                let entry = central.validated_entry().map_err(Error::Archive)?;
-
-                sizes[index] = Some(u64::from(entry.uncompressed_size));
-
-                remaining = remaining.saturating_sub(1);
+                None => sizes.push(None),
             }
-
-            if remaining == 0 {
-                break;
-            }
-
-            offset = central.next_offset;
         }
 
         Ok(sizes)
     }
 
-    async fn find_entry(&mut self, path: &ArchivePath) -> Result<Entry, Error<S::Error>> {
-        let central_end = self
-            .central_directory_offset
-            .checked_add(self.central_directory_size)
-            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
+    fn lookup_indexed(&self, path: &ArchivePath) -> Option<IndexedEntry> {
+        let index = self
+            .entries
+            .binary_search_by(|(name, _)| name.as_str().cmp(path.as_str()))
+            .ok()?;
 
-        let mut offset = self.central_directory_offset;
-
-        for _ in 0..self.entry_count {
-            let central = self.read_central_entry(offset, central_end).await?;
-
-            if central.name.as_str() == path.as_str() {
-                return central.validated_entry().map_err(Error::Archive);
-            }
-
-            offset = central.next_offset;
-        }
-
-        Err(Error::Archive(ArchiveError::EntryNotFound))
+        Some(self.entries[index].1)
     }
 
-    async fn read_central_entry(
-        &mut self,
-        offset: u64,
-        central_end: u64,
-    ) -> Result<CentralEntry, Error<S::Error>> {
-        if offset
-            .checked_add(CENTRAL_HEADER_LEN as u64)
-            .is_none_or(|end| end > central_end)
-        {
-            return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
-        }
+    fn find_entry(&self, path: &ArchivePath) -> Result<Entry, ArchiveError> {
+        let indexed = self
+            .lookup_indexed(path)
+            .ok_or(ArchiveError::EntryNotFound)?;
 
-        let mut header = [0u8; CENTRAL_HEADER_LEN];
+        indexed.validated_entry()
+    }
 
-        self.read_exact(offset, &mut header).await?;
+    async fn read_exact(&mut self, offset: u64, buffer: &mut [u8]) -> Result<(), Error<S::Error>> {
+        self.source
+            .read_exact_at(offset, buffer)
+            .await
+            .map_err(Error::Source)
+    }
+}
+
+async fn read_eocd<S: ByteSource>(
+    source: &mut S,
+    archive_len: u64,
+) -> Result<[u8; EOCD_MIN_LEN], Error<S::Error>> {
+    let fast_len = archive_len.min(FAST_EOCD_PROBE as u64) as usize;
+    let fast_offset = archive_len
+        .checked_sub(fast_len as u64)
+        .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
+
+    let mut fast_buf = [0u8; FAST_EOCD_PROBE];
+    source
+        .read_exact_at(fast_offset, &mut fast_buf[..fast_len])
+        .await
+        .map_err(Error::Source)?;
+
+    if let Some(index) = find_eocd(&fast_buf[..fast_len]) {
+        let mut eocd = [0u8; EOCD_MIN_LEN];
+        eocd.copy_from_slice(&fast_buf[index..index + EOCD_MIN_LEN]);
+        return Ok(eocd);
+    }
+
+    if archive_len <= FAST_EOCD_PROBE as u64 {
+        return Err(Error::Archive(ArchiveError::EndOfCentralDirectoryMissing));
+    }
+
+    let tail_len = archive_len.min(MAX_EOCD_SEARCH as u64);
+    let tail_len =
+        usize::try_from(tail_len).map_err(|_| Error::Archive(ArchiveError::SizeOverflow))?;
+
+    let tail_offset = archive_len
+        .checked_sub(tail_len as u64)
+        .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
+
+    let mut tail = vec![0u8; tail_len];
+    source
+        .read_exact_at(tail_offset, &mut tail)
+        .await
+        .map_err(Error::Source)?;
+
+    let index =
+        find_eocd(&tail).ok_or(Error::Archive(ArchiveError::EndOfCentralDirectoryMissing))?;
+
+    let mut eocd = [0u8; EOCD_MIN_LEN];
+    eocd.copy_from_slice(&tail[index..index + EOCD_MIN_LEN]);
+    Ok(eocd)
+}
+
+fn parse_central_directory<E>(
+    central_directory: &[u8],
+    entry_count: u16,
+) -> Result<Vec<(String, IndexedEntry)>, Error<E>> {
+    let mut entries = Vec::with_capacity(usize::from(entry_count));
+    let mut offset = 0usize;
+
+    for _ in 0..entry_count {
+        let header_end = offset
+            .checked_add(CENTRAL_HEADER_LEN)
+            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
+
+        let header = central_directory
+            .get(offset..header_end)
+            .ok_or(Error::Archive(ArchiveError::InvalidCentralDirectory))?;
 
         if le_u32(&header[0..4]) != CENTRAL_HEADER_SIGNATURE {
             return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
@@ -299,55 +320,49 @@ where
         let compression = le_u16(&header[10..12]);
         let compressed_size = le_u32(&header[20..24]);
         let uncompressed_size = le_u32(&header[24..28]);
-        let name_len = le_u16(&header[28..30]);
-        let extra_len = le_u16(&header[30..32]);
-        let comment_len = le_u16(&header[32..34]);
+        let name_len = usize::from(le_u16(&header[28..30]));
+        let extra_len = usize::from(le_u16(&header[30..32]));
+        let comment_len = usize::from(le_u16(&header[32..34]));
         let disk_start = le_u16(&header[34..36]);
         let local_header_offset = le_u32(&header[42..46]);
 
-        let variable_len = u64::from(name_len)
-            .checked_add(u64::from(extra_len))
-            .and_then(|length| length.checked_add(u64::from(comment_len)))
+        let name_end = header_end
+            .checked_add(name_len)
+            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
+        let next_offset = name_end
+            .checked_add(extra_len)
+            .and_then(|value| value.checked_add(comment_len))
             .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
 
-        let next_offset = offset
-            .checked_add(CENTRAL_HEADER_LEN as u64)
-            .and_then(|value| value.checked_add(variable_len))
-            .ok_or(Error::Archive(ArchiveError::SizeOverflow))?;
-
-        if next_offset > central_end {
+        if next_offset > central_directory.len() {
             return Err(Error::Archive(ArchiveError::InvalidCentralDirectory));
         }
 
-        let mut name = vec![0u8; usize::from(name_len)];
+        let name = core::str::from_utf8(&central_directory[header_end..name_end])
+            .map_err(Error::Utf8)?;
 
-        self.read_exact(offset + CENTRAL_HEADER_LEN as u64, &mut name)
-            .await?;
-
-        let name = core::str::from_utf8(&name).map_err(Error::Utf8)?;
-
-        Ok(CentralEntry {
-            name: String::from(name),
-
-            entry: Entry {
-                flags,
-                compression,
-                compressed_size,
-                uncompressed_size,
-                local_header_offset,
+        entries.push((
+            String::from(name),
+            IndexedEntry {
+                entry: Entry {
+                    flags,
+                    compression,
+                    compressed_size,
+                    uncompressed_size,
+                    local_header_offset,
+                },
+                disk_start,
             },
+        ));
 
-            disk_start,
-            next_offset,
-        })
+        offset = next_offset;
     }
 
-    async fn read_exact(&mut self, offset: u64, buffer: &mut [u8]) -> Result<(), Error<S::Error>> {
-        self.source
-            .read_exact_at(offset, buffer)
-            .await
-            .map_err(Error::Source)
-    }
+    // Rust's slice sort is stable, so deduplicating keeps the first central entry per name.
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries.dedup_by(|later, earlier| later.0 == earlier.0);
+
+    Ok(entries)
 }
 
 fn find_eocd(tail: &[u8]) -> Option<usize> {
@@ -376,4 +391,166 @@ fn le_u16(bytes: &[u8]) -> u16 {
 
 fn le_u32(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{vec, vec::Vec};
+    use core::cell::RefCell;
+
+    use futures_lite::future;
+    use inkpaper_io::{ByteSource, SliceSource, SliceSourceError};
+
+    use super::*;
+
+    struct RecordingSource<'a> {
+        inner: SliceSource<'a>,
+        reads: &'a RefCell<Vec<(u64, usize)>>,
+    }
+
+    impl ByteSource for RecordingSource<'_> {
+        type Error = SliceSourceError;
+
+        async fn len(&mut self) -> Result<u64, Self::Error> {
+            self.inner.len().await
+        }
+
+        async fn read_exact_at(
+            &mut self,
+            offset: u64,
+            buffer: &mut [u8],
+        ) -> Result<(), Self::Error> {
+            self.reads.borrow_mut().push((offset, buffer.len()));
+            self.inner.read_exact_at(offset, buffer).await
+        }
+    }
+
+    fn build_stored_zip(entries: &[(&str, &[u8])], comment: &[u8]) -> Vec<u8> {
+        let mut archive = Vec::new();
+        let mut central = Vec::new();
+
+        for &(name, data) in entries {
+            let local_offset = u32::try_from(archive.len()).unwrap();
+            let name_bytes = name.as_bytes();
+            let size = u32::try_from(data.len()).unwrap();
+
+            archive.extend_from_slice(&LOCAL_HEADER_SIGNATURE.to_le_bytes());
+            archive.extend_from_slice(&20u16.to_le_bytes());
+            archive.extend_from_slice(&0u16.to_le_bytes());
+            archive.extend_from_slice(&COMPRESSION_STORED.to_le_bytes());
+            archive.extend_from_slice(&0u16.to_le_bytes());
+            archive.extend_from_slice(&0u16.to_le_bytes());
+            archive.extend_from_slice(&0u32.to_le_bytes());
+            archive.extend_from_slice(&size.to_le_bytes());
+            archive.extend_from_slice(&size.to_le_bytes());
+            archive.extend_from_slice(&u16::try_from(name_bytes.len()).unwrap().to_le_bytes());
+            archive.extend_from_slice(&0u16.to_le_bytes());
+            archive.extend_from_slice(name_bytes);
+            archive.extend_from_slice(data);
+
+            central.extend_from_slice(&CENTRAL_HEADER_SIGNATURE.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&COMPRESSION_STORED.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&size.to_le_bytes());
+            central.extend_from_slice(&size.to_le_bytes());
+            central.extend_from_slice(&u16::try_from(name_bytes.len()).unwrap().to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&local_offset.to_le_bytes());
+            central.extend_from_slice(name_bytes);
+        }
+
+        let central_offset = u32::try_from(archive.len()).unwrap();
+        let central_size = u32::try_from(central.len()).unwrap();
+        let count = u16::try_from(entries.len()).unwrap();
+
+        archive.extend_from_slice(&central);
+
+        archive.extend_from_slice(&EOCD_SIGNATURE.to_le_bytes());
+        archive.extend_from_slice(&0u16.to_le_bytes());
+        archive.extend_from_slice(&0u16.to_le_bytes());
+        archive.extend_from_slice(&count.to_le_bytes());
+        archive.extend_from_slice(&count.to_le_bytes());
+        archive.extend_from_slice(&central_size.to_le_bytes());
+        archive.extend_from_slice(&central_offset.to_le_bytes());
+        archive.extend_from_slice(&u16::try_from(comment.len()).unwrap().to_le_bytes());
+        archive.extend_from_slice(comment);
+
+        archive
+    }
+
+    #[test]
+    fn fast_eocd_probe_and_cached_central_directory_avoid_repeated_reads() {
+        let padding = vec![b'x'; 8 * 1024];
+        let zip = build_stored_zip(&[("a.txt", b"hello"), ("b.bin", &padding)], &[]);
+        let reads = RefCell::new(Vec::new());
+
+        let mut archive = future::block_on(Archive::open(RecordingSource {
+            inner: SliceSource::new(&zip),
+            reads: &reads,
+        }))
+        .unwrap();
+
+        // Open performs only the 512 B fast EOCD probe plus one bulk central directory read.
+        assert_eq!(reads.borrow().len(), 2);
+        assert_eq!(reads.borrow()[0].1, FAST_EOCD_PROBE);
+
+        let a = ArchivePath::new("a.txt").unwrap();
+        let b = ArchivePath::new("b.bin").unwrap();
+
+        // Size queries use the in-memory index with zero I/O.
+        reads.borrow_mut().clear();
+        assert_eq!(
+            archive.uncompressed_sizes(&[a.clone(), b.clone()]).unwrap(),
+            vec![Some(5), Some(padding.len() as u64)],
+        );
+        assert!(reads.borrow().is_empty());
+
+        // Reading an entry only reads its local header and payload (no central directory scan).
+        let data = future::block_on(archive.read_entry(&a)).unwrap();
+        assert_eq!(data, b"hello");
+        assert_eq!(reads.borrow().len(), 2);
+        assert_eq!(reads.borrow()[0].1, LOCAL_HEADER_LEN);
+        assert_eq!(reads.borrow()[1].1, 5);
+    }
+
+    #[test]
+    fn eocd_probe_falls_back_when_zip_comment_exceeds_fast_probe() {
+        let comment = vec![b'c'; 1024];
+        let zip = build_stored_zip(&[("note.txt", b"with long comment")], &comment);
+        let reads = RefCell::new(Vec::new());
+
+        let mut archive = future::block_on(Archive::open(RecordingSource {
+            inner: SliceSource::new(&zip),
+            reads: &reads,
+        }))
+        .unwrap();
+
+        // Fast 512 B probe misses, fallback full-tail read finds EOCD, then 1 CD read.
+        assert_eq!(reads.borrow().len(), 3);
+        assert_eq!(reads.borrow()[0].1, FAST_EOCD_PROBE);
+
+        let path = ArchivePath::new("note.txt").unwrap();
+        assert_eq!(
+            future::block_on(archive.read_entry(&path)).unwrap(),
+            b"with long comment",
+        );
+    }
+
+    #[test]
+    fn duplicate_entry_names_resolve_to_first_central_entry() {
+        let zip = build_stored_zip(&[("dup.txt", b"first"), ("dup.txt", b"second")], &[]);
+        let mut archive = future::block_on(Archive::open(SliceSource::new(&zip))).unwrap();
+
+        let path = ArchivePath::new("dup.txt").unwrap();
+        assert_eq!(future::block_on(archive.read_entry(&path)).unwrap(), b"first");
+    }
 }

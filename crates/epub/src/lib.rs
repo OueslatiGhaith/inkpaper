@@ -168,7 +168,10 @@ where
             }
         }
 
-        let sizes = self.archive.uncompressed_sizes(&paths).await?;
+        let sizes = self
+            .archive
+            .uncompressed_sizes(&paths)
+            .map_err(Error::Archive)?;
 
         Ok(path_indices
             .into_iter()
