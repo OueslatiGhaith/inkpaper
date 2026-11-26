@@ -14,7 +14,9 @@ pub use inkpaper_epub::{
 };
 pub use metrics::{ImageMeasurer, TextMeasurer, TextStyle};
 pub use page::{ImageFragment, Page, PageItem, PageRange, Rect, TextFragment};
-pub use pagination::{Pagination, paginate_chapter};
+pub use pagination::{
+    ChapterPageIndex, PageCheckpoint, Pagination, index_chapter, paginate_chapter, render_page,
+};
 pub use position::ReadingPosition;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
