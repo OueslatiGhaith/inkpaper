@@ -6,12 +6,17 @@ use crate::{
     BatteryStatus, ClockStatus, FrontlightState,
     components::{
         drawer_handle::{DrawerHandle, DrawerHandleProps},
-        slider::{Slider, SliderProps},
+        slider::{Slider, SliderProps, SliderScrubEvent},
     },
 };
 
 const LIGHTBULB: SvgSource = include_svg!("assets/icons/lucide/lightbulb.svg");
 const LIGHTBULB_OFF: SvgSource = include_svg!("assets/icons/lucide/lightbulb-off.svg");
+
+/// Marker event bound to the control center's handle band so swipe-up
+/// hit-testing uses the handle's laid-out bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ControlCenterHandleEvent;
 
 #[component]
 pub(crate) struct ControlCenter<'a> {
@@ -19,6 +24,10 @@ pub(crate) struct ControlCenter<'a> {
     clock: Option<ClockStatus>,
     reader_title: Option<&'a str>,
     panel: Entity<FrontlightPanel>,
+    on_close: Listener<ActivateEvent>,
+    on_swallow_activate: Listener<ActivateEvent>,
+    on_swallow_scrub: Listener<SliderScrubEvent>,
+    on_handle: Listener<ControlCenterHandleEvent>,
 }
 
 impl RenderOnce for ControlCenter<'_> {
@@ -51,10 +60,18 @@ impl RenderOnce for ControlCenter<'_> {
         let battery_high = battery_percent.is_some_and(|percent| percent > 70);
 
         rsx! {
-            <div class="absolute left-0 top-0 w-[480px] h-[800px]">
+            <div
+                id="control-center-overlay"
+                on:SliderScrubEvent={self.on_swallow_scrub}
+                class="absolute left-0 top-0 w-full h-full flex flex-col"
+            >
                 // Top-anchored sheet. The quick-action bar is omitted
                 // until those actions are real InkPaper features.
-                <div class="absolute left-0 top-0 w-[480px] h-[382px] bg-white">
+                <div
+                    id="control-center-sheet"
+                    on:activate={self.on_swallow_activate}
+                    class="relative w-full h-[382px] bg-white"
+                >
                     // Lyra header: 5 px top padding, 84 px header.
                     <div class="absolute left-0 top-[5px] w-full h-[84px]">
                         {#if let Some(clock_label) = clock_label}
@@ -102,10 +119,21 @@ impl RenderOnce for ControlCenter<'_> {
 
                     <div class="absolute left-0 bottom-0 w-full h-[2px] bg-black" />
 
-                    <div class="absolute left-0 bottom-4 w-full flex justify-center">
+                    <div
+                        id="control-center-handle"
+                        on:activate={self.on_close}
+                        on:ControlCenterHandleEvent={self.on_handle}
+                        class="absolute left-0 bottom-0 w-full h-8 flex items-center justify-center"
+                    >
                         <DrawerHandle />
                     </div>
                 </div>
+
+                <div
+                    id="control-center-backdrop"
+                    on:activate={self.on_close}
+                    class="w-full flex-1"
+                />
             </div>
         }
     }
@@ -121,11 +149,60 @@ impl FrontlightPanel {
     pub(crate) const fn new(frontlight: Entity<FrontlightState>) -> Self {
         Self { frontlight }
     }
+
+    fn change(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        update: impl FnOnce(&mut FrontlightState) -> bool,
+    ) {
+        self.frontlight.update(cx, |frontlight, cx| {
+            if update(frontlight) {
+                cx.notify();
+            }
+        });
+    }
+
+    fn toggle(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.change(cx, FrontlightState::toggle);
+    }
+
+    fn decrease_brightness(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.change(cx, |frontlight| frontlight.adjust_brightness(-1));
+    }
+
+    fn increase_brightness(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.change(cx, |frontlight| frontlight.adjust_brightness(1));
+    }
+
+    fn scrub_brightness(&mut self, event: &SliderScrubEvent, cx: &mut Context<'_, Self>) {
+        let value = event.value().max(1);
+        self.change(cx, |frontlight| frontlight.set_brightness(value));
+    }
+
+    fn decrease_warmth(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.change(cx, |frontlight| frontlight.adjust_warmth(-1));
+    }
+
+    fn increase_warmth(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
+        self.change(cx, |frontlight| frontlight.adjust_warmth(1));
+    }
+
+    fn scrub_warmth(&mut self, event: &SliderScrubEvent, cx: &mut Context<'_, Self>) {
+        let value = event.value();
+        self.change(cx, |frontlight| frontlight.set_warmth(value));
+    }
 }
 
 impl Render for FrontlightPanel {
     fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let setting = self.frontlight.read(cx).setting();
+        let on_toggle = cx.listener(Self::toggle);
+        let on_decrease_brightness = cx.listener(Self::decrease_brightness);
+        let on_increase_brightness = cx.listener(Self::increase_brightness);
+        let on_scrub_brightness = cx.listener(Self::scrub_brightness);
+        let on_decrease_warmth = cx.listener(Self::decrease_warmth);
+        let on_increase_warmth = cx.listener(Self::increase_warmth);
+        let on_scrub_warmth = cx.listener(Self::scrub_warmth);
 
         let brightness_label = format!("Brightness  {}%", setting.brightness());
         let warmth_label = format!("Warmth  {}%", setting.warmth());
@@ -144,7 +221,11 @@ impl Render for FrontlightPanel {
                         {brightness_label}
                     </text>
 
-                    <div class="w-14 h-14 flex items-center justify-center">
+                    <div
+                        id="control-center-frontlight-toggle"
+                        on:activate={on_toggle}
+                        class="w-14 h-14 flex items-center justify-center"
+                    >
                         {
                             svg(lightbulb)
                                 .size(Size::new(px(28), px(28)))
@@ -158,8 +239,9 @@ impl Render for FrontlightPanel {
                 <Slider
                     id="control-center-brightness"
                     value={setting.brightness()}
-                    on_decrease={None}
-                    on_increase={None}
+                    on_decrease={Some(on_decrease_brightness)}
+                    on_increase={Some(on_increase_brightness)}
+                    on_scrub={Some(on_scrub_brightness)}
                 />
 
                 <div class="h-4" />
@@ -176,8 +258,9 @@ impl Render for FrontlightPanel {
                 <Slider
                     id="control-center-warmth"
                     value={setting.warmth()}
-                    on_decrease={None}
-                    on_increase={None}
+                    on_decrease={Some(on_decrease_warmth)}
+                    on_increase={Some(on_increase_warmth)}
+                    on_scrub={Some(on_scrub_warmth)}
                 />
 
                 // takeTop(..., spaceLg) + final screen.spacer(spaceLg).

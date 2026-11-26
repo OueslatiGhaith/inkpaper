@@ -4,7 +4,7 @@ use super::{InkPaperApp, Screen};
 use crate::{
     BatteryStatus, ClockPreferences, ClockStatus, ClockSyncFailure, FrontlightPreferences,
     FrontlightState, UtcOffset,
-    screens::clock_settings::{StepTimezone, TimezoneView},
+    screens::clock_settings::{TimezoneEvent, TimezoneView},
 };
 
 impl InkPaperApp {
@@ -65,15 +65,28 @@ impl InkPaperApp {
         }
     }
 
-    /// Moves the timezone by the clock settings' slider buttons, and saves it.
-    pub(crate) fn on_step_timezone(
+    /// Applies button steps or track scrubbing from the clock settings'
+    /// timezone slider.
+    pub(crate) fn on_timezone_event(
         &mut self,
         _: Entity<TimezoneView>,
-        &StepTimezone(quarters): &StepTimezone,
+        event: &TimezoneEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        let offset = self.clock.utc_offset().step(quarters);
-        self.set_utc_offset(offset, cx);
+        match *event {
+            TimezoneEvent::Step(quarters) => {
+                let offset = self.clock.utc_offset().step(quarters);
+                self.set_utc_offset(offset, cx);
+            }
+            TimezoneEvent::Scrub {
+                offset,
+                commit: false,
+            } => self.preview_utc_offset(offset, cx),
+            TimezoneEvent::Scrub {
+                offset,
+                commit: true,
+            } => self.set_utc_offset(offset, cx),
+        }
     }
 
     /// Saves a timezone, rendering again what [`Self::preview_utc_offset`] does.
@@ -83,11 +96,6 @@ impl InkPaperApp {
         {
             timezone.notify(cx);
         }
-    }
-
-    /// Saves a timezone left by a drag. Returns whether there was one.
-    pub(crate) fn commit_utc_offset(&mut self) -> bool {
-        self.clock.commit()
     }
 
     pub(crate) fn activate_sync_clock(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {

@@ -130,6 +130,8 @@ pub struct InkPaperApp {
     /// set once the screen's own long press took the current touch, so its
     /// moves and release still go to the screen
     pointer_held: bool,
+    /// slider track currently being scrubbed, with its laid-out screen bounds
+    active_slider: Option<(EventTarget, Rect)>,
     pub(crate) file_transfer: FileTransferState,
 }
 
@@ -170,6 +172,7 @@ impl InkPaperApp {
             toasts,
             pointer_captured: false,
             pointer_held: false,
+            active_slider: None,
             file_transfer: FileTransferState::default(),
         }
     }
@@ -194,6 +197,21 @@ impl InkPaperApp {
         runtime: &mut impl ResourceRuntimeApi<'resource>,
     ) -> Result<(), FontRegistryError> {
         crate::typography::register(runtime)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_clock_settings(&mut self, cx: &mut Context<'_, Self>) {
+        self.open_screen(Screen::ClockSettings, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn is_control_center_open(&self) -> bool {
+        self.control_center.is_open()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn frontlight_setting(&self, cx: &Context<'_, Self>) -> crate::FrontlightSetting {
+        self.frontlight.read(cx).setting()
     }
 }
 
@@ -223,6 +241,10 @@ impl Render for InkPaperApp {
                         clock={clock}
                         reader_title={(self.screen() == Screen::Reader).then(|| self.reader.title())}
                         panel={self.frontlight_panel}
+                        on_close={cx.listener(Self::activate_close_control_center)}
+                        on_swallow_activate={cx.listener(Self::ignore_activate)}
+                        on_swallow_scrub={cx.listener(Self::ignore_slider_scrub)}
+                        on_handle={cx.listener(Self::ignore_control_center_handle)}
                     />
                 {/if}
 
