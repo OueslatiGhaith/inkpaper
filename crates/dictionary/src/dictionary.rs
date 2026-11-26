@@ -154,7 +154,7 @@ where
 
         let mut data = vec![0; size.min(MAX_DEFINITION_BYTES) as usize];
 
-        match &self.dictzip {
+        match &mut self.dictzip {
             Some(dictzip) => {
                 dictzip
                     .read(&mut self.data, u64::from(offset), &mut data)

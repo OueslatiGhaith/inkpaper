@@ -34,6 +34,14 @@ pub(crate) struct DictZip {
     chunk_offsets: Vec<u64>,
     /// gzip's size of the inflated data
     len: u64,
+    /// reusable inflate state, allocated lazily on the first read
+    decompressor: Option<Box<DecompressorOxide>>,
+    /// reusable buffer for compressed chunk bytes
+    compressed_buf: Vec<u8>,
+    /// reusable buffer holding the last inflated chunk
+    chunk_buf: Vec<u8>,
+    /// `(chunk_index, inflated_len)` of the chunk currently stored in `chunk_buf`
+    cached_chunk: Option<(usize, usize)>,
 }
 
 impl DictZip {
@@ -101,6 +109,10 @@ impl DictZip {
             chunk_len: u32::from(chunk_len),
             chunk_offsets,
             len: u64::from(u32::from_le_bytes(size)),
+            decompressor: None,
+            compressed_buf: Vec::new(),
+            chunk_buf: Vec::new(),
+            cached_chunk: None,
         }))
     }
 
@@ -110,7 +122,7 @@ impl DictZip {
 
     /// Inflates the chunks holding `out.len()` bytes from `offset` into `out`.
     pub async fn read<S>(
-        &self,
+        &mut self,
         source: &mut S,
         offset: u64,
         out: &mut [u8],
@@ -125,38 +137,9 @@ impl DictZip {
         let chunk_len = u64::from(self.chunk_len);
         let end = offset + out.len() as u64;
 
-        let mut decompressor = Box::<DecompressorOxide>::default();
-        let mut compressed = Vec::new();
-        let mut chunk = vec![0; self.chunk_len as usize];
-
         for index in offset / chunk_len..=(end - 1) / chunk_len {
             let index = index as usize;
-
-            let (Some(&start), Some(&next)) = (
-                self.chunk_offsets.get(index),
-                self.chunk_offsets.get(index + 1),
-            ) else {
-                return Err(Error::MalformedDictZip);
-            };
-
-            compressed.resize((next - start) as usize, 0);
-            read(source, self.data_start + start, &mut compressed).await?;
-
-            // a chunk ends in a full flush, not the stream's last block, so it
-            // inflates to its end wanting more
-            decompressor.init();
-
-            let (status, _, inflated) = decompress(
-                &mut decompressor,
-                &compressed,
-                &mut chunk,
-                0,
-                TINFL_FLAG_HAS_MORE_INPUT | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF,
-            );
-
-            if (status as i8) < 0 {
-                return Err(Error::Inflate);
-            }
+            let inflated = self.load_chunk(source, index).await?;
 
             let chunk_start = index as u64 * chunk_len;
             let from = offset.max(chunk_start);
@@ -167,11 +150,64 @@ impl DictZip {
             }
 
             out[(from - offset) as usize..(to - offset) as usize].copy_from_slice(
-                &chunk[(from - chunk_start) as usize..(to - chunk_start) as usize],
+                &self.chunk_buf[(from - chunk_start) as usize..(to - chunk_start) as usize],
             );
         }
 
         Ok(())
+    }
+
+    /// Ensures chunk `index` is inflated in `self.chunk_buf` and returns its
+    /// inflated byte length.
+    async fn load_chunk<S>(&mut self, source: &mut S, index: usize) -> Result<usize, Error<S::Error>>
+    where
+        S: ByteSource,
+    {
+        if let Some((cached_index, inflated)) = self.cached_chunk
+            && cached_index == index
+        {
+            return Ok(inflated);
+        }
+
+        // Invalidate before touching `chunk_buf` so a failed read/inflate
+        // never leaves stale cache metadata behind.
+        self.cached_chunk = None;
+
+        let (Some(&start), Some(&next)) = (
+            self.chunk_offsets.get(index),
+            self.chunk_offsets.get(index + 1),
+        ) else {
+            return Err(Error::MalformedDictZip);
+        };
+
+        self.compressed_buf.resize((next - start) as usize, 0);
+        read(source, self.data_start + start, &mut self.compressed_buf).await?;
+
+        self.chunk_buf.resize(self.chunk_len as usize, 0);
+
+        let decompressor = self
+            .decompressor
+            .get_or_insert_with(Box::<DecompressorOxide>::default);
+
+        // a chunk ends in a full flush, not the stream's last block, so it
+        // inflates to its end wanting more
+        decompressor.init();
+
+        let (status, _, inflated) = decompress(
+            decompressor,
+            &self.compressed_buf,
+            &mut self.chunk_buf,
+            0,
+            TINFL_FLAG_HAS_MORE_INPUT | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF,
+        );
+
+        if (status as i8) < 0 {
+            return Err(Error::Inflate);
+        }
+
+        self.cached_chunk = Some((index, inflated));
+
+        Ok(inflated)
     }
 }
 

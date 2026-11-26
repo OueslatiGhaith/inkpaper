@@ -1,10 +1,30 @@
 mod support;
 
+use std::cell::Cell;
+
 use futures_lite::future;
 use inkpaper_dictionary::{Definition, Dictionary, DictionaryInfo, Error};
-use inkpaper_io::{SliceSource, SliceSourceError};
+use inkpaper_io::{ByteSource, SliceSource, SliceSourceError};
 
 use support::{GzipHeader, StarDict, dictzip, stardict};
+
+struct CountingSource<'a> {
+    source: SliceSource<'a>,
+    calls: &'a Cell<usize>,
+}
+
+impl ByteSource for CountingSource<'_> {
+    type Error = SliceSourceError;
+
+    async fn len(&mut self) -> Result<u64, Self::Error> {
+        self.source.len().await
+    }
+
+    async fn read_exact_at(&mut self, offset: u64, buffer: &mut [u8]) -> Result<(), Self::Error> {
+        self.calls.set(self.calls.get() + 1);
+        self.source.read_exact_at(offset, buffer).await
+    }
+}
 
 fn open<'a>(
     dictionary: &'a StarDict,
@@ -142,4 +162,78 @@ fn reports_a_damaged_chunk() {
         future::block_on(opened.lookup("word0000")),
         Err(Error::Inflate),
     ));
+}
+
+#[test]
+fn caches_the_last_inflated_chunk() {
+    let (words, definitions) = sentences(200);
+    let entries: Vec<(&str, &[u8])> = words
+        .iter()
+        .zip(&definitions)
+        .map(|(word, definition)| (word.as_str(), definition.as_bytes()))
+        .collect();
+
+    let dictionary = stardict(Some("m"), &entries);
+    let compressed = dictzip(&dictionary.dict, 1_000, &GzipHeader::default());
+
+    let idx_calls = Cell::new(0);
+    let data_calls = Cell::new(0);
+    let info = DictionaryInfo::parse(dictionary.ifo.as_bytes()).unwrap();
+    let mut opened = future::block_on(Dictionary::open(
+        info,
+        CountingSource {
+            source: SliceSource::new(&dictionary.idx),
+            calls: &idx_calls,
+        },
+        CountingSource {
+            source: SliceSource::new(&compressed),
+            calls: &data_calls,
+        },
+    ))
+    .unwrap();
+
+    data_calls.set(0);
+
+    // Adjacent words in chunk 0: first read inflates chunk 0, second hits the cache.
+    assert_eq!(
+        future::block_on(opened.lookup("word0000"))
+            .unwrap()
+            .unwrap()
+            .fields()[0]
+            .text(),
+        definitions[0],
+    );
+    assert_eq!(data_calls.get(), 1);
+
+    assert_eq!(
+        future::block_on(opened.lookup("word0001"))
+            .unwrap()
+            .unwrap()
+            .fields()[0]
+            .text(),
+        definitions[1],
+    );
+    assert_eq!(data_calls.get(), 1);
+
+    // Jumping to a later chunk inflates once, then a nearby word hits the updated cache.
+    assert_eq!(
+        future::block_on(opened.lookup("word0198"))
+            .unwrap()
+            .unwrap()
+            .fields()[0]
+            .text(),
+        definitions[198],
+    );
+    let calls_after_jump = data_calls.get();
+    assert!(calls_after_jump >= 2);
+
+    assert_eq!(
+        future::block_on(opened.lookup("word0199"))
+            .unwrap()
+            .unwrap()
+            .fields()[0]
+            .text(),
+        definitions[199],
+    );
+    assert_eq!(data_calls.get(), calls_after_jump);
 }
