@@ -112,6 +112,10 @@ impl<
         self.images.register_owned(image)
     }
 
+    pub fn unregister_image(&mut self, id: ImageId) -> bool {
+        self.images.unregister(id)
+    }
+
     #[cfg(feature = "alloc")]
     pub fn clear_owned_images(&mut self) {
         self.images.clear_owned();

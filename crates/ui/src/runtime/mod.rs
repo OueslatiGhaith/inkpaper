@@ -5,7 +5,7 @@ use alloc::boxed::Box;
 
 use crate::{
     ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
-    EntityId, EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena,
+    EntityId, EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageId,
     ImageRegistryError, ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId,
     Offset, PaintError, PaintReport, PaintResources, Painter, Point, Rect, ReleaseError, Render,
     RenderInvalidation, Size, TextMeasurer,
@@ -1393,6 +1393,16 @@ impl<
         self.all_dirty.set(true);
 
         Ok(source)
+    }
+
+    pub fn unregister_image(&mut self, id: ImageId) -> bool {
+        let removed = self.resources.unregister_image(id);
+
+        if removed {
+            self.all_dirty.set(true);
+        }
+
+        removed
     }
 
     #[cfg(feature = "alloc")]

@@ -139,3 +139,44 @@ fn clearing_owned_images_preserves_borrowed_images_and_invalidates_old_sources()
         Some(Color::BLUE),
     );
 }
+
+#[test]
+fn unregistering_an_image_frees_its_slot_without_disturbing_others() {
+    let first = SolidImage {
+        size: Size::new(px(1), px(1)),
+        color: Color::RED,
+    };
+    let second = SolidImage {
+        size: Size::new(px(2), px(2)),
+        color: Color::GREEN,
+    };
+    let third = SolidImage {
+        size: Size::new(px(3), px(3)),
+        color: Color::BLUE,
+    };
+
+    let mut registry = ImageRegistry::<2>::default();
+    let first_source = registry.register(&first).unwrap();
+    let second_source = registry.register(&second).unwrap();
+    assert_eq!(registry.register(&third), Err(ImageRegistryError::Full));
+
+    assert!(registry.unregister(first_source.id()));
+    assert!(!registry.unregister(first_source.id()));
+    assert_eq!(registry.len(), 1);
+    assert!(registry.get(first_source.id()).is_none());
+    assert_eq!(
+        registry.get(second_source.id()).unwrap().pixel(0, 0),
+        Some(Color::GREEN),
+    );
+
+    // Reusing the freed slot bumps its generation so the old handle stays invalid.
+    let third_source = registry.register(&third).unwrap();
+    assert_ne!(third_source.id(), first_source.id());
+    assert!(registry.get(first_source.id()).is_none());
+    assert_eq!(
+        registry.get(third_source.id()).unwrap().pixel(0, 0),
+        Some(Color::BLUE),
+    );
+    assert!(!registry.unregister(first_source.id()));
+    assert_eq!(registry.len(), 2);
+}

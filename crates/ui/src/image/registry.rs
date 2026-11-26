@@ -74,6 +74,27 @@ impl<'image, const IMAGES: usize> ImageRegistry<'image, IMAGES> {
         self.insert(ImageRegistryEntry::Owned(image))
     }
 
+    pub fn unregister(&mut self, id: ImageId) -> bool {
+        let index = id.index();
+
+        if self.generations.get(index).copied() != Some(id.generation()) {
+            return false;
+        }
+
+        let Some(slot) = self.images.get_mut(index) else {
+            return false;
+        };
+
+        if slot.take().is_none() {
+            return false;
+        }
+
+        self.generations[index] = self.generations[index].wrapping_add(1);
+        self.len -= 1;
+
+        true
+    }
+
     #[cfg(feature = "alloc")]
     pub fn clear_owned(&mut self) {
         for (index, image) in self.images.iter_mut().enumerate() {

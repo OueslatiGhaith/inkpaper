@@ -3,9 +3,9 @@ use alloc::boxed::Box;
 
 use crate::{
     Context, DamageRegion, ElementId, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
-    FontRegistryError, FrameBuildError, FramePhase, ImageRegistryError, ImageResource, ImageSource,
-    Offset, PaintError, PaintReport, PaintResources, Painter, Point, Runtime, RuntimeResources,
-    Size, TextMeasurer, callback::ListenerInvokeError,
+    FontRegistryError, FrameBuildError, FramePhase, ImageId, ImageRegistryError, ImageResource,
+    ImageSource, Offset, PaintError, PaintReport, PaintResources, Painter, Point, Runtime,
+    RuntimeResources, Size, TextMeasurer, callback::ListenerInvokeError,
 };
 
 /// application-facing runtime operations.
@@ -80,6 +80,8 @@ pub trait ResourceRuntimeApi<'resource> {
         &mut self,
         image: Box<dyn ImageResource>,
     ) -> Result<ImageSource, ImageRegistryError>;
+
+    fn unregister_image(&mut self, id: ImageId) -> bool;
 
     #[cfg(feature = "alloc")]
     fn clear_owned_images(&mut self);
@@ -222,6 +224,10 @@ impl<
         image: Box<dyn ImageResource>,
     ) -> Result<ImageSource, ImageRegistryError> {
         self.register_owned_image(image)
+    }
+
+    fn unregister_image(&mut self, id: ImageId) -> bool {
+        self.unregister_image(id)
     }
 
     #[cfg(feature = "alloc")]
