@@ -1,5 +1,6 @@
 use futures_lite::future;
-use inkpaper_epub::{Epub, SliceSource};
+use inkpaper_epub::Epub;
+use inkpaper_io::SliceSource;
 
 use support::build_stored_zip;
 

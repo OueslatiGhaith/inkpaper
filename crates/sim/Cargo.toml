@@ -13,5 +13,5 @@ embedded-graphics = { workspace = true }
 embedded-graphics-simulator = { workspace = true }
 futures-lite = { workspace = true }
 inkpaper-app = { path = "../app" }
+inkpaper-io = { path = "../io" }
 inkpaper-ui = { path = "../ui", features = ["embedded-graphics", "ttf"] }
-inkpaper-epub = { path = "../epub" }

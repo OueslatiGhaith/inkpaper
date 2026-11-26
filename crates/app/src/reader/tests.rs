@@ -1,6 +1,7 @@
 use alloc::{format, string::String, vec::Vec};
 use futures_lite::future;
-use inkpaper_epub::{Epub, SliceSource, SpineIndex};
+use inkpaper_epub::{Epub, SpineIndex};
+use inkpaper_io::SliceSource;
 use inkpaper_reader::PageItem;
 
 use crate::{

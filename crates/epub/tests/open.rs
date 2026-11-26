@@ -1,8 +1,9 @@
 use futures_lite::future;
 use inkpaper_epub::{
     ArchivePath, BlockKind, BookLocation, ContentOffset, Epub, FontStyle, FontWeight, Inline,
-    SliceSource, SpineIndex, TextAlign,
+    SpineIndex, TextAlign,
 };
+use inkpaper_io::SliceSource;
 
 use support::{DEFLATED, STORED, ZipEntry, build_zip};
 

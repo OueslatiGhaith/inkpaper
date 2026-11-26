@@ -14,7 +14,6 @@ mod location;
 mod navigation;
 mod package;
 mod path;
-mod source;
 mod xhtml;
 mod xml;
 
@@ -23,11 +22,11 @@ pub use css::{
 };
 pub use error::{ArchiveError, ContainerError, Error, NavigationError, PackageError, XhtmlError};
 pub use image::ImageDimensions;
+pub use inkpaper_io::ByteSource;
 pub use location::{BookLocation, ContentOffset, SpineIndex};
 pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};
 pub use path::{ArchivePath, PathError};
-pub use source::{EpubSource, SliceSource, SliceSourceError};
 pub use xhtml::{
     BlockKind, Chapter, ChapterBlock, ChapterImage, Inline, InlineStyle, LinkTarget, StyleNode,
     StyleNodeId, StylesheetSource, TextRun,
@@ -53,7 +52,7 @@ pub struct Epub<S> {
 
 impl<S> Epub<S>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     pub async fn open(source: S) -> Result<Self, Error<S::Error>> {
         let mut archive = Archive::open(source).await?;

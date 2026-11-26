@@ -1,10 +1,10 @@
 use alloc::{string::String, vec, vec::Vec};
+use inkpaper_io::ByteSource;
 use miniz_oxide::inflate::decompress_to_vec_with_limit;
 
 use crate::{
     error::{ArchiveError, Error},
     path::ArchivePath,
-    source::EpubSource,
 };
 
 const EOCD_SIGNATURE: u32 = 0x0605_4b50;
@@ -65,7 +65,7 @@ pub(crate) struct Archive<S> {
 
 impl<S> Archive<S>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     pub(crate) async fn open(mut source: S) -> Result<Self, Error<S::Error>> {
         let archive_len = source.len().await.map_err(Error::Source)?;

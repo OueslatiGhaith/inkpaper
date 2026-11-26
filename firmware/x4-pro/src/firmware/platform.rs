@@ -4,7 +4,7 @@ use inkpaper_app::{
     AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials, WifiJoinPlan,
     WifiJoinToken,
 };
-use inkpaper_epub::EpubSource;
+use inkpaper_io::ByteSource;
 
 use crate::firmware::{
     storage::{self, MAX_RANDOM_ACCESS_READ_BYTES, RandomAccessHandle, StorageError},
@@ -35,7 +35,7 @@ impl X4RandomAccessSource {
     }
 }
 
-impl EpubSource for X4RandomAccessSource {
+impl ByteSource for X4RandomAccessSource {
     type Error = StorageError;
 
     async fn len(&mut self) -> Result<u64, Self::Error> {

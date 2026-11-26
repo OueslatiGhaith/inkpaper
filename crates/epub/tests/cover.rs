@@ -1,5 +1,6 @@
 use futures_lite::future;
-use inkpaper_epub::{ArchivePath, Epub, SliceSource};
+use inkpaper_epub::{ArchivePath, Epub};
+use inkpaper_io::SliceSource;
 
 fn cover_image(bytes: &[u8]) -> Option<ArchivePath> {
     let mut epub = future::block_on(Epub::open(SliceSource::new(bytes))).unwrap();

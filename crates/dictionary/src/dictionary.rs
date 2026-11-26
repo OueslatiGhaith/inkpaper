@@ -1,6 +1,6 @@
 use alloc::{string::String, vec};
 
-use inkpaper_epub::EpubSource;
+use inkpaper_io::ByteSource;
 
 use crate::{
     definition::{Definition, parse_fields},
@@ -32,7 +32,7 @@ pub struct Dictionary<S> {
 
 impl<S> Dictionary<S>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     pub async fn open(
         info: DictionaryInfo,

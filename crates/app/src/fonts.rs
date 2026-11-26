@@ -343,7 +343,7 @@ fn pick(
 mod tests {
     use alloc::{collections::BTreeMap, vec};
     use futures_lite::future;
-    use inkpaper_epub::SliceSource;
+    use inkpaper_io::SliceSource;
 
     use crate::{DeviceKey, FrontlightSetting, WifiCredentials, WifiJoinPlan, WifiJoinToken};
 

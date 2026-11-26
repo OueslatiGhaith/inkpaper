@@ -4,7 +4,8 @@
 
 use alloc::{string::String, vec::Vec};
 
-use inkpaper_epub::{Epub, EpubSource, Error as EpubError};
+use inkpaper_epub::{Epub, Error as EpubError};
+use inkpaper_io::ByteSource;
 use inkpaper_ui::ImageSource;
 use minicbor::{Decode, Encode};
 
@@ -121,7 +122,7 @@ impl BookCover {
 
 /// The cover `epub` declares, decoded. `Ok(None)` when it declares none or
 /// the image can't be decoded; an error when the book couldn't be read.
-pub(crate) async fn read_cover_image<S: EpubSource>(
+pub(crate) async fn read_cover_image<S: ByteSource>(
     epub: &mut Epub<S>,
 ) -> Result<Option<GrayImage>, EpubError<S::Error>> {
     let Some(path) = epub.cover_image().await? else {

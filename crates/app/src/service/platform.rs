@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
-use inkpaper_epub::EpubSource;
+use inkpaper_io::ByteSource;
 
 use crate::{
     BrowseEntry, DeviceKey, FrontlightSetting, WifiCredentials, WifiJoinPlan, WifiJoinToken,
@@ -52,7 +52,7 @@ impl PlatformEntry {
 #[allow(async_fn_in_trait)]
 pub trait AppPlatform {
     type Error;
-    type RandomAccessSource: EpubSource;
+    type RandomAccessSource: ByteSource;
 
     async fn list_directory(&mut self, path: &str) -> Result<Vec<PlatformEntry>, Self::Error>;
 

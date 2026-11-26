@@ -13,6 +13,7 @@ hinting = ["inkpaper-ui/hinting"]
 defmt = { workspace = true, optional = true }
 inkpaper-dictionary = { path = "../dictionary" }
 inkpaper-epub = { path = "../epub" }
+inkpaper-io = { path = "../io" }
 inkpaper-reader = { path = "../reader" }
 inkpaper-trace = { path = "../trace" }
 inkpaper-ui = { path = "../ui", features = ["alloc"] }

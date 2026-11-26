@@ -2211,6 +2211,7 @@ dependencies = [
  "futures-lite",
  "inkpaper-dictionary",
  "inkpaper-epub",
+ "inkpaper-io",
  "inkpaper-reader",
  "inkpaper-trace",
  "inkpaper-ui",
@@ -2225,7 +2226,7 @@ name = "inkpaper-dictionary"
 version = "0.1.0"
 dependencies = [
  "futures-lite",
- "inkpaper-epub",
+ "inkpaper-io",
  "miniz_oxide 0.9.1",
 ]
 
@@ -2234,8 +2235,16 @@ name = "inkpaper-epub"
 version = "0.1.0"
 dependencies = [
  "futures-lite",
+ "inkpaper-io",
  "miniz_oxide 0.9.1",
  "xmlparser",
+]
+
+[[package]]
+name = "inkpaper-io"
+version = "0.1.0"
+dependencies = [
+ "futures-lite",
 ]
 
 [[package]]
@@ -2245,6 +2254,7 @@ dependencies = [
  "futures-lite",
  "hypher",
  "inkpaper-epub",
+ "inkpaper-io",
  "miniz_oxide 0.9.1",
  "unicode-linebreak",
 ]
@@ -2257,7 +2267,7 @@ dependencies = [
  "embedded-graphics-simulator",
  "futures-lite",
  "inkpaper-app",
- "inkpaper-epub",
+ "inkpaper-io",
  "inkpaper-ui",
 ]
 
@@ -2360,7 +2370,7 @@ dependencies = [
  "hadris-fat",
  "hadris-io",
  "inkpaper-app",
- "inkpaper-epub",
+ "inkpaper-io",
  "inkpaper-trace",
  "inkpaper-ui",
  "inkpaper-ui-eink",

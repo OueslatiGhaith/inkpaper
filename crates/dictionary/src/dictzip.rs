@@ -1,6 +1,6 @@
 use alloc::{boxed::Box, vec, vec::Vec};
 
-use inkpaper_epub::EpubSource;
+use inkpaper_io::ByteSource;
 use miniz_oxide::inflate::core::{
     DecompressorOxide, decompress,
     inflate_flags::{TINFL_FLAG_HAS_MORE_INPUT, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF},
@@ -40,7 +40,7 @@ impl DictZip {
     /// Reads the chunk table of a gzip `source`, or `None` when it isn't gzip.
     pub async fn parse<S>(source: &mut S, file_len: u64) -> Result<Option<Self>, Error<S::Error>>
     where
-        S: EpubSource,
+        S: ByteSource,
     {
         // the fixed header, the extra field's length, and the inflated size at the end
         if file_len < FIXED_HEADER_BYTES + 2 + 4 {
@@ -116,7 +116,7 @@ impl DictZip {
         out: &mut [u8],
     ) -> Result<(), Error<S::Error>>
     where
-        S: EpubSource,
+        S: ByteSource,
     {
         if out.is_empty() {
             return Ok(());
@@ -220,7 +220,7 @@ async fn skip_string<S>(
     mut offset: u64,
 ) -> Result<u64, Error<S::Error>>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     let mut window = [0; STRING_WINDOW_BYTES];
 
@@ -243,7 +243,7 @@ where
 
 async fn read<S>(source: &mut S, offset: u64, buffer: &mut [u8]) -> Result<(), Error<S::Error>>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     source
         .read_exact_at(offset, buffer)
