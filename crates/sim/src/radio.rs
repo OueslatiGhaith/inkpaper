@@ -3,7 +3,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use inkpaper_app::{ClockSyncFailure, InkPaperApp, WifiJoinFailure, WifiJoinPlan, WifiNetwork};
+use inkpaper_app::{
+    ClockSyncFailure, InkPaperApp, WifiJoinFailure, WifiJoinPlan, WifiJoinToken, WifiNetwork,
+};
 use inkpaper_ui::prelude::*;
 
 // long enough to see the scanning and syncing states
@@ -18,7 +20,7 @@ pub(super) struct SimulatedRadio {
     scan: Cell<Option<Instant>>,
     clock_sync: Cell<Option<Instant>>,
     clock_sync_plan: RefCell<Option<WifiJoinPlan>>,
-    join: Cell<Option<Instant>>,
+    join: Cell<Option<(Instant, WifiJoinToken)>>,
 }
 
 impl SimulatedRadio {
@@ -31,8 +33,8 @@ impl SimulatedRadio {
         self.clock_sync_plan.replace(Some(plan));
     }
 
-    pub(super) fn start_join(&self) {
-        self.join.set(Some(Instant::now()));
+    pub(super) fn start_join(&self, token: WifiJoinToken) {
+        self.join.set(Some((Instant::now(), token)));
     }
 
     /// Reports work whose time has come. Returns whether anything finished.
@@ -45,9 +47,15 @@ impl SimulatedRadio {
         let synced = take_due(&self.clock_sync, CLOCK_SYNC_DURATION)
             .then(|| self.clock_sync_plan.take())
             .flatten();
-        let joined = take_due(&self.join, JOIN_DURATION);
+        let joined = match self.join.get() {
+            Some((at, token)) if at.elapsed() >= JOIN_DURATION => {
+                self.join.set(None);
+                Some(token)
+            }
+            _ => None,
+        };
 
-        if !scanned && synced.is_none() && !joined {
+        if !scanned && synced.is_none() && joined.is_none() {
             return false;
         }
 
@@ -62,8 +70,8 @@ impl SimulatedRadio {
                     app.apply_clock_sync_result(joined, result, cx);
                 }
 
-                if joined {
-                    app.apply_wifi_join_result(join_result(), cx);
+                if let Some(token) = joined {
+                    app.apply_wifi_join_result(token, join_result(), cx);
                 }
             })
             .expect("application root must remain available");

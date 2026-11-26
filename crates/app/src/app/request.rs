@@ -6,7 +6,7 @@ use super::InkPaperApp;
 use crate::{
     BrowseRequest, ClockPreferences, FileTransferRequest, FrontlightPreferencesRequest,
     FrontlightSetting, ReaderPreferencesRequest, ReaderRequest, ReadingHistoryRequest,
-    SavedNetworks, WifiCredentials, WifiJoinPlan, dictionaries::DictionaryRequest,
+    SavedNetworks, WifiCredentials, WifiJoinPlan, WifiJoinToken, dictionaries::DictionaryRequest,
 };
 
 /// work the app asks the service for
@@ -16,7 +16,7 @@ pub(crate) enum AppRequest {
     FrontlightPreferences(FrontlightPreferencesRequest),
     /// sync the clock over the network this plan joins
     ClockSync(WifiJoinPlan),
-    WifiJoin(WifiCredentials),
+    WifiJoin(WifiJoinToken, WifiCredentials),
     WifiScan,
     SaveWifiNetworks(SavedNetworks),
     SaveClockPreferences(ClockPreferences),
@@ -49,7 +49,11 @@ impl InkPaperApp {
                     })
             })
             .or_else(|| self.take_clock_sync_request().map(AppRequest::ClockSync))
-            .or_else(|| self.wifi.take_join_request().map(AppRequest::WifiJoin))
+            .or_else(|| {
+                self.wifi
+                    .take_join_request()
+                    .map(|(token, network)| AppRequest::WifiJoin(token, network))
+            })
             .or_else(|| {
                 self.wifi
                     .take_scan_request()

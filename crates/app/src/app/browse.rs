@@ -6,16 +6,19 @@ use crate::BrowseListing;
 impl InkPaperApp {
     pub(crate) fn apply_browse_listing(
         &mut self,
+        id: u64,
         listing: BrowseListing,
         cx: &mut Context<'_, Self>,
     ) {
-        self.browser.apply_listing(listing);
-        cx.notify();
+        if self.browser.apply_listing(id, listing) {
+            cx.notify();
+        }
     }
 
-    pub(crate) fn apply_browse_error(&mut self, cx: &mut Context<'_, Self>) {
-        self.browser.apply_error();
-        cx.notify();
+    pub(crate) fn apply_browse_error(&mut self, id: u64, cx: &mut Context<'_, Self>) {
+        if self.browser.apply_error(id) {
+            cx.notify();
+        }
     }
 
     pub(crate) fn activate_browse_entry(

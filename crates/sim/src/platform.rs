@@ -6,6 +6,7 @@ use std::{
 
 use inkpaper_app::{
     AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials, WifiJoinPlan,
+    WifiJoinToken,
 };
 
 use crate::{
@@ -134,8 +135,12 @@ impl AppPlatform for SimulatorPlatform {
         *b"inksim"
     }
 
-    async fn start_wifi_join(&mut self, _: &WifiCredentials) -> Result<(), Self::Error> {
-        self.radio.start_join();
+    async fn start_wifi_join(
+        &mut self,
+        token: WifiJoinToken,
+        _: &WifiCredentials,
+    ) -> Result<(), Self::Error> {
+        self.radio.start_join(token);
 
         Ok(())
     }

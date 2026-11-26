@@ -3,7 +3,7 @@ mod saved;
 
 use alloc::{string::String, vec::Vec};
 
-pub(crate) use password::{JoinStatus, PasswordEntry};
+pub(crate) use password::{JoinOutcome, JoinStatus, PasswordEntry};
 use saved::SavedNetwork;
 pub(crate) use saved::SavedNetworks;
 pub use saved::{DeviceKey, WifiJoinPlan};
@@ -72,6 +72,11 @@ impl WifiNetwork {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WifiScanError;
 
+/// Identifies a single in-flight WiFi join attempt so stale radio results are
+/// ignored after cancelling or switching networks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WifiJoinToken(u64);
+
 /// Why joining a network with a new password failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WifiJoinFailure {
@@ -109,6 +114,7 @@ pub(crate) struct WifiState {
     scan: WifiScanStatus,
     scan_requested: bool,
     revision: u64,
+    next_join_token: u64,
     password_entry: Option<PasswordEntry>,
 }
 
@@ -184,17 +190,25 @@ impl WifiState {
         self.password_entry = None;
     }
 
-    pub(crate) fn take_join_request(&mut self) -> Option<WifiCredentials> {
-        self.password_entry.as_mut()?.take_join_request()
+    pub(crate) fn take_join_request(&mut self) -> Option<(WifiJoinToken, WifiCredentials)> {
+        let token = WifiJoinToken(self.next_join_token.wrapping_add(1));
+        let credentials = self.password_entry.as_mut()?.take_join_request(token)?;
+        self.next_join_token = token.0;
+
+        Some((token, credentials))
     }
 
-    /// Ends the password entry's join. Returns the credentials to save when it
-    /// worked; a result that comes after the entry closed is dropped.
+    /// Ends the password entry's join if `token` matches the active attempt.
     pub(crate) fn finish_join(
         &mut self,
+        token: WifiJoinToken,
         result: Result<(), WifiJoinFailure>,
-    ) -> Option<WifiCredentials> {
-        self.password_entry.as_mut()?.finish_join(result)
+    ) -> JoinOutcome {
+        let Some(entry) = self.password_entry.as_mut() else {
+            return JoinOutcome::Ignored;
+        };
+
+        entry.finish_join(token, result)
     }
 
     pub(crate) fn take_save_request(&mut self) -> Option<SavedNetworks> {
@@ -281,7 +295,7 @@ mod tests {
         wifi.begin_password_entry(String::from("home"));
         type_password(&mut wifi, "password");
 
-        let request = wifi.take_join_request().unwrap();
+        let (token, request) = wifi.take_join_request().unwrap();
         assert_eq!(request.password(), "password");
         assert_eq!(wifi.take_join_request(), None);
 
@@ -290,7 +304,7 @@ mod tests {
         assert!(!entry.press(Key::Delete));
         assert_eq!(entry.status(), JoinStatus::Checking);
 
-        assert_eq!(wifi.finish_join(Ok(())), Some(request));
+        assert_eq!(wifi.finish_join(token, Ok(())), JoinOutcome::Succeeded(request));
     }
 
     #[test]
@@ -298,9 +312,12 @@ mod tests {
         let mut wifi = WifiState::default();
         wifi.begin_password_entry(String::from("home"));
         type_password(&mut wifi, "password");
-        wifi.take_join_request();
+        let (token, _) = wifi.take_join_request().unwrap();
 
-        assert_eq!(wifi.finish_join(Err(WifiJoinFailure::Rejected)), None);
+        assert_eq!(
+            wifi.finish_join(token, Err(WifiJoinFailure::Rejected)),
+            JoinOutcome::Failed
+        );
 
         let entry = wifi.password_entry_mut().unwrap();
         assert_eq!(
@@ -318,10 +335,41 @@ mod tests {
         let mut wifi = WifiState::default();
         wifi.begin_password_entry(String::from("home"));
         type_password(&mut wifi, "password");
-        wifi.take_join_request();
+        let (token, _) = wifi.take_join_request().unwrap();
         wifi.end_password_entry();
 
-        assert_eq!(wifi.finish_join(Ok(())), None);
+        assert_eq!(wifi.finish_join(token, Ok(())), JoinOutcome::Ignored);
         assert!(wifi.saved().connected().is_none());
+    }
+
+    #[test]
+    fn a_stale_join_result_from_a_previous_network_is_ignored() {
+        let mut wifi = WifiState::default();
+        wifi.begin_password_entry(String::from("home"));
+        type_password(&mut wifi, "password-a");
+        let (old_token, _) = wifi.take_join_request().unwrap();
+
+        // User backs out and starts joining a different network.
+        wifi.end_password_entry();
+        wifi.begin_password_entry(String::from("office"));
+        type_password(&mut wifi, "password-b");
+        let (new_token, new_credentials) = wifi.take_join_request().unwrap();
+        assert_ne!(old_token, new_token);
+
+        // Stale Ok and Err results for the previous attempt must not affect the new one.
+        assert_eq!(wifi.finish_join(old_token, Ok(())), JoinOutcome::Ignored);
+        assert_eq!(
+            wifi.finish_join(old_token, Err(WifiJoinFailure::Rejected)),
+            JoinOutcome::Ignored
+        );
+        assert_eq!(
+            wifi.password_entry().unwrap().status(),
+            JoinStatus::Checking
+        );
+
+        assert_eq!(
+            wifi.finish_join(new_token, Ok(())),
+            JoinOutcome::Succeeded(new_credentials)
+        );
     }
 }

@@ -18,7 +18,8 @@ use esp_radio::wifi::{
     Interface, WifiController, scan::ScanConfig, sta::StationConfig,
 };
 use inkpaper_app::{
-    ClockSyncFailure, WifiCredentials, WifiJoinFailure, WifiJoinPlan, WifiNetwork, WifiScanError,
+    ClockSyncFailure, WifiCredentials, WifiJoinFailure, WifiJoinPlan, WifiJoinToken, WifiNetwork,
+    WifiScanError,
 };
 
 use crate::firmware::rtc::{self, RtcSyncResult};
@@ -43,7 +44,7 @@ const SOCKETS: usize = 3;
 enum WifiRequest {
     Scan,
     SyncClock(WifiJoinPlan),
-    Join(WifiCredentials),
+    Join(WifiJoinToken, WifiCredentials),
 }
 
 pub enum WifiEvent {
@@ -52,7 +53,7 @@ pub enum WifiEvent {
         joined: Option<String>,
         result: Result<(), ClockSyncFailure>,
     },
-    Joined(Result<(), WifiJoinFailure>),
+    Joined(WifiJoinToken, Result<(), WifiJoinFailure>),
 }
 
 // the app runs one request at a time, so a newer one never overwrites a
@@ -72,9 +73,9 @@ pub fn request_clock_sync(plan: WifiJoinPlan) {
 }
 
 /// Asks the WiFi task to join `network` and leave it again, checking its
-/// password; the outcome arrives on [`WIFI_EVENTS`].
-pub fn request_join(network: WifiCredentials) {
-    REQUESTS.signal(WifiRequest::Join(network));
+/// password; the outcome arrives on [`WIFI_EVENTS`] tagged with `token`.
+pub fn request_join(token: WifiJoinToken, network: WifiCredentials) {
+    REQUESTS.signal(WifiRequest::Join(token, network));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, defmt::Format)]
@@ -120,7 +121,9 @@ pub async fn wifi_task(mut wifi: WIFI<'static>) {
 
                 WifiEvent::ClockSynced { joined, result }
             }
-            WifiRequest::Join(network) => WifiEvent::Joined(join(wifi.reborrow(), &network).await),
+            WifiRequest::Join(token, network) => {
+                WifiEvent::Joined(token, join(wifi.reborrow(), &network).await)
+            }
         };
 
         WIFI_EVENTS.send(event).await;

@@ -2,7 +2,9 @@ use alloc::string::String;
 
 use crate::keyboard::{Key, KeyResult, KeyboardState};
 
-use super::{MAX_PASSWORD_BYTES, MIN_PASSWORD_BYTES, WifiCredentials, WifiJoinFailure};
+use super::{
+    MAX_PASSWORD_BYTES, MIN_PASSWORD_BYTES, WifiCredentials, WifiJoinFailure, WifiJoinToken,
+};
 
 /// Where a typed password is in being tried, like crosspoint, which joins
 /// the network before saving it.
@@ -14,6 +16,14 @@ pub(crate) enum JoinStatus {
     Failed(WifiJoinFailure),
 }
 
+/// Outcome of applying a join result to the active password entry.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum JoinOutcome {
+    Ignored,
+    Failed,
+    Succeeded(WifiCredentials),
+}
+
 /// The password being typed for a secured network.
 #[derive(Debug)]
 pub(crate) struct PasswordEntry {
@@ -22,6 +32,7 @@ pub(crate) struct PasswordEntry {
     shown: bool,
     status: JoinStatus,
     join_requested: bool,
+    in_flight_join: Option<WifiJoinToken>,
 }
 
 impl PasswordEntry {
@@ -32,6 +43,7 @@ impl PasswordEntry {
             shown: false,
             status: JoinStatus::Typing,
             join_requested: false,
+            in_flight_join: None,
         }
     }
 
@@ -61,28 +73,37 @@ impl PasswordEntry {
         }
     }
 
-    pub(super) fn take_join_request(&mut self) -> Option<WifiCredentials> {
+    pub(super) fn take_join_request(&mut self, token: WifiJoinToken) -> Option<WifiCredentials> {
         if !core::mem::take(&mut self.join_requested) {
             return None;
         }
 
-        self.credentials()
+        let credentials = self.credentials()?;
+        self.in_flight_join = Some(token);
+
+        Some(credentials)
     }
 
-    /// Ends a join. Returns the credentials to save when it worked.
+    /// Ends a join matching `token`. Stale results from earlier attempts are
+    /// ignored.
     pub(super) fn finish_join(
         &mut self,
+        token: WifiJoinToken,
         result: Result<(), WifiJoinFailure>,
-    ) -> Option<WifiCredentials> {
-        if self.status != JoinStatus::Checking {
-            return None;
+    ) -> JoinOutcome {
+        if self.status != JoinStatus::Checking || self.in_flight_join != Some(token) {
+            return JoinOutcome::Ignored;
         }
 
+        self.in_flight_join = None;
+
         match result {
-            Ok(()) => self.credentials(),
+            Ok(()) => self
+                .credentials()
+                .map_or(JoinOutcome::Ignored, JoinOutcome::Succeeded),
             Err(failure) => {
                 self.status = JoinStatus::Failed(failure);
-                None
+                JoinOutcome::Failed
             }
         }
     }

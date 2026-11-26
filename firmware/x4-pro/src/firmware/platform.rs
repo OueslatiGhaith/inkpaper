@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 use inkpaper_app::{
     AppPlatform, DeviceKey, FrontlightSetting, PlatformEntry, WifiCredentials, WifiJoinPlan,
+    WifiJoinToken,
 };
 use inkpaper_epub::EpubSource;
 
@@ -155,8 +156,12 @@ impl AppPlatform for X4Platform {
         key
     }
 
-    async fn start_wifi_join(&mut self, network: &WifiCredentials) -> Result<(), Self::Error> {
-        wifi::request_join(network.clone());
+    async fn start_wifi_join(
+        &mut self,
+        token: WifiJoinToken,
+        network: &WifiCredentials,
+    ) -> Result<(), Self::Error> {
+        wifi::request_join(token, network.clone());
 
         Ok(())
     }
