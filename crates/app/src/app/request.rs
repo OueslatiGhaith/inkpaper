@@ -5,8 +5,8 @@ use inkpaper_ui::prelude::*;
 use super::InkPaperApp;
 use crate::{
     BrowseRequest, ClockPreferences, FileTransferRequest, FrontlightPreferencesRequest,
-    FrontlightSetting, ReaderPreferencesRequest, ReaderRequest, ReadingHistoryRequest,
-    SavedNetworks, WifiCredentials, WifiJoinPlan, WifiJoinToken, dictionaries::DictionaryRequest,
+    FrontlightSetting, ReaderPreferences, ReaderRequest, ReadingHistoryRequest, SavedNetworks,
+    WifiCredentials, WifiJoinPlan, WifiJoinToken, dictionaries::DictionaryRequest,
 };
 
 /// work the app asks the service for
@@ -20,7 +20,7 @@ pub(crate) enum AppRequest {
     WifiScan,
     SaveWifiNetworks(SavedNetworks),
     SaveClockPreferences(ClockPreferences),
-    ReaderPreferences(ReaderPreferencesRequest),
+    SaveReaderPreferences(ReaderPreferences),
     Dictionary(DictionaryRequest),
     /// load the cover of the book at this path
     Cover(String),
@@ -72,7 +72,7 @@ impl InkPaperApp {
             .or_else(|| {
                 self.reader
                     .take_preferences_request()
-                    .map(AppRequest::ReaderPreferences)
+                    .map(AppRequest::SaveReaderPreferences)
             })
             .or_else(|| self.lookup.take_request().map(AppRequest::Dictionary))
             .or_else(|| self.cover.take_request().map(AppRequest::Cover))

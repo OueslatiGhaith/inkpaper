@@ -21,9 +21,9 @@ impl Default for ReadingHistoryState {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
-            // home is the initial screen, so request the persisted history immediately
-            // at startup.
-            pending: Some(ReadingHistoryRequest::Load),
+            // AppService::ensure_initialized pushes the persisted history on boot;
+            // Home and RecentBooks request fresh snapshots when navigated to.
+            pending: None,
             revision: 0,
             error: false,
             pager: Pager::default(),

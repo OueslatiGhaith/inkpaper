@@ -4,8 +4,7 @@ use inkpaper_epub::{Epub, SliceSource, SpineIndex};
 use inkpaper_reader::PageItem;
 
 use crate::{
-    ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
-    ReaderRequest, ReaderSession,
+    ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderRequest, ReaderSession,
     reader::{
         JumpTarget, LineSpacing, ReaderState, TableOfContents, TextSetting, TextSettings,
         load_reader_document,
@@ -457,10 +456,8 @@ fn reader_font_size_stays_within_supported_bounds() {
 fn persisted_reader_preferences_are_used_when_opening_a_book() {
     let mut state = ReaderState::default();
 
-    assert_eq!(
-        state.take_preferences_request(),
-        Some(ReaderPreferencesRequest::Load),
-    );
+    // AppService::ensure_initialized pushes preferences at boot without an extra Load round-trip.
+    assert_eq!(state.take_preferences_request(), None);
 
     let text = TextSettings::default().with_font_size(26).unwrap();
     let preferences = ReaderPreferences::new(text);

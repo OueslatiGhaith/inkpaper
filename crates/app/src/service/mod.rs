@@ -171,9 +171,10 @@ where
                     self.clock_preferences_dirty = true;
                     self.persist_clock_preferences().await;
                 }
-                AppRequest::ReaderPreferences(request) => {
-                    self.service_reader_preferences_request(runtime, app, request)
-                        .await?;
+                AppRequest::SaveReaderPreferences(preferences) => {
+                    self.preferences = preferences;
+                    self.preferences_dirty = true;
+                    self.persist_preferences().await;
                 }
                 AppRequest::Dictionary(request) => {
                     self.service_dictionary_request(runtime, app, request)

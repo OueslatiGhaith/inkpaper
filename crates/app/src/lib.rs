@@ -51,8 +51,8 @@ pub(crate) use file_transfer::{FileTransferRequest, FileTransferState, FileTrans
 pub(crate) use frontlight::{FrontlightPreferences, FrontlightPreferencesRequest, FrontlightState};
 pub use input::{AppInputError, AppInputEvent, dispatch_input};
 pub(crate) use reader::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
-    ReaderPreferencesRequest, ReaderRequest, ReaderSession,
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences, ReaderRequest,
+    ReaderSession,
 };
 pub(crate) use reading_history::{
     BookProgress, ReadingHistory, ReadingHistoryEntry, ReadingHistoryRequest,

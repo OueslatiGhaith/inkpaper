@@ -10,7 +10,7 @@ use inkpaper_epub::{ArchivePath, SpineIndex};
 use inkpaper_reader::{Page, ReadingPosition};
 
 use crate::{
-    ReaderDocument, ReaderPreferences, ReaderPreferencesRequest, ReadingHistoryEntry,
+    ReaderDocument, ReaderPreferences, ReadingHistoryEntry,
     paging::Pager,
     reader::{TableOfContents, TextSettings, WordSelection},
     resume::ResumeLimit,
@@ -111,7 +111,7 @@ pub(crate) struct ReaderState {
     pending_document: Option<ReaderRequest>,
     pending_toc: Option<String>,
     pending_progress: Option<ReadingHistoryEntry>,
-    pending_preferences: Option<ReaderPreferencesRequest>,
+    pending_preferences: Option<ReaderPreferences>,
     pending_chapter: Option<PendingChapterRequest>,
     pending_repagination: Option<PendingRepaginationRequest>,
     pending_jump: Option<JumpTarget>,
@@ -145,7 +145,7 @@ impl Default for ReaderState {
             pending_document: None,
             pending_toc: None,
             pending_progress: None,
-            pending_preferences: Some(ReaderPreferencesRequest::Load),
+            pending_preferences: None,
             pending_chapter: None,
             pending_repagination: None,
             pending_jump: None,
@@ -249,7 +249,7 @@ impl ReaderState {
         }
     }
 
-    pub(crate) fn take_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
+    pub(crate) fn take_preferences_request(&mut self) -> Option<ReaderPreferences> {
         self.pending_preferences.take()
     }
 

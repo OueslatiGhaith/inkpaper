@@ -1,6 +1,6 @@
 use inkpaper_epub::SpineIndex;
 
-use crate::{ReaderChapter, ReaderPreferences, ReaderPreferencesRequest, reader::TextSettings};
+use crate::{ReaderChapter, ReaderPreferences, reader::TextSettings};
 
 use super::{PendingRepaginationRequest, ReaderRequest, ReaderState};
 
@@ -132,6 +132,6 @@ impl ReaderState {
             .with_dictionary(self.dictionary)
             .with_resume_limit(self.resume_limit);
 
-        self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
+        self.pending_preferences = Some(preferences);
     }
 }
