@@ -27,7 +27,9 @@ where
         R: RuntimeApi + ResourceRuntimeApi<'resource>,
     {
         if self.cover.as_ref().is_none_or(|cover| cover.path() != path) {
-            self.cover_source = None;
+            if let Some(old) = self.cover_source.take() {
+                runtime.unregister_image(old.id());
+            }
             self.cover = self.load_cover(&path).await;
         }
 

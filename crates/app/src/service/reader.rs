@@ -6,6 +6,7 @@ use crate::{
     InkPaperApp, ReaderRequest, ReaderSession,
     fonts::{CardFont, card_for, load_card_font},
     reader::{ReaderFont, TextSettings},
+    resources::READER_IMAGE_SLOTS,
     typography::register_card_font,
 };
 
@@ -46,8 +47,11 @@ where
 
                 match chapter {
                     Some(mut chapter) => {
-                        chapter.register_images(runtime);
-                        self.cover_source = None;
+                        chapter.register_images(
+                            runtime,
+                            READER_IMAGE_SLOTS,
+                            &mut self.reader_image_ids,
+                        );
 
                         runtime.update(app, move |app, cx| {
                             app.apply_reader_chapter(path, from, direction, chapter, cx)
@@ -79,8 +83,11 @@ where
 
                 match chapter {
                     Some(mut chapter) => {
-                        chapter.register_images(runtime);
-                        self.cover_source = None;
+                        chapter.register_images(
+                            runtime,
+                            READER_IMAGE_SLOTS,
+                            &mut self.reader_image_ids,
+                        );
 
                         runtime.update(app, move |app, cx| {
                             app.apply_reader_repagination(path, spine, text, chapter, cx);
@@ -106,8 +113,11 @@ where
 
                 match landing {
                     Some((mut chapter, page_index)) => {
-                        chapter.register_images(runtime);
-                        self.cover_source = None;
+                        chapter.register_images(
+                            runtime,
+                            READER_IMAGE_SLOTS,
+                            &mut self.reader_image_ids,
+                        );
 
                         runtime.update(app, move |app, cx| {
                             app.apply_reader_jump(path, target, chapter, page_index, cx);
@@ -210,8 +220,7 @@ where
 
         match document {
             Some(mut document) => {
-                document.register_images(runtime);
-                self.cover_source = None;
+                document.register_images(runtime, READER_IMAGE_SLOTS, &mut self.reader_image_ids);
 
                 runtime.update(app, move |app, cx| {
                     app.apply_reader_document(document, cx);

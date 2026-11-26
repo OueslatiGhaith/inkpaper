@@ -2,7 +2,9 @@ use alloc::{boxed::Box, vec::Vec};
 use core::mem;
 
 use inkpaper_epub::{ArchivePath, Chapter, Epub, EpubSource, ImageDimensions, Inline};
-use inkpaper_ui::{Color, ImageResource, ImageSource, Luminance, ResourceRuntimeApi, Size, px};
+use inkpaper_ui::{
+    Color, ImageId, ImageResource, ImageSource, Luminance, ResourceRuntimeApi, Size, px,
+};
 use zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
 use zune_jpeg::JpegDecoder;
 use zune_png::PngDecoder;
@@ -201,7 +203,12 @@ impl ChapterImages {
             })
     }
 
-    pub(super) fn register<'resource>(&mut self, runtime: &mut impl ResourceRuntimeApi<'resource>) {
+    pub(super) fn register<'resource>(
+        &mut self,
+        runtime: &mut impl ResourceRuntimeApi<'resource>,
+        max_slots: usize,
+        registered: &mut Vec<ImageId>,
+    ) {
         if self
             .entries
             .iter()
@@ -210,7 +217,9 @@ impl ChapterImages {
             return;
         }
 
-        runtime.clear_owned_images();
+        for id in registered.drain(..) {
+            runtime.unregister_image(id);
+        }
 
         for entry in &mut self.entries {
             let state = mem::replace(&mut entry.state, ChapterImageState::Unavailable);
@@ -219,7 +228,12 @@ impl ChapterImages {
                 continue;
             };
 
+            if registered.len() >= max_slots {
+                continue;
+            }
+
             if let Ok(source) = runtime.register_owned_image(Box::new(image)) {
+                registered.push(source.id());
                 entry.state = ChapterImageState::Registered(source);
             }
         }
@@ -455,5 +469,54 @@ mod tests {
     #[test]
     fn rejects_malformed_pixel_buffer_lengths() {
         assert_eq!(png_to_grayscale(vec![0, 0], ColorSpace::RGB, 1, 1), None,);
+    }
+
+    #[test]
+    fn chapter_image_registration_isolates_slots_from_home_cover() {
+        use alloc::format;
+        use inkpaper_ui::{Pool, Runtime};
+
+        use crate::resources::{AppResources, READER_IMAGE_SLOTS};
+
+        let mut runtime = Runtime::<AppResources<'_, 4, 256>>::new(Pool::global());
+
+        // Register a Home cover first.
+        let cover = GrayImage::new(1, 1, vec![42]).unwrap();
+        let cover_source = runtime
+            .register_owned_image(Box::new(cover))
+            .expect("cover slot should register");
+
+        // Build a chapter with more images than READER_IMAGE_SLOTS.
+        let mut first_chapter = ChapterImages::default();
+        for index in 0..(READER_IMAGE_SLOTS + 3) {
+            let name = format!("img-{index}.png");
+            let path = ArchivePath::new(&name).unwrap();
+            first_chapter.record(path, GrayImage::new(1, 1, vec![index as u8]));
+        }
+
+        let mut reader_ids = Vec::new();
+        first_chapter.register(&mut runtime, READER_IMAGE_SLOTS, &mut reader_ids);
+
+        // Chapter caps at READER_IMAGE_SLOTS and leaves the Home cover intact.
+        assert_eq!(reader_ids.len(), READER_IMAGE_SLOTS);
+        assert!(runtime.unregister_image(cover_source.id()));
+
+        // Replacing the Home cover succeeds even while the chapter holds all 32 reader slots.
+        let next_cover = GrayImage::new(1, 1, vec![99]).unwrap();
+        let next_cover_source = runtime
+            .register_owned_image(Box::new(next_cover))
+            .expect("dedicated cover slot should remain free");
+
+        // Loading a second chapter unregisters the first chapter's images without touching the cover.
+        let first_image_id = reader_ids[0];
+        let mut second_chapter = ChapterImages::default();
+        let path = ArchivePath::new("next.png").unwrap();
+        second_chapter.record(path.clone(), GrayImage::new(1, 1, vec![7]));
+        second_chapter.register(&mut runtime, READER_IMAGE_SLOTS, &mut reader_ids);
+
+        assert_eq!(reader_ids.len(), 1);
+        assert!(!runtime.unregister_image(first_image_id));
+        assert!(second_chapter.source(&path).is_some());
+        assert!(runtime.unregister_image(next_cover_source.id()));
     }
 }

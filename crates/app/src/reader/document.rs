@@ -2,7 +2,7 @@ use alloc::{string::String, vec::Vec};
 
 use inkpaper_epub::{ArchivePath, SpineIndex};
 use inkpaper_reader::{Page, Pagination, ReadingPosition};
-use inkpaper_ui::{ImageSource, ResourceRuntimeApi};
+use inkpaper_ui::{ImageId, ImageSource, ResourceRuntimeApi};
 
 use crate::{
     BookProgress,
@@ -41,8 +41,13 @@ impl ReaderChapter {
         }
     }
 
-    pub fn register_images<'resource>(&mut self, runtime: &mut impl ResourceRuntimeApi<'resource>) {
-        self.images.register(runtime);
+    pub(crate) fn register_images<'resource>(
+        &mut self,
+        runtime: &mut impl ResourceRuntimeApi<'resource>,
+        max_slots: usize,
+        registered: &mut Vec<ImageId>,
+    ) {
+        self.images.register(runtime, max_slots, registered);
     }
 
     pub fn image_source(&self, path: &ArchivePath) -> Option<ImageSource> {
@@ -181,8 +186,13 @@ impl ReaderDocument {
         )
     }
 
-    pub fn register_images<'resource>(&mut self, runtime: &mut impl ResourceRuntimeApi<'resource>) {
-        self.chapter.register_images(runtime);
+    pub(crate) fn register_images<'resource>(
+        &mut self,
+        runtime: &mut impl ResourceRuntimeApi<'resource>,
+        max_slots: usize,
+        registered: &mut Vec<ImageId>,
+    ) {
+        self.chapter.register_images(runtime, max_slots, registered);
     }
 
     pub fn image_source(&self, path: &ArchivePath) -> Option<ImageSource> {
