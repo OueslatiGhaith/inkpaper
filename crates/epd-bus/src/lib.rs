@@ -1,12 +1,19 @@
 #![no_std]
 
+use core::mem::ManuallyDrop;
+
 use embassy_futures::select::{Either, select};
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiBus};
 
 mod frame;
+mod panel;
 
 pub use frame::{Region, grayscale_base_byte, region_has_grayscale};
+pub use panel::{
+    BinaryOverGrayMode, BinaryUpdateMode, EpdPanel, GrayscaleUpdateMode, PanelCapabilities,
+    PanelError, RefreshMode,
+};
 
 /// longest a BUSY wait may last before the panel is treated as stuck.
 ///
@@ -45,7 +52,6 @@ pub trait EpdInterface {
 
     async fn command(&mut self, command: u8) -> Result<(), Self::Error>;
     async fn data(&mut self, data: &[u8]) -> Result<(), Self::Error>;
-    async fn command_data(&mut self, command: u8, data: &[u8]) -> Result<(), Self::Error>;
 
     async fn reset<D>(&mut self, delay: &mut D) -> Result<(), Self::Error>
     where
@@ -63,16 +69,84 @@ pub trait EpdInterface {
     where
         D: DelayNs;
 
-    /// begin a command + streamed-data transaction.
+    /// begin a streamed-data transaction.
     ///
-    /// CS remains asserted until `end_stream()`.
+    /// CS remains asserted until `end_data_stream()`. Prefer [`DataStream`] so
+    /// early returns and cancelled futures always release CS.
     async fn begin_data_stream(&mut self) -> Result<(), Self::Error>;
 
     /// write another chunk of data while the stream remains selected.
     async fn stream_data(&mut self, data: &[u8]) -> Result<(), Self::Error>;
 
-    /// finish a command/data stream and deassert CS.
+    /// finish a data stream and deassert CS.
     fn end_data_stream(&mut self) -> Result<(), Self::Error>;
+}
+
+/// Drop-safe RAII guard for a streamed EPD data transfer.
+///
+/// Keeps CS asserted across multiple chunks and guarantees `end_data_stream()`
+/// runs even if a caller returns early on error or drops the surrounding async
+/// future mid-transfer.
+pub struct DataStream<'a, B: EpdInterface + ?Sized> {
+    bus: &'a mut B,
+    closed: bool,
+}
+
+impl<'a, B: EpdInterface + ?Sized> DataStream<'a, B> {
+    pub async fn open(bus: &'a mut B) -> Result<Self, B::Error> {
+        bus.begin_data_stream().await?;
+
+        Ok(Self { bus, closed: false })
+    }
+
+    pub async fn write(&mut self, data: &[u8]) -> Result<(), B::Error> {
+        if let Err(error) = self.bus.stream_data(data).await {
+            self.closed = true;
+            let _ = self.bus.end_data_stream();
+
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<(), B::Error> {
+        self.closed = true;
+        self.bus.end_data_stream()
+    }
+}
+
+impl<B: EpdInterface + ?Sized> Drop for DataStream<'_, B> {
+    fn drop(&mut self) {
+        if !self.closed {
+            self.closed = true;
+            let _ = self.bus.end_data_stream();
+        }
+    }
+}
+
+/// Ensures CS returns high if an async single-transaction transfer is dropped
+/// before `spi.write().await` completes.
+struct CsGuard<'a, CS: OutputPin> {
+    cs: &'a mut CS,
+}
+
+impl<'a, CS: OutputPin> CsGuard<'a, CS> {
+    fn assert_low(cs: &'a mut CS) -> Result<Self, CS::Error> {
+        cs.set_low()?;
+        Ok(Self { cs })
+    }
+
+    fn finish(self) -> Result<(), CS::Error> {
+        let mut this = ManuallyDrop::new(self);
+        this.cs.set_high()
+    }
+}
+
+impl<CS: OutputPin> Drop for CsGuard<'_, CS> {
+    fn drop(&mut self) {
+        let _ = self.cs.set_high();
+    }
 }
 
 pub struct SpiEpdBus<SPI, CS, DC, RESET, BUSY> {
@@ -125,21 +199,6 @@ where
         Ok(())
     }
 
-    fn finish_transaction(
-        &mut self,
-        spi_result: Result<(), SPI::Error>,
-    ) -> Result<(), <Self as EpdInterface>::Error> {
-        let cs_result = self.cs.set_high().map_err(Error::ChipSelect);
-
-        match spi_result {
-            Err(error) => {
-                let _ = cs_result;
-                Err(Error::Spi(error))
-            }
-            Ok(()) => cs_result,
-        }
-    }
-
     pub fn reset_high(&mut self) -> Result<(), <Self as EpdInterface>::Error> {
         self.ensure_no_stream()?;
         self.reset.set_high().map_err(Error::Reset)
@@ -160,48 +219,30 @@ where
         self.ensure_no_stream()?;
 
         self.dc.set_low().map_err(Error::DataCommand)?;
-        self.cs.set_low().map_err(Error::ChipSelect)?;
+        let cs = CsGuard::assert_low(&mut self.cs).map_err(Error::ChipSelect)?;
 
         let result = self.spi.write(&[command]).await;
+        let cs_result = cs.finish().map_err(Error::ChipSelect);
 
-        self.finish_transaction(result)
+        match result {
+            Err(error) => Err(Error::Spi(error)),
+            Ok(()) => cs_result,
+        }
     }
 
     async fn data(&mut self, data: &[u8]) -> Result<(), Self::Error> {
         self.ensure_no_stream()?;
 
         self.dc.set_high().map_err(Error::DataCommand)?;
-        self.cs.set_low().map_err(Error::ChipSelect)?;
+        let cs = CsGuard::assert_low(&mut self.cs).map_err(Error::ChipSelect)?;
 
         let result = self.spi.write(data).await;
+        let cs_result = cs.finish().map_err(Error::ChipSelect);
 
-        self.finish_transaction(result)
-    }
-
-    async fn command_data(&mut self, command: u8, data: &[u8]) -> Result<(), Self::Error> {
-        self.ensure_no_stream()?;
-
-        self.cs.set_low().map_err(Error::ChipSelect)?;
-        self.dc.set_low().map_err(Error::DataCommand)?;
-
-        if let Err(error) = self.spi.write(&[command]).await {
-            let _ = self.cs.set_high();
-            return Err(Error::Spi(error));
+        match result {
+            Err(error) => Err(Error::Spi(error)),
+            Ok(()) => cs_result,
         }
-
-        if !data.is_empty() {
-            if let Err(error) = self.dc.set_high() {
-                let _ = self.cs.set_high();
-                return Err(Error::DataCommand(error));
-            }
-
-            if let Err(error) = self.spi.write(data).await {
-                let _ = self.cs.set_high();
-                return Err(Error::Spi(error));
-            }
-        }
-
-        self.cs.set_high().map_err(Error::ChipSelect)
     }
 
     async fn reset<D>(&mut self, delay: &mut D) -> Result<(), Self::Error>
@@ -288,5 +329,272 @@ where
 
         self.stream_open = false;
         self.cs.set_high().map_err(Error::ChipSelect)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::{
+        convert::Infallible,
+        future::{Future, pending},
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    use embedded_hal::digital::{ErrorType as DigitalErrorType, InputPin, OutputPin};
+    use embedded_hal_async::{
+        digital::Wait,
+        spi::{ErrorType as SpiErrorType, SpiBus},
+    };
+
+    use super::{DataStream, EpdInterface, Error, ProtocolError, SpiEpdBus};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct MockPin {
+        high: bool,
+    }
+
+    impl MockPin {
+        fn new(high: bool) -> Self {
+            Self { high }
+        }
+    }
+
+    impl DigitalErrorType for MockPin {
+        type Error = Infallible;
+    }
+
+    impl OutputPin for MockPin {
+        fn set_low(&mut self) -> Result<(), Self::Error> {
+            self.high = false;
+            Ok(())
+        }
+
+        fn set_high(&mut self) -> Result<(), Self::Error> {
+            self.high = true;
+            Ok(())
+        }
+    }
+
+    impl InputPin for MockPin {
+        fn is_high(&mut self) -> Result<bool, Self::Error> {
+            Ok(self.high)
+        }
+
+        fn is_low(&mut self) -> Result<bool, Self::Error> {
+            Ok(!self.high)
+        }
+    }
+
+    impl Wait for MockPin {
+        async fn wait_for_high(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn wait_for_low(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn wait_for_rising_edge(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn wait_for_falling_edge(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn wait_for_any_edge(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct MockSpiError;
+
+    impl embedded_hal::spi::Error for MockSpiError {
+        fn kind(&self) -> embedded_hal::spi::ErrorKind {
+            embedded_hal::spi::ErrorKind::Other
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SpiBehavior {
+        Ok,
+        FailOnCall(usize),
+        HangOnCall(usize),
+    }
+
+    struct MockSpi {
+        behavior: SpiBehavior,
+        calls: usize,
+        bytes_written: usize,
+    }
+
+    impl MockSpi {
+        fn new(behavior: SpiBehavior) -> Self {
+            Self {
+                behavior,
+                calls: 0,
+                bytes_written: 0,
+            }
+        }
+    }
+
+    impl SpiErrorType for MockSpi {
+        type Error = MockSpiError;
+    }
+
+    impl SpiBus<u8> for MockSpi {
+        async fn read(&mut self, _words: &mut [u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
+            let call = self.calls;
+            self.calls += 1;
+
+            match self.behavior {
+                SpiBehavior::Ok => {
+                    self.bytes_written += words.len();
+                    Ok(())
+                }
+                SpiBehavior::FailOnCall(n) if n == call => Err(MockSpiError),
+                SpiBehavior::HangOnCall(n) if n == call => pending::<Result<(), Self::Error>>().await,
+                _ => {
+                    self.bytes_written += words.len();
+                    Ok(())
+                }
+            }
+        }
+
+        async fn transfer(&mut self, _read: &mut [u8], _write: &[u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn transfer_in_place(&mut self, _words: &mut [u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn flush(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    fn poll_once<F: Future>(future: F) -> Poll<F::Output> {
+        let mut future = pin!(future);
+        let mut cx = Context::from_waker(Waker::noop());
+        future.as_mut().poll(&mut cx)
+    }
+
+    fn ready<F: Future>(future: F) -> F::Output {
+        match poll_once(future) {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("expected future to complete immediately"),
+        }
+    }
+
+    fn make_bus(behavior: SpiBehavior) -> SpiEpdBus<MockSpi, MockPin, MockPin, MockPin, MockPin> {
+        SpiEpdBus::new(
+            MockSpi::new(behavior),
+            MockPin::new(false),
+            MockPin::new(false),
+            MockPin::new(false),
+            MockPin::new(true),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn data_stream_releases_cs_on_finish() {
+        let mut bus = make_bus(SpiBehavior::Ok);
+
+        {
+            let mut stream = ready(DataStream::open(&mut bus)).unwrap();
+            ready(stream.write(&[1, 2, 3])).unwrap();
+            ready(stream.write(&[4, 5])).unwrap();
+            stream.finish().unwrap();
+        }
+
+        assert!(bus.cs.high);
+        assert!(!bus.stream_open);
+        assert_eq!(bus.spi.bytes_written, 5);
+        ready(bus.command(0x12)).unwrap();
+    }
+
+    #[test]
+    fn data_stream_releases_cs_when_dropped_without_finish() {
+        let mut bus = make_bus(SpiBehavior::Ok);
+
+        {
+            let mut stream = ready(DataStream::open(&mut bus)).unwrap();
+            ready(stream.write(&[1, 2])).unwrap();
+            // intentionally dropped without calling finish()
+        }
+
+        assert!(bus.cs.high);
+        assert!(!bus.stream_open);
+        ready(bus.command(0x12)).unwrap();
+    }
+
+    #[test]
+    fn data_stream_releases_cs_when_cancelled_mid_write() {
+        let mut bus = make_bus(SpiBehavior::HangOnCall(1));
+
+        let poll = poll_once(async {
+            let mut stream = DataStream::open(&mut bus).await.unwrap();
+            stream.write(&[1, 2]).await.unwrap();
+            // Second write hangs forever; polling once and dropping simulates cancellation.
+            stream.write(&[3, 4]).await.unwrap();
+            stream.finish().unwrap();
+        });
+
+        assert!(poll.is_pending());
+        assert!(bus.cs.high);
+        assert!(!bus.stream_open);
+        assert_eq!(bus.spi.bytes_written, 2);
+
+        // Subsequent commands succeed instead of returning StreamAlreadyOpen.
+        bus.spi.behavior = SpiBehavior::Ok;
+        ready(bus.command(0x12)).unwrap();
+    }
+
+    #[test]
+    fn data_stream_releases_cs_on_spi_error() {
+        let mut bus = make_bus(SpiBehavior::FailOnCall(0));
+
+        {
+            let mut stream = ready(DataStream::open(&mut bus)).unwrap();
+            let err = ready(stream.write(&[1, 2, 3])).unwrap_err();
+            assert!(matches!(err, Error::Spi(MockSpiError)));
+        }
+
+        assert!(bus.cs.high);
+        assert!(!bus.stream_open);
+        bus.spi.behavior = SpiBehavior::Ok;
+        ready(bus.command(0x12)).unwrap();
+    }
+
+    #[test]
+    fn command_and_data_release_cs_when_cancelled_mid_transfer() {
+        let mut bus = make_bus(SpiBehavior::HangOnCall(0));
+
+        assert!(poll_once(bus.command(0x12)).is_pending());
+        assert!(bus.cs.high);
+
+        bus.spi.behavior = SpiBehavior::HangOnCall(1);
+        assert!(poll_once(bus.data(&[0xaa, 0xbb])).is_pending());
+        assert!(bus.cs.high);
+    }
+
+    #[test]
+    fn nested_command_rejected_while_stream_is_open() {
+        let mut bus = make_bus(SpiBehavior::Ok);
+
+        ready(bus.begin_data_stream()).unwrap();
+        let err = ready(bus.command(0x12)).unwrap_err();
+        assert!(matches!(err, Error::Protocol(ProtocolError::StreamAlreadyOpen)));
+
+        bus.end_data_stream().unwrap();
+        ready(bus.command(0x12)).unwrap();
     }
 }

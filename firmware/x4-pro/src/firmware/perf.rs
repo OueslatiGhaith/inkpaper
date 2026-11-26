@@ -205,18 +205,6 @@ where
         result
     }
 
-    async fn command_data(&mut self, command: u8, data: &[u8]) -> Result<(), Self::Error> {
-        let timer = CycleTimer::start();
-
-        let result = self.inner.command_data(command, data).await;
-
-        let bytes = 1u64.saturating_add(usize_to_u64(data.len()));
-
-        self.record_io(timer.elapsed(), bytes);
-
-        result
-    }
-
     async fn reset<D>(&mut self, delay: &mut D) -> Result<(), Self::Error>
     where
         D: DelayNs,
