@@ -5,9 +5,10 @@ use alloc::boxed::Box;
 
 use crate::{
     ActivateEvent, Context, DamageRegion, ElementId, Entity, EntityAccessError, EntityAllocError,
-    EntityId, EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena, ImageId,
-    ImageRegistryError, ImageResource, ImageSource, Invalidation, Listener, MountError, NodeId,
-    Offset, PaintError, PaintReport, PaintResources, Painter, Point, Rect, ReleaseError, Render,
+    EntityId, EventHit, EventTarget, FontFace, FontFamilyId, FontId, FontRegistryError, FrameArena,
+    ImageId, ImageRegistryError, ImageResource, ImageSource, Invalidation, Listener, MountError,
+    NodeId, Offset, PaintError, PaintReport, PaintResources, Painter, Point, Rect, ReleaseError,
+    Render,
     RenderInvalidation, Size, TextMeasurer,
     callback::{CallbackArena, ListenerInvokeError},
     element::state::{ElementStateId, ElementStateTable, IdentityError},
@@ -1172,12 +1173,30 @@ impl<RESOURCES> Runtime<RESOURCES> {
         E: 'static,
     {
         let root = self.root?;
-        let node = self
+        let (node, _) = self
             .frame
             .hit_test_event(root, position, TypeId::of::<E>())?;
         let element = self.frame.element_state_id(node)?;
 
         Some(EventTarget::new(element))
+    }
+
+    pub fn hit_at<E>(&self, position: Point) -> Option<EventHit>
+    where
+        E: 'static,
+    {
+        let root = self.root?;
+        let (node, bounds) = self
+            .frame
+            .hit_test_event(root, position, TypeId::of::<E>())?;
+        let element = self.frame.element_state_id(node)?;
+        let entry = self.element_states.entry(element)?;
+
+        Some(EventHit::new(
+            EventTarget::new(element),
+            entry.key.local,
+            bounds,
+        ))
     }
 
     pub fn dispatch_to<E>(

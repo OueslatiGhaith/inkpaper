@@ -78,7 +78,7 @@ impl FrameArena {
         root: NodeId,
         position: Point,
         event_type: TypeId,
-    ) -> Option<NodeId> {
+    ) -> Option<(NodeId, Rect)> {
         let mut hit = None;
 
         for visual in self.visual_nodes(root) {
@@ -88,7 +88,7 @@ impl FrameArena {
 
             let node = visual.node();
             if self.event_callbacks(node, event_type).next().is_some() {
-                hit = Some(node);
+                hit = Some((node, visual.bounds()));
             }
         }
 

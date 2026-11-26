@@ -2,10 +2,11 @@
 use alloc::boxed::Box;
 
 use crate::{
-    Context, DamageRegion, ElementId, Entity, EntityAccessError, FontFace, FontFamilyId, FontId,
-    FontRegistryError, FrameBuildError, FramePhase, ImageId, ImageRegistryError, ImageResource,
-    ImageSource, Offset, PaintError, PaintReport, PaintResources, Painter, Point, Runtime,
-    RuntimeResources, Size, TextMeasurer, callback::ListenerInvokeError,
+    Context, DamageRegion, ElementId, Entity, EntityAccessError, EventHit, EventTarget, FontFace,
+    FontFamilyId, FontId, FontRegistryError, FrameBuildError, FramePhase, ImageId,
+    ImageRegistryError, ImageResource, ImageSource, Offset, PaintError, PaintReport,
+    PaintResources, Painter, Point, Runtime, RuntimeResources, Size, TextMeasurer,
+    callback::ListenerInvokeError,
 };
 
 /// application-facing runtime operations.
@@ -46,6 +47,21 @@ pub trait RuntimeApi {
         &mut self,
         position: Point,
         event: impl FnOnce(ElementId) -> E,
+    ) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static;
+
+    /// Returns the topmost element listening for `E` at `position`, together
+    /// with its local id and laid-out screen bounds.
+    fn hit_at<E>(&self, position: Point) -> Option<EventHit>
+    where
+        E: 'static;
+
+    /// Sends `event` directly to a previously hit-tested target.
+    fn dispatch_to<E>(
+        &mut self,
+        target: EventTarget,
+        event: &E,
     ) -> Result<bool, ListenerInvokeError>
     where
         E: 'static;
@@ -173,6 +189,24 @@ impl<RESOURCES> RuntimeApi for Runtime<RESOURCES> {
         E: 'static,
     {
         Runtime::dispatch_at_with(self, position, event)
+    }
+
+    fn hit_at<E>(&self, position: Point) -> Option<EventHit>
+    where
+        E: 'static,
+    {
+        Runtime::hit_at::<E>(self, position)
+    }
+
+    fn dispatch_to<E>(
+        &mut self,
+        target: EventTarget,
+        event: &E,
+    ) -> Result<bool, ListenerInvokeError>
+    where
+        E: 'static,
+    {
+        Runtime::dispatch_to(self, target, event)
     }
 }
 
