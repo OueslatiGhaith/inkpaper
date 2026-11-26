@@ -4,7 +4,7 @@ use minicbor::{Decode, Encode};
 
 use crate::storage::{self, StorageError};
 
-use super::{WifiCredentials, WifiNetwork};
+use super::{MAX_PASSWORD_BYTES, WifiCredentials, WifiNetwork};
 
 /// Like crosspoint, up to eight networks are remembered.
 const MAX_SAVED_NETWORKS: usize = 8;
@@ -141,20 +141,15 @@ impl SavedNetworks {
 
     /// Encodes the networks with each password obfuscated by `device_key`.
     pub(crate) fn encode(&self, device_key: &DeviceKey) -> Result<Vec<u8>, SavedNetworksError> {
-        let stored = StoredSavedNetworks {
+        let encoded = EncodedSavedNetworks {
             connected: self.connected,
-            networks: self
-                .networks
-                .iter()
-                .map(|network| StoredNetwork {
-                    ssid: network.credentials.ssid.clone(),
-                    password: obfuscate(network.credentials.password.as_bytes(), device_key),
-                    auto_connect: network.auto_connect,
-                })
-                .collect(),
+            networks: EncodedNetworks {
+                networks: &self.networks,
+                device_key,
+            },
         };
 
-        Ok(storage::encode(&stored)?)
+        Ok(storage::encode(&encoded)?)
     }
 
     /// Decodes networks saved with the same `device_key`. Networks that don't
@@ -259,7 +254,77 @@ fn obfuscate(bytes: &[u8], device_key: &DeviceKey) -> Vec<u8> {
         .collect()
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Encode)]
+struct EncodedSavedNetworks<'a> {
+    #[n(0)]
+    connected: bool,
+    #[n(1)]
+    networks: EncodedNetworks<'a>,
+}
+
+struct EncodedNetworks<'a> {
+    networks: &'a [SavedNetwork],
+    device_key: &'a DeviceKey,
+}
+
+impl<C> Encode<C> for EncodedNetworks<'_> {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        e.array(self.networks.len() as u64)?;
+        for network in self.networks {
+            EncodedNetwork {
+                ssid: network.credentials.ssid(),
+                password: ObfuscatedPassword {
+                    password: network.credentials.password().as_bytes(),
+                    device_key: self.device_key,
+                },
+                auto_connect: network.auto_connect,
+            }
+            .encode(e, ctx)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Encode)]
+struct EncodedNetwork<'a> {
+    #[n(0)]
+    ssid: &'a str,
+    /// obfuscated with the device key
+    #[n(1)]
+    password: ObfuscatedPassword<'a>,
+    #[n(2)]
+    auto_connect: bool,
+}
+
+struct ObfuscatedPassword<'a> {
+    password: &'a [u8],
+    device_key: &'a DeviceKey,
+}
+
+impl<C> Encode<C> for ObfuscatedPassword<'_> {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        _ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        let mut buffer = [0u8; MAX_PASSWORD_BYTES];
+        let len = self.password.len().min(MAX_PASSWORD_BYTES);
+        for (slot, (&byte, &key)) in buffer[..len]
+            .iter_mut()
+            .zip(self.password.iter().zip(self.device_key.iter().cycle()))
+        {
+            *slot = byte ^ key;
+        }
+        e.bytes(&buffer[..len])?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Decode)]
 struct StoredSavedNetworks {
     #[n(0)]
     connected: bool,
@@ -267,7 +332,7 @@ struct StoredSavedNetworks {
     networks: Vec<StoredNetwork>,
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Decode)]
 struct StoredNetwork {
     #[n(0)]
     ssid: String,

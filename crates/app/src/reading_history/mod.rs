@@ -140,11 +140,11 @@ impl ReadingHistory {
             return Err(ReadingHistoryError::TooManyEntries);
         }
 
-        let stored = StoredHistory {
-            entries: self.entries.iter().map(StoredHistoryEntry::from).collect(),
+        let encoded = EncodedHistory {
+            entries: EncodedHistoryEntries(&self.entries),
         };
 
-        Ok(storage::encode(&stored)?)
+        Ok(storage::encode(&encoded)?)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, ReadingHistoryError> {
@@ -164,13 +164,71 @@ impl ReadingHistory {
     }
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Encode)]
+struct EncodedHistory<'a> {
+    #[n(0)]
+    entries: EncodedHistoryEntries<'a>,
+}
+
+struct EncodedHistoryEntries<'a>(&'a [ReadingHistoryEntry]);
+
+impl<C> Encode<C> for EncodedHistoryEntries<'_> {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        e.array(self.0.len() as u64)?;
+        for entry in self.0 {
+            EncodedHistoryEntry::from(entry).encode(e, ctx)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Encode)]
+struct EncodedHistoryEntry<'a> {
+    #[n(0)]
+    path: &'a str,
+    #[n(1)]
+    identifier: Option<&'a str>,
+    #[n(2)]
+    title: &'a str,
+    #[n(3)]
+    creator: Option<&'a str>,
+    #[n(4)]
+    position: StoredPosition,
+    #[n(5)]
+    progress_basis_points: u16,
+}
+
+impl<'a> From<&'a ReadingHistoryEntry> for EncodedHistoryEntry<'a> {
+    fn from(entry: &'a ReadingHistoryEntry) -> Self {
+        let position = entry.position();
+        let location = position.location();
+
+        Self {
+            path: &entry.path,
+            identifier: entry.identifier.as_deref(),
+            title: &entry.title,
+            creator: entry.creator.as_deref(),
+            position: StoredPosition {
+                spine: location.spine().get(),
+                offset: location.offset().get(),
+                non_text: position.non_text(),
+            },
+            progress_basis_points: entry.progress().basis_points(),
+        }
+    }
+}
+
+#[derive(Debug, Decode)]
 struct StoredHistory {
     #[n(0)]
     entries: Vec<StoredHistoryEntry>,
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Decode)]
 struct StoredHistoryEntry {
     #[n(0)]
     path: String,
@@ -194,26 +252,6 @@ struct StoredPosition {
     offset: u64,
     #[n(2)]
     non_text: u64,
-}
-
-impl From<&ReadingHistoryEntry> for StoredHistoryEntry {
-    fn from(entry: &ReadingHistoryEntry) -> Self {
-        let position = entry.position();
-        let location = position.location();
-
-        Self {
-            path: entry.path.clone(),
-            identifier: entry.identifier.clone(),
-            title: entry.title.clone(),
-            creator: entry.creator.clone(),
-            position: StoredPosition {
-                spine: location.spine().get(),
-                offset: location.offset().get(),
-                non_text: position.non_text(),
-            },
-            progress_basis_points: entry.progress().basis_points(),
-        }
-    }
 }
 
 impl From<StoredHistoryEntry> for ReadingHistoryEntry {

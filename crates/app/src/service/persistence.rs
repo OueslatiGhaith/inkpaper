@@ -69,7 +69,16 @@ impl<T> Persisted<T> {
 }
 
 /// The book to reopen at boot, and when the device went to sleep.
-#[derive(Debug, Encode, Decode)]
+#[derive(Encode)]
+struct EncodedResume<'a> {
+    #[n(0)]
+    book: Option<&'a str>,
+    /// minutes since 1970, when the clock was set
+    #[n(1)]
+    slept_at: Option<u32>,
+}
+
+#[derive(Debug, Decode)]
 struct StoredResume {
     #[n(0)]
     book: Option<String>,
@@ -231,7 +240,7 @@ where
             slept_at: stored.slept_at,
         };
 
-        let forgotten = storage::encode(&StoredResume {
+        let forgotten = storage::encode(&EncodedResume {
             book: None,
             slept_at: None,
         });
@@ -328,8 +337,8 @@ where
             RESUME_STATE,
             &mut self.resume,
             |resume| {
-                storage::encode(&StoredResume {
-                    book: resume.as_ref().map(|book| book.path.clone()),
+                storage::encode(&EncodedResume {
+                    book: resume.as_ref().map(|book| book.path.as_str()),
                     slept_at: resume.as_ref().and_then(|book| book.slept_at),
                 })
             },

@@ -82,18 +82,18 @@ impl BookCover {
 
     pub(crate) fn encode(&self) -> Result<Vec<u8>, StorageError> {
         let stored = match &self.image {
-            Some(image) => StoredCover {
-                path: self.path.clone(),
+            Some(image) => EncodedCover {
+                path: &self.path,
                 width: image.width(),
                 height: image.height(),
-                pixels: image.pixels().to_vec(),
+                pixels: image.pixels(),
             },
 
-            None => StoredCover {
-                path: self.path.clone(),
+            None => EncodedCover {
+                path: &self.path,
                 width: 0,
                 height: 0,
-                pixels: Vec::new(),
+                pixels: &[],
             },
         };
 
@@ -135,7 +135,20 @@ pub(crate) async fn read_cover_image<S: EpubSource>(
     Ok(decode_image(&bytes))
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Encode)]
+struct EncodedCover<'a> {
+    #[n(0)]
+    path: &'a str,
+    #[n(1)]
+    width: u32,
+    #[n(2)]
+    height: u32,
+    /// one gray byte per pixel, row by row; empty when the book has no cover
+    #[cbor(n(3), with = "minicbor::bytes")]
+    pixels: &'a [u8],
+}
+
+#[derive(Debug, Decode)]
 struct StoredCover {
     #[n(0)]
     path: String,
@@ -146,4 +159,23 @@ struct StoredCover {
     /// one gray byte per pixel, row by row; empty when the book has no cover
     #[cbor(n(3), with = "minicbor::bytes")]
     pixels: Vec<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use super::*;
+
+    #[test]
+    fn book_cover_round_trips_with_and_without_image() {
+        let image = GrayImage::new(2, 2, vec![10, 80, 160, 250]).unwrap();
+        let with_image = BookCover::new(String::from("/Books/a.epub"), Some(&image));
+        let encoded = with_image.encode().unwrap();
+        assert_eq!(BookCover::decode(&encoded), Ok(with_image));
+
+        let without_image = BookCover::new(String::from("/Books/b.epub"), None);
+        let encoded = without_image.encode().unwrap();
+        assert_eq!(BookCover::decode(&encoded), Ok(without_image));
+    }
 }
