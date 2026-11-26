@@ -1,3 +1,5 @@
+pub use epd_bus::{BinaryOverGrayMode, PanelCapabilities as EInkCapabilities};
+
 const MAX_CONSECUTIVE_FAST_REFRESHES: u8 = 12;
 const LARGE_DAMAGE_PERCENT: u8 = 60;
 const CONTINUOUS_TONE_DAMAGE_PERCENT: u8 = 20;
@@ -6,25 +8,6 @@ const CONTINUOUS_TONE_DAMAGE_PERCENT: u8 = 20;
 pub enum RefreshRequest {
     Full,
     Fast,
-}
-
-#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
-pub enum BinaryUpdateMode {
-    FullPlane,
-    Window,
-}
-
-#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
-pub enum BinaryOverGrayMode {
-    Unsupported,
-    NativeWindow,
-    PreconditionedWindow,
-}
-
-#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
-pub enum GrayscaleUpdateMode {
-    FullPlane,
-    Window,
 }
 
 #[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
@@ -40,35 +23,6 @@ pub enum RefreshContent {
         /// a damage-scoped grayscale transition
         window_eligible: bool,
     },
-}
-
-#[derive(Debug, defmt::Format, Clone, Copy, PartialEq, Eq)]
-pub struct EInkCapabilities {
-    binary_update: BinaryUpdateMode,
-    binary_over_gray: BinaryOverGrayMode,
-    grayscale_update: GrayscaleUpdateMode,
-}
-
-impl EInkCapabilities {
-    pub const fn new(
-        binary_update: BinaryUpdateMode,
-        binary_over_gray: BinaryOverGrayMode,
-        grayscale_update: GrayscaleUpdateMode,
-    ) -> Self {
-        Self {
-            binary_update,
-            binary_over_gray,
-            grayscale_update,
-        }
-    }
-
-    pub const fn binary_over_gray(self) -> BinaryOverGrayMode {
-        self.binary_over_gray
-    }
-
-    pub const fn supports_partial_grayscale(self) -> bool {
-        matches!(self.grayscale_update, GrayscaleUpdateMode::Window)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

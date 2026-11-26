@@ -21,6 +21,8 @@ pub(crate) enum Command {
     LutWhiteToBlack = 0x23,
     LutBlack = 0x24,
 
+    Pll = 0x30,
+
     VcomDataInterval = 0x50,
     Resolution = 0x61,
     GateSourceStart = 0x65,

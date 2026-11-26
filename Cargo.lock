@@ -2380,8 +2380,7 @@ dependencies = [
  "sntp",
  "ssd1677",
  "static_cell",
- "uc8179",
- "uc8279-x4",
+ "uc8xxx",
  "xteink-display-probe",
 ]
 
@@ -3706,16 +3705,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
-name = "uc8179"
-version = "0.1.0"
-dependencies = [
- "defmt 1.1.1",
- "embedded-hal-async",
- "epd-bus",
-]
-
-[[package]]
-name = "uc8279-x4"
+name = "uc8xxx"
 version = "0.1.0"
 dependencies = [
  "defmt 1.1.1",
