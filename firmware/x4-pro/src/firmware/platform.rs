@@ -7,16 +7,22 @@ use inkpaper_app::{
 use inkpaper_io::ByteSource;
 
 use crate::firmware::{
+    frontlight::Frontlight,
     storage::{self, MAX_RANDOM_ACCESS_READ_BYTES, RandomAccessHandle, StorageError},
     wifi,
 };
 
-#[derive(Debug, Default, Clone, Copy)]
-pub(super) struct X4Platform;
+pub(super) struct X4Platform {
+    frontlight: Frontlight,
+}
 
 impl X4Platform {
-    pub(super) const fn new() -> Self {
-        Self
+    pub(super) const fn new(frontlight: Frontlight) -> Self {
+        Self { frontlight }
+    }
+
+    pub(super) fn frontlight_off(&mut self) {
+        self.frontlight.off();
     }
 }
 
@@ -126,7 +132,8 @@ impl AppPlatform for X4Platform {
         let warmth = ::frontlight::Percent::new(setting.warmth())
             .expect("app frontlight warmth must be valid");
 
-        crate::firmware::frontlight::set(::frontlight::Setting::new(brightness, warmth)).await;
+        self.frontlight
+            .set(::frontlight::Setting::new(brightness, warmth));
 
         Ok(())
     }

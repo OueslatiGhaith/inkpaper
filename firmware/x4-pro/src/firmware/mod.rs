@@ -35,7 +35,7 @@ use crate::firmware::{
     buttons::{Buttons, button_task},
     display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
-    frontlight::frontlight_task,
+    frontlight::Frontlight,
     input::{Button, ButtonEdge, INPUT_EVENTS, InputEvent, PowerButtonEvent, TouchEvent},
     platform::X4Platform,
     power::PowerRails,
@@ -126,7 +126,7 @@ async fn main(spawner: Spawner) -> ! {
     let timer_group = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timer_group.timer0, peripherals.FROM_CPU_INTR0);
 
-    spawner.spawn(frontlight_task(peripherals.LEDC, peripherals.GPIO8, peripherals.GPIO9).unwrap());
+    let frontlight = Frontlight::new(peripherals.LEDC, peripherals.GPIO8, peripherals.GPIO9);
 
     {
         let buttons = Buttons::new(
@@ -265,7 +265,7 @@ async fn main(spawner: Spawner) -> ! {
         apply_rtc_state(runtime, app, state);
     }
 
-    let mut app_service = AppService::new(X4Platform::new());
+    let mut app_service = AppService::new(X4Platform::new(frontlight));
     if app_service.service_pending(runtime, app).await.is_err() {
         warn!("failed to service initial app work");
     }
