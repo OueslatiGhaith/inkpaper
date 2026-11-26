@@ -4,13 +4,14 @@ use inkpaper_ui::prelude::*;
 
 use super::{InkPaperApp, Screen};
 use crate::{
-    SavedNetworks, WifiCredentials, WifiJoinFailure, WifiNetwork, WifiScanError,
+    SavedNetworks, WifiCredentials, WifiJoinFailure, WifiJoinToken, WifiNetwork, WifiScanError,
     screens::{
         wifi_networks::{WifiMenuItem, WifiNetworksEvent, WifiNetworksView},
         wifi_password::{
             PasswordFieldView, PasswordKeyboardView, PressKey, TogglePassword, keyboard_look,
         },
     },
+    wifi::JoinOutcome,
 };
 
 impl InkPaperApp {
@@ -190,21 +191,24 @@ impl InkPaperApp {
     }
 
     /// Reports how joining a network with a typed password ended. A network
-    /// that joined is saved as the one in use.
+    /// that joined is saved as the one in use; stale results are ignored.
     pub fn apply_wifi_join_result(
         &mut self,
+        token: WifiJoinToken,
         result: Result<(), WifiJoinFailure>,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(credentials) = self.wifi.finish_join(result) else {
-            if self.screen() == Screen::WifiPassword {
-                cx.notify();
+        match self.wifi.finish_join(token, result) {
+            JoinOutcome::Ignored => {}
+            JoinOutcome::Failed => {
+                if self.screen() == Screen::WifiPassword {
+                    cx.notify();
+                }
             }
-
-            return;
-        };
-
-        self.connect_wifi_network(credentials, cx);
-        self.navigate_back(cx);
+            JoinOutcome::Succeeded(credentials) => {
+                self.connect_wifi_network(credentials, cx);
+                self.navigate_back(cx);
+            }
+        }
     }
 }

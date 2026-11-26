@@ -35,7 +35,8 @@ pub use gesture::{LONG_PRESS_MS, TouchGesture};
 pub use service::{AppPlatform, AppService, AppServiceError, PlatformEntry};
 pub use system::{BatteryStatus, ClockStatus};
 pub use wifi::{
-    DeviceKey, WifiCredentials, WifiJoinFailure, WifiJoinPlan, WifiNetwork, WifiScanError,
+    DeviceKey, WifiCredentials, WifiJoinFailure, WifiJoinPlan, WifiJoinToken, WifiNetwork,
+    WifiScanError,
 };
 
 // internal application domain/effect types.
@@ -50,8 +51,8 @@ pub(crate) use file_transfer::{FileTransferRequest, FileTransferState, FileTrans
 pub(crate) use frontlight::{FrontlightPreferences, FrontlightPreferencesRequest, FrontlightState};
 pub use input::{AppInputError, AppInputEvent, dispatch_input};
 pub(crate) use reader::{
-    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences,
-    ReaderPreferencesRequest, ReaderRequest, ReaderSession,
+    ReaderChapter, ReaderChapterDirection, ReaderDocument, ReaderPreferences, ReaderRequest,
+    ReaderSession,
 };
 pub(crate) use reading_history::{
     BookProgress, ReadingHistory, ReadingHistoryEntry, ReadingHistoryRequest,

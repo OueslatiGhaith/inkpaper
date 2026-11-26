@@ -1,17 +1,13 @@
 use inkpaper_epub::SpineIndex;
 
-use crate::{ReaderChapter, ReaderPreferences, ReaderPreferencesRequest, reader::TextSettings};
+use crate::{ReaderChapter, ReaderPreferences, reader::TextSettings};
 
 use super::{PendingRepaginationRequest, ReaderRequest, ReaderState};
 
 impl ReaderState {
     /// Repaginates the current chapter with `text`, keeping the reading position.
     pub(crate) fn request_text_settings(&mut self, text: TextSettings) -> bool {
-        if text == self.text
-            || self.pending_chapter.is_some()
-            || self.pending_repagination.is_some()
-            || self.pending_jump.is_some()
-        {
+        if text == self.text || self.has_pending_navigation() {
             return false;
         }
 
@@ -37,7 +33,7 @@ impl ReaderState {
 
         self.pending_repagination = Some(request);
 
-        self.pending = Some(ReaderRequest::RepaginateChapter {
+        self.pending_document = Some(ReaderRequest::RepaginateChapter {
             path: self.path.clone(),
             spine: request.spine,
             text,
@@ -136,6 +132,6 @@ impl ReaderState {
             .with_dictionary(self.dictionary)
             .with_resume_limit(self.resume_limit);
 
-        self.pending_preferences = Some(ReaderPreferencesRequest::Update(preferences));
+        self.pending_preferences = Some(preferences);
     }
 }

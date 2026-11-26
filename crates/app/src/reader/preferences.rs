@@ -139,12 +139,6 @@ impl ReaderPreferences {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReaderPreferencesRequest {
-    Load,
-    Update(ReaderPreferences),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReaderPreferencesError {
     Storage(StorageError),
     InvalidFontSize(u16),

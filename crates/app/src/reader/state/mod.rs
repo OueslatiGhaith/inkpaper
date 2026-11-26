@@ -10,7 +10,7 @@ use inkpaper_epub::{ArchivePath, SpineIndex};
 use inkpaper_reader::{Page, ReadingPosition};
 
 use crate::{
-    ReaderDocument, ReaderPreferences, ReaderPreferencesRequest, ReadingHistoryEntry,
+    ReaderDocument, ReaderPreferences, ReadingHistoryEntry,
     paging::Pager,
     reader::{TableOfContents, TextSettings, WordSelection},
     resume::ResumeLimit,
@@ -108,8 +108,10 @@ pub(crate) struct ReaderState {
     path: String,
     fallback_title: String,
 
-    pending: Option<ReaderRequest>,
-    pending_preferences: Option<ReaderPreferencesRequest>,
+    pending_document: Option<ReaderRequest>,
+    pending_toc: Option<String>,
+    pending_progress: Option<ReadingHistoryEntry>,
+    pending_preferences: Option<ReaderPreferences>,
     pending_chapter: Option<PendingChapterRequest>,
     pending_repagination: Option<PendingRepaginationRequest>,
     pending_jump: Option<JumpTarget>,
@@ -140,8 +142,10 @@ impl Default for ReaderState {
         Self {
             path: String::new(),
             fallback_title: String::new(),
-            pending: None,
-            pending_preferences: Some(ReaderPreferencesRequest::Load),
+            pending_document: None,
+            pending_toc: None,
+            pending_progress: None,
+            pending_preferences: None,
             pending_chapter: None,
             pending_repagination: None,
             pending_jump: None,
@@ -172,11 +176,12 @@ impl ReaderState {
 
     fn start_opening(&mut self, path: String, fallback_title: String, resume: bool) {
         self.text = self.saved_text;
-        self.pending = Some(ReaderRequest::OpenEpub {
+        self.pending_document = Some(ReaderRequest::OpenEpub {
             path: path.clone(),
             text: self.text,
             resume,
         });
+        self.pending_toc = None;
 
         self.pending_chapter = None;
         self.pending_repagination = None;
@@ -191,8 +196,24 @@ impl ReaderState {
         self.toc = TableOfContents::NotLoaded;
     }
 
+    pub(super) const fn has_pending_navigation(&self) -> bool {
+        self.pending_chapter.is_some()
+            || self.pending_repagination.is_some()
+            || self.pending_jump.is_some()
+    }
+
     pub(crate) fn take_request(&mut self) -> Option<ReaderRequest> {
-        self.pending.take()
+        if let Some(progress) = self.pending_progress.take() {
+            return Some(ReaderRequest::UpdateProgress(progress));
+        }
+
+        if let Some(request) = self.pending_document.take() {
+            return Some(request);
+        }
+
+        self.pending_toc
+            .take()
+            .map(|path| ReaderRequest::LoadTableOfContents { path })
     }
 
     pub(crate) const fn resume_limit(&self) -> ResumeLimit {
@@ -213,12 +234,22 @@ impl ReaderState {
 
     /// Puts back a request the service took, unless a newer one is waiting.
     pub(crate) fn restore_request(&mut self, request: ReaderRequest) {
-        if self.pending.is_none() {
-            self.pending = Some(request);
+        match request {
+            ReaderRequest::UpdateProgress(progress) => {
+                self.pending_progress.get_or_insert(progress);
+            }
+            ReaderRequest::LoadTableOfContents { path } => {
+                if self.path == path && self.toc == TableOfContents::Loading {
+                    self.pending_toc.get_or_insert(path);
+                }
+            }
+            document_request => {
+                self.pending_document.get_or_insert(document_request);
+            }
         }
     }
 
-    pub(crate) fn take_preferences_request(&mut self) -> Option<ReaderPreferencesRequest> {
+    pub(crate) fn take_preferences_request(&mut self) -> Option<ReaderPreferences> {
         self.pending_preferences.take()
     }
 
@@ -255,6 +286,7 @@ impl ReaderState {
 
         self.document = Some(document);
 
+        self.pending_document = None;
         self.pending_chapter = None;
         self.pending_repagination = None;
         self.pending_jump = None;
@@ -274,12 +306,15 @@ impl ReaderState {
         }
 
         self.document = None;
+        self.pending_document = None;
+        self.pending_toc = None;
         self.pending_chapter = None;
         self.pending_repagination = None;
         self.pending_jump = None;
         self.page_index = 0;
 
         self.chrome = ReaderChromeState::default();
+        self.toc = TableOfContents::NotLoaded;
 
         true
     }
@@ -388,7 +423,7 @@ impl ReaderState {
             return;
         };
 
-        self.pending = Some(ReaderRequest::UpdateProgress(progress));
+        self.pending_progress = Some(progress);
     }
 
     #[cfg(test)]

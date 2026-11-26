@@ -94,13 +94,15 @@ impl BrowseListing {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BrowseRequest {
-    ListDirectory(String),
+    ListDirectory { id: u64, path: String },
 }
 
 #[derive(Debug)]
 pub(crate) struct BrowserState {
     path: String,
     entries: Vec<BrowseEntry>,
+    next_request_id: u64,
+    in_flight: Option<u64>,
     pending: Option<BrowseRequest>,
     error: bool,
     revision: u64,
@@ -112,6 +114,8 @@ impl Default for BrowserState {
         Self {
             path: "/".to_owned(),
             entries: Vec::new(),
+            next_request_id: 0,
+            in_flight: None,
             pending: None,
             error: false,
             revision: 0,
@@ -161,9 +165,16 @@ impl BrowserState {
         self.pager.turn(turn, self.entries.len(), rows_per_page)
     }
 
-    pub(crate) fn request_current_directory(&mut self) {
-        self.pending = Some(BrowseRequest::ListDirectory(self.path.clone()));
+    fn queue_list(&mut self, path: String) {
+        let id = self.next_request_id.wrapping_add(1);
+        self.next_request_id = id;
+        self.in_flight = Some(id);
+        self.pending = Some(BrowseRequest::ListDirectory { id, path });
         self.error = false;
+    }
+
+    pub(crate) fn request_current_directory(&mut self) {
+        self.queue_list(self.path.clone());
     }
 
     pub(crate) fn request_entry(&mut self, index: usize) -> bool {
@@ -177,8 +188,7 @@ impl BrowserState {
 
         let path = join_path(&self.path, &entry.name);
 
-        self.pending = Some(BrowseRequest::ListDirectory(path));
-        self.error = false;
+        self.queue_list(path);
 
         true
     }
@@ -188,8 +198,7 @@ impl BrowserState {
             return false;
         }
 
-        self.pending = Some(BrowseRequest::ListDirectory(parent_path(&self.path)));
-        self.error = false;
+        self.queue_list(parent_path(&self.path));
 
         true
     }
@@ -198,7 +207,13 @@ impl BrowserState {
         self.pending.take()
     }
 
-    pub(crate) fn apply_listing(&mut self, listing: BrowseListing) {
+    pub(crate) fn apply_listing(&mut self, id: u64, listing: BrowseListing) -> bool {
+        if self.in_flight != Some(id) {
+            return false;
+        }
+
+        self.in_flight = None;
+
         let (path, entries) = listing.into_parts();
 
         // like crosspoint, going up a level shows the folder just left
@@ -213,12 +228,21 @@ impl BrowserState {
         self.entries = entries;
         self.error = false;
         self.revision = self.revision.wrapping_add(1);
+
+        true
     }
 
-    pub(crate) fn apply_error(&mut self) {
+    pub(crate) fn apply_error(&mut self, id: u64) -> bool {
+        if self.in_flight != Some(id) {
+            return false;
+        }
+
+        self.in_flight = None;
         self.error = true;
         self.pager = Pager::default();
         self.revision = self.revision.wrapping_add(1);
+
+        true
     }
 
     pub(crate) fn file_at(&self, index: usize) -> Option<BrowseFile> {
@@ -365,19 +389,32 @@ mod tests {
         BrowseListing::new(path, entries)
     }
 
+    fn load(browser: &mut BrowserState, path: &str, entries: Vec<BrowseEntry>) {
+        browser.queue_list(path.to_owned());
+        let Some(BrowseRequest::ListDirectory { id, .. }) = browser.take_request() else {
+            panic!("expected queued browse request");
+        };
+        assert!(browser.apply_listing(id, list(path, entries)));
+    }
+
     #[test]
     fn going_up_remembers_the_folder_that_was_left() {
         let mut browser = BrowserState::default();
-        browser.apply_listing(list("/books/sci-fi", vec![BrowseEntry::file("a.epub")]));
+        load(
+            &mut browser,
+            "/books/sci-fi",
+            vec![BrowseEntry::file("a.epub")],
+        );
 
-        browser.apply_listing(list(
+        load(
+            &mut browser,
             "/books",
             vec![
                 BrowseEntry::file("sci-fi.epub"),
                 BrowseEntry::directory("fantasy"),
                 BrowseEntry::directory("sci-fi"),
             ],
-        ));
+        );
 
         // directories sort first: fantasy, sci-fi, then the file
         assert_eq!(browser.pager, Pager::showing(1));
@@ -386,15 +423,16 @@ mod tests {
     #[test]
     fn going_up_to_root_remembers_the_folder_that_was_left() {
         let mut browser = BrowserState::default();
-        browser.apply_listing(list("/books", vec![]));
+        load(&mut browser, "/books", vec![]);
 
-        browser.apply_listing(list(
+        load(
+            &mut browser,
             "/",
             vec![
                 BrowseEntry::directory("art"),
                 BrowseEntry::directory("books"),
             ],
-        ));
+        );
 
         assert_eq!(browser.pager, Pager::showing(1));
     }
@@ -402,11 +440,53 @@ mod tests {
     #[test]
     fn opening_or_reloading_a_folder_starts_at_the_top() {
         let mut browser = BrowserState::default();
-        browser.apply_listing(list("/", vec![BrowseEntry::directory("books")]));
-        browser.apply_listing(list("/books", vec![BrowseEntry::directory("books")]));
+        load(&mut browser, "/", vec![BrowseEntry::directory("books")]);
+        load(
+            &mut browser,
+            "/books",
+            vec![BrowseEntry::directory("books")],
+        );
         assert_eq!(browser.pager, Pager::default());
 
-        browser.apply_listing(list("/books", vec![BrowseEntry::directory("books")]));
+        load(
+            &mut browser,
+            "/books",
+            vec![BrowseEntry::directory("books")],
+        );
         assert_eq!(browser.pager, Pager::default());
+    }
+
+    #[test]
+    fn stale_browse_listing_or_error_is_ignored() {
+        let mut browser = BrowserState::default();
+        load(
+            &mut browser,
+            "/",
+            vec![
+                BrowseEntry::directory("a"),
+                BrowseEntry::directory("b"),
+            ],
+        );
+
+        assert!(browser.request_entry(0));
+        let Some(BrowseRequest::ListDirectory { id: first_id, .. }) = browser.take_request() else {
+            panic!("expected first request");
+        };
+
+        assert!(browser.request_entry(1));
+        let Some(BrowseRequest::ListDirectory { id: second_id, .. }) = browser.take_request()
+        else {
+            panic!("expected second request");
+        };
+        assert_ne!(first_id, second_id);
+
+        assert!(!browser.apply_listing(first_id, list("/a", vec![BrowseEntry::file("old.epub")])));
+        assert!(!browser.apply_error(first_id));
+        assert_eq!(browser.path(), "/");
+        assert!(!browser.error());
+
+        assert!(browser.apply_listing(second_id, list("/b", vec![BrowseEntry::file("new.epub")])));
+        assert_eq!(browser.path(), "/b");
+        assert_eq!(browser.entries().len(), 1);
     }
 }

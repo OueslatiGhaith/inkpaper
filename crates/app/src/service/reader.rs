@@ -3,7 +3,7 @@ use alloc::string::String;
 use inkpaper_ui::{Entity, ResourceRuntimeApi, RuntimeApi};
 
 use crate::{
-    InkPaperApp, ReaderPreferencesRequest, ReaderRequest, ReaderSession,
+    InkPaperApp, ReaderRequest, ReaderSession,
     fonts::{CardFont, card_for, load_card_font},
     reader::{ReaderFont, TextSettings},
     typography::register_card_font,
@@ -284,34 +284,5 @@ where
         runtime.update(app, move |app, cx| app.apply_card_font(Some(card), cx))?;
 
         Ok(true)
-    }
-
-    pub(super) async fn service_reader_preferences_request<R>(
-        &mut self,
-        runtime: &mut R,
-        app: Entity<InkPaperApp>,
-        request: ReaderPreferencesRequest,
-    ) -> Result<(), AppServiceError>
-    where
-        R: RuntimeApi,
-    {
-        match request {
-            ReaderPreferencesRequest::Load => {
-                let preferences = self.preferences;
-
-                runtime.update(app, move |app, cx| {
-                    app.apply_reader_preferences(preferences, cx);
-                })?;
-            }
-
-            ReaderPreferencesRequest::Update(preferences) => {
-                self.preferences = preferences;
-                self.preferences_dirty = true;
-
-                self.persist_preferences().await;
-            }
-        }
-
-        Ok(())
     }
 }

@@ -149,10 +149,10 @@ where
                         })?;
                     }
                 }
-                AppRequest::WifiJoin(network) => {
-                    if self.platform.start_wifi_join(&network).await.is_err() {
+                AppRequest::WifiJoin(token, network) => {
+                    if self.platform.start_wifi_join(token, &network).await.is_err() {
                         runtime.update(app, |app, cx| {
-                            app.apply_wifi_join_result(Err(WifiJoinFailure::Radio), cx);
+                            app.apply_wifi_join_result(token, Err(WifiJoinFailure::Radio), cx);
                         })?;
                     }
                 }
@@ -171,9 +171,10 @@ where
                     self.clock_preferences_dirty = true;
                     self.persist_clock_preferences().await;
                 }
-                AppRequest::ReaderPreferences(request) => {
-                    self.service_reader_preferences_request(runtime, app, request)
-                        .await?;
+                AppRequest::SaveReaderPreferences(preferences) => {
+                    self.preferences = preferences;
+                    self.preferences_dirty = true;
+                    self.persist_preferences().await;
                 }
                 AppRequest::Dictionary(request) => {
                     self.service_dictionary_request(runtime, app, request)
@@ -324,26 +325,28 @@ where
         R: RuntimeApi,
     {
         match request {
-            BrowseRequest::ListDirectory(path) => match self.platform.list_directory(&path).await {
-                Ok(entries) => {
-                    let entries = entries
-                        .into_iter()
-                        .map(PlatformEntry::into_browse_entry)
-                        .collect();
+            BrowseRequest::ListDirectory { id, path } => {
+                match self.platform.list_directory(&path).await {
+                    Ok(entries) => {
+                        let entries = entries
+                            .into_iter()
+                            .map(PlatformEntry::into_browse_entry)
+                            .collect();
 
-                    let listing = BrowseListing::new(path, entries);
+                        let listing = BrowseListing::new(path, entries);
 
-                    runtime.update(app, move |app, cx| {
-                        app.apply_browse_listing(listing, cx);
-                    })?;
+                        runtime.update(app, move |app, cx| {
+                            app.apply_browse_listing(id, listing, cx);
+                        })?;
+                    }
+
+                    Err(_) => {
+                        runtime.update(app, move |app, cx| {
+                            app.apply_browse_error(id, cx);
+                        })?;
+                    }
                 }
-
-                Err(_) => {
-                    runtime.update(app, |app, cx| {
-                        app.apply_browse_error(cx);
-                    })?;
-                }
-            },
+            }
         }
 
         Ok(())

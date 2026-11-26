@@ -2,7 +2,9 @@ use alloc::{string::String, vec::Vec};
 
 use inkpaper_epub::EpubSource;
 
-use crate::{BrowseEntry, DeviceKey, FrontlightSetting, WifiCredentials, WifiJoinPlan};
+use crate::{
+    BrowseEntry, DeviceKey, FrontlightSetting, WifiCredentials, WifiJoinPlan, WifiJoinToken,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlatformEntryKind {
@@ -87,9 +89,13 @@ pub trait AppPlatform {
     async fn start_clock_sync(&mut self, plan: &WifiJoinPlan) -> Result<(), Self::Error>;
 
     /// Starts joining `network` to check its password, then leaves it, and
-    /// returns without waiting. The platform reports the outcome through
-    /// [`InkPaperApp::apply_wifi_join_result`].
-    async fn start_wifi_join(&mut self, network: &WifiCredentials) -> Result<(), Self::Error>;
+    /// returns without waiting. The platform reports the outcome with `token`
+    /// through [`InkPaperApp::apply_wifi_join_result`].
+    async fn start_wifi_join(
+        &mut self,
+        token: WifiJoinToken,
+        network: &WifiCredentials,
+    ) -> Result<(), Self::Error>;
 
     /// Starts a WiFi scan and returns without waiting. The platform reports the
     /// networks through [`InkPaperApp::apply_wifi_scan_result`].

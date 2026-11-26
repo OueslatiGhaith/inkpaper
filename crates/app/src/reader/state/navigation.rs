@@ -91,7 +91,7 @@ impl ReaderState {
         let Some(document) = self.document.as_ref() else {
             return false;
         };
-        if self.pending_repagination.is_some() || self.pending_jump.is_some() {
+        if self.has_pending_navigation() {
             return false;
         }
 
@@ -117,7 +117,7 @@ impl ReaderState {
         let Some(document) = self.document.as_ref() else {
             return false;
         };
-        if self.pending_repagination.is_some() || self.pending_jump.is_some() {
+        if self.has_pending_navigation() {
             return false;
         }
 
@@ -144,10 +144,7 @@ impl ReaderState {
     }
 
     fn request_adjacent_chapter(&mut self, from: SpineIndex, direction: ReaderChapterDirection) {
-        if self.pending_chapter.is_some()
-            || self.pending_repagination.is_some()
-            || self.pending_jump.is_some()
-        {
+        if self.has_pending_navigation() {
             return;
         }
 
@@ -155,7 +152,7 @@ impl ReaderState {
 
         self.pending_chapter = Some(request);
 
-        self.pending = Some(ReaderRequest::LoadAdjacentChapter {
+        self.pending_document = Some(ReaderRequest::LoadAdjacentChapter {
             path: self.path.clone(),
             from,
             direction,
@@ -168,17 +165,13 @@ impl ReaderState {
     }
 
     pub(super) fn jump(&mut self, target: JumpTarget) -> bool {
-        if self.document.is_none()
-            || self.pending_chapter.is_some()
-            || self.pending_repagination.is_some()
-            || self.pending_jump.is_some()
-        {
+        if self.document.is_none() || self.has_pending_navigation() {
             return false;
         }
 
         self.pending_jump = Some(target.clone());
 
-        self.pending = Some(ReaderRequest::JumpTo {
+        self.pending_document = Some(ReaderRequest::JumpTo {
             path: self.path.clone(),
             target,
         });

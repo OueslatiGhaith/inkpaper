@@ -21,7 +21,7 @@ pub(crate) use images::{GrayImage, decode_image};
 pub(crate) use loader::ReaderSession;
 #[cfg(test)]
 pub(crate) use loader::load_reader_document;
-pub(crate) use preferences::{ReaderPreferences, ReaderPreferencesRequest};
+pub(crate) use preferences::ReaderPreferences;
 pub(crate) use selection::WordSelection;
 pub(crate) use state::{JumpTarget, ReaderChapterDirection, ReaderRequest, ReaderState};
 pub(crate) use text_settings::{

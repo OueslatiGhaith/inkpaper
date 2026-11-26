@@ -640,7 +640,7 @@ fn apply_wifi_event(runtime: &mut UiRuntime, app: Entity<InkPaperApp>, event: Wi
         WifiEvent::ClockSynced { joined, result } => {
             app.apply_clock_sync_result(joined.as_deref(), result, cx)
         }
-        WifiEvent::Joined(result) => app.apply_wifi_join_result(result, cx),
+        WifiEvent::Joined(token, result) => app.apply_wifi_join_result(token, result, cx),
     });
 
     if applied.is_err() {

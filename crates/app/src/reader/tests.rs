@@ -4,8 +4,7 @@ use inkpaper_epub::{Epub, SliceSource, SpineIndex};
 use inkpaper_reader::PageItem;
 
 use crate::{
-    ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderPreferencesRequest,
-    ReaderRequest, ReaderSession,
+    ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderRequest, ReaderSession,
     reader::{
         JumpTarget, LineSpacing, ReaderState, TableOfContents, TextSetting, TextSettings,
         load_reader_document,
@@ -126,6 +125,10 @@ fn next_chapter_request_replaces_chapter_and_lands_on_first_page() {
     state.open(path.clone(), String::from("book-boundaries"));
 
     assert!(state.apply_document(document));
+    assert!(matches!(
+        state.take_request(),
+        Some(ReaderRequest::UpdateProgress(_)),
+    ));
 
     while state.page_index() < last_page {
         assert!(state.next_page());
@@ -453,10 +456,8 @@ fn reader_font_size_stays_within_supported_bounds() {
 fn persisted_reader_preferences_are_used_when_opening_a_book() {
     let mut state = ReaderState::default();
 
-    assert_eq!(
-        state.take_preferences_request(),
-        Some(ReaderPreferencesRequest::Load),
-    );
+    // AppService::ensure_initialized pushes preferences at boot without an extra Load round-trip.
+    assert_eq!(state.take_preferences_request(), None);
 
     let text = TextSettings::default().with_font_size(26).unwrap();
     let preferences = ReaderPreferences::new(text);
@@ -665,4 +666,96 @@ fn table_of_contents_loads_once_flattened_with_targets_and_marks_the_current_cha
     };
     assert!(state.apply_jump(&path, target, chapter, page_index));
     assert_eq!(state.current_toc_index(), Some(1));
+}
+
+#[test]
+fn turning_back_while_adjacent_chapter_is_pending_does_not_clobber_or_deadlock() {
+    const BYTES: &[u8] = include_bytes!("../../../../fixtures/navigation-anchors.epub");
+    let path = String::from("/Fixtures/navigation-anchors.epub");
+
+    let mut session =
+        future::block_on(ReaderSession::open(path.clone(), SliceSource::new(BYTES))).unwrap();
+    let mut document = future::block_on(session.load_document()).unwrap();
+    let spine = SpineIndex::new(1);
+    let (chapter, _) = future::block_on(session.load_chapter_at(spine, None))
+        .unwrap()
+        .unwrap();
+    document.replace_chapter(chapter);
+
+    let last_page = document.page_count().saturating_sub(1);
+    assert!(last_page > 0, "chapter 2 fixture should span multiple pages");
+
+    let mut state = ReaderState::default();
+    state.open(path.clone(), String::from("navigation-anchors"));
+    assert!(state.apply_document(document));
+    let _ = state.take_request();
+
+    while state.page_index() < last_page {
+        assert!(state.next_page());
+        let _ = state.take_request();
+    }
+
+    // Request next chapter at the end of the current one.
+    assert!(!state.next_page());
+
+    // Pressing previous_page before the chapter request is serviced must be
+    // rejected while chapter navigation is in flight, rather than overwriting
+    // the pending chapter request with UpdateProgress.
+    assert!(!state.previous_page());
+    assert_eq!(state.page_index(), last_page);
+
+    assert_eq!(
+        state.take_request(),
+        Some(ReaderRequest::LoadAdjacentChapter {
+            path: path.clone(),
+            from: spine,
+            direction: ReaderChapterDirection::Next,
+        }),
+    );
+
+    // Completing the chapter request unlocks navigation again.
+    assert!(state.finish_chapter_request(&path, spine, ReaderChapterDirection::Next));
+    assert!(state.previous_page());
+    assert_eq!(state.page_index(), last_page - 1);
+}
+
+#[test]
+fn toc_request_and_progress_or_navigation_requests_do_not_clobber_each_other() {
+    const BYTES: &[u8] = include_bytes!("../../../../fixtures/navigation-anchors.epub");
+    let path = String::from("/Fixtures/navigation-anchors.epub");
+
+    let mut session =
+        future::block_on(ReaderSession::open(path.clone(), SliceSource::new(BYTES))).unwrap();
+    let document = future::block_on(session.load_document()).unwrap();
+
+    let mut state = ReaderState::default();
+    state.open(path.clone(), String::from("navigation-anchors"));
+    assert!(state.apply_document(document));
+
+    // Request TOC before draining the initial UpdateProgress from apply_document,
+    // and also queue a JumpTo while TOC is still pending.
+    assert!(state.request_table_of_contents());
+    assert_eq!(state.table_of_contents(), &TableOfContents::Loading);
+    assert!(state.jump_to(SpineIndex::new(1), None));
+
+    // All three independent requests drain in order without clobbering.
+    assert!(matches!(
+        state.take_request(),
+        Some(ReaderRequest::UpdateProgress(_))
+    ));
+    assert_eq!(
+        state.take_request(),
+        Some(ReaderRequest::JumpTo {
+            path: path.clone(),
+            target: JumpTarget::Chapter {
+                spine: SpineIndex::new(1),
+                anchor: None,
+            },
+        }),
+    );
+    assert_eq!(
+        state.take_request(),
+        Some(ReaderRequest::LoadTableOfContents { path: path.clone() }),
+    );
+    assert_eq!(state.take_request(), None);
 }
