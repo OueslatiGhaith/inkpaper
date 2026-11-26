@@ -59,7 +59,7 @@ impl InkPaperApp {
     /// again; other screens render again on the way back.
     pub(crate) fn preview_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
         if self.clock.preview_utc_offset(offset)
-            && let Some(timezone) = self.timezone
+            && let Some(timezone) = self.views.timezone
         {
             timezone.notify(cx);
         }
@@ -79,7 +79,7 @@ impl InkPaperApp {
     /// Saves a timezone, rendering again what [`Self::preview_utc_offset`] does.
     pub(crate) fn set_utc_offset(&mut self, offset: UtcOffset, cx: &mut Context<'_, Self>) {
         if self.clock.set_utc_offset(offset)
-            && let Some(timezone) = self.timezone
+            && let Some(timezone) = self.views.timezone
         {
             timezone.notify(cx);
         }

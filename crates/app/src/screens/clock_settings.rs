@@ -3,7 +3,7 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     ClockSyncStatus, InkPaperApp, UtcOffset,
-    app::{Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView},
+    app::{Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView, ScreenViews},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
         settings_row::{ListRow, ListRowProps, SettingsValueRow, SettingsValueRowProps},
@@ -173,14 +173,14 @@ impl ScreenLifecycle for ClockSettingsRoute {
         if entry == Entry::Opened {
             app.clock.clear_sync_result();
 
-            let view = InkPaperApp::open_view(&mut app.timezone, cx, TimezoneView::new);
+            let view = ScreenViews::open(&mut app.views.timezone, cx, TimezoneView::new);
             cx.subscribe(view, InkPaperApp::on_step_timezone);
         }
     }
 
     fn exit(&self, app: &mut InkPaperApp, exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
         if exit == Exit::Closed {
-            InkPaperApp::close_view(&mut app.timezone, cx);
+            ScreenViews::close(&mut app.views.timezone, cx);
         }
     }
 }
@@ -226,7 +226,7 @@ impl ScreenView for ClockSettingsRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
-        let Some(timezone) = app.timezone else {
+        let Some(timezone) = app.views.timezone else {
             return div().into_any_element();
         };
 

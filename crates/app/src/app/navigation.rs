@@ -238,18 +238,18 @@ mod tests {
         runtime
             .update(app, |app, cx| {
                 app.open_screen(Screen::Settings, cx);
-                assert!(app.settings.is_some());
+                assert!(app.views.settings.is_some());
 
                 // Fill the stack to MAX_DEPTH without closing Settings.
                 let alternating = [Screen::BrowseFiles, Screen::Reader];
                 for index in 0..(MAX_DEPTH - 2) {
                     app.open_screen(alternating[index % 2], cx);
                 }
-                assert!(app.settings.is_some());
+                assert!(app.views.settings.is_some());
 
                 // One more push evicts Settings from index 1 and must close its view.
                 app.open_screen(Screen::RecentBooks, cx);
-                assert!(app.settings.is_none());
+                assert!(app.views.settings.is_none());
             })
             .expect("app entity should remain alive");
     }

@@ -173,12 +173,9 @@ pub(crate) struct WifiPasswordRoute;
 impl ScreenLifecycle for WifiPasswordRoute {
     fn enter(&self, app: &mut InkPaperApp, entry: Entry, cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
-            let field = InkPaperApp::open_view(&mut app.password_field, cx, PasswordFieldView::new);
-            cx.subscribe(field, InkPaperApp::on_toggle_password);
-
-            let keyboard =
-                InkPaperApp::open_view(&mut app.password_keyboard, cx, PasswordKeyboardView::new);
-            cx.subscribe(keyboard, InkPaperApp::on_password_key);
+            let views = app.views.open_wifi_password(cx);
+            cx.subscribe(views.field, InkPaperApp::on_toggle_password);
+            cx.subscribe(views.keyboard, InkPaperApp::on_password_key);
         }
     }
 
@@ -186,8 +183,7 @@ impl ScreenLifecycle for WifiPasswordRoute {
         // a password typed but not joined is dropped
         if exit == Exit::Closed {
             app.wifi.end_password_entry();
-            InkPaperApp::close_view(&mut app.password_field, cx);
-            InkPaperApp::close_view(&mut app.password_keyboard, cx);
+            app.views.close_wifi_password(cx);
         }
     }
 }
@@ -200,19 +196,16 @@ impl ScreenView for WifiPasswordRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
-        let (Some(entry), Some(field), Some(keyboard)) = (
-            app.wifi.password_entry(),
-            app.password_field,
-            app.password_keyboard,
-        ) else {
+        let (Some(entry), Some(views)) = (app.wifi.password_entry(), app.views.wifi_password)
+        else {
             return div().into_any_element();
         };
 
         WifiPasswordScreen::from(WifiPasswordScreenProps {
             ssid: entry.ssid(),
             battery: app.battery_indicator,
-            field,
-            keyboard,
+            field: views.field,
+            keyboard: views.keyboard,
             on_back: cx.listener(InkPaperApp::activate_back),
         })
         .into_any_element()
