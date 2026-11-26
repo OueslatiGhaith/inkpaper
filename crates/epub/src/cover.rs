@@ -1,12 +1,12 @@
 use xmlparser::{Token, Tokenizer};
 
 use crate::{
-    ArchivePath, Epub, EpubSource, Error, package::XHTML_MEDIA_TYPE, xml::decode_xml_value,
+    ArchivePath, ByteSource, Epub, Error, package::XHTML_MEDIA_TYPE, xml::decode_xml_value,
 };
 
 impl<S> Epub<S>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     /// The path of the book's cover image, like crosspoint finds it: the first
     /// of [`crate::Package::cover_candidates`] that is an image, or a page

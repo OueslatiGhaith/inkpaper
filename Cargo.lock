@@ -2234,6 +2234,7 @@ name = "inkpaper-epub"
 version = "0.1.0"
 dependencies = [
  "futures-lite",
+ "inkpaper-io",
  "miniz_oxide 0.9.1",
  "xmlparser",
 ]
