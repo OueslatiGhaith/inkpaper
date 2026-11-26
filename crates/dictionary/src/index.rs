@@ -125,36 +125,45 @@ where
         Ok(self.samples.insert(samples))
     }
 
-    /// The entry matching `target` the way StarDict sorts, ASCII letters in
-    /// any case. An entry spelled exactly like `target` wins over one in
-    /// another case.
-    pub async fn find(&mut self, target: &[u8]) -> Result<Option<(String, Tail)>, Error<S::Error>> {
+    /// All entries matching `target` the way StarDict sorts, ASCII letters in
+    /// any case. When one or more entries match `target`'s exact case, only
+    /// those exact-case entries are returned; otherwise all case-folded
+    /// matches are returned in index order.
+    pub async fn find_all(
+        &mut self,
+        target: &[u8],
+    ) -> Result<Vec<(String, Tail)>, Error<S::Error>> {
         let start = self.scan_start(target);
 
         let mut entries = EntryReader::new(&mut self.source, self.len, self.kind, start);
-        let mut found = None;
+        let mut exact = Vec::new();
+        let mut folded = Vec::new();
 
         while let Some(entry) = entries.next().await? {
             match compare_folded(entry.word, target) {
                 Ordering::Less => {}
                 Ordering::Greater => break,
                 Ordering::Equal => {
-                    let exact = entry.word == target;
-
-                    if found.is_none() || exact {
-                        let word = String::from_utf8_lossy(entry.word).into_owned();
-
-                        found = Some((word, entry.tail));
-                    }
-
-                    if exact {
-                        break;
+                    if entry.word == target {
+                        exact.push((
+                            String::from_utf8_lossy(entry.word).into_owned(),
+                            entry.tail,
+                        ));
+                    } else if exact.is_empty() {
+                        folded.push((
+                            String::from_utf8_lossy(entry.word).into_owned(),
+                            entry.tail,
+                        ));
                     }
                 }
             }
         }
 
-        Ok(found)
+        if exact.is_empty() {
+            Ok(folded)
+        } else {
+            Ok(exact)
+        }
     }
 
     /// The entry numbered `ordinal`, counting from 0.

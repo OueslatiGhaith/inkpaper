@@ -178,3 +178,24 @@ fn finds_synonyms_without_samples() {
         Some("word01999"),
     );
 }
+
+#[test]
+fn combines_multiple_synonym_matches_and_deduplicates() {
+    let dictionary = stardict(
+        Some("m"),
+        &[
+            ("lead", b"to guide"),
+            ("lead", b"a heavy metal"),
+            ("see", b"to perceive with the eyes"),
+        ],
+    );
+    // Two distinct targets for "saw" plus a duplicate pointing to ordinal 0
+    let syn = synonyms(&[("led", 0), ("led", 1), ("led", 0), ("saw", 2)]);
+    let mut opened = open(&dictionary, Some(&syn));
+
+    let definition = future::block_on(opened.lookup("led")).unwrap().unwrap();
+
+    assert_eq!(definition.headword(), "lead");
+    let texts: Vec<&str> = definition.fields().iter().map(|f| f.text()).collect();
+    assert_eq!(texts, ["to guide", "a heavy metal"]);
+}

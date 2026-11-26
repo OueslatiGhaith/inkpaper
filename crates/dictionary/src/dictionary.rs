@@ -1,4 +1,4 @@
-use alloc::{string::String, vec};
+use alloc::{string::String, vec::Vec};
 
 use inkpaper_io::ByteSource;
 
@@ -106,69 +106,110 @@ where
     /// The definition of `word` as a page gives it: without the punctuation
     /// around it, then as another spelling the dictionary lists, then by the
     /// English forms it could be inflected from, like `walk` for `walking`.
+    /// Homographs matching the same headword are combined in index order.
     pub async fn lookup(&mut self, word: &str) -> Result<Option<Definition>, Error<S::Error>> {
         for form in word_forms(word) {
-            if let Some((headword, offset, size)) = self.locate(form.as_bytes()).await? {
-                return self.read_definition(headword, offset, size).await.map(Some);
+            let matches = self.locate(form.as_bytes()).await?;
+            if !matches.is_empty() {
+                return self.read_definitions(matches).await;
             }
         }
 
         Ok(None)
     }
 
-    /// The headword spelled like `target`, or that `target` is a synonym of,
-    /// and where its definition is.
-    async fn locate(
-        &mut self,
-        target: &[u8],
-    ) -> Result<Option<(String, u32, u32)>, Error<S::Error>> {
-        if let Some((headword, tail)) = self.index.find(target).await? {
-            let (offset, size) = tail.location();
+    /// All headwords spelled like `target`, or that `target` is a synonym of,
+    /// and where their definitions are.
+    async fn locate(&mut self, target: &[u8]) -> Result<Vec<(String, u32, u32)>, Error<S::Error>> {
+        let index_matches = self.index.find_all(target).await?;
+        if !index_matches.is_empty() {
+            let mut results = Vec::with_capacity(index_matches.len());
 
-            return Ok(Some((headword, offset, size)));
+            for (headword, tail) in index_matches {
+                let (offset, size) = tail.location();
+                push_unique_location(&mut results, headword, offset, size);
+            }
+
+            return Ok(results);
         }
 
         let Some(synonyms) = &mut self.synonyms else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
 
-        let Some((_, synonym)) = synonyms.find(target).await? else {
-            return Ok(None);
-        };
+        let syn_matches = synonyms.find_all(target).await?;
+        let mut results = Vec::with_capacity(syn_matches.len());
 
-        let (headword, tail) = self.index.entry(synonym.ordinal()).await?;
-        let (offset, size) = tail.location();
+        for (_, synonym) in syn_matches {
+            let (headword, tail) = self.index.entry(synonym.ordinal()).await?;
+            let (offset, size) = tail.location();
+            push_unique_location(&mut results, headword, offset, size);
+        }
 
-        Ok(Some((headword, offset, size)))
+        Ok(results)
     }
 
-    async fn read_definition(
+    async fn read_definitions(
         &mut self,
-        headword: String,
-        offset: u32,
-        size: u32,
-    ) -> Result<Definition, Error<S::Error>> {
-        if u64::from(offset) + u64::from(size) > self.data_len {
-            return Err(Error::DefinitionOutOfBounds);
-        }
+        matches: Vec<(String, u32, u32)>,
+    ) -> Result<Option<Definition>, Error<S::Error>> {
+        let mut matches = matches.into_iter();
+        let Some((headword, first_offset, first_size)) = matches.next() else {
+            return Ok(None);
+        };
 
-        let mut data = vec![0; size.min(MAX_DEFINITION_BYTES) as usize];
+        let mut fields = Vec::new();
+        let mut remaining = MAX_DEFINITION_BYTES;
+        let mut data = Vec::new();
 
-        match &mut self.dictzip {
-            Some(dictzip) => {
-                dictzip
-                    .read(&mut self.data, u64::from(offset), &mut data)
-                    .await?
+        for (offset, size) in core::iter::once((first_offset, first_size))
+            .chain(matches.map(|(_, offset, size)| (offset, size)))
+        {
+            if u64::from(offset) + u64::from(size) > self.data_len {
+                return Err(Error::DefinitionOutOfBounds);
             }
-            None => self
-                .data
-                .read_exact_at(u64::from(offset), &mut data)
-                .await
-                .map_err(Error::Source)?,
+
+            if remaining == 0 {
+                break;
+            }
+
+            let read_len = size.min(remaining);
+            remaining -= read_len;
+
+            data.resize(read_len as usize, 0);
+
+            match &mut self.dictzip {
+                Some(dictzip) => {
+                    dictzip
+                        .read(&mut self.data, u64::from(offset), &mut data)
+                        .await?
+                }
+                None => self
+                    .data
+                    .read_exact_at(u64::from(offset), &mut data)
+                    .await
+                    .map_err(Error::Source)?,
+            }
+
+            fields.extend(parse_fields(&data, self.info.same_type_sequence()));
         }
 
-        let fields = parse_fields(&data, self.info.same_type_sequence());
+        Ok(Some(Definition::new(headword, fields)))
+    }
+}
 
-        Ok(Definition::new(headword, fields))
+fn push_unique_location(
+    results: &mut Vec<(String, u32, u32)>,
+    headword: String,
+    offset: u32,
+    size: u32,
+) {
+    if !results
+        .iter()
+        .any(|&(_, existing_offset, existing_size)| {
+            existing_offset == offset && existing_size == size
+        })
+    {
+        results.push((headword, offset, size));
     }
 }
