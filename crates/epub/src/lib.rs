@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 mod archive;
 mod container;
@@ -48,6 +48,7 @@ enum NavigationFormat {
 pub struct Epub<S> {
     archive: Archive<S>,
     package: Package,
+    stylesheet_cache: BTreeMap<ArchivePath, Stylesheet>,
 }
 
 impl<S> Epub<S>
@@ -68,7 +69,11 @@ where
         let package =
             parse_package(package_xml, container.package_path().clone()).map_err(Error::Package)?;
 
-        Ok(Self { archive, package })
+        Ok(Self {
+            archive,
+            package,
+            stylesheet_cache: BTreeMap::new(),
+        })
     }
 
     pub const fn package(&self) -> &Package {
@@ -222,12 +227,12 @@ where
         &mut self,
         chapter: &Chapter,
     ) -> Result<ChapterStyles, Error<S::Error>> {
-        let mut stylesheet = Stylesheet::default();
+        let mut embedded = Vec::new();
 
         for source in chapter.stylesheets() {
             match source {
                 StylesheetSource::Embedded(css) => {
-                    stylesheet.push(css);
+                    embedded.push(Stylesheet::parse(css));
                 }
                 StylesheetSource::External(path) => {
                     let declared_css = self
@@ -235,19 +240,37 @@ where
                         .manifest_item_by_path(path)
                         .is_some_and(|item| item.media_type() == "text/css");
 
-                    if !declared_css {
+                    if !declared_css || self.stylesheet_cache.contains_key(path) {
                         continue;
                     }
 
                     let bytes = self.archive.read_entry(path).await?;
                     let css = core::str::from_utf8(&bytes).map_err(Error::Utf8)?;
 
-                    stylesheet.push(css);
+                    self.stylesheet_cache
+                        .insert(path.clone(), Stylesheet::parse(css));
                 }
             }
         }
 
-        Ok(resolve_chapter_styles(chapter, Some(&stylesheet)))
+        let mut ordered = Vec::with_capacity(chapter.stylesheets().len());
+        let mut embedded_index = 0usize;
+
+        for source in chapter.stylesheets() {
+            match source {
+                StylesheetSource::Embedded(_) => {
+                    ordered.push(&embedded[embedded_index]);
+                    embedded_index += 1;
+                }
+                StylesheetSource::External(path) => {
+                    if let Some(sheet) = self.stylesheet_cache.get(path) {
+                        ordered.push(sheet);
+                    }
+                }
+            }
+        }
+
+        Ok(resolve_chapter_styles(chapter, Some(&ordered)))
     }
 
     pub async fn image_dimensions(

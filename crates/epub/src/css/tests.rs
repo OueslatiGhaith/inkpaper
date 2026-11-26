@@ -11,7 +11,8 @@ fn resolve_embedded(chapter: &Chapter) -> ChapterStyles {
         }
     }
 
-    resolve_chapter_styles(chapter, Some(&stylesheet))
+    let sheets = [&stylesheet];
+    resolve_chapter_styles(chapter, Some(&sheets))
 }
 
 fn text_style(chapter: &Chapter, styles: &ChapterStyles, text: &str) -> ComputedStyle {
@@ -474,4 +475,54 @@ fn css_unclosed_string_ends_at_its_line() {
         text_style(&chapter, &styles, "title").text_align(),
         TextAlign::Right,
     );
+}
+
+#[test]
+fn indexed_selectors_preserve_cascade_order_across_buckets_and_sheets() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <body>
+        <div class="box">
+            <p id="hero" class="b a b">multi</p>
+            <p class="plain">universal</p>
+        </div>
+    </body>
+</html>
+"#;
+
+    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+
+    // Sheet 1 sets `.a`, uppercase `P`, and `.box *` universal rules.
+    let sheet_1 = Stylesheet::parse(
+        r#"
+            .box * { font-style: italic; }
+            .a { text-align: left; }
+            .b { text-align: right; }
+            P { font-weight: bold; }
+            #hero { text-align: center; }
+        "#,
+    );
+    // Sheet 2 overrides `.b` and `#hero` in later source order.
+    let sheet_2 = Stylesheet::parse(
+        r#"
+            .a { text-align: justify; }
+            #hero { font-weight: normal; }
+        "#,
+    );
+
+    let styles = resolve_chapter_styles(&chapter, Some(&[&sheet_1, &sheet_2]));
+
+    let multi = text_style(&chapter, &styles, "multi");
+    // Universal bucket matched `.box *`
+    assert_eq!(multi.font_style(), FontStyle::Italic);
+    // ID bucket from sheet 2 overrides element bucket `P` from sheet 1
+    assert_eq!(multi.font_weight(), FontWeight::Normal);
+    // ID bucket beats class buckets (`.a` / `.b`)
+    assert_eq!(multi.text_align(), TextAlign::Center);
+
+    let universal = text_style(&chapter, &styles, "universal");
+    // Uppercase `P` matched `<p>` via lowercased element index
+    assert_eq!(universal.font_weight(), FontWeight::Bold);
+    // Universal `.box *` matched `<p class="plain">`
+    assert_eq!(universal.font_style(), FontStyle::Italic);
 }

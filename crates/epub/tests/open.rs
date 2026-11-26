@@ -1,9 +1,11 @@
+use std::cell::Cell;
+
 use futures_lite::future;
 use inkpaper_epub::{
     ArchivePath, BlockKind, BookLocation, ContentOffset, Epub, FontStyle, FontWeight, Inline,
     SpineIndex, TextAlign,
 };
-use inkpaper_io::SliceSource;
+use inkpaper_io::{ByteSource, SliceSource, SliceSourceError};
 
 use support::{DEFLATED, STORED, ZipEntry, build_zip};
 
@@ -463,6 +465,85 @@ fn loads_percent_encoded_manifest_resource_path() {
     };
 
     assert_eq!(text.text(), "Encoded path works");
+}
+
+#[test]
+fn caches_parsed_external_stylesheets_across_chapters() {
+    struct CountingSource<'a> {
+        inner: SliceSource<'a>,
+        reads: &'a Cell<usize>,
+    }
+
+    impl ByteSource for CountingSource<'_> {
+        type Error = SliceSourceError;
+
+        async fn len(&mut self) -> Result<u64, Self::Error> {
+            self.inner.len().await
+        }
+
+        async fn read_exact_at(
+            &mut self,
+            offset: u64,
+            buffer: &mut [u8],
+        ) -> Result<(), Self::Error> {
+            self.reads.set(self.reads.get() + 1);
+            self.inner.read_exact_at(offset, buffer).await
+        }
+    }
+
+    const CONTAINER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+    <rootfiles>
+        <rootfile full-path="OPS/package.opf" media-type="application/oebps-package+xml" />
+    </rootfiles>
+</container>"#;
+
+    const PACKAGE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+    <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Cached CSS</dc:title></metadata>
+    <manifest>
+        <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml" />
+        <item id="ch2" href="Text/ch2.xhtml" media-type="application/xhtml+xml" />
+        <item id="css" href="Styles/book.css" media-type="text/css" />
+    </manifest>
+    <spine>
+        <itemref idref="ch1" />
+        <itemref idref="ch2" />
+    </spine>
+</package>"#;
+
+    const CH1: &str = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" href="../Styles/book.css" /></head><body><p class="lead">First</p></body></html>"#;
+    const CH2: &str = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" href="../Styles/book.css" /></head><body><p class="lead">Second</p></body></html>"#;
+    const CSS: &str = ".lead { font-style: italic; text-align: center; }";
+
+    let bytes = build_zip(&[
+        ZipEntry { name: "mimetype", data: b"application/epub+zip", compression: STORED },
+        ZipEntry { name: "META-INF/container.xml", data: CONTAINER.as_bytes(), compression: DEFLATED },
+        ZipEntry { name: "OPS/package.opf", data: PACKAGE.as_bytes(), compression: DEFLATED },
+        ZipEntry { name: "OPS/Text/ch1.xhtml", data: CH1.as_bytes(), compression: DEFLATED },
+        ZipEntry { name: "OPS/Text/ch2.xhtml", data: CH2.as_bytes(), compression: DEFLATED },
+        ZipEntry { name: "OPS/Styles/book.css", data: CSS.as_bytes(), compression: DEFLATED },
+    ]);
+
+    let reads = Cell::new(0usize);
+    let mut epub = future::block_on(Epub::open(CountingSource {
+        inner: SliceSource::new(&bytes),
+        reads: &reads,
+    }))
+    .unwrap();
+
+    let ch1 = future::block_on(epub.load_spine_chapter(0)).unwrap().unwrap();
+    reads.set(0);
+    let styles1 = future::block_on(epub.load_chapter_styles(&ch1)).unwrap();
+    assert!(reads.get() > 0, "first chapter should read external CSS from archive");
+    assert_eq!(styles1.style(ch1.blocks()[0].style_node()).unwrap().text_align(), TextAlign::Center);
+
+    let ch2 = future::block_on(epub.load_spine_chapter(1)).unwrap().unwrap();
+    reads.set(0);
+    let styles2 = future::block_on(epub.load_chapter_styles(&ch2)).unwrap();
+    assert_eq!(reads.get(), 0, "second chapter should reuse cached parsed CSS without I/O");
+    assert_eq!(styles2.style(ch2.blocks()[0].style_node()).unwrap().font_style(), FontStyle::Italic);
+    assert_eq!(styles2.style(ch2.blocks()[0].style_node()).unwrap().text_align(), TextAlign::Center);
 }
 
 fn build_percent_encoded_path_epub() -> std::vec::Vec<u8> {

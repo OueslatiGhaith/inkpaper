@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use crate::{Chapter, StyleNode, StyleNodeId};
 
@@ -8,8 +8,8 @@ mod parser;
 mod tests;
 
 use parser::{
-    Declaration, DisplayValue, Property, Rule, Specificity, parse_inline_declarations,
-    parse_stylesheet,
+    Declaration, DisplayValue, Property, Rule, SelectorIndexKey, Specificity,
+    parse_inline_declarations, parse_stylesheet,
 };
 
 const FIXED_SCALE: i64 = 1_000;
@@ -241,12 +241,121 @@ impl ChapterStyles {
 #[derive(Debug, Default)]
 pub(crate) struct Stylesheet {
     rules: Vec<Rule>,
+    declarations: Vec<Declaration>,
     next_order: usize,
+    by_id: BTreeMap<String, Vec<usize>>,
+    by_class: BTreeMap<String, Vec<usize>>,
+    by_element: BTreeMap<String, Vec<usize>>,
+    universal: Vec<usize>,
 }
 
 impl Stylesheet {
+    pub(crate) fn parse(css: &str) -> Self {
+        let mut stylesheet = Self::default();
+        stylesheet.push(css);
+        stylesheet
+    }
+
     pub(crate) fn push(&mut self, css: &str) {
-        parse_stylesheet(css, &mut self.rules, &mut self.next_order);
+        let start = self.rules.len();
+        parse_stylesheet(
+            css,
+            &mut self.rules,
+            &mut self.declarations,
+            &mut self.next_order,
+        );
+
+        for rule_index in start..self.rules.len() {
+            match self.rules[rule_index].index_key() {
+                SelectorIndexKey::Id(id) => {
+                    self.by_id
+                        .entry(String::from(id))
+                        .or_default()
+                        .push(rule_index);
+                }
+                SelectorIndexKey::Class(class) => {
+                    self.by_class
+                        .entry(String::from(class))
+                        .or_default()
+                        .push(rule_index);
+                }
+                SelectorIndexKey::Element(element) => {
+                    self.by_element
+                        .entry(String::from(element))
+                        .or_default()
+                        .push(rule_index);
+                }
+                SelectorIndexKey::Universal => {
+                    self.universal.push(rule_index);
+                }
+            }
+        }
+    }
+
+    const fn order_span(&self) -> usize {
+        self.next_order
+    }
+
+    fn apply_matching_rules(
+        &self,
+        node: &StyleNode,
+        nodes: &[StyleNode],
+        order_offset: usize,
+        cascade: &mut CascadedStyle,
+    ) {
+        if let Some(id) = node.id()
+            && let Some(bucket) = self.by_id.get(id)
+        {
+            self.apply_bucket(bucket, node, nodes, order_offset, cascade);
+        }
+
+        let classes = node.classes();
+        for (index, class) in classes.iter().enumerate() {
+            if classes[..index].iter().any(|previous| previous == class) {
+                continue;
+            }
+
+            if let Some(bucket) = self.by_class.get(class.as_str()) {
+                self.apply_bucket(bucket, node, nodes, order_offset, cascade);
+            }
+        }
+
+        let element = node.element();
+        let element_bucket = if element.bytes().any(|byte| byte.is_ascii_uppercase()) {
+            let lowered = element.to_ascii_lowercase();
+            self.by_element.get(lowered.as_str())
+        } else {
+            self.by_element.get(element)
+        };
+        if let Some(bucket) = element_bucket {
+            self.apply_bucket(bucket, node, nodes, order_offset, cascade);
+        }
+
+        if !self.universal.is_empty() {
+            self.apply_bucket(&self.universal, node, nodes, order_offset, cascade);
+        }
+    }
+
+    fn apply_bucket(
+        &self,
+        bucket: &[usize],
+        node: &StyleNode,
+        nodes: &[StyleNode],
+        order_offset: usize,
+        cascade: &mut CascadedStyle,
+    ) {
+        for &rule_index in bucket {
+            let rule = &self.rules[rule_index];
+            if !rule.matches(node, nodes) {
+                continue;
+            }
+
+            let order = order_offset.saturating_add(rule.order);
+            let specificity = rule.specificity();
+            for &declaration in &self.declarations[rule.declarations.clone()] {
+                apply_declaration(cascade, declaration, specificity, order);
+            }
+        }
     }
 }
 
@@ -294,7 +403,7 @@ struct CascadedStyle {
 /// `None` leaves out the book's styles: its stylesheets and `style` attributes.
 pub(crate) fn resolve_chapter_styles(
     chapter: &Chapter,
-    stylesheet: Option<&Stylesheet>,
+    stylesheets: Option<&[&Stylesheet]>,
 ) -> ChapterStyles {
     let nodes = chapter.style_nodes();
     let mut styles = Vec::with_capacity(nodes.len());
@@ -325,21 +434,17 @@ pub(crate) fn resolve_chapter_styles(
 
         let mut cascade = CascadedStyle::default();
 
-        let rules = stylesheet.map_or(&[][..], |stylesheet| &stylesheet.rules);
-
-        for rule in rules {
-            if !rule.matches(node, nodes) {
-                continue;
+        if let Some(sheets) = stylesheets {
+            let mut order_offset = 0usize;
+            for stylesheet in sheets {
+                stylesheet.apply_matching_rules(node, nodes, order_offset, &mut cascade);
+                order_offset = order_offset.saturating_add(stylesheet.order_span());
             }
 
-            for declaration in &rule.declarations {
-                apply_declaration(&mut cascade, *declaration, rule.specificity(), rule.order);
-            }
-        }
-
-        if let Some(inline) = node.inline_style().filter(|_| stylesheet.is_some()) {
-            for declaration in parse_inline_declarations(inline) {
-                apply_declaration(&mut cascade, declaration, Specificity::INLINE, usize::MAX);
+            if let Some(inline) = node.inline_style() {
+                for declaration in parse_inline_declarations(inline) {
+                    apply_declaration(&mut cascade, declaration, Specificity::INLINE, usize::MAX);
+                }
             }
         }
 
