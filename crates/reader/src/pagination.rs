@@ -1,4 +1,4 @@
-use alloc::{borrow::Cow, format, string::String, vec::Vec};
+use alloc::{borrow::Cow, string::String, vec::Vec};
 use core::mem;
 
 use inkpaper_epub::{
@@ -151,6 +151,15 @@ struct WordSlice<'a> {
     block_start: usize,
 }
 
+const SOFT_HYPHEN: char = '\u{00AD}';
+const LIST_BULLET: &str = "• ";
+
+#[derive(Debug, Clone, Copy)]
+struct ListMarker {
+    style: TextStyle,
+    width: u32,
+}
+
 struct Paginator<'chapter, 'context, M> {
     chapter: &'chapter Chapter,
     styles: &'context ChapterStyles,
@@ -177,6 +186,7 @@ struct Paginator<'chapter, 'context, M> {
     line_text_height: u32,
     line_align: TextAlign,
     line_indent: u32,
+    line_list_marker: Option<ListMarker>,
     line_items: Vec<PendingText<'chapter>>,
     /// reused to measure a word's start with its hyphen
     hyphen_scratch: String,
@@ -188,6 +198,8 @@ struct Paginator<'chapter, 'context, M> {
     block_laid_out: bool,
     block_align: TextAlign,
     block_text_indent: u32,
+    block_hanging_indent: u32,
+    block_list_marker: Option<ListMarker>,
     block_first_line: bool,
     block_line_height: LineHeight,
 }
@@ -226,6 +238,7 @@ where
             line_text_height: 0,
             line_align: TextAlign::Start,
             line_indent: 0,
+            line_list_marker: None,
             line_items: Vec::new(),
             hyphen_scratch: String::new(),
             block_text: String::new(),
@@ -234,6 +247,8 @@ where
             block_laid_out: false,
             block_align: TextAlign::Start,
             block_text_indent: 0,
+            block_hanging_indent: 0,
+            block_list_marker: None,
             block_first_line: false,
             block_line_height: LineHeight::NORMAL,
         }
@@ -278,6 +293,8 @@ where
 
         self.block_align = self.resolve_block_align(block.kind(), block_style);
         self.block_text_indent = self.resolve_text_indent(block.kind(), block_style)?;
+        self.block_list_marker = self.resolve_list_marker(block.kind(), block_style)?;
+        self.block_hanging_indent = self.block_list_marker.map_or(0, |marker| marker.width);
         self.block_first_line = true;
         self.block_line_height = block_style.line_height();
 
@@ -311,6 +328,8 @@ where
 
         self.block_align = TextAlign::Start;
         self.block_text_indent = 0;
+        self.block_hanging_indent = 0;
+        self.block_list_marker = None;
         self.block_first_line = false;
         self.block_line_height = LineHeight::NORMAL;
 
@@ -384,7 +403,14 @@ where
 
         // newlines in a run are collapsible whitespace, so mandatory breaks are
         // treated like any other break opportunity.
+        // Coalesce segments split by U+00AD soft hyphen so the whole word is
+        // measured without soft hyphens and only breaks with a visible '-'
+        // when it does not fit on the current line.
         for (end, _) in linebreaks(block_text) {
+            if end < block_text.len() && block_text[start..end].ends_with(SOFT_HYPHEN) {
+                continue;
+            }
+
             let content_start = skip_break_whitespace(block_text, start, end);
             let content_end = trim_break_whitespace(block_text, content_start, end);
 
@@ -504,7 +530,8 @@ where
             for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
                 let s = if i == start_idx { start_offset } else { slice.start };
                 let piece = &slice.source[s..slice.end];
-                total_width = total_width.saturating_add(self.measurer.measure_text(piece, slice.style)?);
+                total_width =
+                    total_width.saturating_add(self.measure_visible_text(piece, slice.style)?);
             }
 
             let used = if self.line_active {
@@ -519,8 +546,12 @@ where
                 for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
                     let s = if i == start_idx { start_offset } else { slice.start };
                     let piece = &slice.source[s..slice.end];
-                    let width = self.measurer.measure_text(piece, slice.style)?;
-                    self.advance_hidden_up_to(slice.block_start + (s - slice.start), hidden_runs, hidden_cursor);
+                    let width = self.measure_visible_text(piece, slice.style)?;
+                    self.advance_hidden_up_to(
+                        slice.block_start + (s - slice.start),
+                        hidden_runs,
+                        hidden_cursor,
+                    );
                     self.add_text_piece(
                         slice.source,
                         s,
@@ -541,8 +572,12 @@ where
                 for (i, slice) in cluster[..alpha_idx].iter().enumerate().skip(start_idx) {
                     let s = if i == start_idx { start_offset } else { slice.start };
                     let piece = &slice.source[s..slice.end];
-                    let width = self.measurer.measure_text(piece, slice.style)?;
-                    self.advance_hidden_up_to(slice.block_start + (s - slice.start), hidden_runs, hidden_cursor);
+                    let width = self.measure_visible_text(piece, slice.style)?;
+                    self.advance_hidden_up_to(
+                        slice.block_start + (s - slice.start),
+                        hidden_runs,
+                        hidden_cursor,
+                    );
                     self.add_text_piece(
                         slice.source,
                         s,
@@ -581,8 +616,15 @@ where
 
                 self.flush_line(LineEnd::Wrapped);
 
-                start_idx = alpha_idx;
-                start_offset = split;
+                if split < alpha.end {
+                    start_idx = alpha_idx;
+                    start_offset = split;
+                } else if alpha_idx + 1 < cluster.len() {
+                    start_idx = alpha_idx + 1;
+                    start_offset = cluster[start_idx].start;
+                } else {
+                    return Ok(());
+                }
                 continue;
             }
 
@@ -612,7 +654,8 @@ where
     }
 
     /// Hyphenates a multi-run cluster (such as `(<em>extraordinary</em>).`)
-    /// when all alphabetic characters belong to a single styled run.
+    /// at soft hyphens or when all alphabetic characters belong to a single
+    /// styled run.
     fn cluster_hyphenation_break(
         &mut self,
         cluster: &[WordSlice<'chapter>],
@@ -620,6 +663,33 @@ where
         start_offset: usize,
         available: u32,
     ) -> Result<Option<(usize, usize, u32)>, M::Error> {
+        let mut leading_width = 0u32;
+        let mut best_soft: Option<(usize, usize, u32)> = None;
+
+        for (i, slice) in cluster.iter().enumerate().skip(start_idx) {
+            let s = if i == start_idx { start_offset } else { slice.start };
+            let piece = &slice.source[s..slice.end];
+
+            if leading_width < available && piece.contains(SOFT_HYPHEN) {
+                let remaining = available - leading_width;
+                if let Some((split, width)) =
+                    self.soft_hyphen_break(piece, remaining, slice.style)?
+                {
+                    best_soft = Some((i, s.saturating_add(split), width));
+                }
+            }
+
+            leading_width =
+                leading_width.saturating_add(self.measure_visible_text(piece, slice.style)?);
+            if leading_width >= available {
+                break;
+            }
+        }
+
+        if best_soft.is_some() {
+            return Ok(best_soft);
+        }
+
         if self.settings.hyphenation().is_none() {
             return Ok(None);
         }
@@ -644,7 +714,8 @@ where
         for (i, slice) in cluster[..alpha_idx].iter().enumerate().skip(start_idx) {
             let s = if i == start_idx { start_offset } else { slice.start };
             let piece = &slice.source[s..slice.end];
-            leading_width = leading_width.saturating_add(self.measurer.measure_text(piece, slice.style)?);
+            leading_width =
+                leading_width.saturating_add(self.measure_visible_text(piece, slice.style)?);
         }
 
         if leading_width >= available {
@@ -751,7 +822,7 @@ where
         loop {
             let word = &source[start..end];
 
-            let width = self.measurer.measure_text(word, style)?;
+            let width = self.measure_visible_text(word, style)?;
 
             let used = if self.line_active {
                 self.line_indent.saturating_add(self.line_width)
@@ -765,9 +836,20 @@ where
                 return self.add_text_piece(source, start, end, width, style, link, align);
             }
 
+            // prefer explicit U+00AD soft hyphens, then algorithmic hyphenation
+            let break_point = if word.contains(SOFT_HYPHEN) {
+                self.soft_hyphen_break(word, available, style)?
+            } else {
+                None
+            };
+            let break_point = match break_point {
+                Some(found) => Some(found),
+                None => self.hyphenation_break(word, available, style)?,
+            };
+
             // fill the line with the word's start and a hyphen, and carry the
             // rest over to the next line
-            if let Some((split, width)) = self.hyphenation_break(word, available, style)? {
+            if let Some((split, width)) = break_point {
                 let split = start.saturating_add(split);
 
                 self.add_text_piece(source, start, split, width, style, link, align)?;
@@ -779,6 +861,9 @@ where
                 self.flush_line(LineEnd::Wrapped);
 
                 start = split;
+                if start >= end {
+                    return Ok(());
+                }
 
                 continue;
             }
@@ -789,6 +874,71 @@ where
 
             self.flush_line(LineEnd::Wrapped);
         }
+    }
+
+    fn measure_visible_text(&mut self, text: &str, style: TextStyle) -> Result<u32, M::Error> {
+        if !text.contains(SOFT_HYPHEN) {
+            return self.measurer.measure_text(text, style);
+        }
+
+        let mut scratch = mem::take(&mut self.hyphen_scratch);
+        scratch.clear();
+        for ch in text.chars() {
+            if ch != SOFT_HYPHEN {
+                scratch.push(ch);
+            }
+        }
+
+        let result = self.measurer.measure_text(&scratch, style);
+        self.hyphen_scratch = scratch;
+        result
+    }
+
+    /// The longest prefix of `word` ending at a `U+00AD` soft hyphen that fits
+    /// in `available` with a visible `-`.
+    fn soft_hyphen_break(
+        &mut self,
+        word: &str,
+        available: u32,
+        style: TextStyle,
+    ) -> Result<Option<(usize, u32)>, M::Error> {
+        let mut scratch = mem::take(&mut self.hyphen_scratch);
+        let mut best = None;
+
+        for (index, ch) in word.char_indices() {
+            if ch != SOFT_HYPHEN || index == 0 {
+                continue;
+            }
+
+            scratch.clear();
+            for prefix_ch in word[..index].chars() {
+                if prefix_ch != SOFT_HYPHEN {
+                    scratch.push(prefix_ch);
+                }
+            }
+            if scratch.is_empty() {
+                continue;
+            }
+            scratch.push('-');
+
+            let width = match self.measurer.measure_text(&scratch, style) {
+                Ok(width) => width,
+                Err(error) => {
+                    self.hyphen_scratch = scratch;
+                    return Err(error);
+                }
+            };
+
+            if width > available {
+                break;
+            }
+
+            let split = index + SOFT_HYPHEN.len_utf8();
+            best = Some((split, width));
+        }
+
+        self.hyphen_scratch = scratch;
+        Ok(best)
     }
 
     /// The longest start of `word` that fits in `available` with a hyphen, as
@@ -882,7 +1032,7 @@ where
             loop {
                 let candidate = &word[start..end];
 
-                let width = self.measurer.measure_text(candidate, style)?;
+                let width = self.measure_visible_text(candidate, style)?;
 
                 if width <= available {
                     best = Some((end, width));
@@ -906,7 +1056,7 @@ where
                 None => {
                     let candidate = &word[start..first_end];
 
-                    (first_end, self.measurer.measure_text(candidate, style)?)
+                    (first_end, self.measure_visible_text(candidate, style)?)
                 }
             };
 
@@ -949,6 +1099,9 @@ where
             self.line_start = self.cursor;
             self.line_align = align;
             self.line_indent = indent;
+            if self.block_first_line {
+                self.line_list_marker = self.block_list_marker.take();
+            }
             self.block_first_line = false;
         }
 
@@ -1045,6 +1198,18 @@ where
         let alignment = alignment_offset(self.line_align, line_width, self.line_width);
         let origin = self.line_indent.saturating_add(alignment);
 
+        if let Some(marker) = self.line_list_marker.take() {
+            let marker_x = origin.saturating_sub(marker.width);
+            self.page_items.push(PageItem::Text(TextFragment::new(
+                Cow::Borrowed(LIST_BULLET),
+                Rect::new(marker_x, text_y, marker.width, text_height),
+                marker.style,
+                None,
+                0,
+                false,
+            )));
+        }
+
         let mut items = mem::take(&mut self.line_items).into_iter();
 
         if let Some(mut current) = items.next() {
@@ -1071,6 +1236,7 @@ where
         self.line_text_height = 0;
         self.line_align = TextAlign::Start;
         self.line_indent = 0;
+        self.line_list_marker = None;
     }
 
     fn push_text_fragment(
@@ -1080,10 +1246,20 @@ where
         y: u32,
         height: u32,
     ) {
-        let text = if item.hyphen {
-            Cow::Owned(format!("{}-", item.text()))
+        let raw = item.text();
+        let text = if item.hyphen || raw.contains(SOFT_HYPHEN) {
+            let mut owned = String::with_capacity(raw.len() + usize::from(item.hyphen));
+            for ch in raw.chars() {
+                if ch != SOFT_HYPHEN {
+                    owned.push(ch);
+                }
+            }
+            if item.hyphen {
+                owned.push('-');
+            }
+            Cow::Owned(owned)
         } else {
-            Cow::Borrowed(item.text())
+            Cow::Borrowed(raw)
         };
 
         self.page_items.push(PageItem::Text(TextFragment::new(
@@ -1148,16 +1324,17 @@ where
 
     fn measured_line_height(&mut self, style: TextStyle) -> Result<u32, M::Error> {
         let font_size = u32::from(style.font_size());
+        let native = self.measurer.line_height(style)?.max(1);
 
         if let Some(percent) = self.settings.line_height_percent() {
-            return Ok((font_size * u32::from(percent) / 100).max(1));
+            return Ok((font_size * u32::from(percent) / 100).max(native));
         }
 
         if let Some(height) = self.block_line_height.resolve(font_size) {
-            return Ok(height.max(1));
+            return Ok(height.max(native));
         }
 
-        Ok(self.measurer.line_height(style)?.max(1))
+        Ok(native)
     }
 
     fn next_boundary(
@@ -1183,10 +1360,38 @@ where
         if self.line_active {
             self.line_indent
         } else if self.block_first_line {
-            self.block_text_indent
+            self.block_hanging_indent
+                .saturating_add(self.block_text_indent)
+                .min(self.viewport.width().saturating_sub(1))
         } else {
-            0
+            self.block_hanging_indent
         }
+    }
+
+    fn resolve_list_marker(
+        &mut self,
+        kind: BlockKind,
+        style: ComputedStyle,
+    ) -> Result<Option<ListMarker>, M::Error> {
+        if kind != BlockKind::ListItem || style.hidden() {
+            return Ok(None);
+        }
+
+        let marker_style = TextStyle::new(
+            self.settings.font_size(),
+            kind,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        );
+        let marker_width = self
+            .measurer
+            .measure_text(LIST_BULLET, marker_style)?
+            .min(self.viewport.width().saturating_sub(1));
+
+        Ok(Some(ListMarker {
+            style: marker_style,
+            width: marker_width,
+        }))
     }
 
     fn resolve_text_indent(
@@ -1279,14 +1484,21 @@ fn collect_word_slices<'a>(
 }
 
 /// spreads `spare` pixels over a line's gaps, the leftover pixels going to the
-/// first gaps. A line without gaps keeps its natural spacing
+/// first gaps. A line without gaps, or one whose gaps would stretch beyond 3×
+/// their natural width (creating wide rivers), keeps its natural spacing.
 fn justify(items: &mut [PendingText<'_>], spare: u32) {
-    let gaps = items.iter().filter(|item| item.is_gap()).count();
-    let Ok(gaps) = u32::try_from(gaps) else {
-        return;
-    };
+    let mut gaps = 0u32;
+    let mut max_total_stretch = 0u64;
 
-    if gaps == 0 || spare == 0 {
+    for item in items.iter() {
+        if !item.is_gap() {
+            continue;
+        }
+        gaps = gaps.saturating_add(1);
+        max_total_stretch = max_total_stretch.saturating_add(u64::from(item.width) * 2);
+    }
+
+    if gaps == 0 || spare == 0 || u64::from(spare) > max_total_stretch {
         return;
     }
 
