@@ -1,7 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use core::cmp::Ordering;
 
-use inkpaper_epub::EpubSource;
+use inkpaper_io::ByteSource;
 
 use crate::{error::Error, samples::SAMPLE_INTERVAL};
 
@@ -74,7 +74,7 @@ pub(crate) struct WordList<S> {
 
 impl<S> WordList<S>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     pub async fn open(mut source: S, kind: EntryKind) -> Result<Self, Error<S::Error>> {
         let len = source.len().await.map_err(Error::Source)?;
@@ -233,7 +233,7 @@ struct EntryReader<'s, S> {
 
 impl<'s, S> EntryReader<'s, S>
 where
-    S: EpubSource,
+    S: ByteSource,
 {
     fn new(
         source: &'s mut S,

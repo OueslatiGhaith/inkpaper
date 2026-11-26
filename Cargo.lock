@@ -2225,7 +2225,7 @@ name = "inkpaper-dictionary"
 version = "0.1.0"
 dependencies = [
  "futures-lite",
- "inkpaper-epub",
+ "inkpaper-io",
  "miniz_oxide 0.9.1",
 ]
 

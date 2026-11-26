@@ -4,7 +4,7 @@ use std::cell::Cell;
 
 use futures_lite::future;
 use inkpaper_dictionary::{Dictionary, DictionaryInfo, IndexSamples};
-use inkpaper_epub::{EpubSource, SliceSource, SliceSourceError};
+use inkpaper_io::{ByteSource, SliceSource, SliceSourceError};
 
 use support::{StarDict, stardict};
 
@@ -14,7 +14,7 @@ struct CountingSource<'a> {
     read: &'a Cell<usize>,
 }
 
-impl EpubSource for CountingSource<'_> {
+impl ByteSource for CountingSource<'_> {
     type Error = SliceSourceError;
 
     async fn len(&mut self) -> Result<u64, Self::Error> {

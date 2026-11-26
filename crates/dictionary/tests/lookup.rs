@@ -2,7 +2,7 @@ mod support;
 
 use futures_lite::future;
 use inkpaper_dictionary::{Definition, Dictionary, DictionaryInfo, Error, FieldKind};
-use inkpaper_epub::SliceSource;
+use inkpaper_io::SliceSource;
 
 use support::{StarDict, stardict};
 
