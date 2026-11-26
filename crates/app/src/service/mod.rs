@@ -6,7 +6,9 @@ mod reader;
 
 use alloc::{string::String, vec::Vec};
 
-use inkpaper_ui::{Entity, EntityAccessError, ImageSource, ResourceRuntimeApi, RuntimeApi};
+use inkpaper_ui::{
+    Entity, EntityAccessError, ImageId, ImageSource, ResourceRuntimeApi, RuntimeApi,
+};
 
 use crate::{
     BookCover, BrowseListing, BrowseRequest, ClockPreferences, ClockSyncFailure,
@@ -40,11 +42,12 @@ where
     platform: P,
 
     reader_session: Option<ReaderSession<P::RandomAccessSource>>,
+    /// images currently registered in the UI registry for the open reader chapter
+    reader_image_ids: Vec<ImageId>,
 
-    /// the current book's cover, kept to register again after the reader
-    /// clears its images
+    /// the current book's cover thumbnail for Home
     cover: Option<BookCover>,
-    /// the cover's registration, until the reader's images clear it
+    /// the cover's registered slot in the UI image registry
     cover_source: Option<ImageSource>,
 
     /// the font families on the card, found at startup
@@ -81,6 +84,7 @@ where
         Self {
             platform,
             reader_session: None,
+            reader_image_ids: Vec::new(),
             cover: None,
             cover_source: None,
 
