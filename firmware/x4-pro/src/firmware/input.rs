@@ -1,10 +1,16 @@
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+};
 use inkpaper_app::AppInputEvent;
 
 const INPUT_QUEUE_CAPACITY: usize = 16;
 
 pub static INPUT_EVENTS: Channel<CriticalSectionRawMutex, InputEvent, INPUT_QUEUE_CAPACITY> =
     Channel::new();
+
+/// Dedicated signal for the physical power button so bursts of touch or page-turn
+/// input in [`INPUT_EVENTS`] can never delay or block power-off / manual refresh.
+pub static POWER_BUTTON_EVENTS: Signal<CriticalSectionRawMutex, PowerButtonEvent> = Signal::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
@@ -55,6 +61,5 @@ pub enum TouchEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputEvent {
     Button(ButtonEvent),
-    Power(PowerButtonEvent),
     Touch(TouchEvent),
 }

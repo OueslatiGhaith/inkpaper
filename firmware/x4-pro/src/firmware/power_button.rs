@@ -8,7 +8,7 @@ use esp_hal::{
     rtc_cntl::sleep::{LowPower, RtcSleepConfig},
 };
 
-use crate::firmware::input::{INPUT_EVENTS, InputEvent, PowerButtonEvent};
+use crate::firmware::input::{POWER_BUTTON_EVENTS, PowerButtonEvent};
 
 const DEBOUNCE_MS: u64 = 30;
 const LONG_PRESS_MS: u64 = 1_000;
@@ -84,7 +84,7 @@ async fn report_presses(input: &mut Input<'_>) -> ! {
             }
         };
 
-        INPUT_EVENTS.send(InputEvent::Power(event)).await;
+        POWER_BUTTON_EVENTS.signal(event);
     }
 }
 
