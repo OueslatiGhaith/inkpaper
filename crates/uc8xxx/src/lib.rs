@@ -575,23 +575,32 @@ impl Uc8xxx {
             return Ok(full);
         }
 
-        // DTM1 holds the preceding frame's clean B/W base; put the new base into DTM2.
-        self.stream_and_plane(bus, Command::NewPlane, lsb, msb)
+        // DTM1 holds the preceding frame's clean B/W base; update only `region` in DTM2.
+        self.stream_and_plane_window(bus, Command::NewPlane, lsb, msb, region)
             .await?;
 
         self.run_grayscale_precondition(bus, delay, region).await?;
 
         if region_has_grayscale(lsb, msb, self.config.width as usize / 8, region) {
-            self.stream_plane(bus, Command::OldPlane, lsb, false)
+            self.stream_plane_window(bus, Command::OldPlane, lsb, region, false)
                 .await?;
-            self.stream_plane(bus, Command::NewPlane, msb, false)
+            self.stream_plane_window(bus, Command::NewPlane, msb, region, false)
                 .await?;
 
             self.activate_uc8179_grayscale(bus, delay, Some(region))
                 .await?;
-        }
 
-        self.restore_grayscale_base(bus, lsb, msb).await?;
+            // Restore only `region` in both planes; pixels outside `region` still
+            // hold their clean B/W base from the preceding frame.
+            self.stream_and_plane_window(bus, Command::OldPlane, lsb, msb, region)
+                .await?;
+            self.stream_and_plane_window(bus, Command::NewPlane, lsb, msb, region)
+                .await?;
+        } else {
+            // NewPlane already contains the updated B/W base for `region`; sync OldPlane.
+            self.stream_and_plane_window(bus, Command::OldPlane, lsb, msb, region)
+                .await?;
+        }
 
         self.old_plane_valid = true;
         self.need_full_clear = false;
@@ -1175,6 +1184,63 @@ impl Uc8xxx {
         }
 
         stream.finish().map_err(PanelError::Bus)
+    }
+
+    async fn stream_plane_window<B>(
+        &self,
+        bus: &mut B,
+        command: Command,
+        frame: &[u8],
+        region: Region,
+        invert: bool,
+    ) -> Result<(), PanelError<B::Error>>
+    where
+        B: EpdInterface,
+    {
+        let region = self.normalize_region(region)?;
+        let stride = self.config.width as usize / 8;
+        let first_byte = region.x() as usize / 8;
+        let row_bytes = region.width() as usize / 8;
+
+        debug_assert!(region.x().is_multiple_of(8));
+        debug_assert!(region.width().is_multiple_of(8));
+        debug_assert!(row_bytes > 0);
+
+        self.enter_partial_window(bus, region).await?;
+
+        let write_result = async {
+            self.command(bus, command).await?;
+            let mut stream = DataStream::open(bus).await.map_err(PanelError::Bus)?;
+
+            let first_row = region.y() as usize;
+            let height = region.height() as usize;
+
+            for step in 0..height {
+                let row = match self.config.row_order {
+                    RowOrder::Forward => first_row + step,
+                    RowOrder::Reversed => first_row + height - 1 - step,
+                };
+                let row_start = row * stride + first_byte;
+                let source = &frame[row_start..row_start + row_bytes];
+
+                if invert {
+                    Self::stream_inverted(&mut stream, source).await?;
+                } else {
+                    stream.write(source).await.map_err(PanelError::Bus)?;
+                }
+            }
+
+            stream.finish().map_err(PanelError::Bus)
+        }
+        .await;
+
+        let partial_out_result = self.command(bus, Command::PartialOut).await;
+
+        match (write_result, partial_out_result) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Ok(()),
+        }
     }
 
     async fn stream_and_plane_window<B>(
@@ -1787,5 +1853,90 @@ mod tests {
         let pon = bus.ops.iter().position(|op| *op == Op::Command(0x04)).unwrap();
         let drf = bus.ops.iter().position(|op| *op == Op::Command(0x12)).unwrap();
         assert!(bus.ops[pon..drf].contains(&Op::Command(0x00)));
+    }
+
+    #[test]
+    fn uc8179_grayscale_window_streams_only_damaged_region() {
+        let tiny = Config::new(
+            Variant::Uc8179,
+            32,
+            8,
+            10,
+            0,
+            RowOrder::Reversed,
+            PanelSettings::new([0x3f, 0x0a], [0x1f, 0x0a]),
+            0x20,
+            Some([0x25, 0x25, 0x3c, 0x25]),
+            None,
+            0x02,
+            0x02,
+            RefreshTemperature::new(0x1e, 0x5a),
+            VcomDataInterval::ActiveIdle {
+                active: [0x29, 0x07],
+                idle: [0xa9, 0x07],
+            },
+            Some(0x22),
+        );
+
+        let mut panel = Uc8xxx::new(tiny);
+        let mut bus = RecordingBus::new();
+        let mut delay = NoopDelay;
+
+        let mut lsb = std::vec![0xff; tiny.buffer_len()];
+        let msb = std::vec![0xff; tiny.buffer_len()];
+        lsb[0] = 0x00; // establish grayscale on panel
+
+        block_on(panel.initialize(&mut bus, &mut delay)).unwrap();
+        block_on(panel.display_grayscale(&mut bus, &mut delay, &lsb, &msb, false)).unwrap();
+
+        let region = Region::new(8, 2, 16, 4); // 2 bytes × 4 rows = 8 bytes (vs 40 bytes full plane)
+
+        // Window WITH grayscale inside: 5 windowed streams of 8 bytes each.
+        lsb[2 * 4 + 1] = 0x00;
+        bus.ops.clear();
+        block_on(panel.display_grayscale_window(
+            &mut bus,
+            &mut delay,
+            &lsb,
+            &msb,
+            region,
+            RefreshMode::Fast,
+            false,
+        ))
+        .unwrap();
+
+        let stream_lens: Vec<usize> = bus
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Stream(bytes) => Some(bytes.len()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stream_lens, std::vec![8, 8, 8, 8, 8]);
+
+        // Window WITHOUT grayscale inside: only 2 windowed streams (NewPlane + OldPlane).
+        lsb[2 * 4 + 1] = 0xff;
+        bus.ops.clear();
+        block_on(panel.display_grayscale_window(
+            &mut bus,
+            &mut delay,
+            &lsb,
+            &msb,
+            region,
+            RefreshMode::Fast,
+            false,
+        ))
+        .unwrap();
+
+        let stream_lens: Vec<usize> = bus
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Stream(bytes) => Some(bytes.len()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stream_lens, std::vec![8, 8]);
     }
 }

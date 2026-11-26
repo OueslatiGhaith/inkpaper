@@ -1,9 +1,12 @@
 #![no_std]
 
 use embedded_hal_async::delay::DelayNs;
-use epd_bus::{BusyPolarity, EpdInterface, grayscale_base_byte, region_has_grayscale};
+use epd_bus::{
+    BinaryOverGrayMode, BinaryUpdateMode, BusyPolarity, DataStream, EpdInterface, EpdPanel,
+    GrayscaleUpdateMode, PanelCapabilities, PanelError, grayscale_base_byte, region_has_grayscale,
+};
 
-pub use epd_bus::Region;
+pub use epd_bus::{PanelError as Error, RefreshMode, Region};
 
 use crate::{
     command::Command,
@@ -143,25 +146,6 @@ pub const GDEQ0426T82: Config = Config::new(
     RefreshProfile::new(UpdateSequence::new(0xfc), 0xc0, None),
 );
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum RefreshMode {
-    Full,
-    Clean,
-    Fast,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error<E> {
-    Bus(E),
-    InvalidGeometry,
-    InvalidFrameLength { expected: usize, actual: usize },
-    InvalidPreviousFrameLength { expected: usize, actual: usize },
-    EmptyRegion,
-    RegionOutOfBounds { region: Region },
-}
-
 pub struct Ssd1677 {
     config: Config,
 
@@ -294,10 +278,12 @@ impl Ssd1677 {
 
         match mode {
             RefreshMode::Full | RefreshMode::Clean => {
+                self.set_full_ram_area(bus).await?;
                 self.write_plane(bus, Command::WriteRedRam, frame).await?;
             }
             RefreshMode::Fast => {
                 if let Some(previous) = previous {
+                    self.set_full_ram_area(bus).await?;
                     self.write_plane(bus, Command::WriteRedRam, previous)
                         .await?;
                 }
@@ -306,12 +292,10 @@ impl Ssd1677 {
 
         self.refresh(bus, delay, mode).await?;
 
-        if previous.is_none() {
+        // BW RAM already holds `frame`. Only RED RAM needs synchronizing after
+        // a single-buffer Fast refresh; Full/Clean already seeded RED above.
+        if previous.is_none() && mode == RefreshMode::Fast {
             self.set_full_ram_area(bus).await?;
-
-            self.write_plane(bus, Command::WriteBlackWhiteRam, frame)
-                .await?;
-
             self.write_plane(bus, Command::WriteRedRam, frame).await?;
         }
 
@@ -389,7 +373,10 @@ impl Ssd1677 {
             }
         };
 
-        self.paint_grayscale_base(bus, delay, lsb, msb, base_region, base_mode)
+        let has_grayscale =
+            region_has_grayscale(lsb, msb, self.config.width as usize / 8, base_region);
+
+        self.paint_grayscale_base(bus, delay, lsb, msb, base_region, base_mode, !has_grayscale)
             .await?;
 
         self.needs_initial_clean = false;
@@ -398,7 +385,7 @@ impl Ssd1677 {
         // produced its final result.
         // existing grayscale elsewhere on the physical panel is untouched because
         // the base update was windowed.
-        if region_has_grayscale(lsb, msb, self.config.width as usize / 8, base_region) {
+        if has_grayscale {
             self.write_overlay_masks(bus, lsb, msb, base_region).await?;
 
             self.activate_grayscale(bus, delay, &OVERLAY_GRAYSCALE_LUT, OVERLAY_GRAYSCALE_BORDER)
@@ -420,6 +407,7 @@ impl Ssd1677 {
         Ok(base_region)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn paint_grayscale_base<B, D>(
         &mut self,
         bus: &mut B,
@@ -428,6 +416,7 @@ impl Ssd1677 {
         msb: &[u8],
         region: Region,
         mode: RefreshMode,
+        sync_red: bool,
     ) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
@@ -450,30 +439,21 @@ impl Ssd1677 {
             // FAST waveform performs the differential transition.
             self.refresh(bus, delay, RefreshMode::Fast).await?;
 
-            // Synchronize the new base into both controller planes.
-            self.set_ram_area(bus, region).await?;
+            // BW already holds the new base. Only synchronize RED when an
+            // overlay pass is not about to overwrite both planes immediately.
+            if sync_red {
+                self.set_ram_area(bus, region).await?;
 
-            self.write_transformed_window_plane(
-                bus,
-                Command::WriteBlackWhiteRam,
-                lsb,
-                msb,
-                region,
-                grayscale_base_byte,
-            )
-            .await?;
-
-            self.set_ram_area(bus, region).await?;
-
-            self.write_transformed_window_plane(
-                bus,
-                Command::WriteRedRam,
-                lsb,
-                msb,
-                region,
-                grayscale_base_byte,
-            )
-            .await?;
+                self.write_transformed_window_plane(
+                    bus,
+                    Command::WriteRedRam,
+                    lsb,
+                    msb,
+                    region,
+                    grayscale_base_byte,
+                )
+                .await?;
+            }
 
             return Ok(());
         }
@@ -499,11 +479,9 @@ impl Ssd1677 {
         self.write_transformed_plane(bus, Command::WriteRedRam, lsb, msb, grayscale_base_byte)
             .await?;
 
-        self.refresh(bus, delay, mode).await?;
-
-        // match the ordinary single-buffer path: after activation, re-seed both RAM
-        // planes with the displayed B/W baseline.
-        self.restore_grayscale_base(bus, lsb, msb).await
+        // Both BW and RED already hold the new B/W base, so no post-refresh
+        // re-write is needed.
+        self.refresh(bus, delay, mode).await
     }
 
     pub async fn seed_previous_frame<B>(
@@ -774,16 +752,17 @@ impl Ssd1677 {
         let row_bytes = region.width() as usize / 8;
 
         self.command(bus, command).await?;
+        let mut stream = DataStream::open(bus).await.map_err(Error::Bus)?;
 
         for row in 0..region.height() as usize {
             let framebuffer_y = region.y() as usize + row;
             let start = framebuffer_y * framebuffer_stride + x_byte;
             let end = start + row_bytes;
 
-            bus.data(&frame[start..end]).await.map_err(Error::Bus)?;
+            stream.write(&frame[start..end]).await.map_err(Error::Bus)?;
         }
 
-        Ok(())
+        stream.finish().map_err(Error::Bus)
     }
 
     pub async fn display_window<B, D>(
@@ -831,16 +810,8 @@ impl Ssd1677 {
         self.refresh(bus, delay, RefreshMode::Fast).await?;
 
         // in single-buffer mode RED RAM is our persistent differential
-        // baseline. Synchronize both planes after the waveform so the next
-        // update compares against the frame we just displayed.
-        //
-        // when the caller supplies `previous`, it owns that baseline and will
-        // explicitly provide it again on the next update, so there is no need
-        // for the extra write.
+        // baseline. BW RAM already holds `frame` in `region`, so only sync RED.
         if previous.is_none() {
-            self.set_ram_area(bus, region).await?;
-            self.write_window_plane(bus, Command::WriteBlackWhiteRam, frame, region)
-                .await?;
             self.set_ram_area(bus, region).await?;
             self.write_window_plane(bus, Command::WriteRedRam, frame, region)
                 .await?;
@@ -859,6 +830,7 @@ impl Ssd1677 {
         B: EpdInterface,
     {
         self.command(bus, command).await?;
+        let mut stream = DataStream::open(bus).await.map_err(Error::Bus)?;
 
         let mut buffer = [0u8; GRAYSCALE_STREAM_CHUNK];
 
@@ -867,12 +839,13 @@ impl Ssd1677 {
                 buffer[index] = !source[index];
             }
 
-            bus.data(&buffer[..source.len()])
+            stream
+                .write(&buffer[..source.len()])
                 .await
                 .map_err(Error::Bus)?;
         }
 
-        Ok(())
+        stream.finish().map_err(Error::Bus)
     }
 
     async fn load_grayscale_lut<B>(
@@ -979,6 +952,7 @@ impl Ssd1677 {
         B: EpdInterface,
     {
         self.command(bus, command).await?;
+        let mut stream = DataStream::open(bus).await.map_err(Error::Bus)?;
 
         let mut buffer = [0u8; GRAYSCALE_STREAM_CHUNK];
         let mut offset = 0;
@@ -990,12 +964,12 @@ impl Ssd1677 {
                 buffer[index] = transform(lsb[offset + index], msb[offset + index]);
             }
 
-            bus.data(&buffer[..len]).await.map_err(Error::Bus)?;
+            stream.write(&buffer[..len]).await.map_err(Error::Bus)?;
 
             offset += len;
         }
 
-        Ok(())
+        stream.finish().map_err(Error::Bus)
     }
 
     async fn write_transformed_window_plane<B>(
@@ -1011,18 +985,16 @@ impl Ssd1677 {
         B: EpdInterface,
     {
         let stride = self.config.width as usize / 8;
-
         let x_byte = region.x() as usize / 8;
-
         let row_bytes = region.width() as usize / 8;
 
         self.command(bus, command).await?;
+        let mut stream = DataStream::open(bus).await.map_err(Error::Bus)?;
 
         let mut buffer = [0u8; GRAYSCALE_STREAM_CHUNK];
 
         for row in 0..region.height() as usize {
             let start = (region.y() as usize + row) * stride + x_byte;
-
             let mut offset = 0;
 
             while offset < row_bytes {
@@ -1030,17 +1002,16 @@ impl Ssd1677 {
 
                 for (index, byte) in buffer[..len].iter_mut().enumerate() {
                     let source = start + offset + index;
-
                     *byte = transform(lsb[source], msb[source]);
                 }
 
-                bus.data(&buffer[..len]).await.map_err(Error::Bus)?;
+                stream.write(&buffer[..len]).await.map_err(Error::Bus)?;
 
                 offset += len;
             }
         }
 
-        Ok(())
+        stream.finish().map_err(Error::Bus)
     }
 
     async fn write_overlay_mask_plane<B>(
@@ -1064,12 +1035,12 @@ impl Ssd1677 {
         let y_end = y_start + region.height() as usize;
 
         self.command(bus, command).await?;
+        let mut stream = DataStream::open(bus).await.map_err(Error::Bus)?;
 
         let mut buffer = [0u8; GRAYSCALE_STREAM_CHUNK];
 
         for y in 0..self.config.height as usize {
             let row_start = y * stride;
-
             let mut x = 0;
 
             while x < stride {
@@ -1080,20 +1051,19 @@ impl Ssd1677 {
 
                     *byte = if y >= y_start && y < y_end && byte_x >= x_start && byte_x < x_end {
                         let source = row_start + byte_x;
-
                         transform(lsb[source], msb[source])
                     } else {
                         0x00
                     };
                 }
 
-                bus.data(&buffer[..len]).await.map_err(Error::Bus)?;
+                stream.write(&buffer[..len]).await.map_err(Error::Bus)?;
 
                 x += len;
             }
         }
 
-        Ok(())
+        stream.finish().map_err(Error::Bus)
     }
 
     async fn write_overlay_masks<B>(
@@ -1158,6 +1128,99 @@ impl Ssd1677 {
     }
 }
 
+impl EpdPanel for Ssd1677 {
+    fn capabilities(&self) -> PanelCapabilities {
+        PanelCapabilities::new(
+            BinaryUpdateMode::Window,
+            BinaryOverGrayMode::NativeWindow,
+            GrayscaleUpdateMode::Window,
+        )
+    }
+
+    async fn initialize<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), PanelError<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        Ssd1677::initialize(self, bus, delay).await
+    }
+
+    async fn display_binary<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        frame: &[u8],
+        damage: Option<Region>,
+        mode: RefreshMode,
+        _turn_off: bool,
+    ) -> Result<(), PanelError<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        match (mode, damage) {
+            (RefreshMode::Fast, Some(region)) => self
+                .display_window(bus, delay, frame, None, region)
+                .await
+                .map(|_| ()),
+            _ => self.display(bus, delay, frame, None, mode).await,
+        }
+    }
+
+    async fn display_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+        damage: Region,
+        mode: RefreshMode,
+        _turn_off: bool,
+    ) -> Result<(), PanelError<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.display_grayscale_window(bus, delay, lsb, msb, damage, mode, true)
+            .await
+            .map(|_| ())
+    }
+
+    async fn display_binary_preserving_grayscale<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+        lsb: &[u8],
+        msb: &[u8],
+        damage: Region,
+        _turn_off: bool,
+    ) -> Result<(), PanelError<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        self.display_grayscale_window(bus, delay, lsb, msb, damage, RefreshMode::Fast, true)
+            .await
+            .map(|_| ())
+    }
+
+    async fn deep_sleep<B, D>(
+        &mut self,
+        bus: &mut B,
+        delay: &mut D,
+    ) -> Result<(), PanelError<B::Error>>
+    where
+        B: EpdInterface,
+        D: DelayNs,
+    {
+        Ssd1677::deep_sleep(self, bus, delay).await
+    }
+}
+
 fn overlay_lsb_byte(lsb: u8, msb: u8) -> u8 {
     lsb & !msb
 }
@@ -1168,7 +1231,151 @@ fn overlay_msb_byte(lsb: u8, msb: u8) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{grayscale_base_byte, overlay_lsb_byte, overlay_msb_byte};
+    extern crate std;
+
+    use core::{
+        convert::Infallible,
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    use std::vec;
+    use std::vec::Vec;
+
+    use embedded_hal_async::delay::DelayNs;
+    use epd_bus::{BusyPolarity, EpdInterface, RefreshMode, Region};
+
+    use super::{
+        BoosterSoftStart, Config, RefreshProfile, Ssd1677, UpdateSequence, grayscale_base_byte,
+        overlay_lsb_byte, overlay_msb_byte,
+    };
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Op {
+        Reset,
+        Command(u8),
+        Data(Vec<u8>),
+        Stream(Vec<u8>),
+        WaitBusy,
+    }
+
+    struct RecordingBus {
+        ops: Vec<Op>,
+        active_stream: Option<Vec<u8>>,
+    }
+
+    impl RecordingBus {
+        fn new() -> Self {
+            Self {
+                ops: Vec::new(),
+                active_stream: None,
+            }
+        }
+
+        fn plane_writes(&self) -> Vec<(u8, usize)> {
+            let mut writes = Vec::new();
+            for pair in self.ops.windows(2) {
+                match (&pair[0], &pair[1]) {
+                    (Op::Command(cmd @ (0x24 | 0x26)), Op::Data(bytes))
+                    | (Op::Command(cmd @ (0x24 | 0x26)), Op::Stream(bytes)) => {
+                        writes.push((*cmd, bytes.len()));
+                    }
+                    _ => {}
+                }
+            }
+            writes
+        }
+    }
+
+    impl EpdInterface for RecordingBus {
+        type Error = Infallible;
+
+        async fn command(&mut self, command: u8) -> Result<(), Self::Error> {
+            assert!(self.active_stream.is_none());
+            self.ops.push(Op::Command(command));
+            Ok(())
+        }
+
+        async fn data(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+            assert!(self.active_stream.is_none());
+            self.ops.push(Op::Data(data.to_vec()));
+            Ok(())
+        }
+
+        async fn reset<D>(&mut self, _delay: &mut D) -> Result<(), Self::Error>
+        where
+            D: DelayNs,
+        {
+            self.ops.push(Op::Reset);
+            Ok(())
+        }
+
+        fn reset_high(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn is_busy(&mut self, _polarity: BusyPolarity) -> Result<bool, Self::Error> {
+            Ok(false)
+        }
+
+        async fn wait_busy<D>(
+            &mut self,
+            _polarity: BusyPolarity,
+            _delay: &mut D,
+        ) -> Result<(), Self::Error>
+        where
+            D: DelayNs,
+        {
+            self.ops.push(Op::WaitBusy);
+            Ok(())
+        }
+
+        async fn begin_data_stream(&mut self) -> Result<(), Self::Error> {
+            assert!(self.active_stream.is_none());
+            self.active_stream = Some(Vec::new());
+            Ok(())
+        }
+
+        async fn stream_data(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+            self.active_stream
+                .as_mut()
+                .expect("stream must be open")
+                .extend_from_slice(data);
+            Ok(())
+        }
+
+        fn end_data_stream(&mut self) -> Result<(), Self::Error> {
+            let stream = self.active_stream.take().expect("stream must be open");
+            self.ops.push(Op::Stream(stream));
+            Ok(())
+        }
+    }
+
+    struct NoopDelay;
+
+    impl DelayNs for NoopDelay {
+        async fn delay_ns(&mut self, _ns: u32) {}
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let mut future = pin!(future);
+        let mut cx = Context::from_waker(Waker::noop());
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("unexpected pending future in mock test"),
+        }
+    }
+
+    const TINY_CONFIG: Config = Config::new(
+        32,
+        8,
+        BoosterSoftStart::new([0xae, 0xc7, 0xc3, 0xc0, 0x80]),
+        0x02,
+        0x80,
+        RefreshProfile::new(UpdateSequence::new(0xf7), 0xc0, None),
+        RefreshProfile::new(UpdateSequence::new(0xd7), 0xc0, Some(0x5a)),
+        RefreshProfile::new(UpdateSequence::new(0xfc), 0xc0, None),
+    );
 
     #[test]
     fn absolute_pixels_convert_to_overlay_encoding() {
@@ -1191,5 +1398,79 @@ mod tests {
         assert_eq!(grayscale_base_byte(0xff, 0xff), 0xff);
         assert_eq!(overlay_lsb_byte(0xff, 0xff), 0x00);
         assert_eq!(overlay_msb_byte(0xff, 0xff), 0x00);
+    }
+
+    #[test]
+    fn full_and_fast_binary_display_skip_redundant_post_refresh_planes() {
+        let mut panel = Ssd1677::new(TINY_CONFIG);
+        let mut bus = RecordingBus::new();
+        let mut delay = NoopDelay;
+        let frame = vec![0xaa; TINY_CONFIG.buffer_len()];
+
+        block_on(panel.initialize(&mut bus, &mut delay)).unwrap();
+        bus.ops.clear();
+
+        // Full refresh writes BW + RED before activation and 0 planes afterwards.
+        block_on(panel.display(&mut bus, &mut delay, &frame, None, RefreshMode::Full)).unwrap();
+        assert_eq!(bus.plane_writes(), vec![(0x24, 32), (0x26, 32)]);
+
+        bus.ops.clear();
+        // Fast refresh writes BW before activation and only RED afterwards.
+        block_on(panel.display(&mut bus, &mut delay, &frame, None, RefreshMode::Fast)).unwrap();
+        assert_eq!(bus.plane_writes(), vec![(0x24, 32), (0x26, 32)]);
+
+        bus.ops.clear();
+        // Windowed fast refresh streams BW before and only RED afterwards (2 streams, 8 bytes each).
+        let region = Region::new(8, 2, 16, 4);
+        block_on(panel.display_window(&mut bus, &mut delay, &frame, None, region)).unwrap();
+        assert_eq!(bus.plane_writes(), vec![(0x24, 8), (0x26, 8)]);
+        let stream_count = bus.ops.iter().filter(|op| matches!(op, Op::Stream(_))).count();
+        assert_eq!(stream_count, 2);
+    }
+
+    #[test]
+    fn grayscale_window_skips_redundant_base_sync_before_overlay() {
+        let mut panel = Ssd1677::new(TINY_CONFIG);
+        let mut bus = RecordingBus::new();
+        let mut delay = NoopDelay;
+        let white = vec![0xff; TINY_CONFIG.buffer_len()];
+
+        block_on(panel.initialize(&mut bus, &mut delay)).unwrap();
+        block_on(panel.display(&mut bus, &mut delay, &white, None, RefreshMode::Full)).unwrap();
+
+        // Fast window with no gray: BW window before refresh, RED window after refresh.
+        bus.ops.clear();
+        let region = Region::new(8, 2, 16, 4);
+        block_on(panel.display_grayscale_window(
+            &mut bus,
+            &mut delay,
+            &white,
+            &white,
+            region,
+            RefreshMode::Fast,
+            false,
+        ))
+        .unwrap();
+        assert_eq!(bus.plane_writes(), vec![(0x24, 8), (0x26, 8)]);
+
+        // Fast window with gray: only 1 BW window before overlay masks (no wasted RED sync),
+        // then 2 full overlay mask planes + 2 full restored baseline planes.
+        let mut lsb = white.clone();
+        lsb[2 * 4 + 1] = 0x00; // light gray inside `region`
+        bus.ops.clear();
+        block_on(panel.display_grayscale_window(
+            &mut bus,
+            &mut delay,
+            &lsb,
+            &white,
+            region,
+            RefreshMode::Fast,
+            false,
+        ))
+        .unwrap();
+        assert_eq!(
+            bus.plane_writes(),
+            vec![(0x24, 8), (0x24, 32), (0x26, 32), (0x24, 32), (0x26, 32)]
+        );
     }
 }
