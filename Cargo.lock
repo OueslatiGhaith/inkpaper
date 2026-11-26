@@ -2239,6 +2239,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "inkpaper-io"
+version = "0.1.0"
+dependencies = [
+ "futures-lite",
+]
+
+[[package]]
 name = "inkpaper-reader"
 version = "0.1.0"
 dependencies = [
