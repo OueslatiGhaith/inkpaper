@@ -5,7 +5,7 @@ use crate::{
     reader::{TableOfContents, TocEntry, toc::current_toc_index},
 };
 
-use super::{ReaderRequest, ReaderState};
+use super::ReaderState;
 
 impl ReaderState {
     pub(crate) fn table_of_contents(&self) -> &TableOfContents {
@@ -58,9 +58,7 @@ impl ReaderState {
         }
 
         self.toc = TableOfContents::Loading;
-        self.pending = Some(ReaderRequest::LoadTableOfContents {
-            path: self.path.clone(),
-        });
+        self.pending_toc = Some(self.path.clone());
 
         true
     }
