@@ -191,8 +191,8 @@ impl InkPaperApp {
         }
     }
 
-    /// Creates the view of a screen being opened, into `slot`. A view left from an
-    /// earlier opening, such as one the navigation stack dropped, is released.
+    /// Creates the view of a screen being opened, into `slot`, releasing any
+    /// previous view still held there.
     pub(crate) fn open_view<V: 'static>(
         slot: &mut Option<Entity<V>>,
         cx: &mut Context<'_, Self>,

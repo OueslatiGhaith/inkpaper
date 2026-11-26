@@ -41,6 +41,14 @@ pub(crate) trait ScreenLifecycle {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PushOutcome {
+    Unchanged,
+    /// Pushed onto the stack. `evicted` is set when dropping the oldest entry
+    /// above Home removed the last remaining instance of that screen.
+    Pushed { evicted: Option<Screen> },
+}
+
 /// Screens the user can go back through. Home is always at the bottom.
 #[derive(Debug)]
 pub(super) struct NavigationStack {
@@ -63,18 +71,21 @@ impl NavigationStack {
             .expect("navigation stack always keeps Home")
     }
 
-    fn push(&mut self, screen: Screen) -> bool {
+    fn push(&mut self, screen: Screen) -> PushOutcome {
         if self.current() == screen {
-            return false;
+            return PushOutcome::Unchanged;
         }
 
-        if self.screens.len() == MAX_DEPTH {
-            self.screens.remove(1);
-        }
+        let evicted = if self.screens.len() == MAX_DEPTH {
+            let dropped = self.screens.remove(1);
+            (!self.screens.contains(&dropped)).then_some(dropped)
+        } else {
+            None
+        };
 
         self.screens.push(screen);
 
-        true
+        PushOutcome::Pushed { evicted }
     }
 
     fn contains(&self, screen: Screen) -> bool {
@@ -103,11 +114,14 @@ impl InkPaperApp {
     pub(super) fn open_screen(&mut self, screen: Screen, cx: &mut Context<'_, Self>) {
         let covered = self.screen();
 
-        if !self.navigation.push(screen) {
+        let PushOutcome::Pushed { evicted } = self.navigation.push(screen) else {
             return;
-        }
+        };
 
         covered.route().exit(self, Exit::Covered, cx);
+        if let Some(evicted) = evicted {
+            evicted.route().exit(self, Exit::Closed, cx);
+        }
         screen.route().enter(self, Entry::Opened, cx);
 
         cx.notify();
@@ -172,6 +186,8 @@ impl InkPaperApp {
 
 #[cfg(test)]
 mod tests {
+    use inkpaper_ui::{Pool, Runtime};
+
     use super::*;
 
     #[test]
@@ -180,9 +196,15 @@ mod tests {
 
         assert_eq!(stack.pop(), None);
 
-        assert!(stack.push(Screen::BrowseFiles));
-        assert!(stack.push(Screen::Reader));
-        assert!(!stack.push(Screen::Reader));
+        assert_eq!(
+            stack.push(Screen::BrowseFiles),
+            PushOutcome::Pushed { evicted: None }
+        );
+        assert_eq!(
+            stack.push(Screen::Reader),
+            PushOutcome::Pushed { evicted: None }
+        );
+        assert_eq!(stack.push(Screen::Reader), PushOutcome::Unchanged);
 
         assert_eq!(stack.pop(), Some(Screen::Reader));
         assert_eq!(stack.pop(), Some(Screen::BrowseFiles));
@@ -196,11 +218,39 @@ mod tests {
         let screens = [Screen::BrowseFiles, Screen::Reader];
 
         for index in 0..MAX_DEPTH {
-            stack.push(screens[index % 2]);
+            let outcome = stack.push(screens[index % 2]);
+            // Both BrowseFiles and Reader still appear elsewhere on the stack.
+            assert_eq!(outcome, PushOutcome::Pushed { evicted: None });
         }
 
         assert_eq!(stack.screens.len(), MAX_DEPTH);
         assert_eq!(stack.screens[0], Screen::Home);
         assert_eq!(stack.current(), screens[(MAX_DEPTH - 1) % 2]);
+    }
+
+    #[test]
+    fn depth_limit_evicts_unique_screen_and_runs_closed_lifecycle() {
+        let mut runtime = Runtime::<()>::new(Pool::global());
+        let app = runtime
+            .create_root(InkPaperApp::new)
+            .expect("app root should be created");
+
+        runtime
+            .update(app, |app, cx| {
+                app.open_screen(Screen::Settings, cx);
+                assert!(app.settings.is_some());
+
+                // Fill the stack to MAX_DEPTH without closing Settings.
+                let alternating = [Screen::BrowseFiles, Screen::Reader];
+                for index in 0..(MAX_DEPTH - 2) {
+                    app.open_screen(alternating[index % 2], cx);
+                }
+                assert!(app.settings.is_some());
+
+                // One more push evicts Settings from index 1 and must close its view.
+                app.open_screen(Screen::RecentBooks, cx);
+                assert!(app.settings.is_none());
+            })
+            .expect("app entity should remain alive");
     }
 }
