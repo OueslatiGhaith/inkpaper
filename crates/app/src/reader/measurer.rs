@@ -106,12 +106,12 @@ impl TextMeasurer for ReaderMeasurer<'_> {
     type Error = ShapeError;
 
     fn measure_text(&mut self, text: &str, style: ReaderTextStyle) -> Result<u32, Self::Error> {
-        let insertion_slot = match self.measure_cache.lookup(text, style) {
+        let insertion = match self.measure_cache.lookup(text, style) {
             ReaderMeasureCacheLookup::Hit(width) => {
                 return Ok(width);
             }
 
-            ReaderMeasureCacheLookup::Miss { slot, .. } => Some(slot),
+            ReaderMeasureCacheLookup::Miss { slot, hash, .. } => Some((slot, hash)),
 
             ReaderMeasureCacheLookup::Bypass => None,
         };
@@ -123,8 +123,8 @@ impl TextMeasurer for ReaderMeasurer<'_> {
 
         let width = u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX);
 
-        if let Some(slot) = insertion_slot {
-            self.measure_cache.insert(slot, text, style, width);
+        if let Some((slot, hash)) = insertion {
+            self.measure_cache.insert(slot, hash, text, style, width);
         }
 
         Ok(width)
