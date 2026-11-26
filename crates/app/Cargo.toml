@@ -5,11 +5,12 @@ edition = "2024"
 
 [features]
 default = ["hinting"]
-defmt = ["inkpaper-ui/defmt"]
+defmt = ["dep:defmt", "inkpaper-ui/defmt"]
 # draw text from autohinted glyph outlines
 hinting = ["inkpaper-ui/hinting"]
 
 [dependencies]
+defmt = { workspace = true, optional = true }
 inkpaper-dictionary = { path = "../dictionary" }
 inkpaper-epub = { path = "../epub" }
 inkpaper-reader = { path = "../reader" }

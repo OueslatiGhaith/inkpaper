@@ -4,7 +4,7 @@ use minicbor::{Decode, Encode};
 
 use crate::storage::{self, StorageError};
 
-use super::{WifiCredentials, WifiNetwork};
+use super::{MAX_PASSWORD_BYTES, WifiCredentials, WifiNetwork};
 
 /// Like crosspoint, up to eight networks are remembered.
 const MAX_SAVED_NETWORKS: usize = 8;
@@ -141,26 +141,30 @@ impl SavedNetworks {
 
     /// Encodes the networks with each password obfuscated by `device_key`.
     pub(crate) fn encode(&self, device_key: &DeviceKey) -> Result<Vec<u8>, SavedNetworksError> {
-        let stored = StoredSavedNetworks {
+        let encoded = EncodedSavedNetworks {
             connected: self.connected,
-            networks: self
-                .networks
-                .iter()
-                .map(|network| StoredNetwork {
-                    ssid: network.credentials.ssid.clone(),
-                    password: obfuscate(network.credentials.password.as_bytes(), device_key),
-                    auto_connect: network.auto_connect,
-                })
-                .collect(),
+            networks: EncodedNetworks {
+                networks: &self.networks,
+                device_key,
+            },
+            key_tag: Some(device_key_tag(device_key)),
         };
 
-        Ok(storage::encode(&stored)?)
+        Ok(storage::encode(&encoded)?)
     }
 
-    /// Decodes networks saved with the same `device_key`. Networks that don't
-    /// decode, such as from a card moved over from another device, are dropped.
+    /// Decodes networks saved with the same `device_key`. Files written by a
+    /// different device are ignored cleanly; legacy entries without a key tag
+    /// fall back to dropping entries whose deobfuscated password is not UTF-8.
     pub(crate) fn decode(bytes: &[u8], device_key: &DeviceKey) -> Result<Self, SavedNetworksError> {
         let stored: StoredSavedNetworks = storage::decode(bytes)?;
+
+        if stored
+            .key_tag
+            .is_some_and(|tag| tag != device_key_tag(device_key))
+        {
+            return Ok(Self::default());
+        }
 
         let mut connected = stored.connected;
         let mut networks = Vec::new();
@@ -259,15 +263,105 @@ fn obfuscate(bytes: &[u8], device_key: &DeviceKey) -> Vec<u8> {
         .collect()
 }
 
-#[derive(Debug, Encode, Decode)]
+/// Deterministic 64-bit tag derived from `device_key` so files moved from
+/// another device (even with the same MAC OUI) are rejected reliably without
+/// storing the raw key in plaintext.
+fn device_key_tag(device_key: &DeviceKey) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in b"inkpaper-wifi-key-v1".iter().chain(device_key.iter()) {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash ^= hash >> 30;
+    hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    hash ^= hash >> 27;
+    hash = hash.wrapping_mul(0x94d0_49bb_1331_11eb);
+    hash ^ (hash >> 31)
+}
+
+#[derive(Encode)]
+struct EncodedSavedNetworks<'a> {
+    #[n(0)]
+    connected: bool,
+    #[n(1)]
+    networks: EncodedNetworks<'a>,
+    #[n(2)]
+    key_tag: Option<u64>,
+}
+
+struct EncodedNetworks<'a> {
+    networks: &'a [SavedNetwork],
+    device_key: &'a DeviceKey,
+}
+
+impl<C> Encode<C> for EncodedNetworks<'_> {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        e.array(self.networks.len() as u64)?;
+        for network in self.networks {
+            EncodedNetwork {
+                ssid: network.credentials.ssid(),
+                password: ObfuscatedPassword {
+                    password: network.credentials.password().as_bytes(),
+                    device_key: self.device_key,
+                },
+                auto_connect: network.auto_connect,
+            }
+            .encode(e, ctx)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Encode)]
+struct EncodedNetwork<'a> {
+    #[n(0)]
+    ssid: &'a str,
+    /// obfuscated with the device key
+    #[n(1)]
+    password: ObfuscatedPassword<'a>,
+    #[n(2)]
+    auto_connect: bool,
+}
+
+struct ObfuscatedPassword<'a> {
+    password: &'a [u8],
+    device_key: &'a DeviceKey,
+}
+
+impl<C> Encode<C> for ObfuscatedPassword<'_> {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        _ctx: &mut C,
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        let mut buffer = [0u8; MAX_PASSWORD_BYTES];
+        let len = self.password.len().min(MAX_PASSWORD_BYTES);
+        for (slot, (&byte, &key)) in buffer[..len]
+            .iter_mut()
+            .zip(self.password.iter().zip(self.device_key.iter().cycle()))
+        {
+            *slot = byte ^ key;
+        }
+        e.bytes(&buffer[..len])?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Decode)]
 struct StoredSavedNetworks {
     #[n(0)]
     connected: bool,
     #[n(1)]
     networks: Vec<StoredNetwork>,
+    #[n(2)]
+    key_tag: Option<u64>,
 }
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, Decode)]
 struct StoredNetwork {
     #[n(0)]
     ssid: String,
@@ -409,11 +503,53 @@ mod tests {
         );
 
         let other_device = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60];
-        let decoded = SavedNetworks::decode(&bytes, &other_device).unwrap();
-        assert!(
-            decoded
-                .connected()
-                .is_none_or(|network| network.password() != "correct horse battery")
+        assert_eq!(
+            SavedNetworks::decode(&bytes, &other_device),
+            Ok(SavedNetworks::default())
         );
+    }
+
+    #[test]
+    fn same_oui_device_key_rejects_foreign_networks_including_open_ones() {
+        let mut saved = SavedNetworks::default();
+        saved.connect(WifiCredentials::new("cafe", "").unwrap());
+        saved.connect(WifiCredentials::new("home", "abcdefgh").unwrap());
+
+        let bytes = saved.encode(&KEY).unwrap();
+
+        // Same 3-byte OUI and only a 1-bit difference in the last byte: XORed
+        // ASCII bytes would still be valid UTF-8 without the explicit key tag.
+        let mut sibling_device = KEY;
+        sibling_device[5] ^= 0x01;
+
+        assert_eq!(
+            SavedNetworks::decode(&bytes, &sibling_device),
+            Ok(SavedNetworks::default())
+        );
+    }
+
+    #[test]
+    fn legacy_payload_without_key_tag_still_decodes_with_matching_key() {
+        #[derive(Encode)]
+        struct LegacySavedNetworks<'a> {
+            #[n(0)]
+            connected: bool,
+            #[n(1)]
+            networks: EncodedNetworks<'a>,
+        }
+
+        let mut saved = SavedNetworks::default();
+        saved.connect(WifiCredentials::new("home", "secretpass").unwrap());
+
+        let legacy_bytes = storage::encode(&LegacySavedNetworks {
+            connected: saved.connected,
+            networks: EncodedNetworks {
+                networks: &saved.networks,
+                device_key: &KEY,
+            },
+        })
+        .unwrap();
+
+        assert_eq!(SavedNetworks::decode(&legacy_bytes, &KEY), Ok(saved));
     }
 }
