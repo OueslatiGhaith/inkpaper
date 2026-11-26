@@ -7,19 +7,22 @@ use block_device_driver::BlockDevice as RawBlockDevice;
 use defmt::{Debug2Format, debug, error, info, warn};
 use embassy_time::{Delay, Duration, Timer};
 use esp_hal::{
+    Async,
     peripherals::{GPIO19, GPIO20, GPIO40, GPIO41, GPIO42, SDHOST, USB_FS},
-    sdmmc::{Config, SdHostController, SlotConfig},
+    sdmmc::{Config, SdHostController, Slot, SlotConfig},
 };
 use hadris_fat::r#async::FatVolume;
-use sdio::{BlockDevice, MmcBus, sd::Card};
+use sdio::{BlockDevice, sd::Card};
+use static_cell::StaticCell;
 
 use crate::firmware::{
     power::SdPower,
     storage::{
-        partition::{SECTOR_SIZE, SdPartition, find_fat_partition},
+        partition::{Partition, SECTOR_SIZE, SdPartition, find_fat_partition},
         service::{
-            FilesystemExit, serve_filesystem, serve_unavailable_requests, serve_usb_drive_requests,
-            signal_ready,
+            LifecycleCommand, SdCard, SendSlot, ack_shutdown, ack_usb_drive, mark_unavailable,
+            publish_mounted, signal_ready, take_mounted_for_usb_drive, teardown_for_shutdown,
+            wait_lifecycle_command, wait_unavailable_shutdown, wait_usb_drive_shutdown,
         },
     },
     usb_mass_storage::{self, UsbMassStorageExit},
@@ -33,6 +36,8 @@ const POWER_OFF_MS: u64 = 80;
 const POWER_SETTLE_MS: u64 = 120;
 
 const USB_RESTART_SETTLE_MS: u64 = 20;
+
+static SD_CONTROLLER: StaticCell<SdHostController<'static>> = StaticCell::new();
 
 #[embassy_executor::task]
 pub async fn storage_task(
@@ -50,7 +55,7 @@ pub async fn storage_task(
     debug!("SDMMC configuration slot=1 clk_gpio=41 cmd_gpio=42 data0_gpio=40 enable_gpio=5",);
 
     let controller = match SdHostController::new(sdhost, Config::default()) {
-        Ok(controller) => controller,
+        Ok(controller) => SD_CONTROLLER.init(controller),
 
         Err(error) => {
             error!("SDHOST initialization failed: {:?}", error,);
@@ -61,7 +66,7 @@ pub async fn storage_task(
         }
     };
 
-    let mut slot = match controller.slot::<1>(SlotConfig::default()) {
+    let slot = match controller.slot::<1>(SlotConfig::default()) {
         Ok(slot) => slot
             .with_clk(clk)
             .with_cmd(cmd)
@@ -77,28 +82,22 @@ pub async fn storage_task(
         }
     };
 
-    run_storage(&mut slot, &mut sd_power, usb_fs, usb_dp, usb_dm).await;
+    run_storage(slot, &mut sd_power, usb_fs, usb_dp, usb_dm).await;
 }
 
-async fn run_storage<B>(
-    bus: &mut B,
+async fn probe_card_and_partition(
+    slot: &mut Slot<'static, 1, Async>,
     sd_power: &mut SdPower<'_>,
-    usb_fs: USB_FS<'static>,
-    usb_dp: GPIO20<'static>,
-    usb_dm: GPIO19<'static>,
-) where
-    B: MmcBus,
-{
+) -> Option<Partition> {
     for attempt in 1..=MOUNT_ATTEMPTS {
         info!("SD mount attempt {}/{}", attempt, MOUNT_ATTEMPTS);
 
         power_cycle_sd(sd_power).await;
 
-        // reconstruct the BlockDevice for each attempt. sdio::BlockDevice retains
-        // transfer-error state after a failed read, so a failed sector-0 test must not
-        // poison the next power-cycle.
+        // Reconstruct BlockDevice per attempt so a failed sector-0 read does not
+        // poison the next power-cycle with sticky transfer-error state.
         let mut card: BlockDevice<Card, _, _, SECTOR_SIZE> =
-            match BlockDevice::new(&mut *bus, Delay, TARGET_FREQUENCY_HZ).await {
+            match BlockDevice::new(&mut *slot, Delay, TARGET_FREQUENCY_HZ).await {
                 Ok(card) => {
                     info!("SD card initialized at {} Hz", card.freq());
                     card
@@ -133,137 +132,149 @@ async fn run_storage<B>(
             partition.index, partition.partition_type, partition.first_lba, partition.sectors,
         );
 
-        let partition_device = SdPartition::new(&mut card, partition.first_lba, partition.sectors);
+        return Some(partition);
+    }
 
-        let filesystem = match FatVolume::open(partition_device).await {
-            Ok(filesystem) => filesystem,
-            Err(error) => {
-                warn!("FAT mount failed: {:?}", error);
-                continue;
-            }
-        };
+    None
+}
 
-        let volume = filesystem.volume_info();
+async fn run_storage(
+    mut slot: Slot<'static, 1, Async>,
+    sd_power: &mut SdPower<'_>,
+    usb_fs: USB_FS<'static>,
+    usb_dp: GPIO20<'static>,
+    usb_dm: GPIO19<'static>,
+) {
+    let Some(partition) = probe_card_and_partition(&mut slot, sd_power).await else {
+        serve_unavailable(sd_power).await;
+        return;
+    };
 
-        info!(
-            "FAT filesystem mounted oem={} label={} type={}",
-            volume.oem_name(),
-            volume.volume_label(),
-            volume.fs_type_str(),
-        );
+    // Move the owned Slot into a `'static` BlockDevice so callers can access
+    // the mounted FatVolume directly under the async STORAGE mutex without RPC copies.
+    let card: SdCard = match BlockDevice::new(SendSlot::new(slot), Delay, TARGET_FREQUENCY_HZ).await {
+        Ok(card) => card,
+        Err(error) => {
+            warn!("SD card re-acquire failed: {:?}", error);
+            serve_unavailable(sd_power).await;
+            return;
+        }
+    };
 
-        // From here until a transition, GPIO5 stays LOW and this task owns the entire
-        // SD -> block device -> partition -> FAT stack.
-        signal_ready(true);
+    let partition_device = SdPartition::new(card, partition.first_lba, partition.sectors);
 
-        let exit = serve_filesystem(&filesystem).await;
+    let filesystem = match FatVolume::open(partition_device).await {
+        Ok(filesystem) => filesystem,
+        Err(error) => {
+            warn!("FAT mount failed: {:?}", error);
+            serve_unavailable(sd_power).await;
+            return;
+        }
+    };
 
-        // This is the ownership boundary shared by both shutdown and USB Drive. Dropping
-        // FatVolume also drops SdPartition, releasing its mutable borrow of `card`.
-        drop(filesystem);
+    let volume = filesystem.volume_info();
 
-        match exit {
-            FilesystemExit::Shutdown(shutdown_done) => {
-                // Deep sleep does not need the raw card. Tear the SD stack down
-                // and remove card power before acknowledging shutdown.
-                drop(card);
+    info!(
+        "FAT filesystem mounted oem={} label={} type={}",
+        volume.oem_name(),
+        volume.volume_label(),
+        volume.fs_type_str(),
+    );
 
-                sd_power.disable();
+    // Publish the mounted volume under STORAGE and sleep until USB Drive or shutdown.
+    publish_mounted(filesystem).await;
 
-                info!("storage shut down; SD power off");
+    match wait_lifecycle_command().await {
+        LifecycleCommand::Shutdown => {
+            // Drop FatVolume, SdPartition, and SdCard before removing card power.
+            teardown_for_shutdown().await;
 
-                shutdown_done.send(());
+            sd_power.disable();
+            info!("storage shut down; SD power off");
 
-                // Preserve ownership of the GPIO output while main prepares the RTC holds
-                // and enters deep sleep.
-                hold_forever().await;
+            ack_shutdown();
+            hold_forever().await;
+        }
 
+        LifecycleCommand::EnterUsbDrive => {
+            signal_ready(false);
+
+            let Some(mut card) = take_mounted_for_usb_drive().await else {
+                mark_unavailable().await;
+                ack_usb_drive(false);
+                serve_unavailable(sd_power).await;
                 return;
-            }
+            };
 
-            FilesystemExit::UsbDrive(usb_drive_ready) => {
-                signal_ready(false);
+            let sector_count = match usb_sector_count(&mut card).await {
+                Some(sector_count) => sector_count,
+                None => {
+                    error!("USB drive cannot determine raw SD capacity");
 
-                let sector_count = match usb_sector_count(&mut card).await {
-                    Some(sector_count) => sector_count,
-                    None => {
-                        error!("USB drive cannot determine raw SD capacity");
+                    mark_unavailable().await;
+                    ack_usb_drive(false);
+                    drop(card);
+                    serve_unavailable(sd_power).await;
+                    return;
+                }
+            };
 
-                        usb_drive_ready.send(false);
-                        drop(card);
-                        serve_unavailable(sd_power).await;
+            info!(
+                "FAT filesystem detached, starting USB drive sectors={}",
+                sector_count
+            );
 
-                        return;
-                    }
-                };
+            // From this point until USB MSC exits, filesystem calls return Unavailable
+            // and the raw card stays exclusively owned by this task.
+            ack_usb_drive(true);
 
-                info!(
-                    "FAT filesystem detached, starting USB drive sectors={}",
-                    sector_count
-                );
+            let exit = usb_mass_storage::run(
+                &mut card,
+                sector_count,
+                usb_fs,
+                usb_dp,
+                usb_dm,
+                wait_usb_drive_shutdown(),
+            )
+            .await;
 
-                // From this point until USB MSC exits, filesystem calls are unavailable.
-                // The raw card stays exclusively owned by this task
-                usb_drive_ready.send(true);
+            match exit {
+                UsbMassStorageExit::Shutdown => {
+                    drop(card);
+                    sd_power.disable();
 
-                let mut shutdown_done = None;
+                    info!("USB drive stopped for system shutdown");
+                    ack_shutdown();
+                    hold_forever().await;
+                }
+                UsbMassStorageExit::Ejected
+                | UsbMassStorageExit::Disconnected
+                | UsbMassStorageExit::HostTimeout
+                | UsbMassStorageExit::IoError => {
+                    let reason = match exit {
+                        UsbMassStorageExit::Ejected => "ejected",
+                        UsbMassStorageExit::Disconnected => "disconnected",
+                        UsbMassStorageExit::HostTimeout => "host-timeout",
+                        UsbMassStorageExit::IoError => "io-error",
+                        UsbMassStorageExit::Shutdown => unreachable!(),
+                    };
 
-                let exit =
-                    usb_mass_storage::run(&mut card, sector_count, usb_fs, usb_dp, usb_dm, async {
-                        shutdown_done = Some(serve_usb_drive_requests().await)
-                    })
-                    .await;
+                    // The host has completed START STOP UNIT with LOEJ.
+                    // USB has already been disabled by `usb_mass_storage`.
+                    //
+                    // Rebooting is simpler and safer than trying to rebuild every
+                    // app-side storage/reader handle in place.
+                    drop(card);
+                    sd_power.disable();
 
-                match exit {
-                    UsbMassStorageExit::Shutdown => {
-                        drop(card);
-                        sd_power.disable();
+                    info!("USB drive ended, reason={}, restarting", reason);
 
-                        info!("USB drive stopped for system shutdown");
-
-                        // `run` only stops for shutdown once the requests future has
-                        // returned the shutdown reply.
-                        if let Some(shutdown_done) = shutdown_done {
-                            shutdown_done.send(());
-                        }
-                        hold_forever().await;
-
-                        return;
-                    }
-                    UsbMassStorageExit::Ejected
-                    | UsbMassStorageExit::Disconnected
-                    | UsbMassStorageExit::HostTimeout
-                    | UsbMassStorageExit::IoError => {
-                        let reason = match exit {
-                            UsbMassStorageExit::Ejected => "ejected",
-                            UsbMassStorageExit::Disconnected => "disconnected",
-                            UsbMassStorageExit::HostTimeout => "host-timeout",
-                            UsbMassStorageExit::IoError => "io-error",
-                            UsbMassStorageExit::Shutdown => unreachable!(),
-                        };
-
-                        // The host has completed START STOP UNIT with LOEJ.
-                        // USB has already been disabled by `usb_mass_storage`.
-                        //
-                        // Rebooting is simpler and safer than trying to rebuild every
-                        // app-side storage/reader handle in place
-                        drop(card);
-                        sd_power.disable();
-
-                        info!("USB drive ended, reason={}, restarting", reason);
-
-                        // Give the USB soft-disconnect and SD power-down a moment to
-                        // propagate before resetting the MCU
-                        Timer::after(Duration::from_millis(USB_RESTART_SETTLE_MS)).await;
-
-                        esp_hal::system::software_reset();
-                    }
+                    Timer::after(Duration::from_millis(USB_RESTART_SETTLE_MS)).await;
+                    esp_hal::system::software_reset();
                 }
             }
         }
     }
-
-    serve_unavailable(sd_power).await;
 }
 
 async fn serve_unavailable(sd_power: &mut SdPower<'_>) {
@@ -272,10 +283,10 @@ async fn serve_unavailable(sd_power: &mut SdPower<'_>) {
     error!("storage unavailable",);
 
     // GPIO5 remains disabled for the entire unavailable service lifetime.
-    serve_unavailable_requests().await;
+    wait_unavailable_shutdown().await;
 
-    // establish the state again before waiting forever, mirroring the normal shutdown path.
     sd_power.disable();
+    ack_shutdown();
 
     hold_forever().await;
 }

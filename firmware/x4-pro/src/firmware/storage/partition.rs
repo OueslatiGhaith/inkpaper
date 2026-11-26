@@ -20,8 +20,8 @@ pub(super) struct Partition {
     pub(super) sectors: u32,
 }
 
-pub(super) struct SdPartition<'a, D> {
-    device: &'a mut D,
+pub(super) struct SdPartition<D> {
+    device: D,
     first_lba: u32,
     sector_count: u32,
     position: u64,
@@ -34,11 +34,11 @@ pub(super) struct SdPartition<'a, D> {
     sector: Aligned<A4, [u8; SECTOR_SIZE]>,
 }
 
-impl<'a, D> SdPartition<'a, D>
+impl<D> SdPartition<D>
 where
     D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
 {
-    pub(super) fn new(device: &'a mut D, first_lba: u32, sector_count: u32) -> Self {
+    pub(super) fn new(device: D, first_lba: u32, sector_count: u32) -> Self {
         Self {
             device,
             first_lba,
@@ -47,6 +47,10 @@ where
             cached_sector: None,
             sector: Aligned([0; SECTOR_SIZE]),
         }
+    }
+
+    pub(super) fn into_inner(self) -> D {
+        self.device
     }
 
     fn len_bytes(&self) -> u64 {
@@ -130,7 +134,7 @@ where
     }
 }
 
-impl<D> HadrisRead for SdPartition<'_, D>
+impl<D> HadrisRead for SdPartition<D>
 where
     D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
 {
@@ -175,7 +179,7 @@ where
     }
 }
 
-impl<D> HadrisWrite for SdPartition<'_, D>
+impl<D> HadrisWrite for SdPartition<D>
 where
     D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
 {
@@ -229,7 +233,7 @@ where
     }
 }
 
-impl<D> HadrisSeek for SdPartition<'_, D>
+impl<D> HadrisSeek for SdPartition<D>
 where
     D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
 {
