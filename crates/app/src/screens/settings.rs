@@ -248,20 +248,22 @@ pub(crate) struct SettingsRoute;
 impl ScreenLifecycle for SettingsRoute {
     fn enter(&self, app: &mut InkPaperApp, entry: Entry, cx: &mut Context<'_, InkPaperApp>) {
         if entry == Entry::Opened {
-            let view = InkPaperApp::open_view(&mut app.settings, cx, SettingsView::new);
+            let view =
+                crate::app::ScreenViews::open(&mut app.views.settings, cx, SettingsView::new);
             cx.subscribe(view, InkPaperApp::on_settings_event);
         }
     }
 
     fn exit(&self, app: &mut InkPaperApp, exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
         if exit == Exit::Closed {
-            InkPaperApp::close_view(&mut app.settings, cx);
+            crate::app::ScreenViews::close(&mut app.views.settings, cx);
         }
     }
 
     /// Back closes a picker first.
     fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
         let closed = app
+            .views
             .settings
             .is_some_and(|view| view.update(cx, SettingsView::close_picker));
 
@@ -273,7 +275,8 @@ impl ScreenInput for SettingsRoute {}
 
 impl ScreenView for SettingsRoute {
     fn render<'a>(&self, app: &'a InkPaperApp, _: &mut Context<'_, InkPaperApp>) -> AnyElement<'a> {
-        app.settings
+        app.views
+            .settings
             .map_or_else(|| div().into_any_element(), IntoElement::into_any_element)
     }
 }

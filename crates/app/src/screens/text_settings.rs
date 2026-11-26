@@ -433,8 +433,11 @@ impl ScreenLifecycle for TextSettingsRoute {
             app.text_settings.open(app.reader.menu_text_settings());
 
             // a new view opens on the Font tab, like crosspoint's screen
-            let view =
-                InkPaperApp::open_view(&mut app.text_settings_view, cx, TextSettingsView::new);
+            let view = crate::app::ScreenViews::open(
+                &mut app.views.text_settings,
+                cx,
+                TextSettingsView::new,
+            );
             cx.subscribe(view, InkPaperApp::on_text_settings_event);
         }
     }
@@ -443,14 +446,15 @@ impl ScreenLifecycle for TextSettingsRoute {
     fn exit(&self, app: &mut InkPaperApp, exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
         if exit == Exit::Closed {
             app.reader.request_text_settings(app.text_settings.draft());
-            InkPaperApp::close_view(&mut app.text_settings_view, cx);
+            crate::app::ScreenViews::close(&mut app.views.text_settings, cx);
         }
     }
 
     /// Back closes an open picker first.
     fn back(&self, app: &mut InkPaperApp, cx: &mut Context<'_, InkPaperApp>) -> Back {
         let closed = app
-            .text_settings_view
+            .views
+            .text_settings
             .is_some_and(|view| view.update(cx, TextSettingsView::close_picker));
 
         if closed { Back::Handled } else { Back::Leave }
@@ -464,7 +468,7 @@ impl ScreenInput for TextSettingsRoute {
         button: SideButton,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        if let Some(view) = app.text_settings_view {
+        if let Some(view) = app.views.text_settings {
             view.update(cx, |view, cx| view.turn_page(button.into(), cx));
         }
     }
@@ -476,7 +480,7 @@ impl ScreenInput for TextSettingsRoute {
         position: Point,
         cx: &mut Context<'_, InkPaperApp>,
     ) {
-        let Some(view) = app.text_settings_view else {
+        let Some(view) = app.views.text_settings else {
             return;
         };
 
@@ -494,7 +498,8 @@ impl ScreenInput for TextSettingsRoute {
 
 impl ScreenView for TextSettingsRoute {
     fn render<'a>(&self, app: &'a InkPaperApp, _: &mut Context<'_, InkPaperApp>) -> AnyElement<'a> {
-        app.text_settings_view
+        app.views
+            .text_settings
             .map_or_else(|| div().into_any_element(), IntoElement::into_any_element)
     }
 }

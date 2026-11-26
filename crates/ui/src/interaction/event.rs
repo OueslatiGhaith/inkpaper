@@ -1,7 +1,7 @@
 use core::any::TypeId;
 
 use crate::{
-    Element, ElementId, IntoElement, Listener, MountCx, MountError, NodeId, ParentElement,
+    Element, ElementId, IntoElement, Listener, MountCx, MountError, NodeId, ParentElement, Rect,
     StatefulInteractiveElement, StatefulInteractivity, Style, Styled, callback::CallbackId,
     element::state::ElementStateId,
 };
@@ -47,6 +47,33 @@ impl EventTarget {
 
     pub(crate) const fn element(self) -> ElementStateId {
         self.element
+    }
+}
+
+/// Topmost element hit by a point query for a given event type, together with
+/// its local id and laid-out screen bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventHit {
+    target: EventTarget,
+    id: ElementId,
+    bounds: Rect,
+}
+
+impl EventHit {
+    pub(crate) const fn new(target: EventTarget, id: ElementId, bounds: Rect) -> Self {
+        Self { target, id, bounds }
+    }
+
+    pub const fn target(self) -> EventTarget {
+        self.target
+    }
+
+    pub const fn id(self) -> ElementId {
+        self.id
+    }
+
+    pub const fn bounds(self) -> Rect {
+        self.bounds
     }
 }
 

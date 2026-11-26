@@ -3,18 +3,13 @@ use inkpaper_ui::prelude::*;
 
 use crate::{
     ClockSyncStatus, InkPaperApp, UtcOffset,
-    app::{Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView},
+    app::{Entry, Exit, ScreenInput, ScreenLifecycle, ScreenView, ScreenViews},
     components::{
         header::{BackHeader, BackHeaderProps, BatteryIndicator},
         settings_row::{ListRow, ListRowProps, SettingsValueRow, SettingsValueRowProps},
-        slider::{self, Slider, SliderProps},
+        slider::{Slider, SliderPhase, SliderProps, SliderScrubEvent},
     },
 };
-
-// screen geometry: the timezone block starts 186 px down, its slider after a
-// 24 px label and a 4 px gap
-const TIMEZONE_LEFT: i32 = 32;
-const TIMEZONE_SLIDER_TOP: i32 = 186 + 24 + 4;
 
 /// Clock settings, grouped like crosspoint's clock screen: the local time, the
 /// timezone, and a network sync.
@@ -82,9 +77,14 @@ impl RenderOnce for ClockSettingsScreen<'_> {
     }
 }
 
-/// A timezone slider button was tapped: move the timezone this many quarter hours.
+/// Timezone slider interaction from [`TimezoneView`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct StepTimezone(pub i8);
+pub(crate) enum TimezoneEvent {
+    /// A slider `-`/`+` button was tapped: move by this many quarter hours.
+    Step(i8),
+    /// The slider track was scrubbed to `offset`; `commit` saves it on release.
+    Scrub { offset: UtcOffset, commit: bool },
+}
 
 /// the local time and the timezone slider, which shifts it. As their own entity,
 /// dragging the slider or a minute passing renders and paints only these. The
@@ -93,7 +93,7 @@ pub(crate) struct TimezoneView {
     app: Entity<InkPaperApp>,
 }
 
-impl EventEmitter<StepTimezone> for TimezoneView {}
+impl EventEmitter<TimezoneEvent> for TimezoneView {}
 
 impl TimezoneView {
     pub(crate) const fn new(app: Entity<InkPaperApp>) -> Self {
@@ -101,11 +101,18 @@ impl TimezoneView {
     }
 
     fn activate_decrease(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        cx.emit(StepTimezone(-1));
+        cx.emit(TimezoneEvent::Step(-1));
     }
 
     fn activate_increase(&mut self, _: &ActivateEvent, cx: &mut Context<'_, Self>) {
-        cx.emit(StepTimezone(1));
+        cx.emit(TimezoneEvent::Step(1));
+    }
+
+    fn scrub(&mut self, event: &SliderScrubEvent, cx: &mut Context<'_, Self>) {
+        let offset = UtcOffset::from_slider_value(event.value());
+        let commit = event.phase() == SliderPhase::End;
+
+        cx.emit(TimezoneEvent::Scrub { offset, commit });
     }
 }
 
@@ -115,6 +122,7 @@ impl Render for TimezoneView {
         let (clock, utc_offset) = (app.local_clock(cx), app.clock.utc_offset());
         let on_decrease = cx.listener(Self::activate_decrease);
         let on_increase = cx.listener(Self::activate_increase);
+        let on_scrub = cx.listener(Self::scrub);
 
         let (time, date) = match clock {
             None => (String::from("--:--"), String::from("Time not set")),
@@ -159,6 +167,7 @@ impl Render for TimezoneView {
                         value={utc_offset.slider_value()}
                         on_decrease={Some(on_decrease)}
                         on_increase={Some(on_increase)}
+                        on_scrub={Some(on_scrub)}
                     />
                 </div>
             </div>
@@ -173,52 +182,19 @@ impl ScreenLifecycle for ClockSettingsRoute {
         if entry == Entry::Opened {
             app.clock.clear_sync_result();
 
-            let view = InkPaperApp::open_view(&mut app.timezone, cx, TimezoneView::new);
-            cx.subscribe(view, InkPaperApp::on_step_timezone);
+            let view = ScreenViews::open(&mut app.views.timezone, cx, TimezoneView::new);
+            cx.subscribe(view, InkPaperApp::on_timezone_event);
         }
     }
 
     fn exit(&self, app: &mut InkPaperApp, exit: Exit, cx: &mut Context<'_, InkPaperApp>) {
         if exit == Exit::Closed {
-            InkPaperApp::close_view(&mut app.timezone, cx);
+            ScreenViews::close(&mut app.views.timezone, cx);
         }
     }
 }
 
-impl ScreenInput for ClockSettingsRoute {
-    fn drag(
-        &self,
-        app: &mut InkPaperApp,
-        origin: Point,
-        position: Point,
-        cx: &mut Context<'_, InkPaperApp>,
-    ) {
-        // dragging along the timezone slider previews an offset; release saves it
-        if slider::track_contains(origin, TIMEZONE_LEFT, TIMEZONE_SLIDER_TOP) {
-            app.preview_utc_offset(timezone_at(position.x.get()), cx);
-        }
-    }
-
-    fn release(
-        &self,
-        app: &mut InkPaperApp,
-        position: Point,
-        cx: &mut Context<'_, InkPaperApp>,
-    ) -> bool {
-        if slider::track_contains(position, TIMEZONE_LEFT, TIMEZONE_SLIDER_TOP) {
-            app.set_utc_offset(timezone_at(position.x.get()), cx);
-
-            return true;
-        }
-
-        // a drag that left the track still saves where it ended
-        app.commit_utc_offset()
-    }
-}
-
-fn timezone_at(x: i32) -> UtcOffset {
-    UtcOffset::from_slider_value(slider::value_at(x, TIMEZONE_LEFT))
-}
+impl ScreenInput for ClockSettingsRoute {}
 
 impl ScreenView for ClockSettingsRoute {
     fn render<'a>(
@@ -226,7 +202,7 @@ impl ScreenView for ClockSettingsRoute {
         app: &'a InkPaperApp,
         cx: &mut Context<'_, InkPaperApp>,
     ) -> AnyElement<'a> {
-        let Some(timezone) = app.timezone else {
+        let Some(timezone) = app.views.timezone else {
             return div().into_any_element();
         };
 

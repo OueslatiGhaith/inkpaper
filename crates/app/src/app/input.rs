@@ -2,7 +2,8 @@ use inkpaper_ui::prelude::*;
 
 use super::InkPaperApp;
 use crate::{
-    control_center::{ControlCenterAction, ControlCenterPointerResult, ControlCenterSlider},
+    components::{control_center::ControlCenterHandleEvent, slider::SliderScrubEvent},
+    control_center::ControlCenterPointerResult,
     input::{LongPressAction, PointerAction},
 };
 
@@ -147,19 +148,61 @@ impl InkPaperApp {
         }
     }
 
+    pub(crate) fn blocks_pointer_input(&self) -> bool {
+        self.input_target() == InputTarget::Blocked
+    }
+
+    pub(crate) fn begin_slider_scrub(&mut self, target: EventTarget, bounds: Rect) {
+        self.pointer_captured = false;
+        self.pointer_held = false;
+        self.active_slider = Some((target, bounds));
+        self.control_center.cancel_pointer();
+    }
+
+    pub(crate) const fn active_slider(&self) -> Option<(EventTarget, Rect)> {
+        self.active_slider
+    }
+
+    pub(crate) fn take_active_slider(&mut self) -> Option<(EventTarget, Rect)> {
+        self.active_slider.take()
+    }
+
+    pub(super) fn activate_close_control_center(
+        &mut self,
+        _: &ActivateEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.close_control_center(cx);
+    }
+
+    pub(super) fn ignore_activate(&mut self, _: &ActivateEvent, _: &mut Context<'_, Self>) {}
+
+    pub(super) fn ignore_slider_scrub(&mut self, _: &SliderScrubEvent, _: &mut Context<'_, Self>) {}
+
+    pub(super) fn ignore_control_center_handle(
+        &mut self,
+        _: &ControlCenterHandleEvent,
+        _: &mut Context<'_, Self>,
+    ) {
+    }
+
     pub(crate) fn handle_pointer_down(
         &mut self,
         position: Point,
+        on_control_center_handle: bool,
         cx: &mut Context<'_, Self>,
     ) -> PointerAction {
         self.pointer_captured = false;
         self.pointer_held = false;
+        self.active_slider = None;
 
         if self.input_target() == InputTarget::Blocked {
             return PointerAction::Capture;
         }
 
-        let result = self.control_center.pointer_down(position);
+        let result = self
+            .control_center
+            .pointer_down(position, on_control_center_handle);
 
         self.apply_control_center_pointer_result(result, PointerAction::Activate, cx)
     }
@@ -222,7 +265,10 @@ impl InkPaperApp {
         position: Point,
         cx: &mut Context<'_, Self>,
     ) -> LongPressAction {
-        if self.pointer_captured || self.input_target() != InputTarget::Screen {
+        if self.pointer_captured
+            || self.active_slider.is_some()
+            || self.input_target() != InputTarget::Screen
+        {
             return LongPressAction::Ignore;
         }
 
@@ -243,6 +289,7 @@ impl InkPaperApp {
     pub(crate) fn cancel_pointer_input(&mut self) {
         self.pointer_captured = false;
         self.pointer_held = false;
+        self.active_slider = None;
         self.control_center.cancel_pointer();
     }
 
@@ -255,6 +302,8 @@ impl InkPaperApp {
         match result {
             ControlCenterPointerResult::Pass => pass,
 
+            ControlCenterPointerResult::Activate => PointerAction::Activate,
+
             ControlCenterPointerResult::Capture => PointerAction::Capture,
 
             ControlCenterPointerResult::Opened => {
@@ -265,30 +314,6 @@ impl InkPaperApp {
             ControlCenterPointerResult::Closed => {
                 self.request_frontlight_persist(cx);
                 cx.notify();
-                PointerAction::Capture
-            }
-
-            ControlCenterPointerResult::Slider { slider, value } => {
-                // only the control center's panel shows the setting
-                self.change_frontlight(cx, |frontlight| match slider {
-                    ControlCenterSlider::Brightness => frontlight.set_brightness(value),
-                    ControlCenterSlider::Warmth => frontlight.set_warmth(value),
-                });
-
-                PointerAction::Capture
-            }
-
-            ControlCenterPointerResult::Action(action) => {
-                self.change_frontlight(cx, |frontlight| match action {
-                    ControlCenterAction::AdjustBrightness(delta) => {
-                        frontlight.adjust_brightness(delta)
-                    }
-
-                    ControlCenterAction::AdjustWarmth(delta) => frontlight.adjust_warmth(delta),
-
-                    ControlCenterAction::ToggleFrontlight => frontlight.toggle(),
-                });
-
                 PointerAction::Capture
             }
         }

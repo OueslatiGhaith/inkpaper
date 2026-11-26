@@ -1,31 +1,52 @@
 use inkpaper_ui::prelude::*;
 
-// the track area sits between the 56 px buttons and their 4 px gaps
-const TRACK_OFFSET: i32 = 60;
-const TRACK_WIDTH: i32 = 296;
-const ROW_HEIGHT: i32 = 56;
+const TRACK_PART: u64 = 2;
 
-/// Whether `point` lands on the track of a slider row whose top-left corner
-/// is at (`row_left`, `row_top`) on screen.
-pub(crate) fn track_contains(point: Point, row_left: i32, row_top: i32) -> bool {
-    let x = point.x.get() - row_left - TRACK_OFFSET;
-    let y = point.y.get() - row_top;
-
-    (0..TRACK_WIDTH).contains(&x) && (0..ROW_HEIGHT).contains(&y)
+/// Lifecycle phase of a pointer scrub along a [`Slider`] track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SliderPhase {
+    Start,
+    Move,
+    End,
 }
 
-/// Maps a touch x position to a slider value from 0 to 100, for a slider row
-/// whose left edge is at `row_left` on screen.
-pub(crate) fn value_at(x: i32, row_left: i32) -> u8 {
-    let relative = (x - row_left - TRACK_OFFSET).clamp(0, TRACK_WIDTH);
+/// Dispatched to a [`Slider`] track when the user presses, drags, or releases
+/// along it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SliderScrubEvent {
+    value: u8,
+    phase: SliderPhase,
+}
 
-    ((relative * 100 + TRACK_WIDTH / 2) / TRACK_WIDTH) as u8
+impl SliderScrubEvent {
+    pub(crate) const fn new(value: u8, phase: SliderPhase) -> Self {
+        Self { value, phase }
+    }
+
+    pub(crate) const fn value(self) -> u8 {
+        self.value
+    }
+
+    pub(crate) const fn phase(self) -> SliderPhase {
+        self.phase
+    }
+}
+
+/// Whether `id` belongs to a [`Slider`] track rather than an overlay absorber.
+pub(crate) const fn is_track_id(id: ElementId) -> bool {
+    matches!(id, ElementId::NamedValue(_, TRACK_PART))
+}
+
+/// Maps a touch x coordinate to a slider value from 0 to 100 using the track's
+/// laid-out screen bounds.
+pub(crate) fn value_in_bounds(x: Pixels, bounds: Rect) -> u8 {
+    let width = bounds.width().get().max(1);
+    let relative = (x.get() - bounds.x().get()).clamp(0, width);
+
+    ((relative * 100 + width / 2) / width) as u8
 }
 
 /// Slider row: `-` and `+` buttons around a track with a knob.
-///
-/// The buttons only take taps when a listener is given. The control center hit-tests
-/// its sliders itself.
 #[component]
 pub(crate) struct Slider {
     id: &'static str,
@@ -33,6 +54,7 @@ pub(crate) struct Slider {
     value: u8,
     on_decrease: Option<Listener<ActivateEvent>>,
     on_increase: Option<Listener<ActivateEvent>>,
+    on_scrub: Option<Listener<SliderScrubEvent>>,
 }
 
 impl RenderOnce for Slider {
@@ -49,7 +71,11 @@ impl RenderOnce for Slider {
                     on_activate={self.on_decrease}
                 />
 
-                <div class="relative w-[296px] h-14">
+                <div
+                    id={(self.id, TRACK_PART)}
+                    on:SliderScrubEvent={self.on_scrub}
+                    class="relative w-[296px] h-14"
+                >
                     // FreeInk's normal slider has 8 px horizontal padding,
                     // a 4 px light-gray track, and a 14x22 black knob.
                     <div class="absolute left-2 top-[26px] w-[280px] h-1 bg-[#aaaaaa]" />

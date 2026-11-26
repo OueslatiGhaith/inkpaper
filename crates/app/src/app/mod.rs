@@ -14,13 +14,6 @@ use crate::{
     reader::{ReaderState, TextSettingsState},
     reading_history::ReadingHistoryState,
     screens::{
-        clock_settings::TimezoneView,
-        settings::SettingsView,
-        text_settings::TextSettingsView,
-        wifi_networks::WifiNetworksView,
-        wifi_password::{PasswordFieldView, PasswordKeyboardView},
-    },
-    screens::{
         reader::ReaderBatteryIcon,
         sleep::{SleepScreen, SleepScreenProps},
     },
@@ -39,12 +32,14 @@ mod request;
 mod settings;
 mod system;
 mod text_settings;
+mod views;
 mod wifi;
 
 pub(crate) use input::{ScreenInput, SideButton};
 use navigation::NavigationStack;
 pub(crate) use navigation::{Back, Entry, Exit, ScreenLifecycle};
 pub(crate) use request::AppRequest;
+pub(crate) use views::ScreenViews;
 
 use crate::screens::{
     browse_files::BrowseFilesRoute, clock_settings::ClockSettingsRoute,
@@ -125,15 +120,8 @@ pub struct InkPaperApp {
     frontlight_panel: Entity<FrontlightPanel>,
     /// the reader's drawer
     pub(crate) reader_menu: Entity<ReaderDrawer>,
-    // the views of screens, which live while their screen is open
-    /// the Wi-Fi password field and its keyboard
-    pub(crate) password_field: Option<Entity<PasswordFieldView>>,
-    pub(crate) password_keyboard: Option<Entity<PasswordKeyboardView>>,
-    /// the local time and timezone slider of the clock settings
-    pub(crate) timezone: Option<Entity<TimezoneView>>,
-    pub(crate) settings: Option<Entity<SettingsView>>,
-    pub(crate) text_settings_view: Option<Entity<TextSettingsView>>,
-    pub(crate) wifi_networks_view: Option<Entity<WifiNetworksView>>,
+    /// view entities owned by open screens
+    pub(crate) views: ScreenViews,
     control_center: ControlCenterState,
     /// the toast over every screen
     toasts: Entity<ToastLayer>,
@@ -142,6 +130,8 @@ pub struct InkPaperApp {
     /// set once the screen's own long press took the current touch, so its
     /// moves and release still go to the screen
     pointer_held: bool,
+    /// slider track currently being scrubbed, with its laid-out screen bounds
+    active_slider: Option<(EventTarget, Rect)>,
     pub(crate) file_transfer: FileTransferState,
 }
 
@@ -177,41 +167,13 @@ impl InkPaperApp {
             frontlight,
             frontlight_panel,
             reader_menu,
-            password_field: None,
-            password_keyboard: None,
-            timezone: None,
-            settings: None,
-            text_settings_view: None,
-            wifi_networks_view: None,
+            views: ScreenViews::default(),
             control_center: ControlCenterState::default(),
             toasts,
             pointer_captured: false,
             pointer_held: false,
+            active_slider: None,
             file_transfer: FileTransferState::default(),
-        }
-    }
-
-    /// Creates the view of a screen being opened, into `slot`, releasing any
-    /// previous view still held there.
-    pub(crate) fn open_view<V: 'static>(
-        slot: &mut Option<Entity<V>>,
-        cx: &mut Context<'_, Self>,
-        view: impl FnOnce(Entity<Self>) -> V,
-    ) -> Entity<V> {
-        Self::close_view(slot, cx);
-
-        let app = cx.entity();
-        let entity = cx.new(|_| view(app));
-        *slot = Some(entity);
-
-        entity
-    }
-
-    /// Releases the view of a screen being closed. It is dropped once the screen is
-    /// no longer drawn.
-    pub(crate) fn close_view<V: 'static>(slot: &mut Option<Entity<V>>, cx: &mut Context<'_, Self>) {
-        if let Some(view) = slot.take() {
-            cx.release(view);
         }
     }
 
@@ -235,6 +197,21 @@ impl InkPaperApp {
         runtime: &mut impl ResourceRuntimeApi<'resource>,
     ) -> Result<(), FontRegistryError> {
         crate::typography::register(runtime)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_clock_settings(&mut self, cx: &mut Context<'_, Self>) {
+        self.open_screen(Screen::ClockSettings, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn is_control_center_open(&self) -> bool {
+        self.control_center.is_open()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn frontlight_setting(&self, cx: &Context<'_, Self>) -> crate::FrontlightSetting {
+        self.frontlight.read(cx).setting()
     }
 }
 
@@ -264,6 +241,10 @@ impl Render for InkPaperApp {
                         clock={clock}
                         reader_title={(self.screen() == Screen::Reader).then(|| self.reader.title())}
                         panel={self.frontlight_panel}
+                        on_close={cx.listener(Self::activate_close_control_center)}
+                        on_swallow_activate={cx.listener(Self::ignore_activate)}
+                        on_swallow_scrub={cx.listener(Self::ignore_slider_scrub)}
+                        on_handle={cx.listener(Self::ignore_control_center_handle)}
                     />
                 {/if}
 

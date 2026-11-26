@@ -66,7 +66,7 @@ impl InkPaperApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.wifi.finish_scan(result);
-        if let Some(view) = self.wifi_networks_view {
+        if let Some(view) = self.views.wifi_networks {
             view.update(cx, WifiNetworksView::reset_page);
         }
 
@@ -182,8 +182,8 @@ impl InkPaperApp {
         // a key changes the field. The keyboard renders again only when it looks
         // different, such as after Shift
         let keyboard_changed = keyboard_look(entry) != look;
-        if let Some(field) = self.password_field {
-            field.notify(cx);
+        if let Some(views) = self.views.wifi_password {
+            views.field.notify(cx);
         }
         if keyboard_changed {
             keyboard.notify(cx);

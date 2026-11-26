@@ -168,6 +168,67 @@ fn component_event_target_survives_rebuild() {
     assert_eq!(second_activations.get(), 0);
 }
 
+#[test]
+fn hit_at_returns_laid_out_bounds_and_target_for_custom_events() {
+    #[derive(Clone, Copy)]
+    struct ScrubEvent(i32);
+
+    struct TrackApp {
+        last_value: Rc<Cell<i32>>,
+    }
+
+    impl TrackApp {
+        fn on_scrub(&mut self, event: &ScrubEvent, _: &mut Context<'_, Self>) {
+            self.last_value.set(event.0);
+        }
+    }
+
+    impl Render for TrackApp {
+        fn render(&mut self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+            let on_scrub = cx.listener(Self::on_scrub);
+
+            div().w(px(200)).h(px(100)).relative().child(
+                div()
+                    .id("slider-track")
+                    .on(on_scrub)
+                    .absolute()
+                    .left(px(40))
+                    .top(px(20))
+                    .w(px(100))
+                    .h(px(30)),
+            )
+        }
+    }
+
+    let last_value = Rc::new(Cell::new(-1));
+    let mut runtime = Runtime::<inkpaper_ui::RuntimeResources<'_, 0, 1, 1, 0>>::new(pool());
+    runtime
+        .create_root({
+            let last_value = last_value.clone();
+            move |_| TrackApp { last_value }
+        })
+        .unwrap();
+
+    runtime.prepare_frame(Size::new(px(200), px(100))).unwrap();
+
+    // Outside the track misses.
+    assert_eq!(runtime.hit_at::<ScrubEvent>(Point::new(px(10), px(10))), None);
+
+    // Inside the track returns its id and laid-out screen bounds.
+    let hit = runtime
+        .hit_at::<ScrubEvent>(Point::new(px(65), px(35)))
+        .expect("point inside track should hit");
+    assert_eq!(hit.id(), ElementId::Name("slider-track"));
+    assert_eq!(
+        hit.bounds(),
+        Rect::new(Point::new(px(40), px(20)), Size::new(px(100), px(30))),
+    );
+
+    // Subsequent events dispatch directly to the captured target.
+    assert!(runtime.dispatch_to(hit.target(), &ScrubEvent(77)).unwrap());
+    assert_eq!(last_value.get(), 77);
+}
+
 /// a pool large enough for this file's runtimes, over leaked memory
 fn pool() -> inkpaper_ui::Pool {
     inkpaper_ui::Pool::new(Box::leak(Box::<[u8]>::new_uninit_slice(256 * 1024)))
