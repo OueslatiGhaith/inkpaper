@@ -9,7 +9,7 @@ use crate::{
     forms::word_forms,
     index::{EntryKind, WordList},
     info::DictionaryInfo,
-    samples::{FileSamples, IndexSamples},
+    samples::IndexSamples,
 };
 
 /// The most of one definition read, like crosspoint's cap. A longer one is
@@ -81,10 +81,10 @@ where
             return false;
         }
 
-        self.index.set_samples(samples.index.offsets);
+        self.index.set_samples(samples.index);
 
         if let (Some(list), Some(samples)) = (&mut self.synonyms, samples.synonyms) {
-            list.set_samples(samples.offsets);
+            list.set_samples(samples);
         }
 
         true
@@ -93,16 +93,10 @@ where
     /// Takes samples in one pass over the index, and one over the synonyms,
     /// and looks words up through them from now on. Returns them to save.
     pub async fn sample_index(&mut self) -> Result<IndexSamples, Error<S::Error>> {
-        let index = FileSamples {
-            len: self.index.len(),
-            offsets: self.index.sample().await?.to_vec(),
-        };
+        let index = self.index.sample().await?.clone();
 
         let synonyms = match &mut self.synonyms {
-            Some(list) => Some(FileSamples {
-                len: list.len(),
-                offsets: list.sample().await?.to_vec(),
-            }),
+            Some(list) => Some(list.sample().await?.clone()),
             None => None,
         };
 
