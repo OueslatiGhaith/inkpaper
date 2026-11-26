@@ -1,4 +1,4 @@
-use crate::XhtmlError;
+use crate::{ChapterStyles, FontStyle, FontWeight, XhtmlError};
 
 use super::*;
 
@@ -62,7 +62,9 @@ fn xhtml_normalizes_blocks_text_styles_links_and_anchors() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let styles = ChapterStyles::defaults(style_context);
 
     assert_eq!(chapter.path().as_str(), "OPS/Text/chapter.xhtml");
     assert_eq!(chapter.blocks().len(), 3);
@@ -88,9 +90,15 @@ fn xhtml_normalizes_blocks_text_styles_links_and_anchors() {
 
     assert_eq!(heading_text.len(), 2);
     assert_eq!(heading_text[0].text(), "Chapter ");
-    assert!(!heading_text[0].style().italic());
+    assert_eq!(
+        styles.style(heading_text[0].style_node()).unwrap().font_style(),
+        FontStyle::Normal,
+    );
     assert_eq!(heading_text[1].text(), "One");
-    assert!(heading_text[1].style().italic());
+    assert_eq!(
+        styles.style(heading_text[1].style_node()).unwrap().font_style(),
+        FontStyle::Italic,
+    );
 
     let paragraph = &chapter.blocks()[1];
 
@@ -120,8 +128,9 @@ fn xhtml_normalizes_blocks_text_styles_links_and_anchors() {
         })
         .unwrap();
 
-    assert!(bold.style().bold());
-    assert!(!bold.style().italic());
+    let bold_style = styles.style(bold.style_node()).unwrap();
+    assert_eq!(bold_style.font_weight(), FontWeight::Bold);
+    assert_eq!(bold_style.font_style(), FontStyle::Normal);
 
     let bold_italic = paragraph
         .inlines()
@@ -139,8 +148,9 @@ fn xhtml_normalizes_blocks_text_styles_links_and_anchors() {
         })
         .unwrap();
 
-    assert!(bold_italic.style().bold());
-    assert!(bold_italic.style().italic());
+    let bold_italic_style = styles.style(bold_italic.style_node()).unwrap();
+    assert_eq!(bold_italic_style.font_weight(), FontWeight::Bold);
+    assert_eq!(bold_italic_style.font_style(), FontStyle::Italic);
 
     let link = paragraph
         .inlines()
@@ -186,7 +196,8 @@ fn xhtml_preserves_named_anchors_and_external_links() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, _) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
 
     assert_eq!(chapter.blocks().len(), 1);
 
@@ -238,9 +249,10 @@ fn xhtml_ignores_references_outside_the_book() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
 
-    assert!(chapter.stylesheets().is_empty());
+    assert!(style_context.stylesheets().is_empty());
     assert_eq!(chapter.blocks().len(), 1);
 
     let block = &chapter.blocks()[0];
@@ -274,7 +286,7 @@ fn xhtml_creates_list_item_blocks() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let (chapter, _) = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
 
     assert_eq!(chapter.blocks().len(), 2);
     assert_eq!(chapter.blocks()[0].kind(), BlockKind::ListItem);
@@ -310,7 +322,7 @@ fn xhtml_collapses_whitespace_without_inserting_space_before_punctuation() {
 </html>
 "##;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let (chapter, _) = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
 
     assert_eq!(chapter.blocks().len(), 1);
     assert_eq!(
@@ -356,16 +368,20 @@ fn xhtml_preserves_stylesheets_and_element_style_context() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
 
-    assert_eq!(chapter.stylesheets().len(), 2);
+    assert_eq!(style_context.stylesheets().len(), 2);
 
     assert_eq!(
-        chapter.stylesheets()[0].external_path().unwrap().as_str(),
+        style_context.stylesheets()[0]
+            .external_path()
+            .unwrap()
+            .as_str(),
         "OPS/Styles/book.css",
     );
 
-    let embedded = chapter.stylesheets()[1].embedded_css().unwrap();
+    let embedded = style_context.stylesheets()[1].embedded_css().unwrap();
 
     assert!(embedded.contains("p.lead"));
     assert!(embedded.contains(".accent"));
@@ -373,7 +389,7 @@ fn xhtml_preserves_stylesheets_and_element_style_context() {
     assert_eq!(chapter.blocks().len(), 1);
 
     let block = &chapter.blocks()[0];
-    let paragraph = chapter.style_node(block.style_node()).unwrap();
+    let paragraph = style_context.style_node(block.style_node()).unwrap();
 
     assert_eq!(paragraph.element(), "p");
     assert_eq!(paragraph.id(), Some("intro"));
@@ -381,7 +397,7 @@ fn xhtml_preserves_stylesheets_and_element_style_context() {
     assert!(paragraph.has_class("centered"));
     assert_eq!(paragraph.inline_style(), Some("margin-top: 1em"));
 
-    let body = chapter
+    let body = style_context
         .style_node(
             paragraph
                 .parent()
@@ -408,7 +424,7 @@ fn xhtml_preserves_stylesheets_and_element_style_context() {
         })
         .unwrap();
 
-    let span = chapter.style_node(world.style_node()).unwrap();
+    let span = style_context.style_node(world.style_node()).unwrap();
 
     assert_eq!(span.element(), "span");
     assert!(span.has_class("accent"));
@@ -444,7 +460,8 @@ fn xhtml_preserves_lazy_images_links_alt_text_and_style_context() {
 </html>
 "##;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
 
     assert_eq!(chapter.blocks().len(), 2);
 
@@ -468,13 +485,13 @@ fn xhtml_preserves_lazy_images_links_alt_text_and_style_context() {
     assert_eq!(link.path().unwrap().as_str(), "OPS/Text/chapter.xhtml");
     assert_eq!(link.fragment(), Some("full-size"));
 
-    let image_node = chapter.style_node(image.style_node()).unwrap();
+    let image_node = style_context.style_node(image.style_node()).unwrap();
 
     assert_eq!(image_node.element(), "img");
     assert_eq!(image_node.id(), Some("cover"));
     assert!(image_node.has_class("cover"));
 
-    let parent = chapter.style_node(image_node.parent().unwrap()).unwrap();
+    let parent = style_context.style_node(image_node.parent().unwrap()).unwrap();
 
     assert_eq!(parent.element(), "a");
     assert_eq!(visible_text(&chapter.blocks()[1]), "Remote image");
@@ -492,7 +509,8 @@ fn xhtml_content_offsets_survive_markup_images_and_breaks() {
 <html xmlns="http://www.w3.org/1999/xhtml"><body><p>é🙂<a id="middle"></a><strong>漢</strong><br/><img src="../Images/cover.jpg" alt="Cover"/>z</p></body></html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, _) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
 
     assert_eq!(chapter.anchor_offset("middle"), Some(ContentOffset::new(2)));
     assert_eq!(chapter.content_len(), ContentOffset::new(4));
@@ -517,7 +535,8 @@ fn xhtml_decodes_percent_encoded_internal_resource_references() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, _) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
 
     let block = &chapter.blocks()[0];
 
@@ -556,7 +575,7 @@ fn xhtml_keeps_non_breaking_spaces_and_drops_byte_order_marks() {
         <p>\u{FEFF}200\u{00A0}km and 10\u{202F}%   done</p>\
         </body></html>";
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let (chapter, _) = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
 
     assert_eq!(
         visible_text(&chapter.blocks()[0]),
@@ -570,7 +589,7 @@ fn xhtml_does_not_collapse_non_breaking_space_into_adjacent_whitespace() {
         <p>a \u{00A0} b</p>\
         </body></html>";
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let (chapter, _) = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
 
     assert_eq!(visible_text(&chapter.blocks()[0]), "a \u{00A0} b");
 }

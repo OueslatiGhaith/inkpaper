@@ -1,17 +1,18 @@
-use crate::{ArchivePath, Inline, StylesheetSource, xhtml::parse_xhtml};
+use crate::{ArchivePath, Chapter, Inline, StyleContext, StylesheetSource, xhtml::parse_xhtml};
 
 use super::*;
 
-fn resolve_embedded(chapter: &Chapter) -> ChapterStyles {
+fn resolve_embedded(style_context: StyleContext) -> ChapterStyles {
     let mut stylesheet = Stylesheet::default();
 
-    for source in chapter.stylesheets() {
+    for source in style_context.stylesheets() {
         if let StylesheetSource::Embedded(css) = source {
             stylesheet.push(css);
         }
     }
 
-    resolve_chapter_styles(chapter, Some(&stylesheet))
+    let sheets = [&stylesheet];
+    resolve_chapter_styles(&style_context, Some(&sheets))
 }
 
 fn text_style(chapter: &Chapter, styles: &ChapterStyles, text: &str) -> ComputedStyle {
@@ -81,9 +82,10 @@ fn css_resolves_specificity_inheritance_inline_style_and_important() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
 
-    let styles = resolve_embedded(&chapter);
+    let styles = resolve_embedded(style_context);
 
     let paragraph = styles.style(chapter.blocks()[0].style_node()).unwrap();
 
@@ -130,9 +132,10 @@ fn css_display_none_hides_descendants() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
 
-    let styles = resolve_embedded(&chapter);
+    let styles = resolve_embedded(style_context);
 
     assert!(text_style(&chapter, &styles, "secret").hidden());
     assert!(!text_style(&chapter, &styles, "visible").hidden());
@@ -160,9 +163,10 @@ fn css_later_equal_specificity_wins() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
 
-    let styles = resolve_embedded(&chapter);
+    let styles = resolve_embedded(style_context);
 
     assert_eq!(
         text_style(&chapter, &styles, "text").text_align(),
@@ -193,9 +197,10 @@ fn css_resolves_block_spacing_indentation_and_line_height() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
 
-    let styles = resolve_embedded(&chapter);
+    let styles = resolve_embedded(style_context);
 
     let paragraph = styles.style(chapter.blocks()[0].style_node()).unwrap();
 
@@ -241,8 +246,9 @@ fn css_matches_descendant_and_child_combinators() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
-    let styles = resolve_embedded(&chapter);
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let styles = resolve_embedded(style_context);
 
     // descendant: every p under body.book
     assert_eq!(
@@ -285,8 +291,9 @@ fn css_combinator_specificity_adds_across_compounds() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
-    let styles = resolve_embedded(&chapter);
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let styles = resolve_embedded(style_context);
 
     // (0,1,1) beats (0,0,1) even though `p` comes later
     assert_eq!(
@@ -309,8 +316,9 @@ fn css_ignores_unsupported_selectors_without_dropping_the_rest_of_the_list() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
-    let styles = resolve_embedded(&chapter);
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let styles = resolve_embedded(style_context);
 
     assert_eq!(
         text_style(&chapter, &styles, "text").font_style(),
@@ -349,9 +357,10 @@ fn default_styles_ignore_the_book_stylesheet_and_style_attributes() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
 
-    let styles = ChapterStyles::defaults(&chapter);
+    let styles = ChapterStyles::defaults(style_context);
 
     let plain = text_style(&chapter, &styles, "plain ");
 
@@ -398,9 +407,10 @@ fn css_reports_whether_the_book_declared_an_alignment() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("OPS/Text/chapter.xhtml").unwrap()).unwrap();
 
-    let styles = resolve_embedded(&chapter);
+    let styles = resolve_embedded(style_context);
 
     let plain = styles.style(chapter.blocks()[0].style_node()).unwrap();
     let inherited = styles.style(chapter.blocks()[1].style_node()).unwrap();
@@ -433,9 +443,10 @@ fn css_reads_values_with_non_ascii_text() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
 
-    let styles = resolve_embedded(&chapter);
+    let styles = resolve_embedded(style_context);
 
     assert_eq!(
         text_style(&chapter, &styles, "text").text_align(),
@@ -466,12 +477,64 @@ fn css_unclosed_string_ends_at_its_line() {
 </html>
 "#;
 
-    let chapter = parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
 
-    let styles = resolve_embedded(&chapter);
+    let styles = resolve_embedded(style_context);
 
     assert_eq!(
         text_style(&chapter, &styles, "title").text_align(),
         TextAlign::Right,
     );
+}
+
+#[test]
+fn indexed_selectors_preserve_cascade_order_across_buckets_and_sheets() {
+    const XHTML: &str = r#"
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <body>
+        <div class="box">
+            <p id="hero" class="b a b">multi</p>
+            <p class="plain">universal</p>
+        </div>
+    </body>
+</html>
+"#;
+
+    let (chapter, style_context) =
+        parse_xhtml(XHTML, ArchivePath::new("chapter.xhtml").unwrap()).unwrap();
+
+    // Sheet 1 sets `.a`, uppercase `P`, and `.box *` universal rules.
+    let sheet_1 = Stylesheet::parse(
+        r#"
+            .box * { font-style: italic; }
+            .a { text-align: left; }
+            .b { text-align: right; }
+            P { font-weight: bold; }
+            #hero { text-align: center; }
+        "#,
+    );
+    // Sheet 2 overrides `.b` and `#hero` in later source order.
+    let sheet_2 = Stylesheet::parse(
+        r#"
+            .a { text-align: justify; }
+            #hero { font-weight: normal; }
+        "#,
+    );
+
+    let styles = resolve_chapter_styles(&style_context, Some(&[&sheet_1, &sheet_2]));
+
+    let multi = text_style(&chapter, &styles, "multi");
+    // Universal bucket matched `.box *`
+    assert_eq!(multi.font_style(), FontStyle::Italic);
+    // ID bucket from sheet 2 overrides element bucket `P` from sheet 1
+    assert_eq!(multi.font_weight(), FontWeight::Normal);
+    // ID bucket beats class buckets (`.a` / `.b`)
+    assert_eq!(multi.text_align(), TextAlign::Center);
+
+    let universal = text_style(&chapter, &styles, "universal");
+    // Uppercase `P` matched `<p>` via lowercased element index
+    assert_eq!(universal.font_weight(), FontWeight::Bold);
+    // Universal `.box *` matched `<p class="plain">`
+    assert_eq!(universal.font_style(), FontStyle::Italic);
 }

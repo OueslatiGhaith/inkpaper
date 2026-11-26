@@ -7,7 +7,7 @@ const LINKS: &[u8] = include_bytes!("../../../fixtures/links.epub");
 /// each linked run's text and target, in reading order
 fn links(spine: usize) -> Vec<(String, LinkTarget)> {
     let mut epub = future::block_on(Epub::open(SliceSource::new(LINKS))).unwrap();
-    let chapter = future::block_on(epub.load_spine_chapter(spine))
+    let (chapter, _) = future::block_on(epub.load_spine_chapter(spine))
         .unwrap()
         .unwrap();
 

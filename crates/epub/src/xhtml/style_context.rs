@@ -66,6 +66,32 @@ impl StyleNode {
     }
 }
 
+/// Element tree and stylesheet links captured during XHTML parsing and consumed
+/// when resolving [`crate::ChapterStyles`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyleContext {
+    nodes: Vec<StyleNode>,
+    stylesheets: Vec<StylesheetSource>,
+}
+
+impl StyleContext {
+    pub(crate) fn new(nodes: Vec<StyleNode>, stylesheets: Vec<StylesheetSource>) -> Self {
+        Self { nodes, stylesheets }
+    }
+
+    pub fn style_nodes(&self) -> &[StyleNode] {
+        &self.nodes
+    }
+
+    pub fn style_node(&self, id: StyleNodeId) -> Option<&StyleNode> {
+        self.nodes.get(id.index())
+    }
+
+    pub fn stylesheets(&self) -> &[StylesheetSource] {
+        &self.stylesheets
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StylesheetSource {
     External(ArchivePath),

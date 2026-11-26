@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 mod archive;
 mod container;
@@ -28,7 +28,7 @@ pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};
 pub use path::{ArchivePath, PathError};
 pub use xhtml::{
-    BlockKind, Chapter, ChapterBlock, ChapterImage, Inline, InlineStyle, LinkTarget, StyleNode,
+    BlockKind, Chapter, ChapterBlock, ChapterImage, Inline, LinkTarget, StyleContext, StyleNode,
     StyleNodeId, StylesheetSource, TextRun,
 };
 
@@ -48,6 +48,7 @@ enum NavigationFormat {
 pub struct Epub<S> {
     archive: Archive<S>,
     package: Package,
+    stylesheet_cache: BTreeMap<ArchivePath, Stylesheet>,
 }
 
 impl<S> Epub<S>
@@ -68,7 +69,11 @@ where
         let package =
             parse_package(package_xml, container.package_path().clone()).map_err(Error::Package)?;
 
-        Ok(Self { archive, package })
+        Ok(Self {
+            archive,
+            package,
+            stylesheet_cache: BTreeMap::new(),
+        })
     }
 
     pub const fn package(&self) -> &Package {
@@ -168,7 +173,10 @@ where
             }
         }
 
-        let sizes = self.archive.uncompressed_sizes(&paths).await?;
+        let sizes = self
+            .archive
+            .uncompressed_sizes(&paths)
+            .map_err(Error::Archive)?;
 
         Ok(path_indices
             .into_iter()
@@ -179,7 +187,7 @@ where
     pub async fn load_chapter(
         &mut self,
         path: &ArchivePath,
-    ) -> Result<Option<Chapter>, Error<S::Error>> {
+    ) -> Result<Option<(Chapter, StyleContext)>, Error<S::Error>> {
         let Some((path, media_type)) = self.package.manifest_item_by_path(path).map(|item| {
             (
                 item.path().clone(),
@@ -195,15 +203,15 @@ where
 
         let bytes = self.archive.read_entry(&path).await?;
         let xml = core::str::from_utf8(&bytes).map_err(Error::Utf8)?;
-        let chapter = parse_xhtml(xml, path).map_err(Error::Xhtml)?;
+        let parsed = parse_xhtml(xml, path).map_err(Error::Xhtml)?;
 
-        Ok(Some(chapter))
+        Ok(Some(parsed))
     }
 
     pub async fn load_spine_chapter(
         &mut self,
         index: usize,
-    ) -> Result<Option<Chapter>, Error<S::Error>> {
+    ) -> Result<Option<(Chapter, StyleContext)>, Error<S::Error>> {
         let Some(path) = self
             .package
             .spine_content_item(index)
@@ -215,16 +223,18 @@ where
         self.load_chapter(&path).await
     }
 
+    /// Resolves computed styles from `style_context` and consumes it so the
+    /// temporary DOM style nodes and stylesheet links are dropped immediately.
     pub async fn load_chapter_styles(
         &mut self,
-        chapter: &Chapter,
+        style_context: StyleContext,
     ) -> Result<ChapterStyles, Error<S::Error>> {
-        let mut stylesheet = Stylesheet::default();
+        let mut embedded = Vec::new();
 
-        for source in chapter.stylesheets() {
+        for source in style_context.stylesheets() {
             match source {
                 StylesheetSource::Embedded(css) => {
-                    stylesheet.push(css);
+                    embedded.push(Stylesheet::parse(css));
                 }
                 StylesheetSource::External(path) => {
                     let declared_css = self
@@ -232,41 +242,53 @@ where
                         .manifest_item_by_path(path)
                         .is_some_and(|item| item.media_type() == "text/css");
 
-                    if !declared_css {
+                    if !declared_css || self.stylesheet_cache.contains_key(path) {
                         continue;
                     }
 
                     let bytes = self.archive.read_entry(path).await?;
                     let css = core::str::from_utf8(&bytes).map_err(Error::Utf8)?;
 
-                    stylesheet.push(css);
+                    self.stylesheet_cache
+                        .insert(path.clone(), Stylesheet::parse(css));
                 }
             }
         }
 
-        Ok(resolve_chapter_styles(chapter, Some(&stylesheet)))
+        let mut ordered = Vec::with_capacity(style_context.stylesheets().len());
+        let mut embedded_index = 0usize;
+
+        for source in style_context.stylesheets() {
+            match source {
+                StylesheetSource::Embedded(_) => {
+                    ordered.push(&embedded[embedded_index]);
+                    embedded_index += 1;
+                }
+                StylesheetSource::External(path) => {
+                    if let Some(sheet) = self.stylesheet_cache.get(path) {
+                        ordered.push(sheet);
+                    }
+                }
+            }
+        }
+
+        Ok(resolve_chapter_styles(&style_context, Some(&ordered)))
     }
 
     pub async fn image_dimensions(
         &mut self,
         path: &ArchivePath,
     ) -> Result<Option<ImageDimensions>, Error<S::Error>> {
-        let Some((path, media_type)) = self.package.manifest_item_by_path(path).map(|item| {
-            (
-                item.path().clone(),
-                alloc::string::String::from(item.media_type()),
-            )
+        let Some((path, format)) = self.package.manifest_item_by_path(path).and_then(|item| {
+            let format = image::ImageFormat::from_media_type(item.media_type())?;
+            Some((item.path().clone(), format))
         }) else {
             return Ok(None);
         };
 
-        if !image::supports_dimensions(&media_type) {
-            return Ok(None);
-        }
+        let mut stream = self.archive.open_entry_stream(&path).await?;
 
-        let bytes = self.archive.read_entry(&path).await?;
-
-        Ok(image::dimensions(&media_type, &bytes))
+        image::read_dimensions(format, &mut stream).await
     }
 }
 

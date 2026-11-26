@@ -35,7 +35,7 @@ fn opens_percent_encoded_container_rootfile() {
         Some("Compatibility — Encoded Container Path"),
     );
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, _) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
@@ -46,7 +46,7 @@ fn opens_percent_encoded_container_rootfile() {
 fn decodes_epub2_xhtml_named_entities() {
     let mut epub = future::block_on(Epub::open(SliceSource::new(EPUB2_ENTITIES))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, _) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
@@ -60,7 +60,7 @@ fn decodes_epub2_xhtml_named_entities() {
 fn follows_manifest_fallback_for_unsupported_spine_resource() {
     let mut epub = future::block_on(Epub::open(SliceSource::new(MANIFEST_FALLBACK))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, _) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
@@ -73,11 +73,11 @@ fn follows_manifest_fallback_for_unsupported_spine_resource() {
 fn applies_css_descendant_selector() {
     let mut epub = future::block_on(Epub::open(SliceSource::new(CSS_DESCENDANT_SELECTOR))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let text = chapter
         .blocks()

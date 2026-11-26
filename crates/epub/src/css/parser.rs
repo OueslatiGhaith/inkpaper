@@ -1,4 +1,5 @@
 use alloc::{string::String, vec::Vec};
+use core::ops::Range;
 
 use crate::{CssLength, LineHeight, StyleNode, StyleNodeId};
 
@@ -127,10 +128,18 @@ fn matches_ancestors(
     false
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectorIndexKey<'a> {
+    Id(&'a str),
+    Class(&'a str),
+    Element(&'a str),
+    Universal,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct Rule {
     selector: Selector,
-    pub(super) declarations: Vec<Declaration>,
+    pub(super) declarations: Range<usize>,
     pub(super) order: usize,
 }
 
@@ -142,9 +151,28 @@ impl Rule {
     pub(super) const fn specificity(&self) -> Specificity {
         self.selector.specificity
     }
+
+    pub(super) fn index_key(&self) -> SelectorIndexKey<'_> {
+        let subject = &self.selector.subject;
+
+        if let Some(id) = subject.id.as_deref() {
+            SelectorIndexKey::Id(id)
+        } else if let Some(class) = subject.classes.first().map(String::as_str) {
+            SelectorIndexKey::Class(class)
+        } else if let Some(element) = subject.element.as_deref() {
+            SelectorIndexKey::Element(element)
+        } else {
+            SelectorIndexKey::Universal
+        }
+    }
 }
 
-pub(super) fn parse_stylesheet(css: &str, rules: &mut Vec<Rule>, next_order: &mut usize) {
+pub(super) fn parse_stylesheet(
+    css: &str,
+    rules: &mut Vec<Rule>,
+    declaration_slab: &mut Vec<Declaration>,
+    next_order: &mut usize,
+) {
     let css = strip_comments(css);
 
     let mut cursor = 0;
@@ -168,22 +196,31 @@ pub(super) fn parse_stylesheet(css: &str, rules: &mut Vec<Rule>, next_order: &mu
         let selector_text = prelude.rsplit(';').next().unwrap_or("").trim();
 
         if !selector_text.is_empty() && !selector_text.starts_with('@') {
-            let declarations = parse_declarations(&css[open + 1..close]);
+            let decl_start = declaration_slab.len();
+            parse_declarations_into(&css[open + 1..close], declaration_slab);
+            let decl_end = declaration_slab.len();
 
-            if !declarations.is_empty() {
-                let order = *next_order;
-                *next_order = next_order.saturating_add(1);
+            if decl_end > decl_start {
+                let mut added_any = false;
 
                 for raw_selector in selector_text.split(',') {
                     let Some(selector) = parse_selector(raw_selector) else {
                         continue;
                     };
 
+                    let order = *next_order;
+                    *next_order = next_order.saturating_add(1);
+                    added_any = true;
+
                     rules.push(Rule {
                         selector,
-                        declarations: declarations.clone(),
+                        declarations: decl_start..decl_end,
                         order,
                     });
+                }
+
+                if !added_any {
+                    declaration_slab.truncate(decl_start);
                 }
             }
         }
@@ -193,7 +230,9 @@ pub(super) fn parse_stylesheet(css: &str, rules: &mut Vec<Rule>, next_order: &mu
 }
 
 pub(super) fn parse_inline_declarations(css: &str) -> Vec<Declaration> {
-    parse_declarations(&strip_comments(css))
+    let mut declarations = Vec::new();
+    parse_declarations_into(&strip_comments(css), &mut declarations);
+    declarations
 }
 
 fn parse_selector(selector: &str) -> Option<Selector> {
@@ -278,7 +317,8 @@ fn parse_compound(selector: &str, start: usize) -> Option<(CompoundSelector, Spe
     if bytes[index] == b'*' {
         index += 1;
     } else if is_identifier_start(bytes[index]) {
-        let (name, end) = parse_identifier(selector, index)?;
+        let (mut name, end) = parse_identifier(selector, index)?;
+        name.make_ascii_lowercase();
 
         element = Some(name);
         elements = 1;
@@ -364,9 +404,7 @@ fn is_identifier_continue(byte: u8) -> bool {
     is_identifier_start(byte) || byte.is_ascii_digit()
 }
 
-fn parse_declarations(css: &str) -> Vec<Declaration> {
-    let mut declarations = Vec::new();
-
+fn parse_declarations_into(css: &str, declarations: &mut Vec<Declaration>) {
     let mut start = 0;
     let mut quote = None;
     let mut escaped = false;
@@ -405,7 +443,7 @@ fn parse_declarations(css: &str) -> Vec<Declaration> {
             }
 
             ';' if parentheses == 0 => {
-                parse_declaration(&css[start..index], &mut declarations);
+                parse_declaration(&css[start..index], declarations);
 
                 start = index + character.len_utf8();
             }
@@ -414,9 +452,7 @@ fn parse_declarations(css: &str) -> Vec<Declaration> {
         }
     }
 
-    parse_declaration(&css[start..], &mut declarations);
-
-    declarations
+    parse_declaration(&css[start..], declarations);
 }
 
 fn parse_declaration(declaration: &str, output: &mut Vec<Declaration>) {
