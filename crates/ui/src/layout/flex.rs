@@ -323,8 +323,7 @@ impl FlexRatio {
             return true;
         }
 
-        u128::from(unsigned(limit)) * u128::from(self.weight)
-            < u128::from(unsigned(self.amount)) * u128::from(weight)
+        mul_u64_u32(self.weight, unsigned(limit)) < mul_u64_u32(weight, unsigned(self.amount))
     }
 }
 
@@ -386,6 +385,58 @@ fn unsigned(pixels: Pixels) -> u32 {
     pixels.non_negative().get().unsigned_abs()
 }
 
+#[inline]
+fn mul_u64_u32(a: u64, b: u32) -> (u32, u64) {
+    let b = u64::from(b);
+    let lo = (a & 0xffff_ffff) * b;
+    let hi = (a >> 32) * b + (lo >> 32);
+
+    ((hi >> 32) as u32, (hi << 32) | (lo & 0xffff_ffff))
+}
+
+fn mul_div_u64_u32(weight: u64, amount: u32, total: u64) -> u64 {
+    if amount == 0 || weight == 0 {
+        return 0;
+    }
+
+    if let Some(product) = weight.checked_mul(u64::from(amount)) {
+        return product / total;
+    }
+
+    let whole = (weight / total).saturating_mul(u64::from(amount));
+    let rem_w = weight % total;
+
+    if let Some(product) = rem_w.checked_mul(u64::from(amount)) {
+        return whole.saturating_add(product / total);
+    }
+
+    // Exact 96-bit/64-bit division when `rem_w < total` and `rem_w * amount >= 2^64`.
+    let mut quot = 0u64;
+    let mut rem = 0u64;
+    let bits = u32::BITS - amount.leading_zeros();
+
+    for shift in (0..bits).rev() {
+        quot <<= 1;
+        if rem >= total - rem {
+            rem -= total - rem;
+            quot += 1;
+        } else {
+            rem += rem;
+        }
+
+        if (amount >> shift) & 1 != 0 {
+            if rem_w >= total - rem {
+                rem -= total - rem_w;
+                quot += 1;
+            } else {
+                rem += rem_w;
+            }
+        }
+    }
+
+    whole.saturating_add(quot)
+}
+
 fn weighted_share(
     amount: Pixels,
     previous_weight: u64,
@@ -396,11 +447,64 @@ fn weighted_share(
         return px(0);
     }
 
-    let amount = u128::from(unsigned(amount));
-    let total_weight = u128::from(total_weight);
-    let previous = amount * u128::from(previous_weight) / total_weight;
-    let next = amount * u128::from(next_weight) / total_weight;
+    let amount = unsigned(amount);
+    let previous = mul_div_u64_u32(previous_weight, amount, total_weight);
+    let next = mul_div_u64_u32(next_weight, amount, total_weight);
     let share = next.saturating_sub(previous);
 
     px(i32::try_from(share).unwrap_or(i32::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FlexRatio, mul_div_u64_u32, mul_u64_u32, px};
+
+    #[test]
+    fn mul_u64_u32_matches_u128_across_boundaries() {
+        let weights = [0, 1, u64::from(u32::MAX), 1u64 << 32, u64::MAX / 2, u64::MAX];
+        let amounts = [0, 1, 800, i32::MAX as u32, u32::MAX];
+
+        for &w in &weights {
+            for &a in &amounts {
+                let (hi, lo) = mul_u64_u32(w, a);
+                let combined = (u128::from(hi) << 64) | u128::from(lo);
+                assert_eq!(combined, u128::from(w) * u128::from(a));
+            }
+        }
+
+        let ratio = FlexRatio {
+            amount: px(800),
+            weight: u64::MAX - 1,
+        };
+        assert!(ratio.passes(px(399), u64::MAX / 2));
+        assert!(!ratio.passes(px(400), u64::MAX / 2));
+    }
+
+    #[test]
+    fn mul_div_u64_u32_matches_u128_across_overflow_and_large_totals() {
+        let cases: &[(u64, u32, u64)] = &[
+            (0, 800, 1),
+            (5, 800, 10),
+            (1, 100, 3),
+            (2, 100, 3),
+            (u64::MAX - 1, 800, u64::MAX),
+            (u64::MAX / 2, i32::MAX as u32, u64::MAX),
+            (u64::MAX - 17, u32::MAX, u64::MAX),
+            ((1u64 << 63) + 12345, 799, (1u64 << 63) + 99999),
+            (u64::MAX, 100, (1u64 << 62) + 7),
+            ((1u64 << 60) + 3, 1_000_000, (1u64 << 61) + 9),
+        ];
+
+        for &(weight, amount, total) in cases {
+            let actual = mul_div_u64_u32(weight, amount, total);
+            let expected =
+                u64::try_from((u128::from(weight) * u128::from(amount)) / u128::from(total))
+                    .unwrap_or(u64::MAX);
+
+            assert_eq!(
+                actual, expected,
+                "mismatch for weight={weight} amount={amount} total={total}"
+            );
+        }
+    }
 }

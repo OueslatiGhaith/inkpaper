@@ -29,6 +29,20 @@ pub enum BusyPolarity {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum DisplayPhase {
+    Unknown,
+    PowerOn,
+    BinaryFullRefresh,
+    BinaryFastRefresh,
+    GrayscaleBaseRefresh,
+    GrayscalePrecondition,
+    GrayscaleActivate,
+    GrayscaleRefresh,
+    PowerOff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ProtocolError {
     StreamAlreadyOpen,
     StreamNotOpen,
@@ -68,6 +82,20 @@ pub trait EpdInterface {
     ) -> Result<(), Self::Error>
     where
         D: DelayNs;
+
+    /// Wait for the panel to become idle, tagging the wait with its logical
+    /// display phase for instrumentation wrappers.
+    async fn wait_busy_for<D>(
+        &mut self,
+        polarity: BusyPolarity,
+        _phase: DisplayPhase,
+        delay: &mut D,
+    ) -> Result<(), Self::Error>
+    where
+        D: DelayNs,
+    {
+        self.wait_busy(polarity, delay).await
+    }
 
     /// begin a streamed-data transaction.
     ///

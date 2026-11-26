@@ -123,6 +123,7 @@ macro_rules! span {
         $field1:ident = $value1:expr,
         $field2:ident = $value2:expr
         $(, $rest:tt)*
+        $(,)?
     ) => {
         compile_error!(
             "inkpaper_trace::span! supports at most two fields"
@@ -262,6 +263,7 @@ macro_rules! span {
         $field1:ident = $value1:expr,
         $field2:ident = $value2:expr
         $(, $rest:tt)*
+        $(,)?
     ) => {
         compile_error!(
             "inkpaper_trace::span! supports at most two fields"
@@ -309,6 +311,7 @@ macro_rules! async_span {
         $field1:ident = $value1:expr,
         $field2:ident = $value2:expr
         $(, $rest:tt)*
+        $(,)?
     ) => {
         compile_error!(
             "inkpaper_trace::async_span! supports at most two fields"
@@ -448,6 +451,7 @@ macro_rules! async_span {
         $field1:ident = $value1:expr,
         $field2:ident = $value2:expr
         $(, $rest:tt)*
+        $(,)?
     ) => {
         compile_error!(
             "inkpaper_trace::async_span! supports at most two fields"

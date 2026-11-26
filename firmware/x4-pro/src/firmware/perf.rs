@@ -2,14 +2,9 @@ use core::fmt::Write;
 
 use defmt::info;
 use embedded_hal_async::delay::DelayNs;
-use epd_bus::{BusyPolarity, EpdInterface};
+use epd_bus::{BusyPolarity, DisplayPhase, EpdInterface};
 use esp_hal::time::Instant;
 use esp_hal::xtensa_lx::timer::get_cycle_count;
-
-use crate::firmware::{
-    presenter::{FrameUpdate, PresentationMode},
-    refresh_policy::RefreshRequest,
-};
 
 pub(crate) const CLOCK_HZ: u32 = 240_000_000;
 pub(crate) const TRACE_MONOTONIC_HZ: u32 = 1_000_000;
@@ -93,37 +88,14 @@ pub(crate) struct ProfiledEpdBus<'a, B> {
     metrics: PresentMetrics,
 
     next_busy_wait_index: u32,
-
-    trace_plan: Option<DisplayTracePlan>,
-    pending_phase: Option<DisplayPhase>,
 }
 
 impl<'a, B> ProfiledEpdBus<'a, B> {
-    pub(crate) fn new(
-        inner: &'a mut B,
-        controller: DisplayController,
-        update: FrameUpdate,
-    ) -> Self {
+    pub(crate) fn new(inner: &'a mut B) -> Self {
         Self {
             inner,
             metrics: PresentMetrics::default(),
-
             next_busy_wait_index: 0,
-
-            trace_plan: Some(DisplayTracePlan::new(controller, update)),
-            pending_phase: None,
-        }
-    }
-
-    pub(crate) fn new_preparation(inner: &'a mut B) -> Self {
-        Self {
-            inner,
-            metrics: PresentMetrics::default(),
-
-            next_busy_wait_index: 0,
-
-            trace_plan: None,
-            pending_phase: None,
         }
     }
 
@@ -134,44 +106,6 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
     #[inline(always)]
     fn record_io(&mut self, cycles: u32, bytes: u64) {
         self.metrics.record_io(cycles, bytes);
-    }
-
-    fn observe_command(&mut self, command: u8) {
-        let phase = match command {
-            EPD_COMMAND_POWER_ON => Some(DisplayPhase::PowerOn),
-
-            EPD_COMMAND_DISPLAY_REFRESH => {
-                let phase = self
-                    .trace_plan
-                    .as_mut()
-                    .map(DisplayTracePlan::next_refresh_phase)
-                    .unwrap_or(DisplayPhase::Unknown);
-
-                Some(phase)
-            }
-
-            EPD_COMMAND_POWER_OFF => Some(DisplayPhase::PowerOff),
-
-            _ => None,
-        };
-
-        let Some(phase) = phase else {
-            return;
-        };
-
-        self.pending_phase = Some(phase);
-    }
-
-    pub(crate) fn expect_power_off_completion(&mut self) {
-        debug_assert!(self.pending_phase.is_none());
-
-        self.pending_phase = Some(DisplayPhase::PowerOff);
-    }
-
-    pub(crate) fn expect_power_on_completion(&mut self) {
-        debug_assert!(self.pending_phase.is_none());
-
-        self.pending_phase = Some(DisplayPhase::PowerOn);
     }
 }
 
@@ -187,10 +121,6 @@ where
         let result = self.inner.command(command).await;
 
         self.record_io(timer.elapsed(), 1);
-
-        if result.is_ok() {
-            self.observe_command(command);
-        }
 
         result
     }
@@ -223,18 +153,7 @@ where
     }
 
     fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error> {
-        let result = self.inner.is_busy(polarity);
-
-        let ready = match &result {
-            Ok(busy) => !*busy,
-            Err(_) => false,
-        };
-
-        if ready && self.pending_phase == Some(DisplayPhase::PowerOff) {
-            self.pending_phase = None;
-        }
-
-        result
+        self.inner.is_busy(polarity)
     }
 
     async fn wait_busy<D>(
@@ -245,13 +164,24 @@ where
     where
         D: DelayNs,
     {
+        self.wait_busy_for(polarity, DisplayPhase::Unknown, delay)
+            .await
+    }
+
+    async fn wait_busy_for<D>(
+        &mut self,
+        polarity: BusyPolarity,
+        phase: DisplayPhase,
+        delay: &mut D,
+    ) -> Result<(), Self::Error>
+    where
+        D: DelayNs,
+    {
         let wait_index = self.next_busy_wait_index;
 
         self.next_busy_wait_index = self.next_busy_wait_index.saturating_add(1);
 
-        let phase = self.pending_phase.take().unwrap_or(DisplayPhase::Unknown);
-
-        let phase_trace = phase.trace_async_span();
+        let phase_trace = trace_display_phase(phase);
 
         let busy_trace = inkpaper_trace::async_span!(
             target: "display.present",
@@ -259,7 +189,7 @@ where
             index = wait_index,
         );
 
-        let result = self.inner.wait_busy(polarity, delay).await;
+        let result = self.inner.wait_busy_for(polarity, phase, delay).await;
 
         drop(busy_trace);
         drop(phase_trace);
@@ -299,136 +229,43 @@ where
     }
 }
 
-const EPD_COMMAND_POWER_OFF: u8 = 0x02;
-
-const EPD_COMMAND_POWER_ON: u8 = 0x04;
-
-const EPD_COMMAND_DISPLAY_REFRESH: u8 = 0x12;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DisplayController {
-    Ssd1677,
-    Uc8179,
-    Uc8279,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DisplayPhase {
-    Unknown,
-    PowerOn,
-    BinaryFullRefresh,
-    BinaryFastRefresh,
-    GrayscaleBaseRefresh,
-    GrayscalePrecondition,
-    GrayscaleActivate,
-    GrayscaleRefresh,
-    PowerOff,
-}
-
-impl DisplayPhase {
-    #[inline(always)]
-    fn trace_async_span(self) -> inkpaper_trace::AsyncSpan {
-        match self {
-            Self::Unknown => {
-                inkpaper_trace::async_span!(target: "display.phase", "unknown")
-            }
-
-            Self::PowerOn => {
-                inkpaper_trace::async_span!(target: "display.phase", "power_on")
-            }
-
-            Self::BinaryFullRefresh => {
-                inkpaper_trace::async_span!(target: "display.phase", "binary_full_refresh")
-            }
-
-            Self::BinaryFastRefresh => {
-                inkpaper_trace::async_span!(target: "display.phase", "binary_fast_refresh")
-            }
-
-            Self::GrayscaleBaseRefresh => {
-                inkpaper_trace::async_span!(target: "display.phase", "grayscale_base_refresh")
-            }
-
-            Self::GrayscalePrecondition => {
-                inkpaper_trace::async_span!(target: "display.phase", "grayscale_precondition")
-            }
-
-            Self::GrayscaleActivate => {
-                inkpaper_trace::async_span!(target: "display.phase", "grayscale_activate")
-            }
-
-            Self::GrayscaleRefresh => {
-                inkpaper_trace::async_span!(target: "display.phase", "grayscale_refresh")
-            }
-
-            Self::PowerOff => {
-                inkpaper_trace::async_span!(target: "display.phase", "power_off")
-            }
+#[inline(always)]
+fn trace_display_phase(phase: DisplayPhase) -> inkpaper_trace::AsyncSpan {
+    match phase {
+        DisplayPhase::Unknown => {
+            inkpaper_trace::async_span!(target: "display.phase", "unknown")
         }
-    }
-}
 
-#[derive(Debug, Clone, Copy)]
-struct DisplayTracePlan {
-    controller: DisplayController,
-    presentation: PresentationMode,
-    refresh: RefreshRequest,
-    refresh_index: u8,
-}
-
-impl DisplayTracePlan {
-    const fn new(controller: DisplayController, update: FrameUpdate) -> Self {
-        Self {
-            controller,
-            presentation: update.presentation(),
-            refresh: update.refresh(),
-            refresh_index: 0,
+        DisplayPhase::PowerOn => {
+            inkpaper_trace::async_span!(target: "display.phase", "power_on")
         }
-    }
 
-    fn next_refresh_phase(&mut self) -> DisplayPhase {
-        let index = self.refresh_index;
+        DisplayPhase::BinaryFullRefresh => {
+            inkpaper_trace::async_span!(target: "display.phase", "binary_full_refresh")
+        }
 
-        self.refresh_index = self.refresh_index.saturating_add(1);
+        DisplayPhase::BinaryFastRefresh => {
+            inkpaper_trace::async_span!(target: "display.phase", "binary_fast_refresh")
+        }
 
-        match (self.controller, self.presentation, self.refresh, index) {
-            (_, PresentationMode::Binary, RefreshRequest::Full, _) => {
-                DisplayPhase::BinaryFullRefresh
-            }
+        DisplayPhase::GrayscaleBaseRefresh => {
+            inkpaper_trace::async_span!(target: "display.phase", "grayscale_base_refresh")
+        }
 
-            (_, PresentationMode::Binary, RefreshRequest::Fast, _) => {
-                DisplayPhase::BinaryFastRefresh
-            }
+        DisplayPhase::GrayscalePrecondition => {
+            inkpaper_trace::async_span!(target: "display.phase", "grayscale_precondition")
+        }
 
-            (
-                DisplayController::Uc8179,
-                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
-                RefreshRequest::Full,
-                0,
-            ) => DisplayPhase::GrayscaleBaseRefresh,
+        DisplayPhase::GrayscaleActivate => {
+            inkpaper_trace::async_span!(target: "display.phase", "grayscale_activate")
+        }
 
-            (
-                DisplayController::Uc8179,
-                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
-                RefreshRequest::Full,
-                _,
-            ) => DisplayPhase::GrayscaleActivate,
+        DisplayPhase::GrayscaleRefresh => {
+            inkpaper_trace::async_span!(target: "display.phase", "grayscale_refresh")
+        }
 
-            (
-                DisplayController::Uc8179,
-                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
-                RefreshRequest::Fast,
-                0,
-            ) => DisplayPhase::GrayscalePrecondition,
-
-            (
-                DisplayController::Uc8179,
-                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
-                RefreshRequest::Fast,
-                _,
-            ) => DisplayPhase::GrayscaleActivate,
-
-            _ => DisplayPhase::GrayscaleRefresh,
+        DisplayPhase::PowerOff => {
+            inkpaper_trace::async_span!(target: "display.phase", "power_off")
         }
     }
 }
@@ -437,276 +274,87 @@ fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
+macro_rules! record_gauges {
+    ($target:literal => { $($name:literal = $value:expr $(=> $unit:literal)?),* $(,)? }) => {
+        $(
+            record_gauges!(@emit $target, $name, $value $(, $unit)?);
+        )*
+    };
+    (@emit $target:literal, $name:literal, $value:expr) => {
+        inkpaper_trace::gauge!(target: $target, $name, $value);
+    };
+    (@emit $target:literal, $name:literal, $value:expr, $unit:literal) => {
+        inkpaper_trace::gauge!(target: $target, $name, $value, unit: $unit);
+    };
+}
+
 pub(crate) fn record_present_metrics(metrics: PresentMetrics) {
-    inkpaper_trace::gauge!(
-        target: "display.present",
-        "io_cycles",
-        metrics.io_cycles(),
-        unit: "cycles",
-    );
+    record_gauges!("display.present" => {
+        "io_cycles" = metrics.io_cycles() => "cycles",
+        "bytes" = metrics.io_bytes() => "bytes",
+        "io_calls" = metrics.io_calls(),
+    });
 
-    inkpaper_trace::gauge!(
-        target: "display.present",
-        "bytes",
-        metrics.io_bytes(),
-        unit: "bytes",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "display.present",
-        "io_calls",
-        metrics.io_calls(),
-    );
-
-    inkpaper_trace::gauge!(
-        target: "display.stream",
-        "cycles",
-        metrics.stream_cycles(),
-        unit: "cycles",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "display.stream",
-        "bytes",
-        metrics.stream_bytes(),
-        unit: "bytes",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "display.stream",
-        "calls",
-        metrics.stream_calls(),
-    );
+    record_gauges!("display.stream" => {
+        "cycles" = metrics.stream_cycles() => "cycles",
+        "bytes" = metrics.stream_bytes() => "bytes",
+        "calls" = metrics.stream_calls(),
+    });
 }
 
 pub(crate) fn record_ui_metrics(metrics: inkpaper_ui::PerformanceMetrics) {
-    inkpaper_trace::gauge!(
-        target: "ui.render",
-        "entity_render_calls",
-        metrics.entity_render_calls,
-    );
+    record_gauges!("ui.render" => {
+        "entity_render_calls" = metrics.entity_render_calls,
+        "nodes_mounted" = metrics.nodes_mounted,
+    });
 
-    inkpaper_trace::gauge!(
-        target: "ui.render",
-        "nodes_mounted",
-        metrics.nodes_mounted,
-    );
+    record_gauges!("ui.layout" => {
+        "measure_node_calls" = metrics.measure_node_calls,
+        "measurement_cache_hits" = metrics.measurement_cache_hits,
+        "measurement_cache_misses" = metrics.measurement_cache_misses,
+        "text_measurements" = metrics.text_measurements,
+        "flex_base_main_size_calls" = metrics.flex_base_main_size_calls,
+        "flex_item_main_size_calls" = metrics.flex_item_main_size_calls,
+        "flex_sibling_visits" = metrics.flex_sibling_visits,
+        "nodes_laid_out" = metrics.nodes_laid_out,
+    });
 
-    inkpaper_trace::gauge!(
-        target: "ui.layout",
-        "measure_node_calls",
-        metrics.measure_node_calls,
-    );
+    record_gauges!("ui.visual" => {
+        "visual_traversal_passes" = metrics.visual_traversal_passes,
+        "visual_traversal_nodes" = metrics.visual_traversal_nodes,
+        "visual_context_derivations" = metrics.visual_context_derivations,
+        "visual_clip_intersections" = metrics.visual_clip_intersections,
+        "visual_ancestor_pushes" = metrics.visual_ancestor_pushes,
+        "visual_ancestor_pops" = metrics.visual_ancestor_pops,
+        "visual_ancestor_depth_peak" = metrics.visual_ancestor_depth_peak,
+        "visual_context_stack_pushes" = metrics.visual_context_stack_pushes,
+        "visual_context_stack_pops" = metrics.visual_context_stack_pops,
+        "visual_context_stack_depth_peak" = metrics.visual_context_stack_depth_peak,
+        "visual_context_stack_overflows" = metrics.visual_context_stack_overflows,
+        "visual_context_recomputations" = metrics.visual_context_recomputations,
+        "visual_bounds_ancestor_visits" = metrics.visual_bounds_ancestor_visits,
+        "scroll_into_view_ancestor_visits" = metrics.scroll_into_view_ancestor_visits,
+        "visual_nodes_visited" = metrics.visual_nodes_visited,
+        "visible_nodes" = metrics.visible_nodes,
+    });
 
-    inkpaper_trace::gauge!(
-        target: "ui.layout",
-        "measurement_cache_hits",
-        metrics.measurement_cache_hits,
-    );
+    record_gauges!("ui.damage" => {
+        "render_invalidations_consumed" = metrics.render_invalidations_consumed,
+        "full_damage_invalidations" = metrics.full_damage_invalidations,
+        "partial_damage_invalidations" = metrics.partial_damage_invalidations,
+        "damage_rectangles" = metrics.damage_rectangles,
+        "damage_culled_nodes" = metrics.damage_culled_nodes,
+        "damage_pruned_subtrees" = metrics.damage_pruned_subtrees,
+        "damage_extent_pruned_subtrees" = metrics.damage_extent_pruned_subtrees,
+        "damage_pruned_sibling_runs" = metrics.damage_pruned_sibling_runs,
+        "damage_pruned_sibling_prefixes" = metrics.damage_pruned_sibling_prefixes,
+        "damage_prefix_search_steps" = metrics.damage_prefix_search_steps,
+        "damage_clip_paints" = metrics.damage_clip_paints,
+    });
 
-    inkpaper_trace::gauge!(
-        target: "ui.layout",
-        "measurement_cache_misses",
-        metrics.measurement_cache_misses,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.layout",
-        "text_measurements",
-        metrics.text_measurements,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.layout",
-        "flex_base_main_size_calls",
-        metrics.flex_base_main_size_calls,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.layout",
-        "flex_item_main_size_calls",
-        metrics.flex_item_main_size_calls,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.layout",
-        "flex_sibling_visits",
-        metrics.flex_sibling_visits,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.layout",
-        "nodes_laid_out",
-        metrics.nodes_laid_out,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_traversal_passes",
-        metrics.visual_traversal_passes,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_traversal_nodes",
-        metrics.visual_traversal_nodes,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_context_derivations",
-        metrics.visual_context_derivations,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_clip_intersections",
-        metrics.visual_clip_intersections,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_ancestor_pushes",
-        metrics.visual_ancestor_pushes,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_ancestor_pops",
-        metrics.visual_ancestor_pops,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_ancestor_depth_peak",
-        metrics.visual_ancestor_depth_peak,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_context_stack_pushes",
-        metrics.visual_context_stack_pushes,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_context_stack_pops",
-        metrics.visual_context_stack_pops,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_context_stack_depth_peak",
-        metrics.visual_context_stack_depth_peak,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_context_stack_overflows",
-        metrics.visual_context_stack_overflows,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_context_recomputations",
-        metrics.visual_context_recomputations,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_bounds_ancestor_visits",
-        metrics.visual_bounds_ancestor_visits,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "scroll_into_view_ancestor_visits",
-        metrics.scroll_into_view_ancestor_visits,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "render_invalidations_consumed",
-        metrics.render_invalidations_consumed,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "full_damage_invalidations",
-        metrics.full_damage_invalidations,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "partial_damage_invalidations",
-        metrics.partial_damage_invalidations,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "damage_rectangles",
-        metrics.damage_rectangles,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "damage_culled_nodes",
-        metrics.damage_culled_nodes,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "damage_pruned_subtrees",
-        metrics.damage_pruned_subtrees,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "damage_extent_pruned_subtrees",
-        metrics.damage_extent_pruned_subtrees,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "damage_pruned_sibling_runs",
-        metrics.damage_pruned_sibling_runs,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "damage_pruned_sibling_prefixes",
-        metrics.damage_pruned_sibling_prefixes,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "damage_prefix_search_steps",
-        metrics.damage_prefix_search_steps,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.damage",
-        "damage_clip_paints",
-        metrics.damage_clip_paints,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visual_nodes_visited",
-        metrics.visual_nodes_visited,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.visual",
-        "visible_nodes",
-        metrics.visible_nodes,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.paint",
-        "nodes_painted",
-        metrics.nodes_painted,
-    );
+    record_gauges!("ui.paint" => {
+        "nodes_painted" = metrics.nodes_painted,
+    });
 }
 
 pub(crate) fn record_text_metrics(
@@ -715,152 +363,49 @@ pub(crate) fn record_text_metrics(
     bytes_used: usize,
     bytes_capacity: usize,
 ) {
-    inkpaper_trace::gauge!(
-        target: "ui.text",
-        "draw_calls",
-        text.draw_calls,
-    );
+    record_gauges!("ui.text" => {
+        "draw_calls" = text.draw_calls,
+        "shaped_glyphs" = text.shaped_glyphs,
+    });
 
-    inkpaper_trace::gauge!(
-        target: "ui.text",
-        "shaped_glyphs",
-        text.shaped_glyphs,
-    );
+    record_gauges!("ui.glyph_cache" => {
+        "lookups" = cache.lookups,
+        "hits" = cache.hits,
+        "misses" = cache.misses,
+        "collisions" = cache.collisions,
+        "rasterizations" = cache.rasterizations,
+        "clears" = cache.clears,
+        "bytes_used" = bytes_used => "bytes",
+        "bytes_peak" = cache.bytes_peak => "bytes",
+        "bytes_capacity" = bytes_capacity => "bytes",
+    });
 
-    inkpaper_trace::gauge!(
-        target: "ui.glyph_cache",
-        "lookups",
-        cache.lookups,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.glyph_cache",
-        "hits",
-        cache.hits,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.glyph_cache",
-        "misses",
-        cache.misses,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.glyph_cache",
-        "collisions",
-        cache.collisions,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.glyph_cache",
-        "rasterizations",
-        cache.rasterizations,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.glyph_cache",
-        "clears",
-        cache.clears,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.glyph_cache",
-        "bytes_used",
-        bytes_used,
-        unit: "bytes",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.glyph_cache",
-        "bytes_peak",
-        cache.bytes_peak,
-        unit: "bytes",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.glyph_cache",
-        "bytes_capacity",
-        bytes_capacity,
-        unit: "bytes",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.pair_cache",
-        "lookups",
-        text.pair_cache_lookups,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.pair_cache",
-        "hits",
-        text.pair_cache_hits,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.pair_cache",
-        "misses",
-        text.pair_cache_misses,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.pair_cache",
-        "collisions",
-        text.pair_cache_collisions,
-    );
+    record_gauges!("ui.pair_cache" => {
+        "lookups" = text.pair_cache_lookups,
+        "hits" = text.pair_cache_hits,
+        "misses" = text.pair_cache_misses,
+        "collisions" = text.pair_cache_collisions,
+    });
 }
 
 pub(crate) fn record_coverage_metrics(
     paint: inkpaper_ui_eink::EInkPaintReport,
     framebuffer_draw_iter_pixels: u64,
 ) {
-    inkpaper_trace::gauge!(
-        target: "ui.coverage",
-        "bitmaps",
-        paint.coverage_bitmaps(),
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.coverage",
-        "samples",
-        paint.coverage_samples(),
-        unit: "pixels",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.coverage",
-        "accepted",
-        paint.coverage_accepted(),
-        unit: "pixels",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.coverage",
-        "framebuffer_pixels",
-        framebuffer_draw_iter_pixels,
-        unit: "pixels",
-    );
+    record_gauges!("ui.coverage" => {
+        "bitmaps" = paint.coverage_bitmaps(),
+        "samples" = paint.coverage_samples() => "pixels",
+        "accepted" = paint.coverage_accepted() => "pixels",
+        "framebuffer_pixels" = framebuffer_draw_iter_pixels => "pixels",
+    });
 }
 
 pub(crate) fn record_coverage_blitter_metrics(calls: u64, pixels: u64, cycles: u64) {
-    inkpaper_trace::gauge!(
-        target: "ui.coverage_fast",
-        "calls",
-        calls,
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.coverage_fast",
-        "pixels",
-        pixels,
-        unit: "pixels",
-    );
-
-    inkpaper_trace::gauge!(
-        target: "ui.coverage_fast",
-        "cycles",
-        cycles,
-        unit: "cycles",
-    );
+    record_gauges!("ui.coverage_fast" => {
+        "calls" = calls,
+        "pixels" = pixels => "pixels",
+        "cycles" = cycles => "cycles",
+    });
 }
 
 struct DefmtTraceWriter<const N: usize> {
