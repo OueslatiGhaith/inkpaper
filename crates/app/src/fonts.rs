@@ -190,8 +190,8 @@ struct Candidate {
 
 /// Reads family `index` and picks its faces like crosspoint: the upright face
 /// nearest regular weight, then bold, italic and bold italic ones heavier or
-/// slanted from it. Files are read once to learn their faces and again for
-/// the chosen ones, so only those stay in memory.
+/// slanted from it. Already-read bytes are kept up to [`MAX_FAMILY_BYTES`] so
+/// normal families are read from the card only once.
 pub(crate) async fn load_card_font<P: AppPlatform>(
     platform: &mut P,
     families: &[FontFamily],
@@ -202,6 +202,9 @@ pub(crate) async fn load_card_font<P: AppPlatform>(
         .ok_or(FontLoadError::NoFaces)?;
 
     let mut candidates = Vec::new();
+    let mut retained: Vec<Option<Arc<[u8]>>> = Vec::with_capacity(family.files.len());
+    retained.resize_with(family.files.len(), || None);
+    let mut retained_bytes = 0usize;
 
     for (file, path) in family.files.iter().enumerate() {
         let Ok(bytes) = platform.read_file(path, MAX_FAMILY_BYTES).await else {
@@ -213,12 +216,18 @@ pub(crate) async fn load_card_font<P: AppPlatform>(
             continue;
         };
 
+        let len = bytes.len();
         candidates.push(Candidate {
             file,
             weight: face.weight_range().default_weight().value(),
             italic: face.style() == FontStyle::Italic,
-            bytes: bytes.len(),
+            bytes: len,
         });
+
+        if retained_bytes.saturating_add(len) <= MAX_FAMILY_BYTES {
+            retained_bytes += len;
+            retained[file] = Some(Arc::from(bytes));
+        }
     }
 
     let chosen = choose_faces(&candidates);
@@ -236,16 +245,28 @@ pub(crate) async fn load_card_font<P: AppPlatform>(
         return Err(FontLoadError::TooLarge);
     }
 
-    let mut faces = Vec::new();
+    // Drop unchosen buffers before potentially re-reading any unretained winner.
+    for (file, slot) in retained.iter_mut().enumerate() {
+        if !chosen.iter().any(|candidate| candidate.file == file) {
+            *slot = None;
+        }
+    }
+
+    let mut faces = Vec::with_capacity(chosen.len());
 
     for candidate in chosen {
-        let path = &family.files[candidate.file];
-
-        let Ok(bytes) = platform.read_file(path, MAX_FAMILY_BYTES).await else {
-            continue;
+        let data = match retained[candidate.file].take() {
+            Some(data) => data,
+            None => {
+                let path = &family.files[candidate.file];
+                let Ok(bytes) = platform.read_file(path, MAX_FAMILY_BYTES).await else {
+                    continue;
+                };
+                Arc::from(bytes)
+            }
         };
 
-        if let Ok(face) = CardFace::parse(Arc::from(bytes), 0) {
+        if let Ok(face) = CardFace::parse(data, 0) {
             faces.push(face);
         }
     }
@@ -316,4 +337,111 @@ fn pick(
             )
         })
         .copied()
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{collections::BTreeMap, vec};
+    use futures_lite::future;
+    use inkpaper_epub::SliceSource;
+
+    use crate::{DeviceKey, FrontlightSetting, WifiCredentials, WifiJoinPlan, WifiJoinToken};
+
+    use super::*;
+
+    struct CountingFontPlatform {
+        files: BTreeMap<String, &'static [u8]>,
+        reads: BTreeMap<String, usize>,
+    }
+
+    impl AppPlatform for CountingFontPlatform {
+        type Error = ();
+        type RandomAccessSource = SliceSource<'static>;
+
+        async fn list_directory(&mut self, _: &str) -> Result<Vec<PlatformEntry>, Self::Error> {
+            Ok(Vec::new())
+        }
+
+        async fn open_random_access(
+            &mut self,
+            _: &str,
+        ) -> Result<Self::RandomAccessSource, Self::Error> {
+            Err(())
+        }
+
+        async fn read_file(&mut self, path: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
+            *self.reads.entry(String::from(path)).or_insert(0) += 1;
+            let bytes = self.files.get(path).copied().ok_or(())?;
+            if bytes.len() > max_bytes {
+                return Err(());
+            }
+            Ok(bytes.to_vec())
+        }
+
+        async fn set_frontlight(&mut self, _: FrontlightSetting) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn load_state(&mut self, _: &str, _: usize) -> Result<Option<Vec<u8>>, Self::Error> {
+            Ok(None)
+        }
+
+        async fn save_state(&mut self, _: &str, _: &[u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn enter_usb_drive(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn device_key(&self) -> DeviceKey {
+            [0; 6]
+        }
+
+        async fn start_clock_sync(&mut self, _: &WifiJoinPlan) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn start_wifi_join(
+            &mut self,
+            _: WifiJoinToken,
+            _: &WifiCredentials,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn start_wifi_scan(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn load_card_font_reads_each_file_once_within_memory_budget() {
+        const REGULAR: &[u8] = include_bytes!("../assets/fonts/Libron-Regular.ttf");
+        const BOLD: &[u8] = include_bytes!("../assets/fonts/Libron-Bold.ttf");
+
+        let mut files = BTreeMap::new();
+        files.insert(String::from("/fonts/Libron/Regular.ttf"), REGULAR);
+        files.insert(String::from("/fonts/Libron/Bold.ttf"), BOLD);
+
+        let mut platform = CountingFontPlatform {
+            files,
+            reads: BTreeMap::new(),
+        };
+        let families = vec![FontFamily {
+            name: String::from("Libron"),
+            files: vec![
+                String::from("/fonts/Libron/Regular.ttf"),
+                String::from("/fonts/Libron/Bold.ttf"),
+            ],
+        }];
+
+        let loaded = future::block_on(load_card_font(&mut platform, &families, 0))
+            .expect("family should load");
+
+        assert_eq!(loaded.family(), 0);
+        assert_eq!(loaded.faces().len(), 2);
+        assert_eq!(platform.reads.get("/fonts/Libron/Regular.ttf"), Some(&1));
+        assert_eq!(platform.reads.get("/fonts/Libron/Bold.ttf"), Some(&1));
+    }
 }
