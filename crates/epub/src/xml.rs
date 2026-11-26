@@ -1,4 +1,4 @@
-use alloc::string::String;
+use alloc::{borrow::Cow, string::String};
 
 use xmlparser::{ElementEnd, Token, Tokenizer};
 
@@ -62,6 +62,18 @@ pub(crate) fn parse_xml<P: XmlParser>(
     Ok(())
 }
 
+/// Decodes XML and XHTML named and numeric character references in `input`,
+/// borrowing `input` without allocating when it contains no `&`.
+///
+/// Bare `&` characters and unknown named entities are preserved verbatim.
+pub fn decode_xml_text(input: &str) -> Cow<'_, str> {
+    if !input.contains('&') {
+        return Cow::Borrowed(input);
+    }
+
+    Cow::Owned(decode_xml_value(input))
+}
+
 pub(crate) fn decode_xml_value(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
 
@@ -84,6 +96,15 @@ pub(crate) fn push_decoded_xml_text(output: &mut String, input: &str) {
         };
 
         let entity = &after[..end];
+
+        // If another `&` appears before `;`, the first `&` is literal text
+        // (e.g. `A & B &amp; C`), so preserve up to the next `&` and retry.
+        if let Some(next_amp) = entity.find('&') {
+            output.push('&');
+            output.push_str(&entity[..next_amp]);
+            remaining = &after[next_amp..];
+            continue;
+        }
 
         if let Some(character) = decode_entity(entity) {
             output.push(character);
@@ -156,5 +177,12 @@ mod tests {
     #[test]
     fn xml_text_named_entities_are_case_sensitive() {
         assert_eq!(decode_xml_value("&COPY;"), "&COPY;");
+    }
+
+    #[test]
+    fn xml_text_keeps_bare_ampersand_before_valid_entity() {
+        assert_eq!(decode_xml_text("A & B &amp; C"), "A & B & C");
+        assert_eq!(decode_xml_text("&&amp;"), "&&");
+        assert!(matches!(decode_xml_text("plain text"), Cow::Borrowed(_)));
     }
 }

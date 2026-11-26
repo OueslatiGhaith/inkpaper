@@ -593,3 +593,64 @@ fn xhtml_does_not_collapse_non_breaking_space_into_adjacent_whitespace() {
 
     assert_eq!(visible_text(&chapter.blocks()[0]), "a \u{00A0} b");
 }
+
+#[test]
+fn chapter_builder_constructs_styled_blocks_without_xhtml() {
+    let mut builder = Chapter::builder(ArchivePath::new("definition.xhtml").unwrap());
+    builder.start_block(BlockKind::Paragraph);
+    builder.push_text("  Hello ", FontWeight::Normal, FontStyle::Normal);
+    builder.push_text("bold", FontWeight::Bold, FontStyle::Normal);
+    builder.push_text(" and ", FontWeight::Normal, FontStyle::Normal);
+    builder.push_text("italic", FontWeight::Normal, FontStyle::Italic);
+    builder.push_text(" ", FontWeight::Normal, FontStyle::Normal);
+    builder.push_text("both", FontWeight::Bold, FontStyle::Italic);
+    builder.push_text(" !", FontWeight::Normal, FontStyle::Normal);
+    builder.end_block();
+
+    // Empty/whitespace-only block is dropped.
+    builder.start_block(BlockKind::Paragraph);
+    builder.push_text("   \n\t ", FontWeight::Normal, FontStyle::Normal);
+    builder.end_block();
+
+    builder.start_block(BlockKind::Paragraph);
+    builder.push_text("line 1", FontWeight::Normal, FontStyle::Normal);
+    builder.push_break();
+    builder.push_text("  line 2", FontWeight::Normal, FontStyle::Normal);
+
+    let (chapter, styles) = builder.finish();
+
+    assert_eq!(chapter.blocks().len(), 2);
+    assert_eq!(
+        visible_text(&chapter.blocks()[0]),
+        "Hello bold and italic both!"
+    );
+
+    let runs: Vec<(&str, FontWeight, FontStyle)> = chapter.blocks()[0]
+        .inlines()
+        .iter()
+        .map(|inline| match inline {
+            Inline::Text(run) => {
+                let style = styles.style(run.style_node()).unwrap();
+                (run.text(), style.font_weight(), style.font_style())
+            }
+            _ => panic!("expected text run"),
+        })
+        .collect();
+
+    assert_eq!(
+        runs,
+        [
+            ("Hello ", FontWeight::Normal, FontStyle::Normal),
+            ("bold", FontWeight::Bold, FontStyle::Normal),
+            (" and ", FontWeight::Normal, FontStyle::Normal),
+            ("italic", FontWeight::Normal, FontStyle::Italic),
+            (" ", FontWeight::Normal, FontStyle::Normal),
+            ("both", FontWeight::Bold, FontStyle::Italic),
+            ("!", FontWeight::Normal, FontStyle::Normal),
+        ],
+    );
+
+    assert_eq!(chapter.blocks()[1].inlines().len(), 3);
+    assert!(matches!(chapter.blocks()[1].inlines()[1], Inline::Break));
+    assert_eq!(visible_text(&chapter.blocks()[1]), "line 1\nline 2");
+}
