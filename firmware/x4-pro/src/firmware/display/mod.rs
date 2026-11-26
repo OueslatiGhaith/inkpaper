@@ -1,8 +1,9 @@
-use defmt::Format;
 use embedded_hal_async::delay::DelayNs;
-use epd_bus::{EpdInterface, PanelError, RefreshMode as EpdRefreshMode, Region};
-use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Ssd1677};
-use uc8xxx::{UC8179_X4_PRO_800X480, UC8279_X4_PRO_800X480, Uc8xxx, Variant as UcVariant};
+use epd_bus::{EpdInterface, EpdPanel, PanelError, RefreshMode, Region};
+use ssd1677::{GDEQ0426T82, Ssd1677};
+use uc8xxx::{UC8179_X4_PRO_800X480, UC8279_X4_PRO_800X480, Uc8xxx};
+#[cfg(feature = "trace")]
+use uc8xxx::Variant as UcVariant;
 use xteink_display_probe::Controller;
 
 #[cfg(feature = "trace")]
@@ -10,18 +11,12 @@ use crate::firmware::perf::{DisplayController, ProfiledEpdBus};
 use crate::firmware::{
     framebuffer::FramebufferStorage,
     presenter::{FrameUpdate, PresentationMode},
-    refresh_policy::{
-        BinaryOverGrayMode, BinaryUpdateMode, EInkCapabilities, GrayscaleUpdateMode, RefreshRequest,
-    },
+    refresh_policy::{EInkCapabilities, RefreshRequest},
 };
 
 pub mod power;
 
-#[derive(Debug, Format)]
-pub enum Error<E> {
-    Ssd1677(ssd1677::Error<E>),
-    Uc8xxx(PanelError<E>),
-}
+pub type Error<E> = PanelError<E>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PresentPower {
@@ -49,8 +44,18 @@ impl X4Panel {
         }
     }
 
-    pub const fn supports_idle_power_hold(&self) -> bool {
-        matches!(self, Self::Uc8xxx(panel) if matches!(panel.variant(), UcVariant::Uc8179))
+    pub fn supports_idle_power_hold(&self) -> bool {
+        match self {
+            Self::Ssd1677(panel) => panel.supports_idle_power_hold(),
+            Self::Uc8xxx(panel) => panel.supports_idle_power_hold(),
+        }
+    }
+
+    pub fn capabilities(&self) -> EInkCapabilities {
+        match self {
+            Self::Ssd1677(panel) => panel.capabilities(),
+            Self::Uc8xxx(panel) => panel.capabilities(),
+        }
     }
 
     pub async fn initialize<B, D>(
@@ -63,8 +68,8 @@ impl X4Panel {
         D: DelayNs,
     {
         match self {
-            X4Panel::Ssd1677(panel) => panel.initialize(bus, delay).await.map_err(Error::Ssd1677),
-            X4Panel::Uc8xxx(panel) => panel.initialize(bus, delay).await.map_err(Error::Uc8xxx),
+            Self::Ssd1677(panel) => EpdPanel::initialize(panel, bus, delay).await,
+            Self::Uc8xxx(panel) => EpdPanel::initialize(panel, bus, delay).await,
         }
     }
 
@@ -77,26 +82,18 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        let Self::Uc8xxx(panel) = self else {
+        if !self.supports_idle_power_hold() {
             return Ok(());
-        };
-
-        #[cfg(feature = "trace")]
-        {
-            let mut profiled_bus = ProfiledEpdBus::new_preparation(bus);
-
-            panel
-                .begin_power_off(&mut profiled_bus, delay)
-                .await
-                .map_err(Error::Uc8xxx)
         }
 
-        #[cfg(not(feature = "trace"))]
-        {
-            panel
-                .begin_power_off(bus, delay)
-                .await
-                .map_err(Error::Uc8xxx)
+        #[cfg(feature = "trace")]
+        let mut profiled_bus = ProfiledEpdBus::new_preparation(bus);
+        #[cfg(feature = "trace")]
+        let bus = &mut profiled_bus;
+
+        match self {
+            Self::Ssd1677(panel) => panel.begin_idle_power_off(bus, delay).await,
+            Self::Uc8xxx(panel) => panel.begin_idle_power_off(bus, delay).await,
         }
     }
 
@@ -109,32 +106,25 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        let Self::Uc8xxx(panel) = self else {
+        if !self.supports_idle_power_hold() {
             return Ok(());
-        };
+        }
 
         #[cfg(feature = "trace")]
-        {
-            let power_off_pending = panel.power_off_pending();
-
+        let mut profiled_bus = {
+            let power_off_pending = matches!(self, Self::Uc8xxx(panel) if panel.power_off_pending());
             let mut profiled_bus = ProfiledEpdBus::new_preparation(bus);
-
             if power_off_pending {
                 profiled_bus.expect_power_off_completion();
             }
+            profiled_bus
+        };
+        #[cfg(feature = "trace")]
+        let bus = &mut profiled_bus;
 
-            panel
-                .prepare_power_on(&mut profiled_bus, delay)
-                .await
-                .map_err(Error::Uc8xxx)
-        }
-
-        #[cfg(not(feature = "trace"))]
-        {
-            panel
-                .prepare_power_on(bus, delay)
-                .await
-                .map_err(Error::Uc8xxx)
+        match self {
+            Self::Ssd1677(panel) => panel.prepare_power_on(bus, delay).await,
+            Self::Uc8xxx(panel) => panel.prepare_power_on(bus, delay).await,
         }
     }
 
@@ -174,11 +164,9 @@ impl X4Panel {
             debug_assert!(!(pending_power_off && pending_power_on));
 
             let mut profiled_bus = ProfiledEpdBus::new(bus, controller, update);
-
             if pending_power_off {
                 profiled_bus.expect_power_off_completion();
             }
-
             if pending_power_on {
                 profiled_bus.expect_power_on_completion();
             }
@@ -186,7 +174,6 @@ impl X4Panel {
             let result = self
                 .present_inner(&mut profiled_bus, delay, frame, update, power)
                 .await;
-
             let metrics = profiled_bus.finish();
 
             (result, metrics)
@@ -195,7 +182,7 @@ impl X4Panel {
         #[cfg(not(feature = "trace"))]
         let result = self.present_inner(bus, delay, frame, update, power).await;
 
-        // finish the presentation interval before swapping the flight-recorder buffer
+        // Finish the presentation interval before swapping the flight-recorder buffer
         // so this presentation is included in the capture emitted below.
         drop(present_trace);
 
@@ -203,10 +190,7 @@ impl X4Panel {
         crate::firmware::perf::record_present_metrics(present_metrics);
 
         #[cfg(feature = "trace")]
-        let trace_capture = inkpaper_trace::capture();
-
-        #[cfg(feature = "trace")]
-        if let Some(trace_capture) = trace_capture {
+        if let Some(trace_capture) = inkpaper_trace::capture() {
             crate::firmware::perf::log_trace(trace_capture);
         }
 
@@ -225,148 +209,9 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        match update.presentation() {
-            PresentationMode::Gray4 => {
-                self.present_grayscale(bus, delay, frame, update, power)
-                    .await
-            }
-            PresentationMode::BinaryPreservingGray => {
-                self.present_binary_preserving_gray(bus, delay, frame, update, power)
-                    .await
-            }
-            PresentationMode::Binary => {
-                let frame = frame.binary_plane();
-
-                match self {
-                    Self::Ssd1677(panel) => present_ssd1677(panel, bus, delay, frame, update).await,
-                    Self::Uc8xxx(panel) => {
-                        present_uc8xxx(panel, bus, delay, frame, update, power.turn_off()).await
-                    }
-                }
-            }
-        }
-    }
-
-    async fn present_grayscale<B, D>(
-        &mut self,
-        bus: &mut B,
-        delay: &mut D,
-        frame: &FramebufferStorage,
-        update: FrameUpdate,
-        power: PresentPower,
-    ) -> Result<(), Error<B::Error>>
-    where
-        B: EpdInterface,
-        D: DelayNs,
-    {
-        let (lsb, msb) = frame.planes();
-        let damage = update.physical_damage();
-
         match self {
-            Self::Ssd1677(panel) => {
-                let mode = match update.refresh() {
-                    RefreshRequest::Full => SsdRefreshMode::Full,
-                    RefreshRequest::Fast => SsdRefreshMode::Fast,
-                };
-
-                panel
-                    .display_grayscale_window(
-                        bus,
-                        delay,
-                        lsb,
-                        msb,
-                        Region::new(damage.x, damage.y, damage.width, damage.height),
-                        mode,
-                        true,
-                    )
-                    .await
-                    .map(|_| ())
-                    .map_err(Error::Ssd1677)
-            }
-            Self::Uc8xxx(panel) => {
-                let mode = match update.refresh() {
-                    RefreshRequest::Full => EpdRefreshMode::Full,
-                    RefreshRequest::Fast => EpdRefreshMode::Fast,
-                };
-                let turn_off = match panel.variant() {
-                    UcVariant::Uc8179 => power.turn_off(),
-                    UcVariant::Uc8279X4 => true,
-                };
-
-                panel
-                    .display_grayscale_window(
-                        bus,
-                        delay,
-                        lsb,
-                        msb,
-                        Region::new(damage.x, damage.y, damage.width, damage.height),
-                        mode,
-                        turn_off,
-                    )
-                    .await
-                    .map(|_| ())
-                    .map_err(Error::Uc8xxx)
-            }
-        }
-    }
-
-    async fn present_binary_preserving_gray<B, D>(
-        &mut self,
-        bus: &mut B,
-        delay: &mut D,
-        frame: &FramebufferStorage,
-        update: FrameUpdate,
-        power: PresentPower,
-    ) -> Result<(), Error<B::Error>>
-    where
-        B: EpdInterface,
-        D: DelayNs,
-    {
-        // a requested maintenance/full refresh should use the established grayscale-preserving
-        // full path rather than the short differential window waveform.
-        if update.refresh() == RefreshRequest::Full {
-            return self
-                .present_grayscale(bus, delay, frame, update, power)
-                .await;
-        }
-
-        let (lsb, msb) = frame.planes();
-        let damage = update.physical_damage();
-
-        match self {
-            Self::Ssd1677(panel) => panel
-                .display_grayscale_window(
-                    bus,
-                    delay,
-                    lsb,
-                    msb,
-                    Region::new(damage.x, damage.y, damage.width, damage.height),
-                    SsdRefreshMode::Fast,
-                    true,
-                )
-                .await
-                .map(|_| ())
-                .map_err(Error::Ssd1677),
-
-            Self::Uc8xxx(panel) => {
-                let turn_off = match panel.variant() {
-                    UcVariant::Uc8179 => power.turn_off(),
-                    UcVariant::Uc8279X4 => true,
-                };
-
-                panel
-                    .display_binary_window_preserving_grayscale(
-                        bus,
-                        delay,
-                        lsb,
-                        msb,
-                        Region::new(damage.x, damage.y, damage.width, damage.height),
-                        turn_off,
-                    )
-                    .await
-                    .map(|_| ())
-                    .map_err(Error::Uc8xxx)
-            }
+            Self::Ssd1677(panel) => present_panel(panel, bus, delay, frame, update, power).await,
+            Self::Uc8xxx(panel) => present_panel(panel, bus, delay, frame, update, power).await,
         }
     }
 
@@ -380,99 +225,75 @@ impl X4Panel {
         D: DelayNs,
     {
         match self {
-            Self::Ssd1677(panel) => panel.deep_sleep(bus, delay).await.map_err(Error::Ssd1677),
-            Self::Uc8xxx(panel) => panel.deep_sleep(bus, delay).await.map_err(Error::Uc8xxx),
-        }
-    }
-
-    pub const fn capabilities(&self) -> EInkCapabilities {
-        match self {
-            Self::Ssd1677(_) => EInkCapabilities::new(
-                BinaryUpdateMode::Window,
-                BinaryOverGrayMode::NativeWindow,
-                GrayscaleUpdateMode::Window,
-            ),
-            Self::Uc8xxx(panel) => match panel.variant() {
-                UcVariant::Uc8179 => EInkCapabilities::new(
-                    BinaryUpdateMode::FullPlane,
-                    BinaryOverGrayMode::PreconditionedWindow,
-                    GrayscaleUpdateMode::Window,
-                ),
-                UcVariant::Uc8279X4 => EInkCapabilities::new(
-                    BinaryUpdateMode::FullPlane,
-                    BinaryOverGrayMode::Unsupported,
-                    GrayscaleUpdateMode::FullPlane,
-                ),
-            },
+            Self::Ssd1677(panel) => EpdPanel::deep_sleep(panel, bus, delay).await,
+            Self::Uc8xxx(panel) => EpdPanel::deep_sleep(panel, bus, delay).await,
         }
     }
 }
 
-async fn present_ssd1677<B, D>(
-    panel: &mut Ssd1677,
+async fn present_panel<P, B, D>(
+    panel: &mut P,
     bus: &mut B,
     delay: &mut D,
-    frame: &[u8],
+    frame: &FramebufferStorage,
     update: FrameUpdate,
+    power: PresentPower,
 ) -> Result<(), Error<B::Error>>
 where
-    B: EpdInterface,
-    D: DelayNs,
-{
-    match update.refresh() {
-        RefreshRequest::Full => panel
-            .display(bus, delay, frame, None, SsdRefreshMode::Full)
-            .await
-            .map_err(Error::Ssd1677),
-
-        RefreshRequest::Fast => {
-            if update.is_full_damage() {
-                return panel
-                    .display(bus, delay, frame, None, SsdRefreshMode::Fast)
-                    .await
-                    .map_err(Error::Ssd1677);
-            }
-
-            let region = update.physical_damage();
-
-            panel
-                .display_window(
-                    bus,
-                    delay,
-                    frame,
-                    None,
-                    Region::new(region.x, region.y, region.width, region.height),
-                )
-                .await
-                .map(|_| ())
-                .map_err(Error::Ssd1677)
-        }
-    }
-}
-
-async fn present_uc8xxx<B, D>(
-    panel: &mut Uc8xxx,
-    bus: &mut B,
-    delay: &mut D,
-    frame: &[u8],
-    update: FrameUpdate,
-    turn_off: bool,
-) -> Result<(), Error<B::Error>>
-where
+    P: EpdPanel,
     B: EpdInterface,
     D: DelayNs,
 {
     let mode = match update.refresh() {
-        RefreshRequest::Full => EpdRefreshMode::Full,
-        RefreshRequest::Fast => EpdRefreshMode::Fast,
+        RefreshRequest::Full => RefreshMode::Full,
+        RefreshRequest::Fast => RefreshMode::Fast,
     };
-    let turn_off = match panel.variant() {
-        UcVariant::Uc8179 => turn_off,
-        UcVariant::Uc8279X4 => true,
-    };
+    let damage = update.physical_damage();
+    let region = Region::new(damage.x, damage.y, damage.width, damage.height);
 
-    panel
-        .display(bus, delay, frame, mode, turn_off)
-        .await
-        .map_err(Error::Uc8xxx)
+    match update.presentation() {
+        PresentationMode::Binary => {
+            let binary_damage = if update.is_full_damage() {
+                None
+            } else {
+                Some(region)
+            };
+
+            panel
+                .display_binary(
+                    bus,
+                    delay,
+                    frame.binary_plane(),
+                    binary_damage,
+                    mode,
+                    power.turn_off(),
+                )
+                .await
+        }
+        PresentationMode::Gray4 => {
+            let (lsb, msb) = frame.planes();
+            panel
+                .display_grayscale(bus, delay, lsb, msb, region, mode, power.turn_off())
+                .await
+        }
+        PresentationMode::BinaryPreservingGray => {
+            let (lsb, msb) = frame.planes();
+            if update.refresh() == RefreshRequest::Full {
+                panel
+                    .display_grayscale(bus, delay, lsb, msb, region, mode, power.turn_off())
+                    .await
+            } else {
+                panel
+                    .display_binary_preserving_grayscale(
+                        bus,
+                        delay,
+                        lsb,
+                        msb,
+                        region,
+                        power.turn_off(),
+                    )
+                    .await
+            }
+        }
+    }
 }

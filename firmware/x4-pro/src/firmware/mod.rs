@@ -11,6 +11,7 @@ use epd_bus::SpiEpdBus;
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
+    dma_rx_buffer, dma_tx_buffer,
     gpio::{Input, InputConfig, Pull},
     i2c::master::{Config as I2cConfig, I2c},
     spi::{
@@ -198,15 +199,23 @@ async fn main(spawner: Spawner) -> ! {
 
     // the probe has finished using the display pins
     let (sclk, mosi, cs, dc, reset) = probe_io.into_parts();
+    // Static internal-SRAM bounce buffer for non-DMA-accessible sources (e.g.
+    // flash .rodata LUTs / white padding); PSRAM/DRAM frame slices DMA in place.
+    // Small command/register writes stay on the hardware FIFO below the threshold.
+    let dma_rx_buf = dma_rx_buffer!(16).unwrap();
+    let dma_tx_buf = dma_tx_buffer!(4096).unwrap();
     let spi = Spi::new(
         peripherals.SPI2,
         SpiConfig::default()
             .with_frequency(Rate::from_mhz(10))
-            .with_mode(Mode::_0),
+            .with_mode(Mode::_0)
+            .with_min_async_transfer_size(64),
     )
     .unwrap()
     .with_sck(sclk.into_peripheral_output())
     .with_mosi(mosi.into_peripheral_output())
+    .with_dma(peripherals.DMA_CH0)
+    .with_buffers(dma_rx_buf, dma_tx_buf)
     .into_async();
 
     let busy = Input::new(peripherals.GPIO6, InputConfig::default());
