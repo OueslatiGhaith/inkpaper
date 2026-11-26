@@ -2,8 +2,8 @@
 
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::{
-    BinaryOverGrayMode, BinaryUpdateMode, BusyPolarity, DataStream, EpdInterface, EpdPanel,
-    GrayscaleUpdateMode, PanelCapabilities, PanelError, RefreshMode, grayscale_base_byte,
+    BinaryOverGrayMode, BinaryUpdateMode, BusyPolarity, DataStream, DisplayPhase, EpdInterface,
+    EpdPanel, GrayscaleUpdateMode, PanelCapabilities, PanelError, RefreshMode, grayscale_base_byte,
     region_has_grayscale,
 };
 
@@ -423,8 +423,13 @@ impl Uc8xxx {
                 .await?;
         }
 
+        let refresh_phase = if fast {
+            DisplayPhase::BinaryFastRefresh
+        } else {
+            DisplayPhase::BinaryFullRefresh
+        };
         self.command(bus, Command::DisplayRefresh).await?;
-        self.wait_ready(bus, delay).await?;
+        self.wait_ready(bus, refresh_phase, delay).await?;
 
         if fast {
             self.command(bus, Command::PartialOut).await?;
@@ -517,7 +522,8 @@ impl Uc8xxx {
                 .await?;
 
                 self.command(bus, Command::DisplayRefresh).await?;
-                self.wait_ready(bus, delay).await?;
+                self.wait_ready(bus, DisplayPhase::GrayscaleRefresh, delay)
+                    .await?;
 
                 self.need_full_clear = true;
                 self.old_plane_valid = false;
@@ -968,7 +974,7 @@ impl Uc8xxx {
         }
 
         self.command(bus, Command::PowerOn).await?;
-        self.wait_ready(bus, delay).await?;
+        self.wait_ready(bus, DisplayPhase::PowerOn, delay).await?;
         self.screen_on = true;
 
         Ok(())
@@ -997,7 +1003,7 @@ impl Uc8xxx {
             // controller operation instead of stalling here.
             self.power_off_pending = true;
         } else {
-            self.wait_ready(bus, delay).await?;
+            self.wait_ready(bus, DisplayPhase::PowerOff, delay).await?;
         }
 
         Ok(())
@@ -1016,7 +1022,7 @@ impl Uc8xxx {
             return Ok(());
         }
 
-        self.wait_ready(bus, delay).await?;
+        self.wait_ready(bus, DisplayPhase::PowerOff, delay).await?;
         self.power_off_pending = false;
 
         Ok(())
@@ -1035,7 +1041,7 @@ impl Uc8xxx {
             return Ok(());
         }
 
-        self.wait_ready(bus, delay).await?;
+        self.wait_ready(bus, DisplayPhase::PowerOn, delay).await?;
         self.power_on_pending = false;
         self.screen_on = true;
 
@@ -1045,6 +1051,7 @@ impl Uc8xxx {
     async fn wait_ready<B, D>(
         &self,
         bus: &mut B,
+        phase: DisplayPhase,
         delay: &mut D,
     ) -> Result<(), PanelError<B::Error>>
     where
@@ -1052,7 +1059,7 @@ impl Uc8xxx {
         D: DelayNs,
     {
         delay.delay_ms(BUSY_ASSERT_SETTLE_MS).await;
-        bus.wait_busy(BUSY_POLARITY, delay)
+        bus.wait_busy_for(BUSY_POLARITY, phase, delay)
             .await
             .map_err(PanelError::Bus)
     }
@@ -1128,7 +1135,8 @@ impl Uc8xxx {
         }
 
         self.command(bus, Command::DisplayRefresh).await?;
-        self.wait_ready(bus, delay).await?;
+        self.wait_ready(bus, DisplayPhase::GrayscaleBaseRefresh, delay)
+            .await?;
 
         self.write_idle_vcom(bus).await
     }
@@ -1349,7 +1357,8 @@ impl Uc8xxx {
         self.power_on_if_needed(bus, delay).await?;
 
         self.command(bus, Command::DisplayRefresh).await?;
-        self.wait_ready(bus, delay).await?;
+        self.wait_ready(bus, DisplayPhase::GrayscaleActivate, delay)
+            .await?;
 
         if region.is_some() {
             self.command(bus, Command::PartialOut).await?;
@@ -1405,7 +1414,8 @@ impl Uc8xxx {
         self.power_on_if_needed(bus, delay).await?;
 
         self.command(bus, Command::DisplayRefresh).await?;
-        self.wait_ready(bus, delay).await?;
+        self.wait_ready(bus, DisplayPhase::GrayscalePrecondition, delay)
+            .await?;
 
         self.command(bus, Command::PartialOut).await?;
         self.write_idle_vcom(bus).await
@@ -1622,7 +1632,7 @@ mod tests {
     use std::vec::Vec;
 
     use embedded_hal_async::delay::DelayNs;
-    use epd_bus::{BusyPolarity, EpdInterface, PanelError, RefreshMode, Region};
+    use epd_bus::{BusyPolarity, DisplayPhase, EpdInterface, PanelError, RefreshMode, Region};
 
     use super::{
         Config, PanelSettings, RefreshTemperature, RowOrder, UC8179_X4_PRO_800X480,
@@ -1640,6 +1650,7 @@ mod tests {
 
     struct RecordingBus {
         ops: Vec<Op>,
+        phases: Vec<DisplayPhase>,
         active_stream: Option<Vec<u8>>,
     }
 
@@ -1647,6 +1658,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 ops: Vec::new(),
+                phases: Vec::new(),
                 active_stream: None,
             }
         }
@@ -1693,6 +1705,19 @@ mod tests {
         {
             self.ops.push(Op::WaitBusy(polarity));
             Ok(())
+        }
+
+        async fn wait_busy_for<D>(
+            &mut self,
+            polarity: BusyPolarity,
+            phase: DisplayPhase,
+            delay: &mut D,
+        ) -> Result<(), Self::Error>
+        where
+            D: DelayNs,
+        {
+            self.phases.push(phase);
+            self.wait_busy(polarity, delay).await
         }
 
         async fn begin_data_stream(&mut self) -> Result<(), Self::Error> {
@@ -1938,5 +1963,64 @@ mod tests {
             })
             .collect();
         assert_eq!(stream_lens, std::vec![8, 8]);
+    }
+
+    #[test]
+    fn reports_explicit_display_phases_for_uc8179_and_uc8279() {
+        let mut uc8179 = Uc8xxx::new(UC8179_X4_PRO_800X480);
+        let mut bus = RecordingBus::new();
+        let mut delay = NoopDelay;
+        let mut lsb = std::vec![0xff; UC8179_X4_PRO_800X480.buffer_len()];
+        let msb = std::vec![0xff; UC8179_X4_PRO_800X480.buffer_len()];
+        lsb[0] = 0x00;
+
+        block_on(uc8179.initialize(&mut bus, &mut delay)).unwrap();
+        bus.phases.clear();
+
+        block_on(uc8179.display(&mut bus, &mut delay, &msb, RefreshMode::Full, false)).unwrap();
+        block_on(uc8179.display(&mut bus, &mut delay, &msb, RefreshMode::Fast, true)).unwrap();
+        // Deferred PowerOff finishes at the start of the next operation.
+        block_on(uc8179.display_grayscale(&mut bus, &mut delay, &lsb, &msb, false)).unwrap();
+        block_on(uc8179.display_grayscale_window(
+            &mut bus,
+            &mut delay,
+            &lsb,
+            &msb,
+            Region::new(0, 0, 16, 4),
+            RefreshMode::Fast,
+            false,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            bus.phases,
+            std::vec![
+                DisplayPhase::PowerOn,
+                DisplayPhase::BinaryFullRefresh,
+                DisplayPhase::BinaryFastRefresh,
+                DisplayPhase::PowerOff,
+                DisplayPhase::PowerOn,
+                DisplayPhase::GrayscaleBaseRefresh,
+                DisplayPhase::GrayscaleActivate,
+                DisplayPhase::GrayscalePrecondition,
+                DisplayPhase::GrayscaleActivate,
+            ]
+        );
+
+        let mut uc8279 = Uc8xxx::new(UC8279_X4_PRO_800X480);
+        let mut bus = RecordingBus::new();
+        block_on(uc8279.initialize(&mut bus, &mut delay)).unwrap();
+        bus.phases.clear();
+
+        block_on(uc8279.display_grayscale(&mut bus, &mut delay, &lsb, &msb, true)).unwrap();
+        assert_eq!(
+            bus.phases,
+            std::vec![
+                DisplayPhase::PowerOn,
+                DisplayPhase::GrayscaleBaseRefresh,
+                DisplayPhase::GrayscaleRefresh,
+                DisplayPhase::PowerOff,
+            ]
+        );
     }
 }

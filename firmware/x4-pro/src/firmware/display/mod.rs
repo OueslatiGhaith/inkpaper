@@ -2,12 +2,10 @@ use embedded_hal_async::delay::DelayNs;
 use epd_bus::{EpdInterface, EpdPanel, PanelError, RefreshMode, Region};
 use ssd1677::{GDEQ0426T82, Ssd1677};
 use uc8xxx::{UC8179_X4_PRO_800X480, UC8279_X4_PRO_800X480, Uc8xxx};
-#[cfg(feature = "trace")]
-use uc8xxx::Variant as UcVariant;
 use xteink_display_probe::Controller;
 
 #[cfg(feature = "trace")]
-use crate::firmware::perf::{DisplayController, ProfiledEpdBus};
+use crate::firmware::perf::ProfiledEpdBus;
 use crate::firmware::{
     framebuffer::FramebufferStorage,
     presenter::{FrameUpdate, PresentationMode},
@@ -87,7 +85,7 @@ impl X4Panel {
         }
 
         #[cfg(feature = "trace")]
-        let mut profiled_bus = ProfiledEpdBus::new_preparation(bus);
+        let mut profiled_bus = ProfiledEpdBus::new(bus);
         #[cfg(feature = "trace")]
         let bus = &mut profiled_bus;
 
@@ -111,14 +109,7 @@ impl X4Panel {
         }
 
         #[cfg(feature = "trace")]
-        let mut profiled_bus = {
-            let power_off_pending = matches!(self, Self::Uc8xxx(panel) if panel.power_off_pending());
-            let mut profiled_bus = ProfiledEpdBus::new_preparation(bus);
-            if power_off_pending {
-                profiled_bus.expect_power_off_completion();
-            }
-            profiled_bus
-        };
+        let mut profiled_bus = ProfiledEpdBus::new(bus);
         #[cfg(feature = "trace")]
         let bus = &mut profiled_bus;
 
@@ -148,29 +139,7 @@ impl X4Panel {
 
         #[cfg(feature = "trace")]
         let (result, present_metrics) = {
-            let controller = match self {
-                Self::Ssd1677(_) => DisplayController::Ssd1677,
-                Self::Uc8xxx(panel) => match panel.variant() {
-                    UcVariant::Uc8179 => DisplayController::Uc8179,
-                    UcVariant::Uc8279X4 => DisplayController::Uc8279,
-                },
-            };
-
-            let (pending_power_off, pending_power_on) = match self {
-                Self::Uc8xxx(panel) => (panel.power_off_pending(), panel.power_on_pending()),
-                Self::Ssd1677(_) => (false, false),
-            };
-
-            debug_assert!(!(pending_power_off && pending_power_on));
-
-            let mut profiled_bus = ProfiledEpdBus::new(bus, controller, update);
-            if pending_power_off {
-                profiled_bus.expect_power_off_completion();
-            }
-            if pending_power_on {
-                profiled_bus.expect_power_on_completion();
-            }
-
+            let mut profiled_bus = ProfiledEpdBus::new(bus);
             let result = self
                 .present_inner(&mut profiled_bus, delay, frame, update, power)
                 .await;

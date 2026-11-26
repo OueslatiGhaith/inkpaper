@@ -2,8 +2,9 @@
 
 use embedded_hal_async::delay::DelayNs;
 use epd_bus::{
-    BinaryOverGrayMode, BinaryUpdateMode, BusyPolarity, DataStream, EpdInterface, EpdPanel,
-    GrayscaleUpdateMode, PanelCapabilities, PanelError, grayscale_base_byte, region_has_grayscale,
+    BinaryOverGrayMode, BinaryUpdateMode, BusyPolarity, DataStream, DisplayPhase, EpdInterface,
+    EpdPanel, GrayscaleUpdateMode, PanelCapabilities, PanelError, grayscale_base_byte,
+    region_has_grayscale,
 };
 
 pub use epd_bus::{PanelError as Error, RefreshMode, Region};
@@ -290,7 +291,12 @@ impl Ssd1677 {
             }
         }
 
-        self.refresh(bus, delay, mode).await?;
+        let refresh_phase = if mode == RefreshMode::Fast {
+            DisplayPhase::BinaryFastRefresh
+        } else {
+            DisplayPhase::BinaryFullRefresh
+        };
+        self.refresh(bus, delay, mode, refresh_phase).await?;
 
         // BW RAM already holds `frame`. Only RED RAM needs synchronizing after
         // a single-buffer Fast refresh; Full/Clean already seeded RED above.
@@ -325,8 +331,14 @@ impl Ssd1677 {
         self.write_inverted_plane(bus, Command::WriteRedRam, msb)
             .await?;
 
-        self.activate_grayscale(bus, delay, &FACTORY_GRAYSCALE_LUT, FACTORY_GRAYSCALE_BORDER)
-            .await?;
+        self.activate_grayscale(
+            bus,
+            delay,
+            &FACTORY_GRAYSCALE_LUT,
+            FACTORY_GRAYSCALE_BORDER,
+            DisplayPhase::GrayscaleRefresh,
+        )
+        .await?;
 
         // absolute grayscale does not preserve a normal B/W differential baseline.
         self.needs_initial_clean = true;
@@ -375,9 +387,25 @@ impl Ssd1677 {
 
         let has_grayscale =
             region_has_grayscale(lsb, msb, self.config.width as usize / 8, base_region);
+        let base_phase = if has_grayscale {
+            DisplayPhase::GrayscaleBaseRefresh
+        } else if base_mode == RefreshMode::Fast {
+            DisplayPhase::BinaryFastRefresh
+        } else {
+            DisplayPhase::BinaryFullRefresh
+        };
 
-        self.paint_grayscale_base(bus, delay, lsb, msb, base_region, base_mode, !has_grayscale)
-            .await?;
+        self.paint_grayscale_base(
+            bus,
+            delay,
+            lsb,
+            msb,
+            base_region,
+            base_mode,
+            base_phase,
+            !has_grayscale,
+        )
+        .await?;
 
         self.needs_initial_clean = false;
 
@@ -388,8 +416,14 @@ impl Ssd1677 {
         if has_grayscale {
             self.write_overlay_masks(bus, lsb, msb, base_region).await?;
 
-            self.activate_grayscale(bus, delay, &OVERLAY_GRAYSCALE_LUT, OVERLAY_GRAYSCALE_BORDER)
-                .await?;
+            self.activate_grayscale(
+                bus,
+                delay,
+                &OVERLAY_GRAYSCALE_LUT,
+                OVERLAY_GRAYSCALE_BORDER,
+                DisplayPhase::GrayscaleActivate,
+            )
+            .await?;
 
             // the overlay activation temporarily replaces both controller RAM planes
             // with selector masks.
@@ -416,6 +450,7 @@ impl Ssd1677 {
         msb: &[u8],
         region: Region,
         mode: RefreshMode,
+        phase: DisplayPhase,
         sync_red: bool,
     ) -> Result<(), Error<B::Error>>
     where
@@ -437,7 +472,7 @@ impl Ssd1677 {
 
             // RED keeps the previous B/W base here, so the normal
             // FAST waveform performs the differential transition.
-            self.refresh(bus, delay, RefreshMode::Fast).await?;
+            self.refresh(bus, delay, RefreshMode::Fast, phase).await?;
 
             // BW already holds the new base. Only synchronize RED when an
             // overlay pass is not about to overwrite both planes immediately.
@@ -481,7 +516,7 @@ impl Ssd1677 {
 
         // Both BW and RED already hold the new B/W base, so no post-refresh
         // re-write is needed.
-        self.refresh(bus, delay, mode).await
+        self.refresh(bus, delay, mode, phase).await
     }
 
     pub async fn seed_previous_frame<B>(
@@ -519,7 +554,7 @@ impl Ssd1677 {
             self.command(bus, Command::MasterActivation).await?;
             delay.delay_ms(200).await;
 
-            bus.wait_busy(BUSY_POLARITY, delay)
+            bus.wait_busy_for(BUSY_POLARITY, DisplayPhase::PowerOff, delay)
                 .await
                 .map_err(Error::Bus)?;
 
@@ -538,6 +573,7 @@ impl Ssd1677 {
         bus: &mut B,
         delay: &mut D,
         mode: RefreshMode,
+        phase: DisplayPhase,
     ) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
@@ -568,7 +604,7 @@ impl Ssd1677 {
 
         self.command(bus, Command::MasterActivation).await?;
 
-        bus.wait_busy(BUSY_POLARITY, delay)
+        bus.wait_busy_for(BUSY_POLARITY, phase, delay)
             .await
             .map_err(Error::Bus)?;
 
@@ -807,7 +843,8 @@ impl Ssd1677 {
                 .await?;
         }
 
-        self.refresh(bus, delay, RefreshMode::Fast).await?;
+        self.refresh(bus, delay, RefreshMode::Fast, DisplayPhase::BinaryFastRefresh)
+            .await?;
 
         // in single-buffer mode RED RAM is our persistent differential
         // baseline. BW RAM already holds `frame` in `region`, so only sync RED.
@@ -872,6 +909,7 @@ impl Ssd1677 {
         delay: &mut D,
         lut: &[u8; 110],
         border: u8,
+        phase: DisplayPhase,
     ) -> Result<(), Error<B::Error>>
     where
         B: EpdInterface,
@@ -895,7 +933,7 @@ impl Ssd1677 {
 
         self.command(bus, Command::MasterActivation).await?;
 
-        bus.wait_busy(BUSY_POLARITY, delay)
+        bus.wait_busy_for(BUSY_POLARITY, phase, delay)
             .await
             .map_err(Error::Bus)?;
 
@@ -931,7 +969,7 @@ impl Ssd1677 {
 
         delay.delay_ms(200).await;
 
-        bus.wait_busy(BUSY_POLARITY, delay)
+        bus.wait_busy_for(BUSY_POLARITY, DisplayPhase::PowerOff, delay)
             .await
             .map_err(Error::Bus)?;
 
@@ -1243,7 +1281,7 @@ mod tests {
     use std::vec::Vec;
 
     use embedded_hal_async::delay::DelayNs;
-    use epd_bus::{BusyPolarity, EpdInterface, RefreshMode, Region};
+    use epd_bus::{BusyPolarity, DisplayPhase, EpdInterface, RefreshMode, Region};
 
     use super::{
         BoosterSoftStart, Config, RefreshProfile, Ssd1677, UpdateSequence, grayscale_base_byte,
@@ -1261,6 +1299,7 @@ mod tests {
 
     struct RecordingBus {
         ops: Vec<Op>,
+        phases: Vec<DisplayPhase>,
         active_stream: Option<Vec<u8>>,
     }
 
@@ -1268,6 +1307,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 ops: Vec::new(),
+                phases: Vec::new(),
                 active_stream: None,
             }
         }
@@ -1328,6 +1368,19 @@ mod tests {
         {
             self.ops.push(Op::WaitBusy);
             Ok(())
+        }
+
+        async fn wait_busy_for<D>(
+            &mut self,
+            polarity: BusyPolarity,
+            phase: DisplayPhase,
+            delay: &mut D,
+        ) -> Result<(), Self::Error>
+        where
+            D: DelayNs,
+        {
+            self.phases.push(phase);
+            self.wait_busy(polarity, delay).await
         }
 
         async fn begin_data_stream(&mut self) -> Result<(), Self::Error> {
@@ -1471,6 +1524,46 @@ mod tests {
         assert_eq!(
             bus.plane_writes(),
             vec![(0x24, 8), (0x24, 32), (0x26, 32), (0x24, 32), (0x26, 32)]
+        );
+    }
+
+    #[test]
+    fn reports_explicit_display_phases() {
+        let mut panel = Ssd1677::new(TINY_CONFIG);
+        let mut bus = RecordingBus::new();
+        let mut delay = NoopDelay;
+        let white = vec![0xff; TINY_CONFIG.buffer_len()];
+        let mut lsb = white.clone();
+        lsb[2 * 4 + 1] = 0x00;
+
+        block_on(panel.initialize(&mut bus, &mut delay)).unwrap();
+        bus.phases.clear();
+
+        block_on(panel.display(&mut bus, &mut delay, &white, None, RefreshMode::Full)).unwrap();
+        block_on(panel.display(&mut bus, &mut delay, &white, None, RefreshMode::Fast)).unwrap();
+        block_on(panel.display_grayscale_window(
+            &mut bus,
+            &mut delay,
+            &lsb,
+            &white,
+            Region::new(8, 2, 16, 4),
+            RefreshMode::Fast,
+            true,
+        ))
+        .unwrap();
+        block_on(panel.display_grayscale(&mut bus, &mut delay, &lsb, &white, true)).unwrap();
+
+        assert_eq!(
+            bus.phases,
+            vec![
+                DisplayPhase::BinaryFullRefresh,
+                DisplayPhase::BinaryFastRefresh,
+                DisplayPhase::GrayscaleBaseRefresh,
+                DisplayPhase::GrayscaleActivate,
+                DisplayPhase::PowerOff,
+                DisplayPhase::GrayscaleRefresh,
+                DisplayPhase::PowerOff,
+            ]
         );
     }
 }

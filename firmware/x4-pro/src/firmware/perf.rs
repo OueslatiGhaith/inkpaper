@@ -2,14 +2,9 @@ use core::fmt::Write;
 
 use defmt::info;
 use embedded_hal_async::delay::DelayNs;
-use epd_bus::{BusyPolarity, EpdInterface};
+use epd_bus::{BusyPolarity, DisplayPhase, EpdInterface};
 use esp_hal::time::Instant;
 use esp_hal::xtensa_lx::timer::get_cycle_count;
-
-use crate::firmware::{
-    presenter::{FrameUpdate, PresentationMode},
-    refresh_policy::RefreshRequest,
-};
 
 pub(crate) const CLOCK_HZ: u32 = 240_000_000;
 pub(crate) const TRACE_MONOTONIC_HZ: u32 = 1_000_000;
@@ -93,37 +88,14 @@ pub(crate) struct ProfiledEpdBus<'a, B> {
     metrics: PresentMetrics,
 
     next_busy_wait_index: u32,
-
-    trace_plan: Option<DisplayTracePlan>,
-    pending_phase: Option<DisplayPhase>,
 }
 
 impl<'a, B> ProfiledEpdBus<'a, B> {
-    pub(crate) fn new(
-        inner: &'a mut B,
-        controller: DisplayController,
-        update: FrameUpdate,
-    ) -> Self {
+    pub(crate) fn new(inner: &'a mut B) -> Self {
         Self {
             inner,
             metrics: PresentMetrics::default(),
-
             next_busy_wait_index: 0,
-
-            trace_plan: Some(DisplayTracePlan::new(controller, update)),
-            pending_phase: None,
-        }
-    }
-
-    pub(crate) fn new_preparation(inner: &'a mut B) -> Self {
-        Self {
-            inner,
-            metrics: PresentMetrics::default(),
-
-            next_busy_wait_index: 0,
-
-            trace_plan: None,
-            pending_phase: None,
         }
     }
 
@@ -134,44 +106,6 @@ impl<'a, B> ProfiledEpdBus<'a, B> {
     #[inline(always)]
     fn record_io(&mut self, cycles: u32, bytes: u64) {
         self.metrics.record_io(cycles, bytes);
-    }
-
-    fn observe_command(&mut self, command: u8) {
-        let phase = match command {
-            EPD_COMMAND_POWER_ON => Some(DisplayPhase::PowerOn),
-
-            EPD_COMMAND_DISPLAY_REFRESH => {
-                let phase = self
-                    .trace_plan
-                    .as_mut()
-                    .map(DisplayTracePlan::next_refresh_phase)
-                    .unwrap_or(DisplayPhase::Unknown);
-
-                Some(phase)
-            }
-
-            EPD_COMMAND_POWER_OFF => Some(DisplayPhase::PowerOff),
-
-            _ => None,
-        };
-
-        let Some(phase) = phase else {
-            return;
-        };
-
-        self.pending_phase = Some(phase);
-    }
-
-    pub(crate) fn expect_power_off_completion(&mut self) {
-        debug_assert!(self.pending_phase.is_none());
-
-        self.pending_phase = Some(DisplayPhase::PowerOff);
-    }
-
-    pub(crate) fn expect_power_on_completion(&mut self) {
-        debug_assert!(self.pending_phase.is_none());
-
-        self.pending_phase = Some(DisplayPhase::PowerOn);
     }
 }
 
@@ -187,10 +121,6 @@ where
         let result = self.inner.command(command).await;
 
         self.record_io(timer.elapsed(), 1);
-
-        if result.is_ok() {
-            self.observe_command(command);
-        }
 
         result
     }
@@ -223,18 +153,7 @@ where
     }
 
     fn is_busy(&mut self, polarity: BusyPolarity) -> Result<bool, Self::Error> {
-        let result = self.inner.is_busy(polarity);
-
-        let ready = match &result {
-            Ok(busy) => !*busy,
-            Err(_) => false,
-        };
-
-        if ready && self.pending_phase == Some(DisplayPhase::PowerOff) {
-            self.pending_phase = None;
-        }
-
-        result
+        self.inner.is_busy(polarity)
     }
 
     async fn wait_busy<D>(
@@ -245,13 +164,24 @@ where
     where
         D: DelayNs,
     {
+        self.wait_busy_for(polarity, DisplayPhase::Unknown, delay)
+            .await
+    }
+
+    async fn wait_busy_for<D>(
+        &mut self,
+        polarity: BusyPolarity,
+        phase: DisplayPhase,
+        delay: &mut D,
+    ) -> Result<(), Self::Error>
+    where
+        D: DelayNs,
+    {
         let wait_index = self.next_busy_wait_index;
 
         self.next_busy_wait_index = self.next_busy_wait_index.saturating_add(1);
 
-        let phase = self.pending_phase.take().unwrap_or(DisplayPhase::Unknown);
-
-        let phase_trace = phase.trace_async_span();
+        let phase_trace = trace_display_phase(phase);
 
         let busy_trace = inkpaper_trace::async_span!(
             target: "display.present",
@@ -259,7 +189,7 @@ where
             index = wait_index,
         );
 
-        let result = self.inner.wait_busy(polarity, delay).await;
+        let result = self.inner.wait_busy_for(polarity, phase, delay).await;
 
         drop(busy_trace);
         drop(phase_trace);
@@ -299,136 +229,43 @@ where
     }
 }
 
-const EPD_COMMAND_POWER_OFF: u8 = 0x02;
-
-const EPD_COMMAND_POWER_ON: u8 = 0x04;
-
-const EPD_COMMAND_DISPLAY_REFRESH: u8 = 0x12;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DisplayController {
-    Ssd1677,
-    Uc8179,
-    Uc8279,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DisplayPhase {
-    Unknown,
-    PowerOn,
-    BinaryFullRefresh,
-    BinaryFastRefresh,
-    GrayscaleBaseRefresh,
-    GrayscalePrecondition,
-    GrayscaleActivate,
-    GrayscaleRefresh,
-    PowerOff,
-}
-
-impl DisplayPhase {
-    #[inline(always)]
-    fn trace_async_span(self) -> inkpaper_trace::AsyncSpan {
-        match self {
-            Self::Unknown => {
-                inkpaper_trace::async_span!(target: "display.phase", "unknown")
-            }
-
-            Self::PowerOn => {
-                inkpaper_trace::async_span!(target: "display.phase", "power_on")
-            }
-
-            Self::BinaryFullRefresh => {
-                inkpaper_trace::async_span!(target: "display.phase", "binary_full_refresh")
-            }
-
-            Self::BinaryFastRefresh => {
-                inkpaper_trace::async_span!(target: "display.phase", "binary_fast_refresh")
-            }
-
-            Self::GrayscaleBaseRefresh => {
-                inkpaper_trace::async_span!(target: "display.phase", "grayscale_base_refresh")
-            }
-
-            Self::GrayscalePrecondition => {
-                inkpaper_trace::async_span!(target: "display.phase", "grayscale_precondition")
-            }
-
-            Self::GrayscaleActivate => {
-                inkpaper_trace::async_span!(target: "display.phase", "grayscale_activate")
-            }
-
-            Self::GrayscaleRefresh => {
-                inkpaper_trace::async_span!(target: "display.phase", "grayscale_refresh")
-            }
-
-            Self::PowerOff => {
-                inkpaper_trace::async_span!(target: "display.phase", "power_off")
-            }
+#[inline(always)]
+fn trace_display_phase(phase: DisplayPhase) -> inkpaper_trace::AsyncSpan {
+    match phase {
+        DisplayPhase::Unknown => {
+            inkpaper_trace::async_span!(target: "display.phase", "unknown")
         }
-    }
-}
 
-#[derive(Debug, Clone, Copy)]
-struct DisplayTracePlan {
-    controller: DisplayController,
-    presentation: PresentationMode,
-    refresh: RefreshRequest,
-    refresh_index: u8,
-}
-
-impl DisplayTracePlan {
-    const fn new(controller: DisplayController, update: FrameUpdate) -> Self {
-        Self {
-            controller,
-            presentation: update.presentation(),
-            refresh: update.refresh(),
-            refresh_index: 0,
+        DisplayPhase::PowerOn => {
+            inkpaper_trace::async_span!(target: "display.phase", "power_on")
         }
-    }
 
-    fn next_refresh_phase(&mut self) -> DisplayPhase {
-        let index = self.refresh_index;
+        DisplayPhase::BinaryFullRefresh => {
+            inkpaper_trace::async_span!(target: "display.phase", "binary_full_refresh")
+        }
 
-        self.refresh_index = self.refresh_index.saturating_add(1);
+        DisplayPhase::BinaryFastRefresh => {
+            inkpaper_trace::async_span!(target: "display.phase", "binary_fast_refresh")
+        }
 
-        match (self.controller, self.presentation, self.refresh, index) {
-            (_, PresentationMode::Binary, RefreshRequest::Full, _) => {
-                DisplayPhase::BinaryFullRefresh
-            }
+        DisplayPhase::GrayscaleBaseRefresh => {
+            inkpaper_trace::async_span!(target: "display.phase", "grayscale_base_refresh")
+        }
 
-            (_, PresentationMode::Binary, RefreshRequest::Fast, _) => {
-                DisplayPhase::BinaryFastRefresh
-            }
+        DisplayPhase::GrayscalePrecondition => {
+            inkpaper_trace::async_span!(target: "display.phase", "grayscale_precondition")
+        }
 
-            (
-                DisplayController::Uc8179,
-                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
-                RefreshRequest::Full,
-                0,
-            ) => DisplayPhase::GrayscaleBaseRefresh,
+        DisplayPhase::GrayscaleActivate => {
+            inkpaper_trace::async_span!(target: "display.phase", "grayscale_activate")
+        }
 
-            (
-                DisplayController::Uc8179,
-                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
-                RefreshRequest::Full,
-                _,
-            ) => DisplayPhase::GrayscaleActivate,
+        DisplayPhase::GrayscaleRefresh => {
+            inkpaper_trace::async_span!(target: "display.phase", "grayscale_refresh")
+        }
 
-            (
-                DisplayController::Uc8179,
-                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
-                RefreshRequest::Fast,
-                0,
-            ) => DisplayPhase::GrayscalePrecondition,
-
-            (
-                DisplayController::Uc8179,
-                PresentationMode::Gray4 | PresentationMode::BinaryPreservingGray,
-                RefreshRequest::Fast,
-                _,
-            ) => DisplayPhase::GrayscaleActivate,
-
-            _ => DisplayPhase::GrayscaleRefresh,
+        DisplayPhase::PowerOff => {
+            inkpaper_trace::async_span!(target: "display.phase", "power_off")
         }
     }
 }
