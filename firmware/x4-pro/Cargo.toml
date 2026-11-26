@@ -23,8 +23,7 @@ inkpaper-ui = { path = "../../crates/ui", features = ["alloc", "defmt"] }
 inkpaper-ui-eink = { path = "../../crates/ui-eink", features = ["defmt"] }
 sntp = { path = "../../crates/sntp", features = ["defmt"] }
 ssd1677 = { path = "../../crates/ssd1677", features = ["defmt"] }
-uc8179 = { path = "../../crates/uc8179", features = ["defmt"] }
-uc8279-x4 = { path = "../../crates/uc8279-x4", features = ["defmt"] }
+uc8xxx = { path = "../../crates/uc8xxx", features = ["defmt"] }
 xteink-display-probe = { path = "../../crates/xteink-display-probe", features = ["defmt"] }
 
 defmt = { workspace = true }

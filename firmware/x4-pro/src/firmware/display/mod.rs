@@ -1,9 +1,8 @@
 use defmt::Format;
 use embedded_hal_async::delay::DelayNs;
-use epd_bus::{EpdInterface, Region};
+use epd_bus::{EpdInterface, PanelError, RefreshMode as EpdRefreshMode, Region};
 use ssd1677::{GDEQ0426T82, RefreshMode as SsdRefreshMode, Ssd1677};
-use uc8179::{RefreshMode as Uc8179RefreshMode, Uc8179, X4_PRO_800X480 as UC8179_X4_PRO};
-use uc8279_x4::{RefreshMode as Uc8279RefreshMode, Uc8279X4, X4_PRO_800X480 as UC8279_X4_PRO};
+use uc8xxx::{UC8179_X4_PRO_800X480, UC8279_X4_PRO_800X480, Uc8xxx, Variant as UcVariant};
 use xteink_display_probe::Controller;
 
 #[cfg(feature = "trace")]
@@ -21,8 +20,7 @@ pub mod power;
 #[derive(Debug, Format)]
 pub enum Error<E> {
     Ssd1677(ssd1677::Error<E>),
-    Uc8179(uc8179::Error<E>),
-    Uc8279(uc8279_x4::Error<E>),
+    Uc8xxx(PanelError<E>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,21 +37,20 @@ impl PresentPower {
 
 pub enum X4Panel {
     Ssd1677(Ssd1677),
-    Uc8179(Uc8179),
-    Uc8279(Uc8279X4),
+    Uc8xxx(Uc8xxx),
 }
 
 impl X4Panel {
     pub const fn new(controller: Controller) -> Self {
         match controller {
             Controller::Ssd1677 => Self::Ssd1677(Ssd1677::new(GDEQ0426T82)),
-            Controller::Uc8179 => Self::Uc8179(Uc8179::new(UC8179_X4_PRO)),
-            Controller::Uc8279 => Self::Uc8279(Uc8279X4::new(UC8279_X4_PRO)),
+            Controller::Uc8179 => Self::Uc8xxx(Uc8xxx::new(UC8179_X4_PRO_800X480)),
+            Controller::Uc8279 => Self::Uc8xxx(Uc8xxx::new(UC8279_X4_PRO_800X480)),
         }
     }
 
     pub const fn supports_idle_power_hold(&self) -> bool {
-        matches!(self, Self::Uc8179(_))
+        matches!(self, Self::Uc8xxx(panel) if matches!(panel.variant(), UcVariant::Uc8179))
     }
 
     pub async fn initialize<B, D>(
@@ -67,8 +64,7 @@ impl X4Panel {
     {
         match self {
             X4Panel::Ssd1677(panel) => panel.initialize(bus, delay).await.map_err(Error::Ssd1677),
-            X4Panel::Uc8179(panel) => panel.initialize(bus, delay).await.map_err(Error::Uc8179),
-            X4Panel::Uc8279(panel) => panel.initialize(bus, delay).await.map_err(Error::Uc8279),
+            X4Panel::Uc8xxx(panel) => panel.initialize(bus, delay).await.map_err(Error::Uc8xxx),
         }
     }
 
@@ -81,7 +77,7 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        let Self::Uc8179(panel) = self else {
+        let Self::Uc8xxx(panel) = self else {
             return Ok(());
         };
 
@@ -92,7 +88,7 @@ impl X4Panel {
             panel
                 .begin_power_off(&mut profiled_bus, delay)
                 .await
-                .map_err(Error::Uc8179)
+                .map_err(Error::Uc8xxx)
         }
 
         #[cfg(not(feature = "trace"))]
@@ -100,7 +96,7 @@ impl X4Panel {
             panel
                 .begin_power_off(bus, delay)
                 .await
-                .map_err(Error::Uc8179)
+                .map_err(Error::Uc8xxx)
         }
     }
 
@@ -113,7 +109,7 @@ impl X4Panel {
         B: EpdInterface,
         D: DelayNs,
     {
-        let Self::Uc8179(panel) = self else {
+        let Self::Uc8xxx(panel) = self else {
             return Ok(());
         };
 
@@ -130,7 +126,7 @@ impl X4Panel {
             panel
                 .prepare_power_on(&mut profiled_bus, delay)
                 .await
-                .map_err(Error::Uc8179)
+                .map_err(Error::Uc8xxx)
         }
 
         #[cfg(not(feature = "trace"))]
@@ -138,7 +134,7 @@ impl X4Panel {
             panel
                 .prepare_power_on(bus, delay)
                 .await
-                .map_err(Error::Uc8179)
+                .map_err(Error::Uc8xxx)
         }
     }
 
@@ -164,13 +160,15 @@ impl X4Panel {
         let (result, present_metrics) = {
             let controller = match self {
                 Self::Ssd1677(_) => DisplayController::Ssd1677,
-                Self::Uc8179(_) => DisplayController::Uc8179,
-                Self::Uc8279(_) => DisplayController::Uc8279,
+                Self::Uc8xxx(panel) => match panel.variant() {
+                    UcVariant::Uc8179 => DisplayController::Uc8179,
+                    UcVariant::Uc8279X4 => DisplayController::Uc8279,
+                },
             };
 
             let (pending_power_off, pending_power_on) = match self {
-                Self::Uc8179(panel) => (panel.power_off_pending(), panel.power_on_pending()),
-                Self::Ssd1677(_) | Self::Uc8279(_) => (false, false),
+                Self::Uc8xxx(panel) => (panel.power_off_pending(), panel.power_on_pending()),
+                Self::Ssd1677(_) => (false, false),
             };
 
             debug_assert!(!(pending_power_off && pending_power_on));
@@ -241,10 +239,9 @@ impl X4Panel {
 
                 match self {
                     Self::Ssd1677(panel) => present_ssd1677(panel, bus, delay, frame, update).await,
-                    Self::Uc8179(panel) => {
-                        present_uc8179(panel, bus, delay, frame, update, power.turn_off()).await
+                    Self::Uc8xxx(panel) => {
+                        present_uc8xxx(panel, bus, delay, frame, update, power.turn_off()).await
                     }
-                    Self::Uc8279(panel) => present_uc8279(panel, bus, delay, frame, update).await,
                 }
             }
         }
@@ -286,10 +283,14 @@ impl X4Panel {
                     .map(|_| ())
                     .map_err(Error::Ssd1677)
             }
-            Self::Uc8179(panel) => {
+            Self::Uc8xxx(panel) => {
                 let mode = match update.refresh() {
-                    RefreshRequest::Full => Uc8179RefreshMode::Full,
-                    RefreshRequest::Fast => Uc8179RefreshMode::Fast,
+                    RefreshRequest::Full => EpdRefreshMode::Full,
+                    RefreshRequest::Fast => EpdRefreshMode::Fast,
+                };
+                let turn_off = match panel.variant() {
+                    UcVariant::Uc8179 => power.turn_off(),
+                    UcVariant::Uc8279X4 => true,
                 };
 
                 panel
@@ -300,16 +301,12 @@ impl X4Panel {
                         msb,
                         Region::new(damage.x, damage.y, damage.width, damage.height),
                         mode,
-                        power.turn_off(),
+                        turn_off,
                     )
                     .await
                     .map(|_| ())
-                    .map_err(Error::Uc8179)
+                    .map_err(Error::Uc8xxx)
             }
-            Self::Uc8279(panel) => panel
-                .display_grayscale(bus, delay, lsb, msb, true)
-                .await
-                .map_err(Error::Uc8279),
         }
     }
 
@@ -351,23 +348,25 @@ impl X4Panel {
                 .map(|_| ())
                 .map_err(Error::Ssd1677),
 
-            Self::Uc8179(panel) => panel
-                .display_binary_window_preserving_grayscale(
-                    bus,
-                    delay,
-                    lsb,
-                    msb,
-                    Region::new(damage.x, damage.y, damage.width, damage.height),
-                    power.turn_off(),
-                )
-                .await
-                .map(|_| ())
-                .map_err(Error::Uc8179),
+            Self::Uc8xxx(panel) => {
+                let turn_off = match panel.variant() {
+                    UcVariant::Uc8179 => power.turn_off(),
+                    UcVariant::Uc8279X4 => true,
+                };
 
-            Self::Uc8279(panel) => panel
-                .display_grayscale(bus, delay, lsb, msb, true)
-                .await
-                .map_err(Error::Uc8279),
+                panel
+                    .display_binary_window_preserving_grayscale(
+                        bus,
+                        delay,
+                        lsb,
+                        msb,
+                        Region::new(damage.x, damage.y, damage.width, damage.height),
+                        turn_off,
+                    )
+                    .await
+                    .map(|_| ())
+                    .map_err(Error::Uc8xxx)
+            }
         }
     }
 
@@ -382,8 +381,7 @@ impl X4Panel {
     {
         match self {
             Self::Ssd1677(panel) => panel.deep_sleep(bus, delay).await.map_err(Error::Ssd1677),
-            X4Panel::Uc8179(panel) => panel.deep_sleep(bus, delay).await.map_err(Error::Uc8179),
-            X4Panel::Uc8279(panel) => panel.deep_sleep(bus, delay).await.map_err(Error::Uc8279),
+            Self::Uc8xxx(panel) => panel.deep_sleep(bus, delay).await.map_err(Error::Uc8xxx),
         }
     }
 
@@ -394,16 +392,18 @@ impl X4Panel {
                 BinaryOverGrayMode::NativeWindow,
                 GrayscaleUpdateMode::Window,
             ),
-            Self::Uc8179(_) => EInkCapabilities::new(
-                BinaryUpdateMode::FullPlane,
-                BinaryOverGrayMode::PreconditionedWindow,
-                GrayscaleUpdateMode::Window,
-            ),
-            Self::Uc8279(_) => EInkCapabilities::new(
-                BinaryUpdateMode::FullPlane,
-                BinaryOverGrayMode::Unsupported,
-                GrayscaleUpdateMode::FullPlane,
-            ),
+            Self::Uc8xxx(panel) => match panel.variant() {
+                UcVariant::Uc8179 => EInkCapabilities::new(
+                    BinaryUpdateMode::FullPlane,
+                    BinaryOverGrayMode::PreconditionedWindow,
+                    GrayscaleUpdateMode::Window,
+                ),
+                UcVariant::Uc8279X4 => EInkCapabilities::new(
+                    BinaryUpdateMode::FullPlane,
+                    BinaryOverGrayMode::Unsupported,
+                    GrayscaleUpdateMode::FullPlane,
+                ),
+            },
         }
     }
 }
@@ -450,8 +450,8 @@ where
     }
 }
 
-async fn present_uc8179<B, D>(
-    panel: &mut Uc8179,
+async fn present_uc8xxx<B, D>(
+    panel: &mut Uc8xxx,
     bus: &mut B,
     delay: &mut D,
     frame: &[u8],
@@ -463,42 +463,16 @@ where
     D: DelayNs,
 {
     let mode = match update.refresh() {
-        RefreshRequest::Full => Uc8179RefreshMode::Full,
-        RefreshRequest::Fast => Uc8179RefreshMode::Fast,
+        RefreshRequest::Full => EpdRefreshMode::Full,
+        RefreshRequest::Fast => EpdRefreshMode::Fast,
+    };
+    let turn_off = match panel.variant() {
+        UcVariant::Uc8179 => turn_off,
+        UcVariant::Uc8279X4 => true,
     };
 
-    // UC8179 currently uses a whole-plane differential FAST refresh.
-    //
-    // keep the controller powered across a short burst when requested by the display-power
-    // policy. The policy, not this hardware dispatch layer, decides how long that
-    // powered session lasts.
     panel
         .display(bus, delay, frame, mode, turn_off)
         .await
-        .map_err(Error::Uc8179)
-}
-
-async fn present_uc8279<B, D>(
-    panel: &mut Uc8279X4,
-    bus: &mut B,
-    delay: &mut D,
-    frame: &[u8],
-    update: FrameUpdate,
-) -> Result<(), Error<B::Error>>
-where
-    B: EpdInterface,
-    D: DelayNs,
-{
-    let mode = match update.refresh() {
-        RefreshRequest::Full => Uc8279RefreshMode::Full,
-
-        RefreshRequest::Fast => Uc8279RefreshMode::Fast,
-    };
-
-    // the X4 UC8279 variant already owns its required full PTL sequence.
-    // keep that controller-specific behavior inside its driver.
-    panel
-        .display(bus, delay, frame, mode, true)
-        .await
-        .map_err(Error::Uc8279)
+        .map_err(Error::Uc8xxx)
 }
