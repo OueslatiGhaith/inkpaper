@@ -49,11 +49,11 @@ fn pagination_produces_stable_content_ranges() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     assert_eq!(chapter.content_len(), ContentOffset::new(18));
 
@@ -92,11 +92,11 @@ fn repagination_changes_page_count_not_canonical_content_extent() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = MonoMeasurer::default();
 
@@ -146,11 +146,11 @@ fn hidden_css_text_keeps_its_content_offsets_without_using_layout_space() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let content_end = chapter.content_len();
 
@@ -184,11 +184,11 @@ fn image_can_occupy_a_page_without_advancing_content_location() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let image = chapter
         .blocks()
@@ -274,11 +274,11 @@ fn hidden_image_does_not_consume_page_space() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = MonoMeasurer {
         image_dimensions: Some(ImageDimensions::new(64, 32)),
@@ -320,11 +320,11 @@ fn pagination_emits_positioned_text_fragments_and_links() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = MonoMeasurer::default();
 
@@ -392,11 +392,11 @@ fn pagination_propagates_text_measurement_errors() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = FailingMeasurer;
 
@@ -486,11 +486,11 @@ fn owned_pagination_keeps_text_links_images_and_ranges_after_chapter_drop() {
 
         let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-        let chapter = future::block_on(epub.load_spine_chapter(0))
+        let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
             .unwrap()
             .unwrap();
 
-        let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+        let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
         let mut measurer = MonoMeasurer {
             image_dimensions: Some(ImageDimensions::new(6, 3)),
@@ -542,10 +542,10 @@ fn owned_pagination_keeps_text_links_images_and_ranges_after_chapter_drop() {
 fn paginate_positions(body: &str, width: u32, height: u32) -> inkpaper_reader::Pagination<'static> {
     let bytes = build_test_epub(body);
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
     let mut measurer = MonoMeasurer {
         image_dimensions: Some(ImageDimensions::new(4, 2)),
     };
@@ -631,10 +631,10 @@ fn hidden_and_unmeasurable_images_do_not_change_following_flow_coordinates() {
     let body = r#"<p><img style="display:none" src="../Images/picture.jpg"/><br style="display:none"/>abcd<img src="../Images/picture.jpg"/>efgh</p>"#;
     let bytes = build_test_epub(body);
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
     let mut positions = Vec::new();
 
     for dimensions in [None, Some(ImageDimensions::new(4, 2))] {
@@ -701,11 +701,11 @@ fn css_block_margins_control_spacing_between_blocks() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = MonoMeasurer::default();
 
@@ -745,11 +745,11 @@ fn css_text_indent_applies_only_to_first_line_of_block() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = MonoMeasurer::default();
 
@@ -794,11 +794,11 @@ fn css_line_height_controls_line_boxes() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = MonoMeasurer::default();
 
@@ -836,11 +836,11 @@ fn line_bounds(body: &str, settings: ReaderSettings) -> Vec<Rect> {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = MonoMeasurer::default();
 
@@ -904,11 +904,11 @@ fn pagination_coalesces_contiguous_text_on_the_same_line() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = MonoMeasurer::default();
 
@@ -1061,11 +1061,11 @@ fn line_fragments(body: &str, settings: ReaderSettings) -> Vec<(String, Rect, u3
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let mut measurer = MonoMeasurer::default();
 
@@ -1286,10 +1286,10 @@ fn fragments_say_whether_the_line_break_added_their_hyphen() {
     let hyphenated = |body: &str, settings: ReaderSettings| -> Vec<(String, bool)> {
         let bytes = build_test_epub(body);
         let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
-        let chapter = future::block_on(epub.load_spine_chapter(0))
+        let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
             .unwrap()
             .unwrap();
-        let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+        let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
         let pagination = paginate_chapter(
             &chapter,

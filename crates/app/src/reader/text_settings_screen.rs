@@ -196,8 +196,8 @@ impl PreviewLayouter {
             Some(parsed) => parsed,
             None => {
                 let path = ArchivePath::new("preview.xhtml").ok()?;
-                let chapter = Chapter::parse(PREVIEW_XHTML, path).ok()?;
-                let styles = ChapterStyles::defaults(&chapter);
+                let (chapter, style_context) = Chapter::parse(PREVIEW_XHTML, path).ok()?;
+                let styles = ChapterStyles::defaults(style_context);
                 self.parsed.insert((chapter, styles))
             }
         };

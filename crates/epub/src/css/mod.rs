@@ -1,6 +1,6 @@
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
-use crate::{Chapter, StyleNode, StyleNodeId};
+use crate::{StyleContext, StyleNode, StyleNodeId};
 
 mod parser;
 
@@ -229,8 +229,9 @@ pub struct ChapterStyles {
 impl ChapterStyles {
     /// The chapter's styles from its markup alone, such as bold headings and
     /// italic `<em>`, ignoring the book's stylesheets and `style` attributes.
-    pub fn defaults(chapter: &Chapter) -> Self {
-        resolve_chapter_styles(chapter, None)
+    /// Consumes `style_context` so the element tree is dropped once resolved.
+    pub fn defaults(style_context: StyleContext) -> Self {
+        resolve_chapter_styles(&style_context, None)
     }
 
     pub fn style(&self, node: StyleNodeId) -> Option<ComputedStyle> {
@@ -402,19 +403,13 @@ struct CascadedStyle {
 
 /// `None` leaves out the book's styles: its stylesheets and `style` attributes.
 pub(crate) fn resolve_chapter_styles(
-    chapter: &Chapter,
+    style_context: &StyleContext,
     stylesheets: Option<&[&Stylesheet]>,
 ) -> ChapterStyles {
-    let nodes = chapter.style_nodes();
+    let nodes = style_context.style_nodes();
     let mut styles = Vec::with_capacity(nodes.len());
 
-    for index in 0..chapter.style_nodes().len() {
-        let node_id = StyleNodeId::new(index);
-
-        let node = chapter
-            .style_node(node_id)
-            .expect("style node index comes from chapter style arena");
-
+    for node in nodes {
         let parent = node
             .parent()
             .and_then(|parent| styles.get(parent.index()).copied());

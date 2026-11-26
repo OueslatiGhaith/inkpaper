@@ -2,8 +2,8 @@ use std::cell::Cell;
 
 use futures_lite::future;
 use inkpaper_epub::{
-    ArchivePath, BlockKind, BookLocation, ContentOffset, Epub, FontStyle, FontWeight, Inline,
-    SpineIndex, TextAlign,
+    ArchivePath, BlockKind, BookLocation, ChapterStyles, ContentOffset, Epub, FontStyle,
+    FontWeight, Inline, SpineIndex, TextAlign,
 };
 use inkpaper_io::{ByteSource, SliceSource, SliceSourceError};
 
@@ -107,9 +107,10 @@ fn loads_spine_xhtml_as_normalized_chapter() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
+    let styles = ChapterStyles::defaults(style_context);
 
     assert_eq!(chapter.path().as_str(), "OPS/Text/chapter1.xhtml");
     assert_eq!(chapter.blocks().len(), 1);
@@ -124,8 +125,9 @@ fn loads_spine_xhtml_as_normalized_chapter() {
     };
 
     assert_eq!(text.text(), "One");
-    assert!(!text.style().bold());
-    assert!(!text.style().italic());
+    let text_style = styles.style(text.style_node()).unwrap();
+    assert_eq!(text_style.font_weight(), FontWeight::Normal);
+    assert_eq!(text_style.font_style(), FontStyle::Normal);
     assert!(text.link().is_none());
     assert!(
         future::block_on(epub.load_spine_chapter(99))
@@ -140,11 +142,11 @@ fn loads_and_resolves_external_chapter_styles() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, style_context) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
-    let styles = future::block_on(epub.load_chapter_styles(&chapter)).unwrap();
+    let styles = future::block_on(epub.load_chapter_styles(style_context)).unwrap();
 
     let text = chapter.blocks()[0]
         .inlines()
@@ -201,7 +203,7 @@ fn builds_stable_location_from_spine_and_normalized_content_offset() {
 
     let mut epub = future::block_on(Epub::open(SliceSource::new(&bytes))).unwrap();
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, _) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
@@ -454,7 +456,7 @@ fn loads_percent_encoded_manifest_resource_path() {
     assert_eq!(item.href(), "Text/Caf%C3%A9%20Chapter.xhtml");
     assert_eq!(item.path().as_str(), "OPS/Text/Café Chapter.xhtml");
 
-    let chapter = future::block_on(epub.load_spine_chapter(0))
+    let (chapter, _) = future::block_on(epub.load_spine_chapter(0))
         .unwrap()
         .unwrap();
 
@@ -532,15 +534,15 @@ fn caches_parsed_external_stylesheets_across_chapters() {
     }))
     .unwrap();
 
-    let ch1 = future::block_on(epub.load_spine_chapter(0)).unwrap().unwrap();
+    let (ch1, ctx1) = future::block_on(epub.load_spine_chapter(0)).unwrap().unwrap();
     reads.set(0);
-    let styles1 = future::block_on(epub.load_chapter_styles(&ch1)).unwrap();
+    let styles1 = future::block_on(epub.load_chapter_styles(ctx1)).unwrap();
     assert!(reads.get() > 0, "first chapter should read external CSS from archive");
     assert_eq!(styles1.style(ch1.blocks()[0].style_node()).unwrap().text_align(), TextAlign::Center);
 
-    let ch2 = future::block_on(epub.load_spine_chapter(1)).unwrap().unwrap();
+    let (ch2, ctx2) = future::block_on(epub.load_spine_chapter(1)).unwrap().unwrap();
     reads.set(0);
-    let styles2 = future::block_on(epub.load_chapter_styles(&ch2)).unwrap();
+    let styles2 = future::block_on(epub.load_chapter_styles(ctx2)).unwrap();
     assert_eq!(reads.get(), 0, "second chapter should reuse cached parsed CSS without I/O");
     assert_eq!(styles2.style(ch2.blocks()[0].style_node()).unwrap().font_style(), FontStyle::Italic);
     assert_eq!(styles2.style(ch2.blocks()[0].style_node()).unwrap().text_align(), TextAlign::Center);

@@ -468,7 +468,7 @@ where
             .map_err(ReaderLoadError::Epub)?
     };
 
-    let Some(chapter) = chapter else {
+    let Some((chapter, style_context)) = chapter else {
         return Ok(None);
     };
 
@@ -482,11 +482,11 @@ where
         );
 
         if text.embedded_style() {
-            epub.load_chapter_styles(&chapter)
+            epub.load_chapter_styles(style_context)
                 .await
                 .map_err(ReaderLoadError::Epub)?
         } else {
-            ChapterStyles::defaults(&chapter)
+            ChapterStyles::defaults(style_context)
         }
     };
 

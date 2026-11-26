@@ -28,7 +28,7 @@ pub use navigation::{Navigation, NavigationEntry, NavigationTarget};
 pub use package::{ManifestItem, Metadata, Package, Spine, SpineItem};
 pub use path::{ArchivePath, PathError};
 pub use xhtml::{
-    BlockKind, Chapter, ChapterBlock, ChapterImage, Inline, InlineStyle, LinkTarget, StyleNode,
+    BlockKind, Chapter, ChapterBlock, ChapterImage, Inline, LinkTarget, StyleContext, StyleNode,
     StyleNodeId, StylesheetSource, TextRun,
 };
 
@@ -187,7 +187,7 @@ where
     pub async fn load_chapter(
         &mut self,
         path: &ArchivePath,
-    ) -> Result<Option<Chapter>, Error<S::Error>> {
+    ) -> Result<Option<(Chapter, StyleContext)>, Error<S::Error>> {
         let Some((path, media_type)) = self.package.manifest_item_by_path(path).map(|item| {
             (
                 item.path().clone(),
@@ -203,15 +203,15 @@ where
 
         let bytes = self.archive.read_entry(&path).await?;
         let xml = core::str::from_utf8(&bytes).map_err(Error::Utf8)?;
-        let chapter = parse_xhtml(xml, path).map_err(Error::Xhtml)?;
+        let parsed = parse_xhtml(xml, path).map_err(Error::Xhtml)?;
 
-        Ok(Some(chapter))
+        Ok(Some(parsed))
     }
 
     pub async fn load_spine_chapter(
         &mut self,
         index: usize,
-    ) -> Result<Option<Chapter>, Error<S::Error>> {
+    ) -> Result<Option<(Chapter, StyleContext)>, Error<S::Error>> {
         let Some(path) = self
             .package
             .spine_content_item(index)
@@ -223,13 +223,15 @@ where
         self.load_chapter(&path).await
     }
 
+    /// Resolves computed styles from `style_context` and consumes it so the
+    /// temporary DOM style nodes and stylesheet links are dropped immediately.
     pub async fn load_chapter_styles(
         &mut self,
-        chapter: &Chapter,
+        style_context: StyleContext,
     ) -> Result<ChapterStyles, Error<S::Error>> {
         let mut embedded = Vec::new();
 
-        for source in chapter.stylesheets() {
+        for source in style_context.stylesheets() {
             match source {
                 StylesheetSource::Embedded(css) => {
                     embedded.push(Stylesheet::parse(css));
@@ -253,10 +255,10 @@ where
             }
         }
 
-        let mut ordered = Vec::with_capacity(chapter.stylesheets().len());
+        let mut ordered = Vec::with_capacity(style_context.stylesheets().len());
         let mut embedded_index = 0usize;
 
-        for source in chapter.stylesheets() {
+        for source in style_context.stylesheets() {
             match source {
                 StylesheetSource::Embedded(_) => {
                     ordered.push(&embedded[embedded_index]);
@@ -270,7 +272,7 @@ where
             }
         }
 
-        Ok(resolve_chapter_styles(chapter, Some(&ordered)))
+        Ok(resolve_chapter_styles(&style_context, Some(&ordered)))
     }
 
     pub async fn image_dimensions(

@@ -9,20 +9,18 @@ mod style_context;
 mod tests;
 
 pub(crate) use parser::parse_xhtml;
-pub use style_context::{StyleNode, StyleNodeId, StylesheetSource};
+pub use style_context::{StyleContext, StyleNode, StyleNodeId, StylesheetSource};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chapter {
     path: ArchivePath,
     blocks: Vec<ChapterBlock>,
-    style_nodes: Vec<StyleNode>,
-    stylesheets: Vec<StylesheetSource>,
 }
 
 impl Chapter {
     /// A chapter from its XHTML outside any book, like a settings preview.
     /// `path` resolves its relative links and images.
-    pub fn parse(xhtml: &str, path: ArchivePath) -> Result<Self, crate::XhtmlError> {
+    pub fn parse(xhtml: &str, path: ArchivePath) -> Result<(Self, StyleContext), crate::XhtmlError> {
         parse_xhtml(xhtml, path)
     }
 
@@ -32,18 +30,6 @@ impl Chapter {
 
     pub fn blocks(&self) -> &[ChapterBlock] {
         &self.blocks
-    }
-
-    pub fn style_nodes(&self) -> &[StyleNode] {
-        &self.style_nodes
-    }
-
-    pub fn style_node(&self, id: StyleNodeId) -> Option<&StyleNode> {
-        self.style_nodes.get(id.index())
-    }
-
-    pub fn stylesheets(&self) -> &[StylesheetSource] {
-        &self.stylesheets
     }
 
     pub fn content_len(&self) -> ContentOffset {
@@ -120,7 +106,6 @@ pub enum Inline {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextRun {
     text: String,
-    style: InlineStyle,
     style_node: StyleNodeId,
     link: Option<LinkTarget>,
 }
@@ -128,10 +113,6 @@ pub struct TextRun {
 impl TextRun {
     pub fn text(&self) -> &str {
         &self.text
-    }
-
-    pub const fn style(&self) -> InlineStyle {
-        self.style
     }
 
     pub const fn style_node(&self) -> StyleNodeId {
@@ -166,22 +147,6 @@ impl ChapterImage {
 
     pub const fn link(&self) -> Option<&LinkTarget> {
         self.link.as_ref()
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct InlineStyle {
-    bold: bool,
-    italic: bool,
-}
-
-impl InlineStyle {
-    pub const fn bold(self) -> bool {
-        self.bold
-    }
-
-    pub const fn italic(self) -> bool {
-        self.italic
     }
 }
 
@@ -278,7 +243,7 @@ struct ChapterBlockBuilder {
     element_depth: Option<usize>,
     style_node: StyleNodeId,
     inlines: Vec<Inline>,
-    pending_space: Option<(InlineStyle, Option<LinkTarget>, StyleNodeId)>,
+    pending_space: Option<(Option<LinkTarget>, StyleNodeId)>,
 }
 
 impl ChapterBlockBuilder {
@@ -317,22 +282,16 @@ impl ChapterBlockBuilder {
     }
 
     fn push_image(&mut self, image: ChapterImage) {
-        if let Some((space_style, space_link, space_style_node)) = self.pending_space.take()
+        if let Some((space_link, space_style_node)) = self.pending_space.take()
             && self.can_precede_collapsed_space()
         {
-            self.append_text(" ", space_style, space_link, space_style_node);
+            self.append_text(" ", space_link, space_style_node);
         }
 
         self.inlines.push(Inline::Image(image));
     }
 
-    fn push_text(
-        &mut self,
-        text: &str,
-        style: InlineStyle,
-        link: Option<LinkTarget>,
-        style_node: StyleNodeId,
-    ) {
+    fn push_text(&mut self, text: &str, link: Option<LinkTarget>, style_node: StyleNodeId) {
         let mut output = String::new();
 
         for character in text.chars() {
@@ -349,7 +308,7 @@ impl ChapterBlockBuilder {
                 // without flushing "Chapter" here, the block still appears empty when
                 // the trailing whitespace is encountered and the separating space is lost.
                 if !output.is_empty() {
-                    self.append_text(&output, style, link.clone(), style_node);
+                    self.append_text(&output, link.clone(), style_node);
 
                     output.clear();
                 }
@@ -358,7 +317,7 @@ impl ChapterBlockBuilder {
                 // in particular, whitespace immediately following <br> must not produce
                 // a leading space on the next line.
                 if self.can_precede_collapsed_space() && self.pending_space.is_none() {
-                    self.pending_space = Some((style, link.clone(), style_node));
+                    self.pending_space = Some((link.clone(), style_node));
                 }
 
                 continue;
@@ -373,34 +332,27 @@ impl ChapterBlockBuilder {
             //   "See "   unlinked
             //   "website" linked
             if output.is_empty()
-                && let Some((space_style, space_link, space_style_node)) = self.pending_space.take()
+                && let Some((space_link, space_style_node)) = self.pending_space.take()
                 && self.can_precede_collapsed_space()
                 && !suppresses_preceding_space(character)
             {
-                self.append_text(" ", space_style, space_link, space_style_node);
+                self.append_text(" ", space_link, space_style_node);
             }
 
             output.push(character);
         }
 
         if !output.is_empty() {
-            self.append_text(&output, style, link, style_node);
+            self.append_text(&output, link, style_node);
         }
     }
 
-    fn append_text(
-        &mut self,
-        text: &str,
-        style: InlineStyle,
-        link: Option<LinkTarget>,
-        style_node: StyleNodeId,
-    ) {
+    fn append_text(&mut self, text: &str, link: Option<LinkTarget>, style_node: StyleNodeId) {
         if text.is_empty() {
             return;
         }
 
         if let Some(Inline::Text(last)) = self.inlines.last_mut()
-            && last.style == style
             && last.link == link
             && last.style_node == style_node
         {
@@ -410,7 +362,6 @@ impl ChapterBlockBuilder {
 
         self.inlines.push(Inline::Text(TextRun {
             text: String::from(text),
-            style,
             style_node,
             link,
         }));

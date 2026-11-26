@@ -48,8 +48,8 @@ fn paginate(
     card: Option<&CardFont>,
 ) -> Option<Vec<Page<'static>>> {
     let path = ArchivePath::new("definition.xhtml").ok()?;
-    let chapter = Chapter::parse(xhtml, path).ok()?;
-    let styles = ChapterStyles::defaults(&chapter);
+    let (chapter, style_context) = Chapter::parse(xhtml, path).ok()?;
+    let styles = ChapterStyles::defaults(style_context);
 
     let fonts = ReaderFonts::new(card_for(text.font(), card)).ok()?;
     let mut measurer = ReaderMeasurer::new(&fonts, Default::default());

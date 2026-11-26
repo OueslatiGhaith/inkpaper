@@ -7,7 +7,7 @@ use crate::{
 };
 
 use super::{
-    BlockKind, Chapter, ChapterBlock, ChapterBlockBuilder, InlineStyle, LinkTarget, StyleNode,
+    BlockKind, Chapter, ChapterBlock, ChapterBlockBuilder, LinkTarget, StyleContext, StyleNode,
     StyleNodeId, StylesheetSource,
 };
 
@@ -17,8 +17,6 @@ enum ElementKind {
     Paragraph,
     Heading(u8),
     ListItem,
-    Strong,
-    Emphasis,
     Anchor,
     Image,
     Break,
@@ -44,9 +42,6 @@ impl ElementKind {
             "h6" => Self::Heading(6),
 
             "li" => Self::ListItem,
-
-            "strong" | "b" => Self::Strong,
-            "em" | "i" => Self::Emphasis,
 
             "a" => Self::Anchor,
             "img" => Self::Image,
@@ -139,9 +134,6 @@ struct XhtmlParser {
 
     pending_anchors: Vec<String>,
 
-    bold_depth: usize,
-    italic_depth: usize,
-
     active_link: Option<ActiveLink>,
 
     style_nodes: Vec<StyleNode>,
@@ -162,8 +154,6 @@ impl XhtmlParser {
             current: None,
             blocks: Vec::new(),
             pending_anchors: Vec::new(),
-            bold_depth: 0,
-            italic_depth: 0,
             active_link: None,
             style_nodes: Vec::new(),
             style_stack: Vec::new(),
@@ -289,22 +279,6 @@ impl XmlParser for XhtmlParser {
         }
 
         match element.kind {
-            ElementKind::Strong => {
-                if let Some(id) = element.id {
-                    self.push_anchor(id);
-                }
-                if !empty {
-                    self.bold_depth = self.bold_depth.saturating_add(1);
-                }
-            }
-            ElementKind::Emphasis => {
-                if let Some(id) = element.id {
-                    self.push_anchor(id);
-                }
-                if !empty {
-                    self.italic_depth = self.italic_depth.saturating_add(1);
-                }
-            }
             ElementKind::Anchor => {
                 if let Some(id) = element.id {
                     self.push_anchor(id);
@@ -418,12 +392,6 @@ impl XmlParser for XhtmlParser {
         }
 
         match kind {
-            ElementKind::Strong => {
-                self.bold_depth = self.bold_depth.saturating_sub(1);
-            }
-            ElementKind::Emphasis => {
-                self.italic_depth = self.italic_depth.saturating_sub(1);
-            }
             ElementKind::Anchor => {
                 if self
                     .active_link
@@ -479,19 +447,13 @@ impl XmlParser for XhtmlParser {
             return;
         }
 
-        let style = InlineStyle {
-            bold: self.bold_depth > 0,
-            italic: self.italic_depth > 0,
-        };
-
         let link = self.active_link.as_ref().map(|link| link.target.clone());
 
         let style_node = self
             .current_style_node()
             .expect("body text must have an active style node");
 
-        self.implicit_block()
-            .push_text(&text, style, link, style_node);
+        self.implicit_block().push_text(&text, link, style_node);
     }
 
     fn element_end(&mut self) {
@@ -638,15 +600,9 @@ impl XhtmlParser {
             return;
         };
 
-        let style = InlineStyle {
-            bold: self.bold_depth > 0,
-            italic: self.italic_depth > 0,
-        };
-
         let link = self.active_link.as_ref().map(|link| link.target.clone());
 
-        self.implicit_block()
-            .push_text(&alt, style, link, style_node);
+        self.implicit_block().push_text(&alt, link, style_node);
     }
 
     /// The block being built, starting a paragraph when there is none.
@@ -689,23 +645,27 @@ impl XhtmlParser {
         }
     }
 
-    fn finish(mut self) -> Result<Chapter, XhtmlError> {
+    fn finish(mut self) -> Result<(Chapter, StyleContext), XhtmlError> {
         self.finish_current();
 
         if !self.saw_body {
             return Err(XhtmlError::MissingBody);
         }
 
-        Ok(Chapter {
-            path: self.path,
-            blocks: self.blocks,
-            style_nodes: self.style_nodes,
-            stylesheets: self.stylesheets,
-        })
+        Ok((
+            Chapter {
+                path: self.path,
+                blocks: self.blocks,
+            },
+            StyleContext::new(self.style_nodes, self.stylesheets),
+        ))
     }
 }
 
-pub(crate) fn parse_xhtml(xml: &str, path: ArchivePath) -> Result<Chapter, XhtmlError> {
+pub(crate) fn parse_xhtml(
+    xml: &str,
+    path: ArchivePath,
+) -> Result<(Chapter, StyleContext), XhtmlError> {
     let mut parser = XhtmlParser::new(path);
 
     parse_xml(xml, &mut parser, XhtmlError::Xml)?;
