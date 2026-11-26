@@ -254,22 +254,16 @@ where
         &mut self,
         path: &ArchivePath,
     ) -> Result<Option<ImageDimensions>, Error<S::Error>> {
-        let Some((path, media_type)) = self.package.manifest_item_by_path(path).map(|item| {
-            (
-                item.path().clone(),
-                alloc::string::String::from(item.media_type()),
-            )
+        let Some((path, format)) = self.package.manifest_item_by_path(path).and_then(|item| {
+            let format = image::ImageFormat::from_media_type(item.media_type())?;
+            Some((item.path().clone(), format))
         }) else {
             return Ok(None);
         };
 
-        if !image::supports_dimensions(&media_type) {
-            return Ok(None);
-        }
+        let mut stream = self.archive.open_entry_stream(&path).await?;
 
-        let bytes = self.archive.read_entry(&path).await?;
-
-        Ok(image::dimensions(&media_type, &bytes))
+        image::read_dimensions(format, &mut stream).await
     }
 }
 

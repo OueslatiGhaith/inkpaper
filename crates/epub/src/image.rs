@@ -1,3 +1,7 @@
+use inkpaper_io::ByteSource;
+
+use crate::{Error, archive::EntryStream};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageDimensions {
     width: u32,
@@ -18,19 +22,127 @@ impl ImageDimensions {
     }
 }
 
-pub(crate) fn supports_dimensions(media_type: &str) -> bool {
-    matches!(
-        media_type,
-        "image/png" | "image/jpeg" | "image/jpg" | "image/gif"
-    )
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImageFormat {
+    Png,
+    Jpeg,
+    Gif,
 }
 
-pub(crate) fn dimensions(media_type: &str, bytes: &[u8]) -> Option<ImageDimensions> {
-    match media_type {
-        "image/png" => png_dimensions(bytes),
-        "image/jpeg" | "image/jpg" => jpeg_dimensions(bytes),
-        "image/gif" => gif_dimensions(bytes),
-        _ => None,
+impl ImageFormat {
+    pub(crate) fn from_media_type(media_type: &str) -> Option<Self> {
+        match media_type {
+            "image/png" => Some(Self::Png),
+            "image/jpeg" | "image/jpg" => Some(Self::Jpeg),
+            "image/gif" => Some(Self::Gif),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) async fn read_dimensions<S: ByteSource>(
+    format: ImageFormat,
+    stream: &mut EntryStream<'_, S>,
+) -> Result<Option<ImageDimensions>, Error<S::Error>> {
+    match format {
+        ImageFormat::Png => {
+            let mut header = [0u8; 24];
+            if !stream.read_exact(&mut header).await? {
+                return Ok(None);
+            }
+            Ok(png_dimensions(&header))
+        }
+        ImageFormat::Gif => {
+            let mut header = [0u8; 10];
+            if !stream.read_exact(&mut header).await? {
+                return Ok(None);
+            }
+            Ok(gif_dimensions(&header))
+        }
+        ImageFormat::Jpeg => read_jpeg_dimensions(stream).await,
+    }
+}
+
+async fn read_jpeg_dimensions<S: ByteSource>(
+    stream: &mut EntryStream<'_, S>,
+) -> Result<Option<ImageDimensions>, Error<S::Error>> {
+    let mut soi = [0u8; 2];
+    if !stream.read_exact(&mut soi).await? || soi != [0xff, 0xd8] {
+        return Ok(None);
+    }
+
+    loop {
+        let mut byte = match stream.read_u8().await? {
+            Some(byte) => byte,
+            None => return Ok(None),
+        };
+
+        while byte != 0xff {
+            byte = match stream.read_u8().await? {
+                Some(byte) => byte,
+                None => return Ok(None),
+            };
+        }
+
+        let marker = loop {
+            match stream.read_u8().await? {
+                Some(0xff) => continue,
+                Some(marker) => break marker,
+                None => return Ok(None),
+            }
+        };
+
+        if marker == 0x00 {
+            continue;
+        }
+
+        if marker == 0xd9 || marker == 0xda {
+            return Ok(None);
+        }
+        if marker == 0xd8 || marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+            continue;
+        }
+
+        let mut len_bytes = [0u8; 2];
+        if !stream.read_exact(&mut len_bytes).await? {
+            return Ok(None);
+        }
+
+        let segment_len = usize::from(be_u16(&len_bytes));
+        if segment_len < 2 {
+            return Ok(None);
+        }
+
+        let payload_len = segment_len - 2;
+
+        if is_start_of_frame(marker) {
+            if payload_len < 5 {
+                return Ok(None);
+            }
+
+            let mut sof = [0u8; 5];
+            if !stream.read_exact(&mut sof).await? {
+                return Ok(None);
+            }
+
+            let height = u32::from(be_u16(&sof[1..3]));
+            let width = u32::from(be_u16(&sof[3..5]));
+
+            return Ok(dimensions_if_nonzero(width, height));
+        }
+
+        if !stream.skip(payload_len).await? {
+            return Ok(None);
+        }
+    }
+}
+
+#[cfg(test)]
+fn dimensions(media_type: &str, bytes: &[u8]) -> Option<ImageDimensions> {
+    match ImageFormat::from_media_type(media_type)? {
+        ImageFormat::Png => png_dimensions(bytes),
+        ImageFormat::Jpeg => jpeg_dimensions(bytes),
+        ImageFormat::Gif => gif_dimensions(bytes),
     }
 }
 
@@ -58,6 +170,7 @@ fn gif_dimensions(bytes: &[u8]) -> Option<ImageDimensions> {
     dimensions_if_nonzero(width, height)
 }
 
+#[cfg(test)]
 fn jpeg_dimensions(bytes: &[u8]) -> Option<ImageDimensions> {
     if bytes.len() < 4 || bytes[0] != 0xff || bytes[1] != 0xd8 {
         return None;

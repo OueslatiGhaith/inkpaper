@@ -1,6 +1,10 @@
-use alloc::{string::String, vec, vec::Vec};
+use alloc::{boxed::Box, string::String, vec, vec::Vec};
 use inkpaper_io::ByteSource;
-use miniz_oxide::inflate::decompress_to_vec_with_limit;
+use miniz_oxide::inflate::{
+    TINFLStatus,
+    core::{DecompressorOxide, decompress, inflate_flags::TINFL_FLAG_HAS_MORE_INPUT},
+    decompress_to_vec_with_limit,
+};
 
 use crate::{
     error::{ArchiveError, Error},
@@ -22,6 +26,19 @@ const MAX_EOCD_SEARCH: usize = EOCD_MIN_LEN + u16::MAX as usize;
 
 const COMPRESSION_STORED: u16 = 0;
 const COMPRESSION_DEFLATE: u16 = 8;
+
+const STREAM_STORED_BUF_LEN: usize = 128;
+const STREAM_DEFLATE_IN_LEN: usize = 1024;
+const STREAM_DEFLATE_OUT_LEN: usize = 32 * 1024;
+
+#[derive(Debug, Clone, Copy)]
+struct EntryData {
+    compression: u16,
+    data_offset: u64,
+    compressed_len: usize,
+    uncompressed_len: usize,
+    uncompressed_size: u32,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Entry {
@@ -125,6 +142,89 @@ where
         &mut self,
         path: &ArchivePath,
     ) -> Result<Vec<u8>, Error<S::Error>> {
+        let data = self.resolve_entry_data(path).await?;
+        let mut compressed = vec![0u8; data.compressed_len];
+
+        self.read_exact(data.data_offset, &mut compressed).await?;
+
+        match data.compression {
+            COMPRESSION_STORED => {
+                if compressed.len() != data.uncompressed_len {
+                    return Err(Error::Archive(ArchiveError::SizeMismatch {
+                        expected: data.uncompressed_size,
+                        actual: compressed.len(),
+                    }));
+                }
+
+                Ok(compressed)
+            }
+            COMPRESSION_DEFLATE => {
+                let decompressed = decompress_to_vec_with_limit(&compressed, data.uncompressed_len)
+                    .map_err(|_| Error::Archive(ArchiveError::Inflate))?;
+
+                if decompressed.len() != data.uncompressed_len {
+                    return Err(Error::Archive(ArchiveError::SizeMismatch {
+                        expected: data.uncompressed_size,
+                        actual: decompressed.len(),
+                    }));
+                }
+
+                Ok(decompressed)
+            }
+            compression => Err(Error::Archive(ArchiveError::UnsupportedCompression(
+                compression,
+            ))),
+        }
+    }
+
+    pub(crate) async fn open_entry_stream<'a>(
+        &'a mut self,
+        path: &ArchivePath,
+    ) -> Result<EntryStream<'a, S>, Error<S::Error>> {
+        let data = self.resolve_entry_data(path).await?;
+
+        match data.compression {
+            COMPRESSION_STORED => {
+                if data.compressed_len != data.uncompressed_len {
+                    return Err(Error::Archive(ArchiveError::SizeMismatch {
+                        expected: data.uncompressed_size,
+                        actual: data.compressed_len,
+                    }));
+                }
+
+                Ok(EntryStream::Stored(StoredStream {
+                    source: &mut self.source,
+                    offset: data.data_offset,
+                    remaining: data.uncompressed_len,
+                    buf: [0u8; STREAM_STORED_BUF_LEN],
+                    buf_pos: 0,
+                    buf_len: 0,
+                }))
+            }
+            COMPRESSION_DEFLATE => Ok(EntryStream::Deflate(Box::new(DeflateStream {
+                source: &mut self.source,
+                compressed_offset: data.data_offset,
+                compressed_remaining: data.compressed_len,
+                uncompressed_remaining: data.uncompressed_len,
+                decompressor: Box::default(),
+                in_buf: vec![0u8; STREAM_DEFLATE_IN_LEN],
+                in_pos: 0,
+                in_len: 0,
+                out_buf: vec![0u8; STREAM_DEFLATE_OUT_LEN],
+                out_read: 0,
+                out_end: 0,
+                finished: false,
+            }))),
+            compression => Err(Error::Archive(ArchiveError::UnsupportedCompression(
+                compression,
+            ))),
+        }
+    }
+
+    async fn resolve_entry_data(
+        &mut self,
+        path: &ArchivePath,
+    ) -> Result<EntryData, Error<S::Error>> {
         let entry = self.find_entry(path).map_err(Error::Archive)?;
         if entry.flags & 0x0001 != 0 {
             return Err(Error::Archive(ArchiveError::EncryptedEntry));
@@ -168,41 +268,16 @@ where
         let compressed_len = usize::try_from(entry.compressed_size)
             .map_err(|_| Error::Archive(ArchiveError::SizeOverflow))?;
 
-        let expected_len = usize::try_from(entry.uncompressed_size)
+        let uncompressed_len = usize::try_from(entry.uncompressed_size)
             .map_err(|_| Error::Archive(ArchiveError::SizeOverflow))?;
 
-        let mut compressed = vec![0u8; compressed_len];
-
-        self.read_exact(data_offset, &mut compressed).await?;
-
-        match entry.compression {
-            COMPRESSION_STORED => {
-                if compressed.len() != expected_len {
-                    return Err(Error::Archive(ArchiveError::SizeMismatch {
-                        expected: entry.uncompressed_size,
-                        actual: compressed.len(),
-                    }));
-                }
-
-                Ok(compressed)
-            }
-            COMPRESSION_DEFLATE => {
-                let decompressed = decompress_to_vec_with_limit(&compressed, expected_len)
-                    .map_err(|_| Error::Archive(ArchiveError::Inflate))?;
-
-                if decompressed.len() != expected_len {
-                    return Err(Error::Archive(ArchiveError::SizeMismatch {
-                        expected: entry.uncompressed_size,
-                        actual: decompressed.len(),
-                    }));
-                }
-
-                Ok(decompressed)
-            }
-            compression => Err(Error::Archive(ArchiveError::UnsupportedCompression(
-                compression,
-            ))),
-        }
+        Ok(EntryData {
+            compression: entry.compression,
+            data_offset,
+            compressed_len,
+            uncompressed_len,
+            uncompressed_size: entry.uncompressed_size,
+        })
     }
 
     pub(crate) fn uncompressed_sizes(
@@ -246,6 +321,219 @@ where
             .read_exact_at(offset, buffer)
             .await
             .map_err(Error::Source)
+    }
+}
+
+pub(crate) enum EntryStream<'a, S> {
+    Stored(StoredStream<'a, S>),
+    Deflate(Box<DeflateStream<'a, S>>),
+}
+
+pub(crate) struct StoredStream<'a, S> {
+    source: &'a mut S,
+    offset: u64,
+    remaining: usize,
+    buf: [u8; STREAM_STORED_BUF_LEN],
+    buf_pos: usize,
+    buf_len: usize,
+}
+
+pub(crate) struct DeflateStream<'a, S> {
+    source: &'a mut S,
+    compressed_offset: u64,
+    compressed_remaining: usize,
+    uncompressed_remaining: usize,
+    decompressor: Box<DecompressorOxide>,
+    in_buf: Vec<u8>,
+    in_pos: usize,
+    in_len: usize,
+    out_buf: Vec<u8>,
+    out_read: usize,
+    out_end: usize,
+    finished: bool,
+}
+
+impl<S: ByteSource> EntryStream<'_, S> {
+    pub(crate) async fn read_u8(&mut self) -> Result<Option<u8>, Error<S::Error>> {
+        let mut byte = [0u8; 1];
+        if self.read_exact(&mut byte).await? {
+            Ok(Some(byte[0]))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Reads `dst.len()` bytes into `dst`, returning `Ok(false)` if EOF is reached first.
+    pub(crate) async fn read_exact(&mut self, dst: &mut [u8]) -> Result<bool, Error<S::Error>> {
+        match self {
+            Self::Stored(stream) => stream.read_exact(dst).await,
+            Self::Deflate(stream) => stream.read_exact(dst).await,
+        }
+    }
+
+    /// Advances past `count` bytes, returning `Ok(false)` if EOF is reached first.
+    pub(crate) async fn skip(&mut self, count: usize) -> Result<bool, Error<S::Error>> {
+        match self {
+            Self::Stored(stream) => Ok(stream.skip(count)),
+            Self::Deflate(stream) => stream.skip(count).await,
+        }
+    }
+}
+
+impl<S: ByteSource> StoredStream<'_, S> {
+    async fn read_exact(&mut self, mut dst: &mut [u8]) -> Result<bool, Error<S::Error>> {
+        let buffered = self.buf_len - self.buf_pos;
+        if dst.len() > buffered.saturating_add(self.remaining) {
+            return Ok(false);
+        }
+
+        while !dst.is_empty() {
+            let avail = self.buf_len - self.buf_pos;
+            if avail > 0 {
+                let take = avail.min(dst.len());
+                dst[..take].copy_from_slice(&self.buf[self.buf_pos..self.buf_pos + take]);
+                self.buf_pos += take;
+                dst = &mut dst[take..];
+                continue;
+            }
+
+            if dst.len() >= self.buf.len() {
+                let read_len = dst.len();
+                self.source
+                    .read_exact_at(self.offset, dst)
+                    .await
+                    .map_err(Error::Source)?;
+                self.offset += read_len as u64;
+                self.remaining -= read_len;
+                break;
+            }
+
+            let fill = self.remaining.min(self.buf.len());
+            self.source
+                .read_exact_at(self.offset, &mut self.buf[..fill])
+                .await
+                .map_err(Error::Source)?;
+            self.offset += fill as u64;
+            self.remaining -= fill;
+            self.buf_pos = 0;
+            self.buf_len = fill;
+        }
+
+        Ok(true)
+    }
+
+    fn skip(&mut self, count: usize) -> bool {
+        let avail = self.buf_len - self.buf_pos;
+        if count <= avail {
+            self.buf_pos += count;
+            return true;
+        }
+
+        let extra = count - avail;
+        if extra > self.remaining {
+            return false;
+        }
+
+        self.buf_pos = 0;
+        self.buf_len = 0;
+        self.offset += extra as u64;
+        self.remaining -= extra;
+        true
+    }
+}
+
+impl<S: ByteSource> DeflateStream<'_, S> {
+    async fn fill_output(&mut self) -> Result<usize, Error<S::Error>> {
+        while self.out_read == self.out_end {
+            if self.finished || self.uncompressed_remaining == 0 {
+                return Ok(0);
+            }
+
+            if self.out_end == self.out_buf.len() {
+                self.out_read = 0;
+                self.out_end = 0;
+            }
+
+            if self.in_pos == self.in_len && self.compressed_remaining > 0 {
+                let to_read = self.compressed_remaining.min(self.in_buf.len());
+                self.source
+                    .read_exact_at(self.compressed_offset, &mut self.in_buf[..to_read])
+                    .await
+                    .map_err(Error::Source)?;
+                self.compressed_offset += to_read as u64;
+                self.compressed_remaining -= to_read;
+                self.in_pos = 0;
+                self.in_len = to_read;
+            }
+
+            let flags = if self.compressed_remaining > 0 {
+                TINFL_FLAG_HAS_MORE_INPUT
+            } else {
+                0
+            };
+
+            let (status, consumed, written) = decompress(
+                &mut self.decompressor,
+                &self.in_buf[self.in_pos..self.in_len],
+                &mut self.out_buf,
+                self.out_end,
+                flags,
+            );
+
+            self.in_pos += consumed;
+
+            if written > self.uncompressed_remaining {
+                return Err(Error::Archive(ArchiveError::Inflate));
+            }
+
+            self.out_end += written;
+            self.uncompressed_remaining -= written;
+
+            match status {
+                TINFLStatus::Done => {
+                    self.finished = true;
+                }
+                TINFLStatus::HasMoreOutput | TINFLStatus::NeedsMoreInput => {
+                    if written == 0 && consumed == 0 && self.compressed_remaining == 0 {
+                        return Err(Error::Archive(ArchiveError::Inflate));
+                    }
+                }
+                _ => return Err(Error::Archive(ArchiveError::Inflate)),
+            }
+        }
+
+        Ok(self.out_end - self.out_read)
+    }
+
+    async fn read_exact(&mut self, mut dst: &mut [u8]) -> Result<bool, Error<S::Error>> {
+        while !dst.is_empty() {
+            let avail = self.fill_output().await?;
+            if avail == 0 {
+                return Ok(false);
+            }
+
+            let take = avail.min(dst.len());
+            dst[..take].copy_from_slice(&self.out_buf[self.out_read..self.out_read + take]);
+            self.out_read += take;
+            dst = &mut dst[take..];
+        }
+
+        Ok(true)
+    }
+
+    async fn skip(&mut self, mut count: usize) -> Result<bool, Error<S::Error>> {
+        while count > 0 {
+            let avail = self.fill_output().await?;
+            if avail == 0 {
+                return Ok(false);
+            }
+
+            let take = avail.min(count);
+            self.out_read += take;
+            count -= take;
+        }
+
+        Ok(true)
     }
 }
 
@@ -425,39 +713,45 @@ mod tests {
         }
     }
 
-    fn build_stored_zip(entries: &[(&str, &[u8])], comment: &[u8]) -> Vec<u8> {
+    fn build_zip(entries: &[(&str, &[u8], u16)], comment: &[u8]) -> Vec<u8> {
         let mut archive = Vec::new();
         let mut central = Vec::new();
 
-        for &(name, data) in entries {
+        for &(name, data, compression) in entries {
             let local_offset = u32::try_from(archive.len()).unwrap();
             let name_bytes = name.as_bytes();
-            let size = u32::try_from(data.len()).unwrap();
+            let payload: Vec<u8> = match compression {
+                COMPRESSION_STORED => data.to_vec(),
+                COMPRESSION_DEFLATE => miniz_oxide::deflate::compress_to_vec(data, 6),
+                other => panic!("unsupported test compression {other}"),
+            };
+            let compressed_size = u32::try_from(payload.len()).unwrap();
+            let uncompressed_size = u32::try_from(data.len()).unwrap();
 
             archive.extend_from_slice(&LOCAL_HEADER_SIGNATURE.to_le_bytes());
             archive.extend_from_slice(&20u16.to_le_bytes());
             archive.extend_from_slice(&0u16.to_le_bytes());
-            archive.extend_from_slice(&COMPRESSION_STORED.to_le_bytes());
+            archive.extend_from_slice(&compression.to_le_bytes());
             archive.extend_from_slice(&0u16.to_le_bytes());
             archive.extend_from_slice(&0u16.to_le_bytes());
             archive.extend_from_slice(&0u32.to_le_bytes());
-            archive.extend_from_slice(&size.to_le_bytes());
-            archive.extend_from_slice(&size.to_le_bytes());
+            archive.extend_from_slice(&compressed_size.to_le_bytes());
+            archive.extend_from_slice(&uncompressed_size.to_le_bytes());
             archive.extend_from_slice(&u16::try_from(name_bytes.len()).unwrap().to_le_bytes());
             archive.extend_from_slice(&0u16.to_le_bytes());
             archive.extend_from_slice(name_bytes);
-            archive.extend_from_slice(data);
+            archive.extend_from_slice(&payload);
 
             central.extend_from_slice(&CENTRAL_HEADER_SIGNATURE.to_le_bytes());
             central.extend_from_slice(&20u16.to_le_bytes());
             central.extend_from_slice(&20u16.to_le_bytes());
             central.extend_from_slice(&0u16.to_le_bytes());
-            central.extend_from_slice(&COMPRESSION_STORED.to_le_bytes());
+            central.extend_from_slice(&compression.to_le_bytes());
             central.extend_from_slice(&0u16.to_le_bytes());
             central.extend_from_slice(&0u16.to_le_bytes());
             central.extend_from_slice(&0u32.to_le_bytes());
-            central.extend_from_slice(&size.to_le_bytes());
-            central.extend_from_slice(&size.to_le_bytes());
+            central.extend_from_slice(&compressed_size.to_le_bytes());
+            central.extend_from_slice(&uncompressed_size.to_le_bytes());
             central.extend_from_slice(&u16::try_from(name_bytes.len()).unwrap().to_le_bytes());
             central.extend_from_slice(&0u16.to_le_bytes());
             central.extend_from_slice(&0u16.to_le_bytes());
@@ -485,6 +779,14 @@ mod tests {
         archive.extend_from_slice(comment);
 
         archive
+    }
+
+    fn build_stored_zip(entries: &[(&str, &[u8])], comment: &[u8]) -> Vec<u8> {
+        let entries: Vec<_> = entries
+            .iter()
+            .map(|&(name, data)| (name, data, COMPRESSION_STORED))
+            .collect();
+        build_zip(&entries, comment)
     }
 
     #[test]
@@ -552,5 +854,139 @@ mod tests {
 
         let path = ArchivePath::new("dup.txt").unwrap();
         assert_eq!(future::block_on(archive.read_entry(&path)).unwrap(), b"first");
+    }
+
+    fn make_large_png(width: u32, height: u32, trailing_bytes: usize) -> Vec<u8> {
+        let mut bytes = vec![0u8; 24 + trailing_bytes];
+        bytes[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes[12..16].copy_from_slice(b"IHDR");
+        bytes[16..20].copy_from_slice(&width.to_be_bytes());
+        bytes[20..24].copy_from_slice(&height.to_be_bytes());
+        // pseudo-random trailing data so deflate stays large too
+        let mut x = 0x1234_5678u32;
+        for byte in &mut bytes[24..] {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            *byte = x as u8;
+        }
+        bytes
+    }
+
+    fn make_jpeg_with_app1(width: u16, height: u16, app1_payload_len: usize, tail: usize) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(2 + 4 + app1_payload_len + 19 + tail);
+        bytes.extend_from_slice(&[0xff, 0xd8]);
+        // APP1 segment (e.g. EXIF) before SOF0
+        bytes.extend_from_slice(&[0xff, 0xe1]);
+        let seg_len = u16::try_from(app1_payload_len + 2).unwrap();
+        bytes.extend_from_slice(&seg_len.to_be_bytes());
+        bytes.resize(bytes.len() + app1_payload_len, 0x42);
+        // SOF0 segment
+        bytes.extend_from_slice(&[0xff, 0xc0, 0x00, 0x11, 0x08]);
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&[0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00]);
+        // Scan data tail
+        let mut x = 0x9e37_79b9u32;
+        for _ in 0..tail {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            bytes.push(x as u8);
+        }
+        bytes
+    }
+
+    #[test]
+    fn streaming_stored_image_headers_skips_payload_and_app_segments() {
+        use crate::image::{ImageDimensions, ImageFormat, read_dimensions};
+
+        let png = make_large_png(1200, 1600, 64 * 1024);
+        let jpeg = make_jpeg_with_app1(800, 600, 40 * 1024, 64 * 1024);
+        let zip = build_stored_zip(&[("pic.png", &png), ("photo.jpg", &jpeg)], &[]);
+
+        let reads = RefCell::new(Vec::new());
+        let mut archive = future::block_on(Archive::open(RecordingSource {
+            inner: SliceSource::new(&zip),
+            reads: &reads,
+        }))
+        .unwrap();
+
+        reads.borrow_mut().clear();
+        let mut png_stream = future::block_on(
+            archive.open_entry_stream(&ArchivePath::new("pic.png").unwrap()),
+        )
+        .unwrap();
+        let png_dims = future::block_on(read_dimensions(ImageFormat::Png, &mut png_stream)).unwrap();
+        assert_eq!(png_dims, Some(ImageDimensions::new(1200, 1600)));
+        let png_bytes_read: usize = reads.borrow().iter().map(|&(_, len)| len).sum();
+        assert!(
+            png_bytes_read <= LOCAL_HEADER_LEN + STREAM_STORED_BUF_LEN,
+            "expected small header read, got {png_bytes_read}"
+        );
+
+        reads.borrow_mut().clear();
+        let mut jpg_stream = future::block_on(
+            archive.open_entry_stream(&ArchivePath::new("photo.jpg").unwrap()),
+        )
+        .unwrap();
+        let jpg_dims = future::block_on(read_dimensions(ImageFormat::Jpeg, &mut jpg_stream)).unwrap();
+        assert_eq!(jpg_dims, Some(ImageDimensions::new(800, 600)));
+        let jpg_bytes_read: usize = reads.borrow().iter().map(|&(_, len)| len).sum();
+        // Skipped the 40 KiB APP1 segment without reading it!
+        assert!(
+            jpg_bytes_read <= LOCAL_HEADER_LEN + 2 * STREAM_STORED_BUF_LEN,
+            "expected APP1 skip without reading payload, got {jpg_bytes_read}"
+        );
+    }
+
+    #[test]
+    fn streaming_deflated_image_headers_stops_early_and_handles_ring_wrap() {
+        use crate::image::{ImageDimensions, ImageFormat, read_dimensions};
+
+        let png = make_large_png(640, 480, 64 * 1024);
+        // 40 KiB APP1 exceeds the 32 KiB inflate ring buffer, exercising wraparound.
+        let jpeg = make_jpeg_with_app1(1024, 768, 40 * 1024, 64 * 1024);
+        let zip = build_zip(
+            &[
+                ("pic.png", &png, COMPRESSION_DEFLATE),
+                ("photo.jpg", &jpeg, COMPRESSION_DEFLATE),
+            ],
+            &[],
+        );
+
+        let reads = RefCell::new(Vec::new());
+        let mut archive = future::block_on(Archive::open(RecordingSource {
+            inner: SliceSource::new(&zip),
+            reads: &reads,
+        }))
+        .unwrap();
+
+        reads.borrow_mut().clear();
+        let mut png_stream = future::block_on(
+            archive.open_entry_stream(&ArchivePath::new("pic.png").unwrap()),
+        )
+        .unwrap();
+        let png_dims = future::block_on(read_dimensions(ImageFormat::Png, &mut png_stream)).unwrap();
+        assert_eq!(png_dims, Some(ImageDimensions::new(640, 480)));
+        let png_bytes_read: usize = reads.borrow().iter().map(|&(_, len)| len).sum();
+        assert!(
+            png_bytes_read < 4 * 1024,
+            "expected early deflate stop on PNG header, got {png_bytes_read}"
+        );
+
+        reads.borrow_mut().clear();
+        let mut jpg_stream = future::block_on(
+            archive.open_entry_stream(&ArchivePath::new("photo.jpg").unwrap()),
+        )
+        .unwrap();
+        let jpg_dims = future::block_on(read_dimensions(ImageFormat::Jpeg, &mut jpg_stream)).unwrap();
+        assert_eq!(jpg_dims, Some(ImageDimensions::new(1024, 768)));
+        let jpg_bytes_read: usize = reads.borrow().iter().map(|&(_, len)| len).sum();
+        // Stopped before reading the 64 KiB random scan-data tail
+        assert!(
+            jpg_bytes_read < 16 * 1024,
+            "expected early deflate stop after SOF0, got {jpg_bytes_read}"
+        );
     }
 }
