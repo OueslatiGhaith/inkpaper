@@ -3,18 +3,24 @@ use inkpaper_reader::TextStyle;
 
 pub(super) const READER_MEASURE_CACHE_SLOTS: usize = 64;
 pub(super) const READER_MEASURE_CACHE_TEXT_BYTES: usize = 32;
+const MAX_PROBE_DISTANCE: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ReaderMeasureCacheLookup {
     Hit(u32),
 
-    Miss { slot: usize, collision: bool },
+    Miss {
+        slot: usize,
+        hash: u32,
+        collision: bool,
+    },
 
     Bypass,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ReaderMeasureCacheEntry<const TEXT_BYTES: usize> {
+    hash: u32,
     style: TextStyle,
     len: u8,
     text: [u8; TEXT_BYTES],
@@ -22,7 +28,11 @@ struct ReaderMeasureCacheEntry<const TEXT_BYTES: usize> {
 }
 
 impl<const TEXT_BYTES: usize> ReaderMeasureCacheEntry<TEXT_BYTES> {
-    fn matches(&self, text: &str, style: TextStyle) -> bool {
+    fn matches(&self, hash: u32, text: &str, style: TextStyle) -> bool {
+        if self.hash != hash {
+            return false;
+        }
+
         let len = usize::from(self.len);
 
         self.style == style && len == text.len() && self.text[..len] == *text.as_bytes()
@@ -31,6 +41,7 @@ impl<const TEXT_BYTES: usize> ReaderMeasureCacheEntry<TEXT_BYTES> {
 
 pub(super) struct ReaderMeasureCache<const SLOTS: usize, const TEXT_BYTES: usize> {
     slots: [Option<ReaderMeasureCacheEntry<TEXT_BYTES>>; SLOTS],
+    evict_cursor: u8,
 }
 
 impl<const SLOTS: usize, const TEXT_BYTES: usize> Default
@@ -49,6 +60,7 @@ impl<const SLOTS: usize, const TEXT_BYTES: usize> Default
 
         Self {
             slots: [None; SLOTS],
+            evict_cursor: 0,
         }
     }
 }
@@ -59,13 +71,15 @@ impl<const SLOTS: usize, const TEXT_BYTES: usize> ReaderMeasureCache<SLOTS, TEXT
             return ReaderMeasureCacheLookup::Bypass;
         }
 
-        let home_slot = Self::slot_index(text, style);
+        let hash = Self::hash_key(text, style);
+        let home_slot = usize::try_from(hash).unwrap_or(usize::MAX) % SLOTS;
+        let probes = MAX_PROBE_DISTANCE.min(SLOTS);
 
-        for probe in 0..SLOTS {
+        for probe in 0..probes {
             let slot = (home_slot + probe) % SLOTS;
 
             match self.slots[slot] {
-                Some(entry) if entry.matches(text, style) => {
+                Some(entry) if entry.matches(hash, text, style) => {
                     return ReaderMeasureCacheLookup::Hit(entry.width);
                 }
 
@@ -74,21 +88,32 @@ impl<const SLOTS: usize, const TEXT_BYTES: usize> ReaderMeasureCache<SLOTS, TEXT
                 None => {
                     return ReaderMeasureCacheLookup::Miss {
                         slot,
+                        hash,
                         collision: probe != 0,
                     };
                 }
             }
         }
 
-        // Once the table is full there is no empty terminator.
-        // Replace the home slot on the next successful measurement.
+        // Bounded probe window is full: evict a rotating slot within the window
+        // so misses stay O(1) even once the table is saturated.
+        let victim = (home_slot + usize::from(self.evict_cursor) % probes) % SLOTS;
+
         ReaderMeasureCacheLookup::Miss {
-            slot: home_slot,
+            slot: victim,
+            hash,
             collision: true,
         }
     }
 
-    pub(super) fn insert(&mut self, slot: usize, text: &str, style: TextStyle, width: u32) {
+    pub(super) fn insert(
+        &mut self,
+        slot: usize,
+        hash: u32,
+        text: &str,
+        style: TextStyle,
+        width: u32,
+    ) {
         debug_assert!(slot < SLOTS);
         debug_assert!(text.len() <= TEXT_BYTES);
 
@@ -100,14 +125,16 @@ impl<const SLOTS: usize, const TEXT_BYTES: usize> ReaderMeasureCache<SLOTS, TEXT
         bytes[..text.len()].copy_from_slice(text.as_bytes());
 
         self.slots[slot] = Some(ReaderMeasureCacheEntry {
+            hash,
             style,
             len,
             text: bytes,
             width,
         });
+        self.evict_cursor = self.evict_cursor.wrapping_add(1);
     }
 
-    fn slot_index(text: &str, style: TextStyle) -> usize {
+    fn hash_key(text: &str, style: TextStyle) -> u32 {
         let mut hash = 0x811C_9DC5u32;
 
         for byte in text.bytes() {
@@ -143,7 +170,7 @@ impl<const SLOTS: usize, const TEXT_BYTES: usize> ReaderMeasureCache<SLOTS, TEXT
             },
         );
 
-        usize::try_from(hash).unwrap_or(usize::MAX) % SLOTS
+        hash
     }
 }
 
@@ -171,13 +198,18 @@ mod tests {
 
         let miss = cache.lookup("hello", style);
 
-        let ReaderMeasureCacheLookup::Miss { slot, collision } = miss else {
+        let ReaderMeasureCacheLookup::Miss {
+            slot,
+            hash,
+            collision,
+        } = miss
+        else {
             panic!("first lookup must miss");
         };
 
         assert!(!collision);
 
-        cache.insert(slot, "hello", style, 42);
+        cache.insert(slot, hash, "hello", style, 42);
 
         assert_eq!(
             cache.lookup("hello", style),
@@ -192,11 +224,12 @@ mod tests {
         let first_style = style(20);
         let second_style = style(22);
 
-        let ReaderMeasureCacheLookup::Miss { slot, .. } = cache.lookup("hello", first_style) else {
+        let ReaderMeasureCacheLookup::Miss { slot, hash, .. } = cache.lookup("hello", first_style)
+        else {
             panic!("first lookup must miss");
         };
 
-        cache.insert(slot, "hello", first_style, 42);
+        cache.insert(slot, hash, "hello", first_style, 42);
 
         assert_eq!(
             cache.lookup("hello", first_style),
@@ -214,20 +247,24 @@ mod tests {
         let mut cache = ReaderMeasureCache::<1, 16>::default();
         let style = style(20);
 
-        let ReaderMeasureCacheLookup::Miss { slot, .. } = cache.lookup("first", style) else {
+        let ReaderMeasureCacheLookup::Miss { slot, hash, .. } = cache.lookup("first", style) else {
             panic!("first lookup must miss");
         };
 
-        cache.insert(slot, "first", style, 11);
+        cache.insert(slot, hash, "first", style, 11);
 
-        let ReaderMeasureCacheLookup::Miss { slot, collision } = cache.lookup("second", style)
+        let ReaderMeasureCacheLookup::Miss {
+            slot,
+            hash,
+            collision,
+        } = cache.lookup("second", style)
         else {
             panic!("colliding text must miss");
         };
 
         assert!(collision);
 
-        cache.insert(slot, "second", style, 22);
+        cache.insert(slot, hash, "second", style, 22);
 
         assert_eq!(
             cache.lookup("second", style),
@@ -258,11 +295,11 @@ mod tests {
         let mut cache = ReaderMeasureCache::<8, 16>::default();
         let style = style(20);
 
-        let ReaderMeasureCacheLookup::Miss { slot, .. } = cache.lookup("café", style) else {
+        let ReaderMeasureCacheLookup::Miss { slot, hash, .. } = cache.lookup("café", style) else {
             panic!("first lookup must miss");
         };
 
-        cache.insert(slot, "café", style, 37);
+        cache.insert(slot, hash, "café", style, 37);
 
         assert_eq!(
             cache.lookup("café", style),
@@ -273,5 +310,40 @@ mod tests {
             cache.lookup("cafe", style),
             ReaderMeasureCacheLookup::Miss { .. },
         ));
+    }
+
+    #[test]
+    fn saturated_cache_evicts_within_bounded_probe_window() {
+        let mut cache = ReaderMeasureCache::<16, 16>::default();
+        let style = style(20);
+
+        // Saturate every slot in the table.
+        for index in 0..64u32 {
+            let word = alloc::format!("word-{index}");
+            if let ReaderMeasureCacheLookup::Miss { slot, hash, .. } = cache.lookup(&word, style) {
+                cache.insert(slot, hash, &word, style, index);
+            }
+        }
+
+        // A new key must evict a slot within MAX_PROBE_DISTANCE of its home slot.
+        let ReaderMeasureCacheLookup::Miss {
+            slot,
+            hash,
+            collision,
+        } = cache.lookup("fresh-token", style)
+        else {
+            panic!("new token should miss");
+        };
+
+        assert!(collision);
+        let home = usize::try_from(hash).unwrap() % 16;
+        let distance = (slot + 16 - home) % 16;
+        assert!(distance < MAX_PROBE_DISTANCE);
+
+        cache.insert(slot, hash, "fresh-token", style, 999);
+        assert_eq!(
+            cache.lookup("fresh-token", style),
+            ReaderMeasureCacheLookup::Hit(999),
+        );
     }
 }

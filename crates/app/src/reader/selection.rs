@@ -4,7 +4,9 @@
 use alloc::{string::String, vec::Vec};
 use core::ops::Range;
 
-use inkpaper_reader::{Page, PageItem, ReadingPosition, Rect, TextFragment, TextMeasurer};
+use inkpaper_reader::{Page, PageItem, ReadingPosition, Rect, TextFragment};
+
+use crate::reader::measurer::ReaderFonts;
 
 /// How far beside a line's text a press still picks its word.
 const SLOP: u32 = 6;
@@ -56,44 +58,51 @@ struct WordSpot {
 
 /// The word on `page` under `x` and `y`, which are page coordinates, measured
 /// like the page was laid out.
-pub(super) fn word_at<M: TextMeasurer>(
+pub(super) fn word_at(
     page: &Page<'_>,
     x: u32,
     y: u32,
-    measurer: &mut M,
+    fonts: &ReaderFonts,
 ) -> Option<WordSelection> {
-    let spot = spot_at(page.items(), x, y, measurer)?;
+    let (spot, cached) = spot_at(page.items(), x, y, fonts)?;
 
-    select(page, spot, spot, measurer)
+    select(page, spot, spot, fonts, Some((spot.item, cached)))
 }
 
 /// `selection` grown or shrunk to the word under `x` and `y` on `page`, or
 /// `None` when that's no other word, or the words would be too long to look
 /// up.
-pub(super) fn extend_to<M: TextMeasurer>(
+pub(super) fn extend_to(
     selection: &WordSelection,
     page: &Page<'_>,
     x: u32,
     y: u32,
-    measurer: &mut M,
+    fonts: &ReaderFonts,
 ) -> Option<WordSelection> {
-    let end = spot_at(page.items(), x, y, measurer)?;
+    let (end, cached) = spot_at(page.items(), x, y, fonts)?;
 
     if end == selection.end {
         return None;
     }
 
-    select(page, selection.anchor, end, measurer)
-        .filter(|extended| extended.word.len() <= MAX_SELECTION_BYTES)
+    select(
+        page,
+        selection.anchor,
+        end,
+        fonts,
+        Some((end.item, cached)),
+    )
+    .filter(|extended| extended.word.len() <= MAX_SELECTION_BYTES)
 }
 
-/// The word under `x` and `y`, or the closest one beside it on its line.
-fn spot_at<M: TextMeasurer>(
+/// The word under `x` and `y`, or the closest one beside it on its line,
+/// together with that line's measured words so callers avoid shaping it again.
+fn spot_at(
     items: &[PageItem<'_>],
     x: u32,
     y: u32,
-    measurer: &mut M,
-) -> Option<WordSpot> {
+    fonts: &ReaderFonts,
+) -> Option<(WordSpot, Vec<Word>)> {
     // the text under the press, or else beside it
     let text_near = |slop| {
         items.iter().position(|item| match item {
@@ -103,7 +112,7 @@ fn spot_at<M: TextMeasurer>(
     };
 
     let item = text_near(0).or_else(|| text_near(SLOP))?;
-    let words = measure_words(text_item(items, item)?, measurer)?;
+    let words = measure_words(text_item(items, item)?, fonts)?;
 
     let word = words
         .iter()
@@ -111,16 +120,17 @@ fn spot_at<M: TextMeasurer>(
         .min_by_key(|(_, word)| distance(word, x))
         .map(|(word, _)| word)?;
 
-    Some(WordSpot { item, word })
+    Some((WordSpot { item, word }, words))
 }
 
 /// The words from `anchor` to `end`, in either order, with the rest of a
 /// word either one is part of where it's broken across lines.
-fn select<M: TextMeasurer>(
+fn select(
     page: &Page<'_>,
     anchor: WordSpot,
     end: WordSpot,
-    measurer: &mut M,
+    fonts: &ReaderFonts,
+    mut cached: Option<(usize, Vec<Word>)>,
 ) -> Option<WordSelection> {
     let items = page.items();
 
@@ -132,21 +142,22 @@ fn select<M: TextMeasurer>(
     if first.word == 0
         && let Some((previous, fragment)) = neighbor(items, first.item, -1)
         && fragment.hyphenated()
-        && let Some(words) = measure_words(fragment, measurer)
-        && !words.is_empty()
     {
-        first = WordSpot {
-            item: previous,
-            word: words.len() - 1,
-        };
+        let count = count_words(fragment.text());
+        if count > 0 {
+            first = WordSpot {
+                item: previous,
+                word: count - 1,
+            };
+        }
     }
 
     let fragment = text_item(items, last.item)?;
 
     if fragment.hyphenated()
-        && measure_words(fragment, measurer)?.len() == last.word + 1
+        && count_words(fragment.text()) == last.word + 1
         && let Some((next, fragment)) = neighbor(items, last.item, 1)
-        && measure_words(fragment, measurer).is_some_and(|words| !words.is_empty())
+        && count_words(fragment.text()) > 0
     {
         last = WordSpot {
             item: next,
@@ -165,7 +176,13 @@ fn select<M: TextMeasurer>(
             continue;
         };
 
-        let words = measure_words(fragment, measurer)?;
+        let words = match cached.take() {
+            Some((cached_item, words)) if cached_item == item => words,
+            other => {
+                cached = other;
+                measure_words(fragment, fonts)?
+            }
+        };
         let from = if item == first.item { first.word } else { 0 };
         let to = if item == last.item {
             last.word
@@ -217,25 +234,16 @@ struct Word {
     right: u32,
 }
 
-/// The words of `fragment`, split at whitespace and without the punctuation
-/// around them, each placed by measuring the text before it like the page
-/// was laid out, its spaces stretched by the line's justification.
-fn measure_words<M: TextMeasurer>(
-    fragment: &TextFragment<'_>,
-    measurer: &mut M,
-) -> Option<Vec<Word>> {
-    let text = fragment.text();
-    let left = fragment.bounds().x();
+struct WordSpan {
+    range: Range<usize>,
+    touch_left: bool,
+    touch_right: bool,
+}
 
-    let mut advance = |end: usize| -> Option<u32> {
-        let prefix = &text[..end];
-        let spaces = prefix.matches(' ').count() as u32;
-        let width = measurer.measure_text(prefix, fragment.style()).ok()?;
-
-        Some(left + width + spaces * fragment.word_spacing())
-    };
-
-    let mut words = Vec::new();
+/// Scans `text` into word spans (split at whitespace, stripped of leading and
+/// trailing punctuation). Pure UTF-8 scanning with no shaping.
+fn word_spans(text: &str) -> Vec<WordSpan> {
+    let mut spans = Vec::new();
     let mut start = None;
 
     let ends = text
@@ -249,13 +257,9 @@ fn measure_words<M: TextMeasurer>(
             (Some(word_start), true) => {
                 // a dash or a quote on its own isn't a word
                 if let Some(range) = letters(text, word_start..offset) {
-                    // padded only where it won't cover punctuation
-                    let padding = |touching: bool| if touching { 0 } else { HIGHLIGHT_PADDING };
-
-                    words.push(Word {
-                        left: advance(range.start)?
-                            .saturating_sub(padding(range.start > word_start)),
-                        right: advance(range.end)? + padding(range.end < offset),
+                    spans.push(WordSpan {
+                        touch_left: range.start > word_start,
+                        touch_right: range.end < offset,
                         range,
                     });
                 }
@@ -264,6 +268,75 @@ fn measure_words<M: TextMeasurer>(
             }
             _ => {}
         }
+    }
+
+    spans
+}
+
+fn count_words(text: &str) -> usize {
+    let mut count = 0;
+    let mut start = None;
+
+    let ends = text
+        .char_indices()
+        .map(|(offset, character)| (offset, character.is_whitespace()))
+        .chain(core::iter::once((text.len(), true)));
+
+    for (offset, whitespace) in ends {
+        match (start, whitespace) {
+            (None, false) => start = Some(offset),
+            (Some(word_start), true) => {
+                if letters(text, word_start..offset).is_some() {
+                    count += 1;
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+
+    count
+}
+
+/// The words of `fragment`, split at whitespace and without the punctuation
+/// around them, placed in a single shaping pass over the line.
+fn measure_words(fragment: &TextFragment<'_>, fonts: &ReaderFonts) -> Option<Vec<Word>> {
+    let text = fragment.text();
+    let spans = word_spans(text);
+    if spans.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let ranges: Vec<Range<usize>> = spans.iter().map(|span| span.range.clone()).collect();
+    let measured = fonts
+        .measure_ranges(text, fragment.style(), fragment.word_spacing(), &ranges)
+        .ok()?;
+
+    let line_left = fragment.bounds().x();
+    let mut words = Vec::with_capacity(spans.len());
+
+    for (span, bounds) in spans.into_iter().zip(measured) {
+        let Some((min_left, max_right)) = bounds else {
+            continue;
+        };
+
+        // padded only where it won't cover punctuation
+        let pad_left = if span.touch_left {
+            0
+        } else {
+            HIGHLIGHT_PADDING
+        };
+        let pad_right = if span.touch_right {
+            0
+        } else {
+            HIGHLIGHT_PADDING
+        };
+
+        words.push(Word {
+            left: (line_left + min_left).saturating_sub(pad_left),
+            right: line_left + max_right + pad_right,
+            range: span.range,
+        });
     }
 
     Some(words)
@@ -316,4 +389,44 @@ fn neighbor<'a, 'page>(
     let neighbor = index.checked_add_signed(step)?;
 
     text_item(items, neighbor).map(|fragment| (neighbor, fragment))
+}
+
+#[cfg(test)]
+mod tests {
+    use inkpaper_epub::{BlockKind, FontStyle, FontWeight};
+    use inkpaper_reader::TextStyle;
+
+    use crate::reader::measurer::ReaderFonts;
+
+    use super::*;
+
+    #[test]
+    fn single_pass_measure_words_accounts_for_word_spacing_and_punctuation() {
+        let fonts = ReaderFonts::new(None).unwrap();
+        let style = TextStyle::new(20, BlockKind::Paragraph, FontWeight::Normal, FontStyle::Normal);
+
+        let text = "Hello, \"brave\" world!";
+        let spans = word_spans(text);
+        let ranges: Vec<_> = spans.iter().map(|s| s.range.clone()).collect();
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(&text[ranges[0].clone()], "Hello");
+        assert_eq!(&text[ranges[1].clone()], "brave");
+        assert_eq!(&text[ranges[2].clone()], "world");
+
+        let unspaced = fonts.measure_ranges(text, style, 0, &ranges).unwrap();
+        let spaced = fonts.measure_ranges(text, style, 10, &ranges).unwrap();
+
+        let (u0, u1, u2) = (
+            unspaced[0].unwrap(),
+            unspaced[1].unwrap(),
+            unspaced[2].unwrap(),
+        );
+        let (s0, s1, s2) = (spaced[0].unwrap(), spaced[1].unwrap(), spaced[2].unwrap());
+
+        assert!(u0.0 < u0.1 && u0.1 < u1.0 && u1.0 < u1.1 && u1.1 < u2.0 && u2.0 < u2.1);
+        // Word 0 has 0 spaces before it, word 1 has 1 space (+10px), word 2 has 2 spaces (+20px).
+        assert_eq!(s0, u0);
+        assert_eq!(s1, (u1.0 + 10, u1.1 + 10));
+        assert_eq!(s2, (u2.0 + 20, u2.1 + 20));
+    }
 }

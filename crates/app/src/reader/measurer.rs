@@ -1,3 +1,6 @@
+use alloc::{boxed::Box, vec, vec::Vec};
+use core::{fmt, ops::Range};
+
 use inkpaper_epub::{
     ChapterImage, FontStyle as ReaderFontStyle, FontWeight as ReaderFontWeight, ImageDimensions,
 };
@@ -44,6 +47,90 @@ impl ReaderFonts {
 
         Ok(Self { registry, family })
     }
+
+    /// Measures the visual `(left, right)` x-bounds (relative to the start of
+    /// `text`) of each sorted, non-overlapping byte `range` in `ranges` using a
+    /// single shaping pass over `text`.
+    pub(super) fn measure_ranges(
+        &self,
+        text: &str,
+        style: ReaderTextStyle,
+        word_spacing: u32,
+        ranges: &[Range<usize>],
+    ) -> Result<Vec<Option<(u32, u32)>>, ShapeError> {
+        let mut bounds: Vec<Option<(u32, u32)>> = vec![None; ranges.len()];
+        if ranges.is_empty() {
+            return Ok(bounds);
+        }
+
+        let font = resolve_font(self, style.font_weight(), style.font_style());
+        let shaper = SimpleShaper::with_properties(font.properties())
+            .prepare(&self.registry, font.id());
+        let mut pen_x: i32 = 0;
+
+        shaper.shape_line_with(&self.registry, style.font_size(), text, "", |glyph| {
+            let start_x = pen_x.max(0) as u32;
+            let advance = glyph.advance().get();
+            let extra = if text.as_bytes().get(glyph.cluster()) == Some(&b' ') {
+                i32::try_from(word_spacing).unwrap_or(i32::MAX)
+            } else {
+                0
+            };
+            pen_x = pen_x.saturating_add(advance).saturating_add(extra);
+            let end_x = (start_x as i64 + i64::from(advance)).max(0) as u32;
+
+            let cluster = glyph.cluster();
+            let index = ranges.partition_point(|range| range.end <= cluster);
+            if let Some(range) = ranges.get(index)
+                && cluster >= range.start
+            {
+                bounds[index] = Some(match bounds[index] {
+                    Some((min_left, max_right)) => (min_left.min(start_x), max_right.max(end_x)),
+                    None => (start_x, end_x),
+                });
+            }
+        })?;
+
+        Ok(bounds)
+    }
+}
+
+/// Keeps a [`ReaderFonts`] registry cached by card family id so repeated
+/// selection drags or settings previews avoid rebuilding fonts on every frame.
+#[derive(Default)]
+pub(crate) struct CachedReaderFonts {
+    cached: Option<(Option<u8>, Box<ReaderFonts>)>,
+}
+
+impl CachedReaderFonts {
+    pub(crate) fn get_or_init(
+        &mut self,
+        card: Option<&CardFont>,
+    ) -> Result<&ReaderFonts, FontRegistryError> {
+        let key = card.map(CardFont::family);
+        if self
+            .cached
+            .as_ref()
+            .is_none_or(|(cached_key, _)| *cached_key != key)
+        {
+            self.cached = Some((key, Box::new(ReaderFonts::new(card)?)));
+        }
+
+        Ok(self.cached.as_ref().expect("just initialized").1.as_ref())
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.cached = None;
+    }
+}
+
+impl fmt::Debug for CachedReaderFonts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CachedReaderFonts")
+            .field("card_family", &self.cached.as_ref().map(|(key, _)| *key))
+            .finish()
+    }
 }
 
 /// Measures with shapers prepared from `fonts`, which it borrows since what
@@ -56,7 +143,8 @@ pub(super) struct ReaderMeasurer<'fonts> {
 
     images: ChapterImageMetrics,
 
-    measure_cache: ReaderMeasureCache<READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES>,
+    measure_cache:
+        Box<ReaderMeasureCache<READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES>>,
 }
 
 impl<'fonts> ReaderMeasurer<'fonts> {
@@ -77,7 +165,7 @@ impl<'fonts> ReaderMeasurer<'fonts> {
             fonts,
             shapers,
             images,
-            measure_cache: ReaderMeasureCache::default(),
+            measure_cache: Box::default(),
         }
     }
 }
@@ -106,12 +194,12 @@ impl TextMeasurer for ReaderMeasurer<'_> {
     type Error = ShapeError;
 
     fn measure_text(&mut self, text: &str, style: ReaderTextStyle) -> Result<u32, Self::Error> {
-        let insertion_slot = match self.measure_cache.lookup(text, style) {
+        let insertion = match self.measure_cache.lookup(text, style) {
             ReaderMeasureCacheLookup::Hit(width) => {
                 return Ok(width);
             }
 
-            ReaderMeasureCacheLookup::Miss { slot, .. } => Some(slot),
+            ReaderMeasureCacheLookup::Miss { slot, hash, .. } => Some((slot, hash)),
 
             ReaderMeasureCacheLookup::Bypass => None,
         };
@@ -123,8 +211,8 @@ impl TextMeasurer for ReaderMeasurer<'_> {
 
         let width = u32::try_from(summary.advance().non_negative().get()).unwrap_or(u32::MAX);
 
-        if let Some(slot) = insertion_slot {
-            self.measure_cache.insert(slot, text, style, width);
+        if let Some((slot, hash)) = insertion {
+            self.measure_cache.insert(slot, hash, text, style, width);
         }
 
         Ok(width)

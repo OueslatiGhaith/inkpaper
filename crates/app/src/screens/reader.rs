@@ -237,6 +237,7 @@ impl ScreenLifecycle for ReaderRoute {
             app.reader.close_menu();
             app.lookup.close();
             app.reader.clear_selection();
+            app.reader.clear_selection_fonts();
         }
     }
 }
