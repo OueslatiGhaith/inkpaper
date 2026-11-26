@@ -7,16 +7,22 @@ use inkpaper_app::{
 use inkpaper_io::ByteSource;
 
 use crate::firmware::{
-    storage::{self, MAX_RANDOM_ACCESS_READ_BYTES, RandomAccessHandle, StorageError},
+    frontlight::Frontlight,
+    storage::{self, RandomAccessHandle, StorageError},
     wifi,
 };
 
-#[derive(Debug, Default, Clone, Copy)]
-pub(super) struct X4Platform;
+pub(super) struct X4Platform {
+    frontlight: Frontlight,
+}
 
 impl X4Platform {
-    pub(super) const fn new() -> Self {
-        Self
+    pub(super) const fn new(frontlight: Frontlight) -> Self {
+        Self { frontlight }
+    }
+
+    pub(super) fn frontlight_off(&mut self) {
+        self.frontlight.off();
     }
 }
 
@@ -43,40 +49,7 @@ impl ByteSource for X4RandomAccessSource {
     }
 
     async fn read_exact_at(&mut self, offset: u64, buffer: &mut [u8]) -> Result<(), Self::Error> {
-        let requested_len = u64::try_from(buffer.len()).map_err(|_| StorageError::OutOfBounds)?;
-
-        let end = offset
-            .checked_add(requested_len)
-            .ok_or(StorageError::OutOfBounds)?;
-
-        if end > self.len {
-            return Err(StorageError::OutOfBounds);
-        }
-
-        let mut copied = 0usize;
-
-        while copied < buffer.len() {
-            let remaining = buffer.len() - copied;
-
-            let chunk_len = remaining.min(MAX_RANDOM_ACCESS_READ_BYTES);
-
-            let chunk_offset = offset
-                .checked_add(copied as u64)
-                .ok_or(StorageError::OutOfBounds)?;
-
-            let chunk =
-                storage::read_random_access_and_wait(self.handle, chunk_offset, chunk_len).await?;
-
-            if chunk.len() != chunk_len {
-                return Err(StorageError::UnexpectedEof);
-            }
-
-            buffer[copied..copied + chunk_len].copy_from_slice(&chunk);
-
-            copied += chunk_len;
-        }
-
-        Ok(())
+        storage::read_random_access_into(self.handle, offset, buffer).await
     }
 }
 
@@ -85,7 +58,7 @@ impl AppPlatform for X4Platform {
     type RandomAccessSource = X4RandomAccessSource;
 
     async fn list_directory(&mut self, path: &str) -> Result<Vec<PlatformEntry>, Self::Error> {
-        let entries = storage::list_directory_and_wait(path).await?;
+        let entries = storage::list_directory(path).await?;
 
         Ok(entries
             .into_iter()
@@ -105,13 +78,13 @@ impl AppPlatform for X4Platform {
         &mut self,
         path: &str,
     ) -> Result<Self::RandomAccessSource, Self::Error> {
-        let handle = storage::open_random_access_and_wait(path).await?;
+        let handle = storage::open_random_access(path).await?;
 
         Ok(X4RandomAccessSource::from_handle(handle))
     }
 
     async fn read_file(&mut self, path: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
-        storage::read_file_and_wait(path, max_bytes).await
+        storage::read_file(path, max_bytes).await
     }
 
     async fn set_frontlight(&mut self, setting: FrontlightSetting) -> Result<(), Self::Error> {
@@ -126,7 +99,8 @@ impl AppPlatform for X4Platform {
         let warmth = ::frontlight::Percent::new(setting.warmth())
             .expect("app frontlight warmth must be valid");
 
-        crate::firmware::frontlight::set(::frontlight::Setting::new(brightness, warmth)).await;
+        self.frontlight
+            .set(::frontlight::Setting::new(brightness, warmth));
 
         Ok(())
     }
@@ -136,11 +110,11 @@ impl AppPlatform for X4Platform {
         name: &str,
         max_bytes: usize,
     ) -> Result<Option<Vec<u8>>, Self::Error> {
-        storage::load_state_and_wait(name, max_bytes).await
+        storage::load_state(name, max_bytes).await
     }
 
     async fn save_state(&mut self, name: &str, bytes: &[u8]) -> Result<(), Self::Error> {
-        storage::save_state_and_wait(name, bytes).await
+        storage::save_state(name, bytes).await
     }
 
     async fn start_clock_sync(&mut self, plan: &WifiJoinPlan) -> Result<(), Self::Error> {

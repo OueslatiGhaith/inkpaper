@@ -1,303 +1,354 @@
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 
 use defmt::debug;
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+    blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, signal::Signal,
 };
+use embassy_time::Delay;
+use esp_hal::{Async, sdmmc::Slot};
 use hadris_fat::r#async::FatVolume;
-use hadris_io::r#async::{Read as HadrisRead, Seek as HadrisSeek, Write as HadrisWrite};
+use sdio::{
+    BlockDevice, BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand,
+    ControlCommand, MmcBus, MmcError, TuningOp, sd::Card,
+};
 
 use super::{
-    filesystem::{list_directory, read_file},
+    filesystem,
+    partition::{SECTOR_SIZE, SdPartition},
     random_access::OpenRandomAccessFile,
-    state::{load_state, save_state},
-    types::{
-        MAX_RANDOM_ACCESS_READ_BYTES, MAX_STATE_BYTES, RandomAccessHandle, StorageEntry,
-        StorageError,
-    },
+    state,
+    types::{MAX_STATE_BYTES, RandomAccessHandle, StorageEntry, StorageError},
 };
-use crate::firmware::rpc::{self, Reply};
-
-const COMMAND_CAPACITY: usize = 4;
 
 /// The random-access files kept open together: a book, and a dictionary's
 /// index, definitions and synonyms. Opening another closes the one read
 /// least recently.
 const MAX_OPEN_RANDOM_ACCESS: usize = 4;
 
-static COMMANDS: Channel<CriticalSectionRawMutex, Command, COMMAND_CAPACITY> = Channel::new();
+/// Newtype around `esp_hal::sdmmc::Slot` whose fields are all `Send`; the only
+/// `!Send` marker comes from `esp_hal::Async(PhantomData<*const ()>)`.
+pub(super) struct SendSlot(Slot<'static, 1, Async>);
 
+impl SendSlot {
+    pub(super) fn new(slot: Slot<'static, 1, Async>) -> Self {
+        Self(slot)
+    }
+}
+
+// SAFETY: Every field of `Slot<'static, 1, Async>` is `Send` (plain config
+// integers, `PeripheralGuard`, and `Option<OutputSignal>`), SDHOST async
+// completion uses atomic/critical-section state, and all access is serialized
+// under the async `STORAGE` mutex or exclusively owned by `storage_task`.
+unsafe impl Send for SendSlot {}
+
+impl MmcBus for SendSlot {
+    async fn send_command<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: ControlCommand + 'a,
+    {
+        self.0.send_command(cmd).await
+    }
+
+    async fn read_blocks<'a, C>(
+        &mut self,
+        cmd: C,
+        auto_stop: bool,
+    ) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: BlockReadCommand + 'a,
+    {
+        self.0.read_blocks(cmd, auto_stop).await
+    }
+
+    async fn write_blocks<'a, C>(
+        &mut self,
+        cmd: C,
+        auto_stop: bool,
+    ) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: BlockWriteCommand + 'a,
+    {
+        self.0.write_blocks(cmd, auto_stop).await
+    }
+
+    async fn read_bytes<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: ByteReadCommand + 'a,
+    {
+        self.0.read_bytes(cmd).await
+    }
+
+    async fn write_bytes<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: ByteWriteCommand + 'a,
+    {
+        self.0.write_bytes(cmd).await
+    }
+
+    async fn init_idle(&mut self, hz: u32) -> Result<(), MmcError> {
+        self.0.init_idle(hz).await
+    }
+
+    async fn tune_bus<O>(&mut self, width: BusWidth, hz: u32, op: O) -> Result<(), MmcError>
+    where
+        O: TuningOp,
+    {
+        self.0.tune_bus(width, hz, op).await
+    }
+
+    async fn wait_for_event(&mut self) -> Result<(), MmcError> {
+        self.0.wait_for_event().await
+    }
+
+    fn set_bus(&mut self, width: BusWidth, hz: u32) -> Result<(), MmcError> {
+        self.0.set_bus(width, hz)
+    }
+
+    fn supports_mmc(&self) -> bool {
+        self.0.supports_mmc()
+    }
+
+    fn supports_auto_stop(&self) -> bool {
+        self.0.supports_auto_stop()
+    }
+
+    fn supports_bus_width(&self) -> BusWidth {
+        self.0.supports_bus_width()
+    }
+
+    fn supports_1v8(&self) -> bool {
+        self.0.supports_1v8()
+    }
+
+    fn supports_frequency(&self) -> u32 {
+        self.0.supports_frequency()
+    }
+}
+
+pub(super) type SdCard = BlockDevice<Card, SendSlot, Delay, SECTOR_SIZE>;
+pub(super) type MountedVolume = FatVolume<SdPartition<SdCard>>;
+
+pub(super) struct MountedStorage {
+    filesystem: MountedVolume,
+    // Least recently read first.
+    open_random_access: Vec<OpenRandomAccessFile>,
+    last_handle: u32,
+}
+
+impl MountedStorage {
+    pub(super) fn new(filesystem: MountedVolume) -> Self {
+        Self {
+            filesystem,
+            open_random_access: Vec::new(),
+            last_handle: 0,
+        }
+    }
+
+    pub(super) fn into_card(self) -> SdCard {
+        drop(self.open_random_access);
+        self.filesystem.into_inner().into_inner()
+    }
+}
+
+/// Inline in static internal DRAM so `SdPartition`'s sector buffer stays
+/// reachable by ESP32-S3 SDHOST IDMAC (which cannot DMA into PSRAM).
+#[allow(clippy::large_enum_variant)]
+pub(super) enum StorageState {
+    Unavailable,
+    Mounted(MountedStorage),
+    UsbDrive,
+    Shutdown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LifecycleCommand {
+    EnterUsbDrive,
+    Shutdown,
+}
+
+static STORAGE: Mutex<CriticalSectionRawMutex, StorageState> =
+    Mutex::new(StorageState::Unavailable);
 static READY: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
-/// Why the storage task stopped serving the filesystem, with the reply that
-/// acknowledges the transition once `mount.rs` has made it.
-#[derive(Debug)]
-pub(super) enum FilesystemExit {
-    Shutdown(Reply<()>),
-    UsbDrive(Reply<bool>),
-}
-
-#[derive(Debug)]
-enum Command {
-    ListDirectory {
-        path: String,
-        reply: Reply<Result<Vec<StorageEntry>, StorageError>>,
-    },
-
-    OpenRandomAccess {
-        path: String,
-        reply: Reply<Result<RandomAccessHandle, StorageError>>,
-    },
-
-    ReadRandomAccess {
-        handle: u32,
-        offset: u64,
-        len: usize,
-        reply: Reply<Result<Vec<u8>, StorageError>>,
-    },
-
-    ReadFile {
-        path: String,
-        max_bytes: usize,
-        reply: Reply<Result<Vec<u8>, StorageError>>,
-    },
-
-    LoadState {
-        name: String,
-        max_bytes: usize,
-        reply: Reply<Result<Option<Vec<u8>>, StorageError>>,
-    },
-
-    SaveState {
-        name: String,
-        bytes: Vec<u8>,
-        reply: Reply<Result<(), StorageError>>,
-    },
-
-    EnterUsbDrive(Reply<bool>),
-
-    Shutdown(Reply<()>),
-}
+static LIFECYCLE_CMD: Signal<CriticalSectionRawMutex, LifecycleCommand> = Signal::new();
+static USB_DRIVE_ACK: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+static SHUTDOWN_ACK: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub async fn wait_ready() -> bool {
     READY.wait().await
 }
 
-pub async fn list_directory_and_wait(path: &str) -> Result<Vec<StorageEntry>, StorageError> {
-    rpc::call(&COMMANDS, |reply| Command::ListDirectory {
-        path: String::from(path),
-        reply,
-    })
-    .await
+pub async fn list_directory(path: &str) -> Result<Vec<StorageEntry>, StorageError> {
+    let guard = STORAGE.lock().await;
+    let StorageState::Mounted(mounted) = &*guard else {
+        return Err(StorageError::Unavailable);
+    };
+
+    filesystem::list_directory(&mounted.filesystem, path).await
 }
 
-pub async fn open_random_access_and_wait(path: &str) -> Result<RandomAccessHandle, StorageError> {
-    rpc::call(&COMMANDS, |reply| Command::OpenRandomAccess {
-        path: String::from(path),
-        reply,
-    })
-    .await
-}
+pub async fn open_random_access(path: &str) -> Result<RandomAccessHandle, StorageError> {
+    let mut guard = STORAGE.lock().await;
+    let StorageState::Mounted(mounted) = &mut *guard else {
+        return Err(StorageError::Unavailable);
+    };
 
-pub async fn read_random_access_and_wait(
-    handle: u32,
-    offset: u64,
-    len: usize,
-) -> Result<Vec<u8>, StorageError> {
-    if len > MAX_RANDOM_ACCESS_READ_BYTES {
-        return Err(StorageError::ReadTooLarge);
+    let id = next_handle(&mut mounted.last_handle);
+    let file = OpenRandomAccessFile::open(&mounted.filesystem, path, id).await?;
+    let handle = file.handle();
+
+    if mounted.open_random_access.len() == MAX_OPEN_RANDOM_ACCESS {
+        mounted.open_random_access.remove(0);
     }
 
-    rpc::call(&COMMANDS, |reply| Command::ReadRandomAccess {
-        handle,
-        offset,
-        len,
-        reply,
-    })
-    .await
+    mounted.open_random_access.push(file);
+
+    Ok(handle)
 }
 
-/// Reads a whole file, apart from the open random-access file.
-pub async fn read_file_and_wait(path: &str, max_bytes: usize) -> Result<Vec<u8>, StorageError> {
-    rpc::call(&COMMANDS, |reply| Command::ReadFile {
-        path: String::from(path),
-        max_bytes,
-        reply,
-    })
-    .await
+pub async fn read_random_access_into(
+    handle: u32,
+    offset: u64,
+    buffer: &mut [u8],
+) -> Result<(), StorageError> {
+    let mut guard = STORAGE.lock().await;
+    let StorageState::Mounted(mounted) = &mut *guard else {
+        return Err(StorageError::Unavailable);
+    };
+
+    let Some(index) = mounted
+        .open_random_access
+        .iter()
+        .position(|file| file.handle().id() == handle)
+    else {
+        return Err(StorageError::StaleHandle);
+    };
+
+    let result = mounted.open_random_access[index]
+        .read_exact_at(&mounted.filesystem, offset, buffer)
+        .await;
+
+    // Most recently read last.
+    mounted.open_random_access[index..].rotate_left(1);
+
+    result
 }
 
-pub async fn load_state_and_wait(
-    name: &str,
-    max_bytes: usize,
-) -> Result<Option<Vec<u8>>, StorageError> {
+/// Reads a whole file, apart from the open random-access handles.
+pub async fn read_file(path: &str, max_bytes: usize) -> Result<Vec<u8>, StorageError> {
+    let guard = STORAGE.lock().await;
+    let StorageState::Mounted(mounted) = &*guard else {
+        return Err(StorageError::Unavailable);
+    };
+
+    filesystem::read_file(&mounted.filesystem, path, max_bytes).await
+}
+
+pub async fn load_state(name: &str, max_bytes: usize) -> Result<Option<Vec<u8>>, StorageError> {
     if max_bytes > MAX_STATE_BYTES {
         return Err(StorageError::StateTooLarge);
     }
 
-    rpc::call(&COMMANDS, |reply| Command::LoadState {
-        name: String::from(name),
-        max_bytes,
-        reply,
-    })
-    .await
+    let guard = STORAGE.lock().await;
+    let StorageState::Mounted(mounted) = &*guard else {
+        return Err(StorageError::Unavailable);
+    };
+
+    state::load_state(&mounted.filesystem, name, max_bytes).await
 }
 
-pub async fn save_state_and_wait(name: &str, bytes: &[u8]) -> Result<(), StorageError> {
+pub async fn save_state(name: &str, bytes: &[u8]) -> Result<(), StorageError> {
     if bytes.len() > MAX_STATE_BYTES {
         return Err(StorageError::StateTooLarge);
     }
 
-    rpc::call(&COMMANDS, |reply| Command::SaveState {
-        name: String::from(name),
-        bytes: Vec::from(bytes),
-        reply,
-    })
-    .await
-}
+    let guard = STORAGE.lock().await;
+    let StorageState::Mounted(mounted) = &*guard else {
+        return Err(StorageError::Unavailable);
+    };
 
-pub async fn shutdown_and_wait() {
-    rpc::call(&COMMANDS, Command::Shutdown).await;
+    state::save_state(&mounted.filesystem, name, bytes).await
 }
 
 pub async fn enter_usb_drive_and_wait() -> bool {
-    rpc::call(&COMMANDS, Command::EnterUsbDrive).await
+    USB_DRIVE_ACK.reset();
+    LIFECYCLE_CMD.signal(LifecycleCommand::EnterUsbDrive);
+    USB_DRIVE_ACK.wait().await
+}
+
+pub async fn shutdown_and_wait() {
+    SHUTDOWN_ACK.reset();
+    LIFECYCLE_CMD.signal(LifecycleCommand::Shutdown);
+    SHUTDOWN_ACK.wait().await;
 }
 
 pub(super) fn signal_ready(ready: bool) {
     READY.signal(ready);
 }
 
-pub(super) async fn serve_filesystem<'a, D>(filesystem: &'a FatVolume<D>) -> FilesystemExit
-where
-    D: HadrisRead
-        + HadrisWrite<Error = <D as HadrisRead>::Error>
-        + HadrisSeek<Error = <D as HadrisRead>::Error>,
-{
-    // the least recently read first
-    let mut open_random_access: Vec<OpenRandomAccessFile<'a, D>> = Vec::new();
-    let mut last_handle = 0u32;
+pub(super) async fn publish_mounted(filesystem: MountedVolume) {
+    let mut guard = STORAGE.lock().await;
+    *guard = StorageState::Mounted(MountedStorage::new(filesystem));
+    drop(guard);
 
+    signal_ready(true);
+}
+
+pub(super) async fn take_mounted_for_usb_drive() -> Option<SdCard> {
+    let mut guard = STORAGE.lock().await;
+    let previous = core::mem::replace(&mut *guard, StorageState::UsbDrive);
+    drop(guard);
+
+    match previous {
+        StorageState::Mounted(mounted) => Some(mounted.into_card()),
+        _ => None,
+    }
+}
+
+pub(super) async fn mark_unavailable() {
+    let mut guard = STORAGE.lock().await;
+    *guard = StorageState::Unavailable;
+}
+
+pub(super) async fn teardown_for_shutdown() {
+    let mut guard = STORAGE.lock().await;
+    *guard = StorageState::Shutdown;
+}
+
+pub(super) async fn wait_lifecycle_command() -> LifecycleCommand {
+    let command = LIFECYCLE_CMD.wait().await;
+    match command {
+        LifecycleCommand::EnterUsbDrive => debug!("USB Drive storage handoff requested"),
+        LifecycleCommand::Shutdown => debug!("storage shutdown requested"),
+    }
+    command
+}
+
+pub(super) fn ack_usb_drive(ready: bool) {
+    USB_DRIVE_ACK.signal(ready);
+}
+
+pub(super) fn ack_shutdown() {
+    SHUTDOWN_ACK.signal(());
+}
+
+pub(super) async fn wait_unavailable_shutdown() {
+    signal_ready(false);
     loop {
-        match COMMANDS.receive().await {
-            Command::ListDirectory { path, reply } => {
-                reply.send(list_directory(filesystem, &path).await);
-            }
-
-            Command::OpenRandomAccess { path, reply } => {
-                let handle = next_handle(&mut last_handle);
-
-                match OpenRandomAccessFile::open(filesystem, &path, handle).await {
-                    Ok(file) => {
-                        let handle = file.handle();
-
-                        if open_random_access.len() == MAX_OPEN_RANDOM_ACCESS {
-                            open_random_access.remove(0);
-                        }
-
-                        open_random_access.push(file);
-
-                        reply.send(Ok(handle));
-                    }
-
-                    Err(error) => reply.send(Err(error)),
-                }
-            }
-
-            Command::ReadRandomAccess {
-                handle,
-                offset,
-                len,
-                reply,
-            } => {
-                let index = open_random_access
-                    .iter()
-                    .position(|file| file.handle().id() == handle);
-
-                let result = match index {
-                    Some(index) => {
-                        let result = open_random_access[index].read_exact_at(offset, len).await;
-
-                        // most recently read last
-                        open_random_access[index..].rotate_left(1);
-
-                        result
-                    }
-                    None => Err(StorageError::StaleHandle),
-                };
-
-                reply.send(result);
-            }
-
-            Command::ReadFile {
-                path,
-                max_bytes,
-                reply,
-            } => {
-                reply.send(read_file(filesystem, &path, max_bytes).await);
-            }
-
-            Command::LoadState {
-                name,
-                max_bytes,
-                reply,
-            } => {
-                reply.send(load_state(filesystem, &name, max_bytes).await);
-            }
-
-            Command::SaveState { name, bytes, reply } => {
-                reply.send(save_state(filesystem, &name, &bytes).await);
-            }
-
-            Command::EnterUsbDrive(reply) => {
-                debug!("USB Drive storage handoff requested");
-
-                // No FAT-backed object may survive the transition to raw block access.
-                // This drops the open random-access readers before mount.rs drops
-                // the FatVolume itself.
-                drop(open_random_access);
-
-                return FilesystemExit::UsbDrive(reply);
-            }
-
-            Command::Shutdown(reply) => {
-                debug!("storage shutdown requested");
-
-                // ensure every FAT FileReader is gone before `mount.rs` drops
-                // the FatVolume and block device.
-                drop(open_random_access);
-
-                return FilesystemExit::Shutdown(reply);
-            }
+        match LIFECYCLE_CMD.wait().await {
+            LifecycleCommand::EnterUsbDrive => ack_usb_drive(false),
+            LifecycleCommand::Shutdown => return,
         }
     }
 }
 
-pub(super) async fn serve_unavailable_requests() {
-    READY.signal(false);
-
-    refuse_filesystem_requests(false).await.send(());
-}
-
-/// Refuses filesystem requests while the card is a USB drive, until a shutdown
-/// request. The drive's exit acknowledges it once it has stopped.
-pub(super) async fn serve_usb_drive_requests() -> Reply<()> {
-    refuse_filesystem_requests(true).await
-}
-
-/// Answers every filesystem request with [`StorageError::Unavailable`] and a
-/// USB drive request with `usb_drive`, until a shutdown request.
-async fn refuse_filesystem_requests(usb_drive: bool) -> Reply<()> {
+/// Refuses extra USB drive requests while the card is a USB drive, returning
+/// once shutdown is requested.
+pub(super) async fn wait_usb_drive_shutdown() {
     loop {
-        match COMMANDS.receive().await {
-            Command::ListDirectory { reply, .. } => reply.send(Err(StorageError::Unavailable)),
-            Command::OpenRandomAccess { reply, .. } => reply.send(Err(StorageError::Unavailable)),
-            Command::ReadRandomAccess { reply, .. } => reply.send(Err(StorageError::Unavailable)),
-            Command::ReadFile { reply, .. } => reply.send(Err(StorageError::Unavailable)),
-            Command::LoadState { reply, .. } => reply.send(Err(StorageError::Unavailable)),
-            Command::SaveState { reply, .. } => reply.send(Err(StorageError::Unavailable)),
-            Command::EnterUsbDrive(reply) => reply.send(usb_drive),
-            Command::Shutdown(reply) => return reply,
+        match LIFECYCLE_CMD.wait().await {
+            LifecycleCommand::EnterUsbDrive => ack_usb_drive(true),
+            LifecycleCommand::Shutdown => return,
         }
     }
 }

@@ -80,6 +80,10 @@ impl<P> AppService<P>
 where
     P: AppPlatform,
 {
+    pub fn platform_mut(&mut self) -> &mut P {
+        &mut self.platform
+    }
+
     pub fn new(platform: P) -> Self {
         Self {
             platform,

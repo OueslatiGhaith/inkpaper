@@ -1,6 +1,5 @@
 use alloc::string::String;
 
-pub const MAX_RANDOM_ACCESS_READ_BYTES: usize = 16 * 1024;
 pub(super) const MAX_STATE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,7 +10,6 @@ pub enum StorageError {
     StateTooLarge,
     FileTooLarge,
     StaleHandle,
-    ReadTooLarge,
     OutOfBounds,
     UnexpectedEof,
 }

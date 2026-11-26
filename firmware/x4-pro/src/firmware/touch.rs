@@ -1,7 +1,11 @@
-use defmt::warn;
-use embassy_time::{Duration, Instant, Timer};
+use defmt::{debug, info, warn};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_time::{Delay as AsyncDelay, Duration, Instant, Timer};
 use embedded_hal_async::{delay::DelayNs, i2c::I2c};
-use esp_hal::gpio::{Flex, InputConfig, Level, Output, OutputConfig, OutputPin, Pin, Pull};
+use esp_hal::{
+    gpio::{Flex, InputConfig, Level, Output, OutputConfig, OutputPin, Pin, Pull},
+    peripherals::{GPIO4, GPIO10},
+};
 use gt911::{
     ALTERNATE_ADDRESS, Gt911, PRIMARY_ADDRESS, PointLayout, ProductInfo, TouchFrame, TouchPoint,
 };
@@ -15,6 +19,12 @@ use crate::firmware::{
 };
 
 const POLL_INTERVAL_MS: u64 = 10;
+
+/// Signaled by `main` after the GT911 power rail is enabled and settled.
+pub static TOUCH_RAIL_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Reports whether GT911 initialization succeeded so `main` can cut the rail on failure.
+pub static TOUCH_INIT_OK: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 pub struct TouchController<'d, I2C> {
     driver: Gt911<I2C>,
     reset: Output<'d>,
@@ -118,7 +128,32 @@ where
 }
 
 #[embassy_executor::task]
-pub async fn touch_task(mut touch: TouchController<'static, SharedI2cDevice>) {
+pub async fn touch_task(i2c: SharedI2cDevice, reset: GPIO4<'static>, interrupt: GPIO10<'static>) {
+    TOUCH_RAIL_READY.wait().await;
+
+    let mut touch = TouchController::new(i2c, reset, interrupt);
+    let mut delay = AsyncDelay;
+
+    match touch.initialize(&mut delay).await {
+        Ok(info) => {
+            info!(
+                "GT911 initialized address={:#04x} firmware={:#06x} resolution={}x{} vendor={:#04x}",
+                touch.address(),
+                info.firmware_version(),
+                info.x_resolution(),
+                info.y_resolution(),
+                info.vendor_id(),
+            );
+            debug!("GT911 product={}", info.product_id());
+            TOUCH_INIT_OK.signal(true);
+        }
+        Err(error) => {
+            warn!("GT911 initialization failed error={:?}", error);
+            TOUCH_INIT_OK.signal(false);
+            return;
+        }
+    }
+
     let mut gesture = TouchGesture::default();
     let mut home_pressed = false;
     let mut consecutive_errors = 0u16;

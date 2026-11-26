@@ -1,3 +1,4 @@
+mod cache;
 mod filesystem;
 mod mount;
 mod partition;
@@ -9,9 +10,8 @@ mod types;
 pub use mount::storage_task;
 
 pub use service::{
-    enter_usb_drive_and_wait, list_directory_and_wait, load_state_and_wait,
-    open_random_access_and_wait, read_file_and_wait, read_random_access_and_wait,
-    save_state_and_wait, shutdown_and_wait, wait_ready,
+    enter_usb_drive_and_wait, list_directory, load_state, open_random_access, read_file,
+    read_random_access_into, save_state, shutdown_and_wait, wait_ready,
 };
 
-pub use types::{MAX_RANDOM_ACCESS_READ_BYTES, RandomAccessHandle, StorageEntry, StorageError};
+pub use types::{RandomAccessHandle, StorageEntry, StorageError};

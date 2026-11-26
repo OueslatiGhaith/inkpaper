@@ -18,6 +18,7 @@ use esp_hal::{
         Mode,
         master::{Config as SpiConfig, Spi},
     },
+    system::Stack,
     time::Rate,
     timer::timg::TimerGroup,
 };
@@ -26,7 +27,7 @@ use inkpaper_app::{
     InkPaperApp, UsbDriveConnection as AppUsbDriveConnection,
 };
 use inkpaper_ui::prelude::*;
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 use xteink_display_probe::{Verdict, detect_x4_controller};
 
 use crate::firmware::{
@@ -35,8 +36,11 @@ use crate::firmware::{
     buttons::{Buttons, button_task},
     display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
-    frontlight::frontlight_task,
-    input::{Button, ButtonEdge, INPUT_EVENTS, InputEvent, PowerButtonEvent, TouchEvent},
+    frontlight::Frontlight,
+    input::{
+        Button, ButtonEdge, INPUT_EVENTS, InputEvent, POWER_BUTTON_EVENTS, PowerButtonEvent,
+        TouchEvent,
+    },
     platform::X4Platform,
     power::PowerRails,
     power_button::power_button_task,
@@ -45,7 +49,7 @@ use crate::firmware::{
     rtc::{RTC_UPDATES, RtcState, rtc_task},
     sleep_pins::release_display_reset_hold,
     suspend::SuspendContext,
-    touch::{TouchController, touch_task},
+    touch::{TOUCH_INIT_OK, TOUCH_RAIL_READY, touch_task},
     usb_mass_storage::{USB_HOST_UPDATES, UsbHostState},
     wifi::{WIFI_EVENTS, WifiEvent, wifi_task},
 };
@@ -85,6 +89,8 @@ const RTC_BOOT_WAIT_MS: u64 = 100;
 
 static FRAMEBUFFER: StaticCell<FramebufferStorage> = StaticCell::new();
 static UI_RUNTIME: StaticCell<UiRuntime> = StaticCell::new();
+static APP_CORE_STACK: ConstStaticCell<Stack<12288>> = ConstStaticCell::new(Stack::new());
+static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputAction {
@@ -126,38 +132,73 @@ async fn main(spawner: Spawner) -> ! {
     let timer_group = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timer_group.timer0, peripherals.FROM_CPU_INTR0);
 
-    spawner.spawn(frontlight_task(peripherals.LEDC, peripherals.GPIO8, peripherals.GPIO9).unwrap());
+    let frontlight = Frontlight::new(peripherals.LEDC, peripherals.GPIO8, peripherals.GPIO9);
 
-    {
-        let buttons = Buttons::new(
-            Input::new(
-                peripherals.GPIO0,
-                InputConfig::default().with_pull(Pull::Up),
-            ),
-            Input::new(
-                peripherals.GPIO7,
-                InputConfig::default().with_pull(Pull::Up),
-            ),
-        );
-        spawner.spawn(button_task(buttons).unwrap());
-        spawner.spawn(power_button_task(peripherals.GPIO3, peripherals.LPWR).unwrap());
-    }
+    // Run latency-sensitive input, I2C sensors, SD mount, and USB Mass Storage on
+    // Core 1 so synchronous UI layout/decoding/rasterization on Core 0 cannot stall
+    // button debouncing, power-button timing, touch polling, or USB packets.
+    let buttons = Buttons::new(
+        Input::new(
+            peripherals.GPIO0,
+            InputConfig::default().with_pull(Pull::Up),
+        ),
+        Input::new(
+            peripherals.GPIO7,
+            InputConfig::default().with_pull(Pull::Up),
+        ),
+    );
+    let gpio3 = peripherals.GPIO3;
+    let lpwr = peripherals.LPWR;
+    let sdhost = peripherals.SDHOST;
+    let sd_clk = peripherals.GPIO41;
+    let sd_cmd = peripherals.GPIO42;
+    let sd_d0 = peripherals.GPIO40;
+    let usb_fs = peripherals.USB_FS;
+    let usb_dp = peripherals.GPIO20;
+    let usb_dm = peripherals.GPIO19;
+    let i2c0 = peripherals.I2C0;
+    let i2c_sda = peripherals.GPIO39;
+    let i2c_scl = peripherals.GPIO38;
+    let touch_rst = peripherals.GPIO4;
+    let touch_int = peripherals.GPIO10;
+    let charge_stat = peripherals.GPIO21;
+
+    esp_rtos::start_second_core(
+        peripherals.CPU_CTRL,
+        peripherals.FROM_CPU_INTR1,
+        APP_CORE_STACK.take(),
+        move || {
+            let i2c = I2c::new(
+                i2c0,
+                I2cConfig::default().with_frequency(Rate::from_khz(400)),
+            )
+            .unwrap()
+            .with_sda(i2c_sda)
+            .with_scl(i2c_scl)
+            .into_async();
+            let shared_i2c = i2c_bus::init(i2c);
+
+            let executor = APP_CORE_EXECUTOR.init(esp_rtos::embassy::Executor::new());
+            executor.run(|core1_spawner| {
+                core1_spawner.spawn(button_task(buttons).unwrap());
+                core1_spawner.spawn(power_button_task(gpio3, lpwr).unwrap());
+                core1_spawner.spawn(
+                    storage::storage_task(
+                        sdhost, sd_clk, sd_cmd, sd_d0, sd_power, usb_fs, usb_dp, usb_dm,
+                    )
+                    .unwrap(),
+                );
+                core1_spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
+                core1_spawner.spawn(
+                    touch_task(i2c_bus::device(shared_i2c), touch_rst, touch_int).unwrap(),
+                );
+                core1_spawner
+                    .spawn(battery_task(i2c_bus::device(shared_i2c), charge_stat).unwrap());
+            });
+        },
+    );
 
     let mut delay = AsyncDelay;
-
-    spawner.spawn(
-        storage::storage_task(
-            peripherals.SDHOST,
-            peripherals.GPIO41,
-            peripherals.GPIO42,
-            peripherals.GPIO40,
-            sd_power,
-            peripherals.USB_FS,
-            peripherals.GPIO20,
-            peripherals.GPIO19,
-        )
-        .unwrap(),
-    );
 
     info!("probing display controller...");
 
@@ -236,26 +277,14 @@ async fn main(spawner: Spawner) -> ! {
     InkPaperApp::register_resources(runtime).unwrap();
     let app = runtime.create_root(InkPaperApp::new).unwrap();
 
-    // Storage initialization has been running concurrently with display startup.
-    // Wait only when AppService is about to load persisted app state
+    // Storage and RTC initialization have been running concurrently on Core 1.
+    // Wait only when AppService is about to load persisted app state.
     let storage_ready = storage::wait_ready().await;
     info!("storage ready: {}", storage_ready);
 
-    let i2c = I2c::new(
-        peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(400)),
-    )
-    .unwrap()
-    .with_sda(peripherals.GPIO39)
-    .with_scl(peripherals.GPIO38)
-    .into_async();
-    let shared_i2c = i2c_bus::init(i2c);
-
-    // the app reads the time before its first work, to tell how long the
-    // device slept before reopening the book read then. The RTC answers its
-    // first poll at once; a clock that doesn't answer leaves the time unknown
-    spawner.spawn(rtc_task(i2c_bus::device(shared_i2c)).unwrap());
-
+    // The app reads the time before its first work, to tell how long the
+    // device slept before reopening the book read then. The RTC task on Core 1
+    // answers its first poll at once; a clock that doesn't answer leaves the time unknown.
     if let Either::First(state) = select(
         RTC_UPDATES.wait(),
         Timer::after(Duration::from_millis(RTC_BOOT_WAIT_MS)),
@@ -265,7 +294,7 @@ async fn main(spawner: Spawner) -> ! {
         apply_rtc_state(runtime, app, state);
     }
 
-    let mut app_service = AppService::new(X4Platform::new());
+    let mut app_service = AppService::new(X4Platform::new(frontlight));
     if app_service.service_pending(runtime, app).await.is_err() {
         warn!("failed to service initial app work");
     }
@@ -311,41 +340,19 @@ async fn main(spawner: Spawner) -> ! {
         warn!("failed to apply initial frontlight state");
     }
 
-    // touch power-up.
-    // GPIO2 is active-low. Give the GT911 rail time to settle before
-    // performing its address-select reset sequence.
+    // Touch power-up.
+    // GPIO2 is active-low. Give the GT911 rail time to settle before letting
+    // Core 1's touch task run its address-select reset sequence.
     debug!("powering GT911...");
     rails.enable_touch();
     Timer::after(Duration::from_millis(50)).await;
 
-    let mut touch = TouchController::new(
-        i2c_bus::device(shared_i2c),
-        peripherals.GPIO4,
-        peripherals.GPIO10,
-    );
-
-    match touch.initialize(&mut delay).await {
-        Ok(info) => {
-            info!(
-                "GT911 initialized address={:#04x} firmware={:#06x} resolution={}x{} vendor={:#04x}",
-                touch.address(),
-                info.firmware_version(),
-                info.x_resolution(),
-                info.y_resolution(),
-                info.vendor_id(),
-            );
-            debug!("GT911 product={}", info.product_id());
-
-            spawner.spawn(touch_task(touch).unwrap());
-        }
-        Err(error) => {
-            warn!("GT911 initialization failed error={:?}", error);
-            rails.disable_touch();
-        }
+    TOUCH_RAIL_READY.signal(());
+    if !TOUCH_INIT_OK.wait().await {
+        rails.disable_touch();
     }
 
-    spawner.spawn(battery_task(i2c_bus::device(shared_i2c), peripherals.GPIO21).unwrap());
-    info!("shared I2C services started");
+    info!("shared I2C services running on Core 1");
 
     // clock syncs write through the RTC task, so it starts after it
     spawner.spawn(wifi_task(peripherals.WIFI).unwrap());
@@ -357,6 +364,13 @@ async fn main(spawner: Spawner) -> ! {
         let deferred = app_service.has_deferred_work();
 
         match next_wake(&display_power, &auto_sleep, deferred).await {
+            Wake::PowerButton(event) => {
+                auto_sleep.reset();
+                action = match event {
+                    PowerButtonEvent::LongPress => InputAction::Sleep,
+                    PowerButtonEvent::ShortPress => InputAction::ForceRefresh,
+                };
+            }
             Wake::Input(event) => {
                 auto_sleep.reset();
 
@@ -481,6 +495,7 @@ async fn stay_alive() -> ! {
 
 /// What woke the main loop.
 enum Wake {
+    PowerButton(PowerButtonEvent),
     Input(InputEvent),
     Battery(BatteryReading),
     Rtc(RtcState),
@@ -493,15 +508,16 @@ enum Wake {
 
 /// Waits for the next thing the main loop handles.
 ///
-/// Sources are polled in order, so input wins when several are ready. The
-/// losers are dropped, which is safe: the update signals keep their stored
-/// value, and the channels keep queued events.
+/// Sources are polled in order, so power button and input win when several are
+/// ready. The losers are dropped, which is safe: the update signals keep their
+/// stored value, and the channels keep queued events.
 async fn next_wake(
     display_power: &DisplayPowerManager,
     auto_sleep: &AutoSleep,
     deferred: bool,
 ) -> Wake {
-    let wakes: [Pin<&mut dyn Future<Output = Wake>>; 8] = [
+    let wakes: [Pin<&mut dyn Future<Output = Wake>>; 9] = [
+        pin!(async { Wake::PowerButton(POWER_BUTTON_EVENTS.wait().await) }),
         pin!(async { Wake::Input(INPUT_EVENTS.receive().await) }),
         pin!(async { Wake::Battery(BATTERY_UPDATES.wait().await) }),
         pin!(async { Wake::Rtc(RTC_UPDATES.wait().await) }),
@@ -544,9 +560,6 @@ fn handle_input_event(
     event: InputEvent,
 ) -> InputAction {
     match event {
-        InputEvent::Power(PowerButtonEvent::LongPress) => InputAction::Sleep,
-        InputEvent::Power(PowerButtonEvent::ShortPress) => InputAction::ForceRefresh,
-
         InputEvent::Button(event)
             if event.button() == Button::Left && event.edge() == ButtonEdge::Pressed =>
         {

@@ -1,4 +1,4 @@
-use aligned::{A4, Aligned};
+use aligned::A4;
 use block_device_driver::BlockDevice as RawBlockDevice;
 use defmt::{Debug2Format, warn};
 use hadris_io::{
@@ -6,7 +6,8 @@ use hadris_io::{
     r#async::{Read as HadrisRead, Seek as HadrisSeek, Write as HadrisWrite},
 };
 
-pub(super) const SECTOR_SIZE: usize = 512;
+use super::cache::SectorCache;
+pub(super) use super::cache::SECTOR_SIZE;
 
 const MBR_PARTITION_TABLE_OFFSET: usize = 446;
 const MBR_PARTITION_ENTRY_SIZE: usize = 16;
@@ -20,40 +21,37 @@ pub(super) struct Partition {
     pub(super) sectors: u32,
 }
 
-pub(super) struct SdPartition<'a, D> {
-    device: &'a mut D,
+pub(super) struct SdPartition<D> {
+    device: D,
     first_lba: u32,
     sector_count: u32,
     position: u64,
-
-    // Hadris is byte oriented while the SD card is sector oriented.
-    // Keep one sector cached. This is particularly useful for FAT directory entries:
-    // Hadris reads 32-byte entries individually, so without this cache we'd perform
-    // the same physical 512-byte read repeatedly.
-    cached_sector: Option<u32>,
-    sector: Aligned<A4, [u8; SECTOR_SIZE]>,
+    cache: SectorCache,
 }
 
-impl<'a, D> SdPartition<'a, D>
+impl<D> SdPartition<D>
 where
     D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
 {
-    pub(super) fn new(device: &'a mut D, first_lba: u32, sector_count: u32) -> Self {
+    pub(super) fn new(device: D, first_lba: u32, sector_count: u32) -> Self {
         Self {
             device,
             first_lba,
             sector_count,
             position: 0,
-            cached_sector: None,
-            sector: Aligned([0; SECTOR_SIZE]),
+            cache: SectorCache::new(),
         }
+    }
+
+    pub(super) fn into_inner(self) -> D {
+        self.device
     }
 
     fn len_bytes(&self) -> u64 {
         self.sector_count as u64 * SECTOR_SIZE as u64
     }
 
-    async fn load_sector(&mut self, relative_sector: u32) -> HadrisResult<()> {
+    fn physical_lba(&self, relative_sector: u32) -> HadrisResult<u32> {
         if relative_sector >= self.sector_count {
             return Err(HadrisError::new(
                 HadrisErrorKind::UnexpectedEof,
@@ -61,18 +59,23 @@ where
             ));
         }
 
-        if self.cached_sector == Some(relative_sector) {
-            return Ok(());
+        self.first_lba
+            .checked_add(relative_sector)
+            .ok_or_else(|| HadrisError::new(HadrisErrorKind::InvalidInput, "SD LBA overflow"))
+    }
+
+    async fn load_sector(&mut self, relative_sector: u32) -> HadrisResult<usize> {
+        let physical_lba = self.physical_lba(relative_sector)?;
+
+        if let Some(slot) = self.cache.lookup(relative_sector) {
+            return Ok(slot);
         }
 
-        let physical_lba = self
-            .first_lba
-            .checked_add(relative_sector)
-            .ok_or_else(|| HadrisError::new(HadrisErrorKind::InvalidInput, "SD LBA overflow"))?;
+        let slot = self.cache.allocate_slot(relative_sector);
 
         if let Err(error) = self
             .device
-            .read(physical_lba, core::slice::from_mut(&mut self.sector))
+            .read(physical_lba, core::slice::from_mut(self.cache.data_mut(slot)))
             .await
         {
             warn!(
@@ -87,30 +90,34 @@ where
             ));
         }
 
-        self.cached_sector = Some(relative_sector);
+        self.cache.commit(slot, relative_sector);
 
-        Ok(())
+        Ok(slot)
     }
 
-    async fn store_sector(&mut self, relative_sector: u32) -> HadrisResult<()> {
-        if relative_sector >= self.sector_count {
-            return Err(HadrisError::new(
-                HadrisErrorKind::UnexpectedEof,
-                "sector outside SD partition",
-            ));
+    async fn prepare_write_slot(
+        &mut self,
+        relative_sector: u32,
+        full_sector: bool,
+    ) -> HadrisResult<usize> {
+        if !full_sector {
+            return self.load_sector(relative_sector).await;
         }
 
-        let physical_lba = self
-            .first_lba
-            .checked_add(relative_sector)
-            .ok_or_else(|| HadrisError::new(HadrisErrorKind::InvalidInput, "SD LBA overflow"))?;
+        // Full-sector overwrite skips reading the old contents from SD.
+        let _ = self.physical_lba(relative_sector)?;
+        Ok(self.cache.allocate_slot(relative_sector))
+    }
+
+    async fn store_sector(&mut self, slot: usize, relative_sector: u32) -> HadrisResult<()> {
+        let physical_lba = self.physical_lba(relative_sector)?;
 
         if let Err(error) = self
             .device
-            .write(physical_lba, core::slice::from_ref(&self.sector))
+            .write(physical_lba, core::slice::from_ref(self.cache.data(slot)))
             .await
         {
-            self.cached_sector = None;
+            self.cache.invalidate(slot);
 
             warn!(
                 "SD write failed at LBA: {}: {}",
@@ -124,13 +131,13 @@ where
             ));
         }
 
-        self.cached_sector = Some(relative_sector);
+        self.cache.commit(slot, relative_sector);
 
         Ok(())
     }
 }
 
-impl<D> HadrisRead for SdPartition<'_, D>
+impl<D> HadrisRead for SdPartition<D>
 where
     D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
 {
@@ -148,7 +155,6 @@ where
         }
 
         let bytes_to_read = core::cmp::min(buf.len() as u64, remaining) as usize;
-
         let mut copied = 0usize;
 
         while copied < bytes_to_read {
@@ -158,14 +164,14 @@ where
                 })?;
 
             let offset = (self.position % SECTOR_SIZE as u64) as usize;
-
-            self.load_sector(relative_sector).await?;
+            let slot = self.load_sector(relative_sector).await?;
 
             let available = SECTOR_SIZE - offset;
             let wanted = bytes_to_read - copied;
             let count = core::cmp::min(available, wanted);
 
-            buf[copied..copied + count].copy_from_slice(&self.sector[offset..offset + count]);
+            buf[copied..copied + count]
+                .copy_from_slice(&self.cache.data(slot)[offset..offset + count]);
 
             copied += count;
             self.position += count as u64;
@@ -175,7 +181,7 @@ where
     }
 }
 
-impl<D> HadrisWrite for SdPartition<'_, D>
+impl<D> HadrisWrite for SdPartition<D>
 where
     D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
 {
@@ -193,7 +199,6 @@ where
         }
 
         let bytes_to_write = core::cmp::min(buf.len() as u64, remaining) as usize;
-
         let mut written = 0usize;
 
         while written < bytes_to_write {
@@ -207,14 +212,14 @@ where
             let available = SECTOR_SIZE - offset;
             let wanted = bytes_to_write - written;
             let count = core::cmp::min(available, wanted);
+            let full_sector = offset == 0 && count == SECTOR_SIZE;
 
-            if offset != 0 || count != SECTOR_SIZE {
-                self.load_sector(relative_sector).await?;
-            }
+            let slot = self.prepare_write_slot(relative_sector, full_sector).await?;
 
-            self.sector[offset..offset + count].copy_from_slice(&buf[written..written + count]);
+            self.cache.data_mut(slot)[offset..offset + count]
+                .copy_from_slice(&buf[written..written + count]);
 
-            self.store_sector(relative_sector).await?;
+            self.store_sector(slot, relative_sector).await?;
 
             written += count;
             self.position += count as u64;
@@ -224,12 +229,12 @@ where
     }
 
     async fn flush(&mut self) -> HadrisResult<(), Self::Error> {
-        // sector writes are committed immediately.
+        // Sector writes are write-through and committed immediately.
         Ok(())
     }
 }
 
-impl<D> HadrisSeek for SdPartition<'_, D>
+impl<D> HadrisSeek for SdPartition<D>
 where
     D: RawBlockDevice<SECTOR_SIZE, Align = A4>,
 {

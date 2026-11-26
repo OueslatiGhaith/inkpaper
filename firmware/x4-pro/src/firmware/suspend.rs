@@ -7,7 +7,6 @@ use inkpaper_ui::prelude::*;
 use crate::firmware::{
     display::{X4Panel, power::DisplayPowerManager},
     framebuffer::FramebufferStorage,
-    frontlight::frontlight_off_and_wait,
     platform::X4Platform,
     power::PowerRails,
     power_button::ENTER_DEEP_SLEEP,
@@ -61,7 +60,7 @@ where
     .await;
 
     info!("suspend: turning frontlight off");
-    frontlight_off_and_wait().await;
+    app_service.platform_mut().frontlight_off();
 
     info!("suspend: flushing application state");
 
