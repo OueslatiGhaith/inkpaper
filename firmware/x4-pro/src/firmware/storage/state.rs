@@ -27,7 +27,22 @@ where
 
     let mut reader = match filesystem.open_file_path(&path).await {
         Ok(reader) => reader,
-        Err(hadris_fat::Error::EntryNotFound) => return Ok(None),
+        Err(hadris_fat::Error::EntryNotFound) => {
+            // If power was lost between deleting the previous file and renaming
+            // the completed temporary file into place, recover from `<name>.tmp`.
+            let tmp_path = temp_state_path(name);
+            match filesystem.open_file_path(&tmp_path).await {
+                Ok(reader) => {
+                    warn!("recovering state from temp file name={}", name);
+                    reader
+                }
+                Err(hadris_fat::Error::EntryNotFound) => return Ok(None),
+                Err(error) => {
+                    warn!("temp state open failed name={} error={:?}", name, error);
+                    return Err(StorageError::Io);
+                }
+            }
+        }
         Err(error) => {
             warn!("state open failed name={} error={:?}", name, error);
             return Err(StorageError::Io);
@@ -46,7 +61,6 @@ where
     }
 
     let mut bytes = vec![0; size];
-
     let mut read = 0usize;
 
     while read < bytes.len() {
@@ -81,6 +95,8 @@ where
     }
 
     let path = state_path(name)?;
+    let tmp_name = temp_state_name(name);
+    let tmp_path = temp_state_path(name);
 
     let inkpaper_directory = match filesystem.open_dir_path(INKPAPER_DIRECTORY_PATH).await {
         Ok(directory) => directory,
@@ -104,37 +120,40 @@ where
         }
     };
 
-    let entry = match filesystem.open_path(&path).await {
-        Ok(entry) => entry,
-
-        Err(hadris_fat::Error::EntryNotFound) => filesystem
-            .create_file(&inkpaper_directory, name)
-            .await
-            .map_err(|error| {
-                warn!("state file create failed name={} error={:?}", name, error);
-
+    // Clean up any stale temp file left behind by an interrupted previous save.
+    match filesystem.open_path(&tmp_path).await {
+        Ok(stale) => {
+            filesystem.delete(&stale).await.map_err(|error| {
+                warn!("stale temp state delete failed name={} error={:?}", name, error);
                 StorageError::Io
-            })?,
-
+            })?;
+        }
+        Err(hadris_fat::Error::EntryNotFound) => {}
         Err(error) => {
-            warn!("state lookup failed name={} error={:?}", name, error);
-
+            warn!("temp state lookup failed name={} error={:?}", name, error);
             return Err(StorageError::Io);
         }
-    };
+    }
 
-    let mut writer = filesystem.write_file(&entry).map_err(|error| {
-        warn!("state writer open failed name={} error={:?}", name, error);
+    // Phase 1: write and finish the complete new payload into `<name>.tmp`.
+    // The previous `<name>` file remains intact on disk until this succeeds.
+    let tmp_entry = filesystem
+        .create_file(&inkpaper_directory, &tmp_name)
+        .await
+        .map_err(|error| {
+            warn!("temp state create failed name={} error={:?}", name, error);
+            StorageError::Io
+        })?;
 
+    let mut writer = filesystem.write_file(&tmp_entry).map_err(|error| {
+        warn!("temp state writer open failed name={} error={:?}", name, error);
         StorageError::Io
     })?;
 
     let mut written = 0usize;
-
     while written < bytes.len() {
         let count = writer.write(&bytes[written..]).await.map_err(|error| {
-            warn!("state write failed name={} error={:?}", name, error);
-
+            warn!("temp state write failed name={} error={:?}", name, error);
             StorageError::Io
         })?;
 
@@ -146,10 +165,41 @@ where
     }
 
     writer.finish().await.map_err(|error| {
-        warn!("state finish failed name={} error={:?}", name, error);
-
+        warn!("temp state finish failed name={} error={:?}", name, error);
         StorageError::Io
     })?;
+
+    // Re-open `<name>.tmp` so `rename` sees the cluster chain and size committed
+    // by `writer.finish()` rather than the empty entry returned by `create_file`.
+    let committed_tmp = filesystem.open_path(&tmp_path).await.map_err(|error| {
+        warn!("temp state reopen failed name={} error={:?}", name, error);
+        StorageError::Io
+    })?;
+
+    // Phase 2: replace `<name>` with `<name>.tmp`. Because `hadris_fat::rename`
+    // rejects an existing destination, remove `<name>` first; if power drops in
+    // this window, `load_state` recovers from the already-complete `<name>.tmp`.
+    match filesystem.open_path(&path).await {
+        Ok(existing) => {
+            filesystem.delete(&existing).await.map_err(|error| {
+                warn!("old state delete failed name={} error={:?}", name, error);
+                StorageError::Io
+            })?;
+        }
+        Err(hadris_fat::Error::EntryNotFound) => {}
+        Err(error) => {
+            warn!("state lookup failed name={} error={:?}", name, error);
+            return Err(StorageError::Io);
+        }
+    }
+
+    filesystem
+        .rename(&committed_tmp, &inkpaper_directory, name)
+        .await
+        .map_err(|error| {
+            warn!("state rename failed name={} error={:?}", name, error);
+            StorageError::Io
+        })?;
 
     info!("state saved name={} bytes={}", name, bytes.len());
 
@@ -162,6 +212,14 @@ fn state_path(name: &str) -> Result<String, StorageError> {
     }
 
     Ok(format!("{INKPAPER_DIRECTORY_PATH}/{name}"))
+}
+
+fn temp_state_name(name: &str) -> String {
+    format!("{name}.tmp")
+}
+
+fn temp_state_path(name: &str) -> String {
+    format!("{INKPAPER_DIRECTORY_PATH}/{name}.tmp")
 }
 
 fn valid_state_name(name: &str) -> bool {
