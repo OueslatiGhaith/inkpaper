@@ -1,7 +1,7 @@
 use alloc::string::String;
 use inkpaper_epub::SpineIndex;
 
-use crate::ReaderChapter;
+use crate::{ReaderChapter, fonts::CardFont};
 
 use super::{
     JumpTarget, PendingChapterRequest, ReaderChapterDirection, ReaderRequest, ReaderState,
@@ -48,18 +48,20 @@ impl ReaderState {
             return false;
         }
 
-        document.replace_chapter(chapter);
-
-        self.page_index = match direction {
+        let target_page = match direction {
             ReaderChapterDirection::Next => 0,
 
-            ReaderChapterDirection::Previous => document.page_count().saturating_sub(1),
+            ReaderChapterDirection::Previous => chapter.page_count().saturating_sub(1),
         };
 
+        document.replace_chapter(chapter);
+
+        self.page_index = target_page;
         self.pending_chapter = None;
 
         self.chrome.menu_open = false;
 
+        self.queue_missing_page_images();
         self.refresh_chrome();
         self.queue_progress_update();
 
@@ -87,7 +89,12 @@ impl ReaderState {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn previous_page(&mut self) -> bool {
+        self.previous_page_with_card(None)
+    }
+
+    pub(crate) fn previous_page_with_card(&mut self, card: Option<&CardFont>) -> bool {
         let Some(document) = self.document.as_ref() else {
             return false;
         };
@@ -96,7 +103,10 @@ impl ReaderState {
         }
 
         if self.page_index > 0 {
-            self.page_index -= 1;
+            let previous = self.page_index - 1;
+            if !self.select_page(previous, card) {
+                return false;
+            }
 
             self.chrome.menu_open = false;
 
@@ -113,7 +123,12 @@ impl ReaderState {
         false
     }
 
+    #[cfg(test)]
     pub(crate) fn next_page(&mut self) -> bool {
+        self.next_page_with_card(None)
+    }
+
+    pub(crate) fn next_page_with_card(&mut self, card: Option<&CardFont>) -> bool {
         let Some(document) = self.document.as_ref() else {
             return false;
         };
@@ -128,7 +143,9 @@ impl ReaderState {
         let next = self.page_index.saturating_add(1);
 
         if next < page_count {
-            self.page_index = next;
+            if !self.select_page(next, card) {
+                return false;
+            }
 
             self.chrome.menu_open = false;
 
@@ -202,6 +219,7 @@ impl ReaderState {
 
         self.chrome.menu_open = false;
 
+        self.queue_missing_page_images();
         self.refresh_chrome();
         self.queue_progress_update();
 

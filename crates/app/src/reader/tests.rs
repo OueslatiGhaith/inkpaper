@@ -1,11 +1,11 @@
-use alloc::{format, string::String, vec::Vec};
+use alloc::{format, string::String, vec, vec::Vec};
 use futures_lite::future;
 use inkpaper_epub::{Epub, SpineIndex};
 use inkpaper_io::SliceSource;
 use inkpaper_reader::PageItem;
 
 use crate::{
-    ReaderChapter, ReaderChapterDirection, ReaderPreferences, ReaderRequest, ReaderSession,
+    ReaderChapterDirection, ReaderPreferences, ReaderRequest, ReaderSession,
     reader::{
         JumpTarget, LineSpacing, ReaderState, TableOfContents, TextSetting, TextSettings,
         load_reader_document,
@@ -113,11 +113,9 @@ fn next_chapter_request_replaces_chapter_and_lands_on_first_page() {
 
     let next_spine = SpineIndex::new(from.get().saturating_add(1));
 
-    let next_chapter = ReaderChapter::new(
-        String::from("Text/next.xhtml"),
-        next_spine,
-        document.chapter().pagination().clone(),
-    );
+    let next_chapter = document
+        .chapter()
+        .with_path_and_spine(String::from("Text/next.xhtml"), next_spine);
 
     let last_page = document.page_count().saturating_sub(1);
 
@@ -248,7 +246,7 @@ fn reader_session_reopens_at_saved_position() {
 
     let target_index = document.page_count().saturating_sub(1);
 
-    let target_position = document.page(target_index).unwrap().position();
+    let target_position = document.page_position(target_index).unwrap();
 
     let source = SliceSource::new(include_bytes!("../../../../fixtures/book-boundaries.epub"));
 
@@ -383,7 +381,7 @@ fn font_size_repagination_keeps_the_current_reading_position() {
 
     let target_index = document.page_count().saturating_sub(1).min(2);
 
-    let target_position = document.page(target_index).unwrap().position();
+    let target_position = document.page_position(target_index).unwrap();
 
     let mut state = ReaderState::default();
 
@@ -759,4 +757,160 @@ fn toc_request_and_progress_or_navigation_requests_do_not_clobber_each_other() {
         Some(ReaderRequest::LoadTableOfContents { path: path.clone() }),
     );
     assert_eq!(state.take_request(), None);
+}
+
+#[test]
+fn chapter_images_are_decoded_lazily_per_page() {
+    // Valid 1x1 white grayscale PNG (67 bytes).
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x00, 0x00, 0x3a,
+        0x7e, 0x9b, 0x55, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8,
+        0x0f, 0x00, 0x01, 0x01, 0x01, 0x00, 0x1b, 0xb6, 0xee, 0x56, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    fn build_stored_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut archive = Vec::new();
+        let mut central = Vec::new();
+        for &(name, data) in entries {
+            let local_offset = u32::try_from(archive.len()).unwrap();
+            let name_bytes = name.as_bytes();
+            let size = u32::try_from(data.len()).unwrap();
+            archive.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+            archive.extend_from_slice(&20u16.to_le_bytes());
+            archive.extend_from_slice(&0u16.to_le_bytes());
+            archive.extend_from_slice(&0u16.to_le_bytes());
+            archive.extend_from_slice(&0u16.to_le_bytes());
+            archive.extend_from_slice(&0u16.to_le_bytes());
+            archive.extend_from_slice(&0u32.to_le_bytes());
+            archive.extend_from_slice(&size.to_le_bytes());
+            archive.extend_from_slice(&size.to_le_bytes());
+            archive.extend_from_slice(&u16::try_from(name_bytes.len()).unwrap().to_le_bytes());
+            archive.extend_from_slice(&0u16.to_le_bytes());
+            archive.extend_from_slice(name_bytes);
+            archive.extend_from_slice(data);
+
+            central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&size.to_le_bytes());
+            central.extend_from_slice(&size.to_le_bytes());
+            central.extend_from_slice(&u16::try_from(name_bytes.len()).unwrap().to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&local_offset.to_le_bytes());
+            central.extend_from_slice(name_bytes);
+        }
+        let central_offset = u32::try_from(archive.len()).unwrap();
+        let central_size = u32::try_from(central.len()).unwrap();
+        let count = u16::try_from(entries.len()).unwrap();
+        archive.extend_from_slice(&central);
+        archive.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        archive.extend_from_slice(&0u16.to_le_bytes());
+        archive.extend_from_slice(&0u16.to_le_bytes());
+        archive.extend_from_slice(&count.to_le_bytes());
+        archive.extend_from_slice(&count.to_le_bytes());
+        archive.extend_from_slice(&central_size.to_le_bytes());
+        archive.extend_from_slice(&central_offset.to_le_bytes());
+        archive.extend_from_slice(&0u16.to_le_bytes());
+        archive
+    }
+
+    const CONTAINER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OPS/package.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>"#;
+
+    const PACKAGE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Lazy Images</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img1" href="Images/first.png" media-type="image/png"/>
+    <item id="img2" href="Images/second.png" media-type="image/png"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"#;
+
+    let mut body = String::from(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><body><p><img src="../Images/first.png" alt="First"/></p>"#,
+    );
+    for i in 0..45 {
+        body.push_str(&format!(
+            "<p>Paragraph {i} with enough words to fill a full reader page before the second illustration appears.</p>"
+        ));
+    }
+    body.push_str(r#"<p><img src="../Images/second.png" alt="Second"/></p></body></html>"#);
+
+    let zip = build_stored_zip(&[
+        ("mimetype", b"application/epub+zip"),
+        ("META-INF/container.xml", CONTAINER.as_bytes()),
+        ("OPS/package.opf", PACKAGE.as_bytes()),
+        ("OPS/Text/ch1.xhtml", body.as_bytes()),
+        ("OPS/Images/first.png", TINY_PNG),
+        ("OPS/Images/second.png", TINY_PNG),
+    ]);
+
+    let first_path = inkpaper_epub::ArchivePath::new("OPS/Images/first.png").unwrap();
+    let second_path = inkpaper_epub::ArchivePath::new("OPS/Images/second.png").unwrap();
+    let book_path = String::from("/Fixtures/lazy-images.epub");
+
+    let mut session =
+        future::block_on(ReaderSession::open(book_path.clone(), SliceSource::new(&zip))).unwrap();
+    let document = future::block_on(session.load_document()).unwrap();
+
+    assert!(document.page_count() >= 2);
+    // Opening page 0 decoded only the first image, not the image on the last page.
+    assert!(document.chapter().has_decoded_image(&first_path));
+    assert!(!document.chapter().has_decoded_image(&second_path));
+
+    let last_page = document.page_count() - 1;
+    let spine = document.spine();
+
+    let mut state = ReaderState::default();
+    state.open(book_path.clone(), String::from("Lazy Images"));
+    assert!(state.apply_document(document));
+    let _ = state.take_request(); // initial UpdateProgress
+
+    let mut requested_images = None;
+    while state.page_index() < last_page {
+        assert!(state.next_page());
+        while let Some(request) = state.take_request() {
+            if let ReaderRequest::LoadPageImages {
+                path,
+                spine: req_spine,
+                page_index,
+                images,
+            } = request
+            {
+                requested_images = Some((path, req_spine, page_index, images));
+            }
+        }
+    }
+
+    let (req_path, req_spine, req_page, images) =
+        requested_images.expect("turning to the last page must request its image lazily");
+    assert_eq!(req_path, book_path);
+    assert_eq!(req_spine, spine);
+    assert_eq!(req_page, last_page);
+    assert_eq!(images, vec![second_path.clone()]);
+
+    let decoded = future::block_on(session.load_page_images(&images));
+    assert!(state.apply_page_images(&req_path, req_spine, req_page, decoded));
+    assert!(
+        state
+            .document()
+            .unwrap()
+            .chapter()
+            .has_decoded_image(&second_path)
+    );
 }

@@ -10,7 +10,7 @@ use crate::{
         toast::{Toast, ToastId},
     },
     fonts::reader_family,
-    reader::{JumpTarget, TableOfContents, TextSettings, TocEntry},
+    reader::{ChapterImages, JumpTarget, TableOfContents, TextSettings, TocEntry},
     reader_page::paint_reader_page,
     resume::SleptBook,
 };
@@ -131,13 +131,19 @@ impl InkPaperApp {
     }
 
     pub(crate) fn reader_previous_page(&mut self, cx: &mut Context<'_, Self>) {
-        if self.reader.previous_page() {
+        if self
+            .reader
+            .previous_page_with_card(self.text_settings.card_font())
+        {
             cx.notify();
         }
     }
 
     pub(crate) fn reader_next_page(&mut self, cx: &mut Context<'_, Self>) {
-        if self.reader.next_page() {
+        if self
+            .reader
+            .next_page_with_card(self.text_settings.card_font())
+        {
             cx.notify();
         }
     }
@@ -257,9 +263,32 @@ impl InkPaperApp {
         chapter: ReaderChapter,
         cx: &mut Context<'_, Self>,
     ) -> bool {
+        let changed = self.reader.apply_repaginated_chapter_with_card(
+            &path,
+            spine,
+            text,
+            chapter,
+            self.text_settings.card_font(),
+        );
+
+        if changed {
+            cx.notify();
+        }
+
+        changed
+    }
+
+    pub(crate) fn apply_reader_page_images(
+        &mut self,
+        path: String,
+        spine: SpineIndex,
+        page_index: usize,
+        images: ChapterImages,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
         let changed = self
             .reader
-            .apply_repaginated_chapter(&path, spine, text, chapter);
+            .apply_page_images(&path, spine, page_index, images);
 
         if changed {
             cx.notify();
