@@ -1,10 +1,7 @@
-use inkpaper_reader::Page;
-
 use crate::{
     fonts::{CardFont, card_for},
     reader::{
         WordSelection,
-        measurer::{ReaderFonts, ReaderMeasurer},
         selection::{extend_to, word_at},
     },
 };
@@ -19,9 +16,17 @@ impl ReaderState {
     /// Selects the word at `x` and `y` on the screen, measured in the font
     /// the page was laid out in, `card` when it's the reader's. Returns it.
     pub(crate) fn select_word(&mut self, x: i32, y: i32, card: Option<&CardFont>) -> Option<&str> {
-        let selection = self.measure_at(x, y, card, |page, x, y, measurer| {
-            word_at(page, x, y, measurer)
-        })?;
+        let (x, y) = self.page_point(x, y)?;
+        let page = self
+            .document
+            .as_ref()
+            .and_then(|document| document.page(self.page_index))?;
+        let fonts = self
+            .selection_fonts
+            .get_or_init(card_for(self.text.font(), card))
+            .ok()?;
+
+        let selection = word_at(page, x, y, fonts)?;
 
         Some(self.selection.insert(selection).word())
     }
@@ -29,41 +34,53 @@ impl ReaderState {
     /// Grows or shrinks the selection from the word held to the one at `x`
     /// and `y` on the screen. Returns whether it changed.
     pub(crate) fn extend_selection(&mut self, x: i32, y: i32, card: Option<&CardFont>) -> bool {
-        let Some(selection) = self.selection() else {
+        let Some((x, y)) = self.page_point(x, y) else {
+            return false;
+        };
+        let Some(page) = self
+            .document
+            .as_ref()
+            .and_then(|document| document.page(self.page_index))
+        else {
+            return false;
+        };
+        let Some(selection) = self
+            .selection
+            .as_ref()
+            .filter(|selection| selection.position() == page.position())
+        else {
+            return false;
+        };
+        let Ok(fonts) = self
+            .selection_fonts
+            .get_or_init(card_for(self.text.font(), card))
+        else {
             return false;
         };
 
-        let extended = self.measure_at(x, y, card, |page, x, y, measurer| {
-            extend_to(selection, page, x, y, measurer)
-        });
+        let extended = extend_to(selection, page, x, y, fonts);
 
         extended
             .map(|extended| self.selection = Some(extended))
             .is_some()
     }
 
-    /// What `measure` finds at `x` and `y` on the screen, given them on the
-    /// page shown, and a measurer for the font it was laid out in.
-    fn measure_at<T>(
-        &self,
-        x: i32,
-        y: i32,
-        card: Option<&CardFont>,
-        measure: impl FnOnce(&Page<'_>, u32, u32, &mut ReaderMeasurer<'_>) -> Option<T>,
-    ) -> Option<T> {
+    fn page_point(&self, x: i32, y: i32) -> Option<(u32, u32)> {
         let bounds = self.text.margin().page_bounds();
         let x = u32::try_from(x).ok()?.checked_sub(bounds.left)?;
         let y = u32::try_from(y).ok()?.checked_sub(bounds.top)?;
 
-        let fonts = ReaderFonts::new(card_for(self.text.font(), card)).ok()?;
-        let mut measurer = ReaderMeasurer::new(&fonts, Default::default());
-
-        measure(self.page()?, x, y, &mut measurer)
+        Some((x, y))
     }
 
     /// Unselects the words. Returns whether any were selected.
     pub(crate) fn clear_selection(&mut self) -> bool {
         self.selection.take().is_some()
+    }
+
+    /// Releases cached selection fonts when leaving the reader.
+    pub(crate) fn clear_selection_fonts(&mut self) {
+        self.selection_fonts.clear();
     }
 
     /// The selected words, while their page is the one shown.

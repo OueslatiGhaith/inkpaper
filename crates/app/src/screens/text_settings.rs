@@ -17,8 +17,8 @@ use crate::{
     fonts::{card_for, reader_family},
     paging::{self, PageTurn, Pager},
     reader::{
-        PREVIEW_PADDING, PREVIEW_TEXT_HEIGHT, TextSetting, TextSettings, TextSettingsRow,
-        TextSettingsTab, layout_preview, preview_text_left,
+        PREVIEW_PADDING, PREVIEW_TEXT_HEIGHT, PreviewLayouter, TextSetting, TextSettings,
+        TextSettingsRow, TextSettingsTab, preview_text_left,
     },
     reader_page::paint_page,
 };
@@ -263,6 +263,7 @@ pub(crate) struct TextSettingsView {
     /// the settings and whether the card font had loaded, as the preview was laid out
     preview_for: Option<(TextSettings, bool)>,
     preview_family: FontFamilyId,
+    preview_layouter: PreviewLayouter,
 }
 
 impl EventEmitter<TextSettingsEvent> for TextSettingsView {}
@@ -278,6 +279,7 @@ impl TextSettingsView {
             preview: None,
             preview_for: None,
             preview_family: FontFamilyId::new(0),
+            preview_layouter: PreviewLayouter::default(),
         }
     }
 
@@ -395,13 +397,18 @@ impl Render for TextSettingsView {
         let state = &app.text_settings;
         let draft = state.draft();
 
-        // lay the preview out again when the settings or the card font change
-        let key = (draft, card_for(draft.font(), state.card_font()).is_some());
-        if self.preview_for != Some(key) {
-            self.preview = layout_preview(draft, state.card_font());
-            self.preview_for = Some(key);
+        // lay the preview out again only when layout-affecting settings or the
+        // loaded card font change; paint-only changes (darkness, antialiasing)
+        // reuse the existing page
+        let has_card = card_for(draft.font(), state.card_font()).is_some();
+        let needs_layout = self
+            .preview_for
+            .is_none_or(|(prev, prev_card)| !draft.same_layout(prev) || prev_card != has_card);
+        if needs_layout {
+            self.preview = self.preview_layouter.layout(draft, state.card_font());
             self.preview_family = reader_family(draft.font(), state.card_font());
         }
+        self.preview_for = Some((draft, has_card));
 
         let rows = state.rows(tab);
         self.row_count = rows.len();

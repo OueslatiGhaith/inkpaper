@@ -1,5 +1,5 @@
-use alloc::{vec, vec::Vec};
-use core::ops::Range;
+use alloc::{boxed::Box, vec, vec::Vec};
+use core::{fmt, ops::Range};
 
 use inkpaper_epub::{
     ChapterImage, FontStyle as ReaderFontStyle, FontWeight as ReaderFontWeight, ImageDimensions,
@@ -47,42 +47,6 @@ impl ReaderFonts {
 
         Ok(Self { registry, family })
     }
-}
-
-/// Measures with shapers prepared from `fonts`, which it borrows since what
-/// a registry resolves borrows the registry.
-pub(super) struct ReaderMeasurer<'fonts> {
-    fonts: &'fonts ReaderFonts,
-
-    /// indexed by [`shaper_index`]
-    shapers: [PreparedSimpleShaper<'fonts>; 4],
-
-    images: ChapterImageMetrics,
-
-    measure_cache: ReaderMeasureCache<READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES>,
-}
-
-impl<'fonts> ReaderMeasurer<'fonts> {
-    pub(super) fn new(fonts: &'fonts ReaderFonts, images: ChapterImageMetrics) -> Self {
-        let shapers = [
-            (ReaderFontWeight::Normal, ReaderFontStyle::Normal),
-            (ReaderFontWeight::Bold, ReaderFontStyle::Normal),
-            (ReaderFontWeight::Normal, ReaderFontStyle::Italic),
-            (ReaderFontWeight::Bold, ReaderFontStyle::Italic),
-        ]
-        .map(|(weight, style)| {
-            let font = resolve_font(fonts, weight, style);
-
-            SimpleShaper::with_properties(font.properties()).prepare(&fonts.registry, font.id())
-        });
-
-        Self {
-            fonts,
-            shapers,
-            images,
-            measure_cache: ReaderMeasureCache::default(),
-        }
-    }
 
     /// Measures the visual `(left, right)` x-bounds (relative to the start of
     /// `text`) of each sorted, non-overlapping byte `range` in `ranges` using a
@@ -99,10 +63,12 @@ impl<'fonts> ReaderMeasurer<'fonts> {
             return Ok(bounds);
         }
 
-        let shaper = &self.shapers[shaper_index(style.font_weight(), style.font_style())];
+        let font = resolve_font(self, style.font_weight(), style.font_style());
+        let shaper = SimpleShaper::with_properties(font.properties())
+            .prepare(&self.registry, font.id());
         let mut pen_x: i32 = 0;
 
-        shaper.shape_line_with(&self.fonts.registry, style.font_size(), text, "", |glyph| {
+        shaper.shape_line_with(&self.registry, style.font_size(), text, "", |glyph| {
             let start_x = pen_x.max(0) as u32;
             let advance = glyph.advance().get();
             let extra = if text.as_bytes().get(glyph.cluster()) == Some(&b' ') {
@@ -126,6 +92,81 @@ impl<'fonts> ReaderMeasurer<'fonts> {
         })?;
 
         Ok(bounds)
+    }
+}
+
+/// Keeps a [`ReaderFonts`] registry cached by card family id so repeated
+/// selection drags or settings previews avoid rebuilding fonts on every frame.
+#[derive(Default)]
+pub(crate) struct CachedReaderFonts {
+    cached: Option<(Option<u8>, Box<ReaderFonts>)>,
+}
+
+impl CachedReaderFonts {
+    pub(crate) fn get_or_init(
+        &mut self,
+        card: Option<&CardFont>,
+    ) -> Result<&ReaderFonts, FontRegistryError> {
+        let key = card.map(CardFont::family);
+        if self
+            .cached
+            .as_ref()
+            .is_none_or(|(cached_key, _)| *cached_key != key)
+        {
+            self.cached = Some((key, Box::new(ReaderFonts::new(card)?)));
+        }
+
+        Ok(self.cached.as_ref().expect("just initialized").1.as_ref())
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.cached = None;
+    }
+}
+
+impl fmt::Debug for CachedReaderFonts {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CachedReaderFonts")
+            .field("card_family", &self.cached.as_ref().map(|(key, _)| *key))
+            .finish()
+    }
+}
+
+/// Measures with shapers prepared from `fonts`, which it borrows since what
+/// a registry resolves borrows the registry.
+pub(super) struct ReaderMeasurer<'fonts> {
+    fonts: &'fonts ReaderFonts,
+
+    /// indexed by [`shaper_index`]
+    shapers: [PreparedSimpleShaper<'fonts>; 4],
+
+    images: ChapterImageMetrics,
+
+    measure_cache:
+        Box<ReaderMeasureCache<READER_MEASURE_CACHE_SLOTS, READER_MEASURE_CACHE_TEXT_BYTES>>,
+}
+
+impl<'fonts> ReaderMeasurer<'fonts> {
+    pub(super) fn new(fonts: &'fonts ReaderFonts, images: ChapterImageMetrics) -> Self {
+        let shapers = [
+            (ReaderFontWeight::Normal, ReaderFontStyle::Normal),
+            (ReaderFontWeight::Bold, ReaderFontStyle::Normal),
+            (ReaderFontWeight::Normal, ReaderFontStyle::Italic),
+            (ReaderFontWeight::Bold, ReaderFontStyle::Italic),
+        ]
+        .map(|(weight, style)| {
+            let font = resolve_font(fonts, weight, style);
+
+            SimpleShaper::with_properties(font.properties()).prepare(&fonts.registry, font.id())
+        });
+
+        Self {
+            fonts,
+            shapers,
+            images,
+            measure_cache: Box::default(),
+        }
     }
 }
 

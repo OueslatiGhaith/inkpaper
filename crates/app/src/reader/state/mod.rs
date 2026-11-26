@@ -12,7 +12,7 @@ use inkpaper_reader::{Page, ReadingPosition};
 use crate::{
     ReaderDocument, ReaderPreferences, ReadingHistoryEntry,
     paging::Pager,
-    reader::{TableOfContents, TextSettings, WordSelection},
+    reader::{TableOfContents, TextSettings, WordSelection, measurer::CachedReaderFonts},
     resume::ResumeLimit,
 };
 
@@ -131,6 +131,8 @@ pub(crate) struct ReaderState {
     resume_limit: ResumeLimit,
     /// the word held to look up, on the page it was held on
     selection: Option<WordSelection>,
+    /// fonts cached across word-selection presses and drags
+    selection_fonts: CachedReaderFonts,
 
     chrome: ReaderChromeState,
     toc: TableOfContents,
@@ -157,6 +159,7 @@ impl Default for ReaderState {
             dictionary: None,
             resume_limit: ResumeLimit::Always,
             selection: None,
+            selection_fonts: CachedReaderFonts::default(),
             chrome: ReaderChromeState::default(),
             toc: TableOfContents::NotLoaded,
             toc_pager: Pager::default(),

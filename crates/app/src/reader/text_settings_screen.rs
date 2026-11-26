@@ -5,7 +5,7 @@ use inkpaper_reader::{Page, Viewport, paginate_chapter};
 
 use super::{
     ReaderFont, TextSetting, TextSettings,
-    measurer::{ReaderFonts, ReaderMeasurer},
+    measurer::{CachedReaderFonts, ReaderMeasurer},
     text_settings::font_sizes,
 };
 use crate::{
@@ -175,25 +175,46 @@ fn preview_viewport(text: TextSettings) -> Option<Viewport> {
     )
 }
 
-/// The preview's first page, laid out by the reader like a book's, in the
-/// card font when it is the one chosen and has loaded.
-pub(crate) fn layout_preview(text: TextSettings, card: Option<&CardFont>) -> Option<Page<'static>> {
-    let path = ArchivePath::new("preview.xhtml").ok()?;
-    let chapter = Chapter::parse(PREVIEW_XHTML, path).ok()?;
-    let styles = ChapterStyles::defaults(&chapter);
+/// Caches the parsed preview chapter and font registry across Text Settings
+/// edits so changing size, spacing, margins, or alignment doesn't re-parse
+/// XHTML or rebuild `ReaderFonts` on every render.
+#[derive(Default)]
+pub(crate) struct PreviewLayouter {
+    parsed: Option<(Chapter, ChapterStyles)>,
+    fonts: CachedReaderFonts,
+}
 
-    let fonts = ReaderFonts::new(card_for(text.font(), card)).ok()?;
-    let mut measurer = ReaderMeasurer::new(&fonts, Default::default());
+impl PreviewLayouter {
+    /// Lays out the preview's first page in the card font when it is the one
+    /// chosen and has loaded.
+    pub(crate) fn layout(
+        &mut self,
+        text: TextSettings,
+        card: Option<&CardFont>,
+    ) -> Option<Page<'static>> {
+        let (chapter, styles) = match &self.parsed {
+            Some(parsed) => parsed,
+            None => {
+                let path = ArchivePath::new("preview.xhtml").ok()?;
+                let chapter = Chapter::parse(PREVIEW_XHTML, path).ok()?;
+                let styles = ChapterStyles::defaults(&chapter);
+                self.parsed.insert((chapter, styles))
+            }
+        };
 
-    let pagination = paginate_chapter(
-        &chapter,
-        &styles,
-        SpineIndex::ZERO,
-        preview_viewport(text)?,
-        text.reader_settings(Some(PREVIEW_LANGUAGE)),
-        &mut measurer,
-    )
-    .ok()?;
+        let fonts = self.fonts.get_or_init(card_for(text.font(), card)).ok()?;
+        let mut measurer = ReaderMeasurer::new(fonts, Default::default());
 
-    pagination.into_owned().pages().first().cloned()
+        let pagination = paginate_chapter(
+            chapter,
+            styles,
+            SpineIndex::ZERO,
+            preview_viewport(text)?,
+            text.reader_settings(Some(PREVIEW_LANGUAGE)),
+            &mut measurer,
+        )
+        .ok()?;
+
+        pagination.into_owned().pages().first().cloned()
+    }
 }

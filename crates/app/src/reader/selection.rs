@@ -6,7 +6,7 @@ use core::ops::Range;
 
 use inkpaper_reader::{Page, PageItem, ReadingPosition, Rect, TextFragment};
 
-use crate::reader::measurer::ReaderMeasurer;
+use crate::reader::measurer::ReaderFonts;
 
 /// How far beside a line's text a press still picks its word.
 const SLOP: u32 = 6;
@@ -62,11 +62,11 @@ pub(super) fn word_at(
     page: &Page<'_>,
     x: u32,
     y: u32,
-    measurer: &ReaderMeasurer<'_>,
+    fonts: &ReaderFonts,
 ) -> Option<WordSelection> {
-    let (spot, cached) = spot_at(page.items(), x, y, measurer)?;
+    let (spot, cached) = spot_at(page.items(), x, y, fonts)?;
 
-    select(page, spot, spot, measurer, Some((spot.item, cached)))
+    select(page, spot, spot, fonts, Some((spot.item, cached)))
 }
 
 /// `selection` grown or shrunk to the word under `x` and `y` on `page`, or
@@ -77,9 +77,9 @@ pub(super) fn extend_to(
     page: &Page<'_>,
     x: u32,
     y: u32,
-    measurer: &ReaderMeasurer<'_>,
+    fonts: &ReaderFonts,
 ) -> Option<WordSelection> {
-    let (end, cached) = spot_at(page.items(), x, y, measurer)?;
+    let (end, cached) = spot_at(page.items(), x, y, fonts)?;
 
     if end == selection.end {
         return None;
@@ -89,7 +89,7 @@ pub(super) fn extend_to(
         page,
         selection.anchor,
         end,
-        measurer,
+        fonts,
         Some((end.item, cached)),
     )
     .filter(|extended| extended.word.len() <= MAX_SELECTION_BYTES)
@@ -101,7 +101,7 @@ fn spot_at(
     items: &[PageItem<'_>],
     x: u32,
     y: u32,
-    measurer: &ReaderMeasurer<'_>,
+    fonts: &ReaderFonts,
 ) -> Option<(WordSpot, Vec<Word>)> {
     // the text under the press, or else beside it
     let text_near = |slop| {
@@ -112,7 +112,7 @@ fn spot_at(
     };
 
     let item = text_near(0).or_else(|| text_near(SLOP))?;
-    let words = measure_words(text_item(items, item)?, measurer)?;
+    let words = measure_words(text_item(items, item)?, fonts)?;
 
     let word = words
         .iter()
@@ -129,7 +129,7 @@ fn select(
     page: &Page<'_>,
     anchor: WordSpot,
     end: WordSpot,
-    measurer: &ReaderMeasurer<'_>,
+    fonts: &ReaderFonts,
     mut cached: Option<(usize, Vec<Word>)>,
 ) -> Option<WordSelection> {
     let items = page.items();
@@ -180,7 +180,7 @@ fn select(
             Some((cached_item, words)) if cached_item == item => words,
             other => {
                 cached = other;
-                measure_words(fragment, measurer)?
+                measure_words(fragment, fonts)?
             }
         };
         let from = if item == first.item { first.word } else { 0 };
@@ -300,7 +300,7 @@ fn count_words(text: &str) -> usize {
 
 /// The words of `fragment`, split at whitespace and without the punctuation
 /// around them, placed in a single shaping pass over the line.
-fn measure_words(fragment: &TextFragment<'_>, measurer: &ReaderMeasurer<'_>) -> Option<Vec<Word>> {
+fn measure_words(fragment: &TextFragment<'_>, fonts: &ReaderFonts) -> Option<Vec<Word>> {
     let text = fragment.text();
     let spans = word_spans(text);
     if spans.is_empty() {
@@ -308,7 +308,7 @@ fn measure_words(fragment: &TextFragment<'_>, measurer: &ReaderMeasurer<'_>) -> 
     }
 
     let ranges: Vec<Range<usize>> = spans.iter().map(|span| span.range.clone()).collect();
-    let measured = measurer
+    let measured = fonts
         .measure_ranges(text, fragment.style(), fragment.word_spacing(), &ranges)
         .ok()?;
 
@@ -403,7 +403,6 @@ mod tests {
     #[test]
     fn single_pass_measure_words_accounts_for_word_spacing_and_punctuation() {
         let fonts = ReaderFonts::new(None).unwrap();
-        let measurer = ReaderMeasurer::new(&fonts, Default::default());
         let style = TextStyle::new(20, BlockKind::Paragraph, FontWeight::Normal, FontStyle::Normal);
 
         let text = "Hello, \"brave\" world!";
@@ -414,8 +413,8 @@ mod tests {
         assert_eq!(&text[ranges[1].clone()], "brave");
         assert_eq!(&text[ranges[2].clone()], "world");
 
-        let unspaced = measurer.measure_ranges(text, style, 0, &ranges).unwrap();
-        let spaced = measurer.measure_ranges(text, style, 10, &ranges).unwrap();
+        let unspaced = fonts.measure_ranges(text, style, 0, &ranges).unwrap();
+        let spaced = fonts.measure_ranges(text, style, 10, &ranges).unwrap();
 
         let (u0, u1, u2) = (
             unspaced[0].unwrap(),
